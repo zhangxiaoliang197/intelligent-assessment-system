@@ -1,0 +1,124 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - assessment-network
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gateway
+    ports:
+      - "8080:8080"
+    networks:
+      - assessment-network
+
+  admin-service:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.admin
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+    networks:
+      - assessment-network
+
+  knowledge-service:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.knowledge
+    ports:
+      - "8001:8001"
+    volumes:
+      - knowledge-data:/app/uploads
+    networks:
+      - assessment-network
+
+  qa-service:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.qa
+    ports:
+      - "8002:8002"
+    networks:
+      - assessment-network
+
+  indicator-service:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.indicator
+    ports:
+      - "8003:8003"
+    networks:
+      - assessment-network
+
+  evaluation-service:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.evaluation
+    ports:
+      - "8004:8004"
+    networks:
+      - assessment-network
+
+  ontology-service:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ontology
+    ports:
+      - "8005:8005"
+    networks:
+      - assessment-network
+
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: assessment_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - assessment-network
+
+  neo4j:
+    image: neo4j:5
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/admin123
+    volumes:
+      - neo4j-data:/data
+    networks:
+      - assessment-network
+
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - chromadb-data:/chroma/chroma
+    networks:
+      - assessment-network
+
+volumes:
+  knowledge-data:
+  postgres-data:
+  neo4j-data:
+  chromadb-data:
+
+networks:
+  assessment-network:
+    driver: bridge
