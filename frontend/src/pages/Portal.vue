@@ -4,7 +4,7 @@
       <div class="portal-content">
         <div class="logo-section">
           <div class="logo">
-            <el-icon :size="50" color="#409eff"><Cpu /></el-icon>
+            <img src="/logo.jpg" alt="天基" class="logo-img" />
           </div>
           <h1 class="system-name">智能评估系统</h1>
           <p class="system-subtitle">Intelligent Assessment System</p>
@@ -212,6 +212,13 @@ const navigateToSystem = (path: string) => {
   align-items: center;
   justify-content: center;
   margin: 0 auto 1.5rem;
+  overflow: hidden;
+}
+
+.logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .system-name {

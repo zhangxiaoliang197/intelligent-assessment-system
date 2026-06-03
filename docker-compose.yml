@@ -1,124 +1,76 @@
-version: '3.8'
-
 services:
   frontend:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.frontend
+    image: assessment-frontend:latest
+    container_name: assessment-frontend
     ports:
-      - "3000:80"
-    depends_on:
-      - api-gateway
+      - "10086:80"
+    restart: always
     networks:
-      - assessment-network
-
-  api-gateway:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.gateway
-    ports:
-      - "8080:8080"
-    networks:
-      - assessment-network
-
-  admin-service:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.admin
-    ports:
-      - "8081:8081"
-    environment:
-      - SPRING_PROFILES_ACTIVE=prod
-    networks:
-      - assessment-network
+      - assessment-net
 
   knowledge-service:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.knowledge
+    image: assessment-knowledge:latest
+    container_name: assessment-knowledge
     ports:
-      - "8001:8001"
-    volumes:
-      - knowledge-data:/app/uploads
+      - "10252:10252"
+    restart: always
     networks:
-      - assessment-network
+      - assessment-net
 
   qa-service:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.qa
+    image: assessment-qa:latest
+    container_name: assessment-qa
     ports:
-      - "8002:8002"
+      - "10253:10253"
+    restart: always
     networks:
-      - assessment-network
+      - assessment-net
 
   indicator-service:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.indicator
+    image: assessment-indicator:latest
+    container_name: assessment-indicator
     ports:
-      - "8003:8003"
+      - "10254:10254"
+    restart: always
     networks:
-      - assessment-network
+      - assessment-net
 
   evaluation-service:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.evaluation
+    image: assessment-evaluation:latest
+    container_name: assessment-evaluation
     ports:
-      - "8004:8004"
+      - "10255:10255"
+    restart: always
     networks:
-      - assessment-network
+      - assessment-net
 
   ontology-service:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.ontology
+    image: assessment-ontology:latest
+    container_name: assessment-ontology
     ports:
-      - "8005:8005"
+      - "10256:10256"
+    restart: always
     networks:
-      - assessment-network
+      - assessment-net
 
-  postgres:
-    image: postgres:15-alpine
+  api-gateway:
+    image: assessment-gateway:latest
+    container_name: assessment-gateway
     ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_DB: assessment_db
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin123
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - "10257:10257"
+    restart: always
     networks:
-      - assessment-network
+      - assessment-net
 
-  neo4j:
-    image: neo4j:5
+  admin-service:
+    image: assessment-admin:latest
+    container_name: assessment-admin
     ports:
-      - "7474:7474"
-      - "7687:7687"
-    environment:
-      NEO4J_AUTH: neo4j/admin123
-    volumes:
-      - neo4j-data:/data
+      - "10258:10258"
+    restart: always
     networks:
-      - assessment-network
-
-  chromadb:
-    image: chromadb/chroma:latest
-    ports:
-      - "8000:8000"
-    volumes:
-      - chromadb-data:/chroma/chroma
-    networks:
-      - assessment-network
-
-volumes:
-  knowledge-data:
-  postgres-data:
-  neo4j-data:
-  chromadb-data:
+      - assessment-net
 
 networks:
-  assessment-network:
+  assessment-net:
     driver: bridge

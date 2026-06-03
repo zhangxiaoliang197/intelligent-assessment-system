@@ -124,17 +124,20 @@
             <el-form :model="llmConfig" label-width="120px" class="llm-form">
               <el-form-item label="模型类型">
                 <el-select v-model="llmConfig.type" placeholder="请选择模型类型" style="width: 100%">
+                  <el-option label="DeepSeek" value="deepseek" />
+                  <el-option label="OpenAI兼容" value="openai" />
                   <el-option label="Qwen（通义千问）" value="qwen" />
                   <el-option label="ChatGLM（智谱）" value="chatglm" />
-                  <el-option label="LLaMA" value="llama" />
-                  <el-option label="Baichuan（百川）" value="baichuan" />
                 </el-select>
               </el-form-item>
+              <el-form-item label="模型名称">
+                <el-input v-model="llmConfig.model" placeholder="deepseek-chat" />
+              </el-form-item>
               <el-form-item label="API地址">
-                <el-input v-model="llmConfig.apiUrl" placeholder="请输入API地址，如：http://localhost:8000/v1" />
+                <el-input v-model="llmConfig.apiUrl" placeholder="https://api.deepseek.com/v1" />
               </el-form-item>
               <el-form-item label="API密钥">
-                <el-input v-model="llmConfig.apiKey" type="password" placeholder="请输入API密钥" />
+                <el-input v-model="llmConfig.apiKey" type="password" placeholder="sk-xxxxxxxxxxxxxxxx" show-password />
               </el-form-item>
               <el-form-item label="Temperature">
                 <el-slider v-model="llmConfig.temperature" :min="0" :max="1" :step="0.1" show-stops :marks="tempMarks" />
@@ -310,9 +313,10 @@ const indicators = ref<any[]>([
 ])
 
 const llmConfig = ref({
-  type: 'qwen',
-  apiUrl: 'http://localhost:8000/v1',
+  type: 'deepseek',
+  apiUrl: 'https://api.deepseek.com/v1',
   apiKey: '',
+  model: 'deepseek-chat',
   temperature: 0.7,
   maxTokens: 2000,
   topP: 0.9
@@ -523,8 +527,13 @@ const addIndicator = () => {
   ElMessage.success('指标创建成功')
 }
 
-const saveLlmConfig = () => {
-  ElMessage.success('大模型配置保存成功')
+const saveLlmConfig = async () => {
+  try {
+    await api.post('/config/llm', llmConfig.value)
+    ElMessage.success('大模型配置保存成功')
+  } catch (e) {
+    ElMessage.error('配置保存失败，请检查网络连接')
+  }
 }
 
 onMounted(() => {

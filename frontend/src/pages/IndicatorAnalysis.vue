@@ -75,28 +75,11 @@
           <div ref="treeChartRef" class="tree-chart"></div>
         </div>
         <div class="detail-section">
-          <h3>指标详情</h3>
-          <el-descriptions v-if="selectedIndicator" :column="2" border>
-            <el-descriptions-item label="指标名称">
-              {{ selectedIndicator.name }}
-            </el-descriptions-item>
-            <el-descriptions-item label="指标类型">
-              <el-tag :type="selectedIndicator.source === 'knowledge' ? 'primary' : 'info'">
-                {{ selectedIndicator.source === 'knowledge' ? '知识库' : '大模型生成' }}
-              </el-tag>
-            </el-descriptions-item>
-            <el-descriptions-item label="定义" :span="2">
-              {{ selectedIndicator.definition }}
-            </el-descriptions-item>
-            <el-descriptions-item label="计算公式" :span="2">
-              {{ selectedIndicator.formula }}
-            </el-descriptions-item>
-            <el-descriptions-item label="评估标准" :span="2">
-              {{ selectedIndicator.criteria }}
-            </el-descriptions-item>
-          </el-descriptions>
+          <h3>分析结果</h3>
+          <div v-if="indicatorAnalysis" class="analysis-result">{{ indicatorAnalysis }}</div>
           <div v-else class="empty-detail">
-            <p>请选择指标查看详情</p>
+            <el-icon :size="48" color="#d1d5db"><PieChart /></el-icon>
+            <p>输入指标需求后点击"分析指标"，将为您生成专业分析</p>
           </div>
         </div>
         <div class="input-area">
@@ -105,11 +88,11 @@
             type="textarea"
             :rows="2"
             placeholder="输入指标需求，如：帮我分析火力打击任务完成度指标..."
-            @keyup.enter.ctrl="analyzeIndicator"
+            @keyup.enter="analyzeIndicator"
           />
           <div class="input-actions">
-            <el-button type="primary" @click="analyzeIndicator">
-              分析指标
+            <el-button type="primary" @click="analyzeIndicator" :loading="analyzing">
+              {{ analyzing ? '分析中...' : '分析指标' }}
             </el-button>
           </div>
         </div>
@@ -125,11 +108,15 @@ import { Collection, Box, PieChart } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
+import api from '@/services/api'
 
 const router = useRouter()
 const treeChartRef = ref<HTMLElement | null>(null)
 const inputMessage = ref('')
 const selectedIndicator = ref<any>(null)
+const indicatorAnalysis = ref('')
+const analyzing = ref(false)
+const indicatorData = ref<any[]>([])
 const historyList = ref([
   { id: 1, title: '作战效能指标' },
   { id: 2, title: '打击能力指标' }
@@ -157,17 +144,33 @@ const loadHistory = (item: any) => {
   ElMessage.info('加载历史记录')
 }
 
-const selectIndicator = (indicator: string) => {
+const selectIndicator = async (indicator: string) => {
   inputMessage.value = `分析${indicator}指标`
-  analyzeIndicator()
+  await analyzeIndicator()
 }
 
-const analyzeIndicator = () => {
+const analyzeIndicator = async () => {
   if (!inputMessage.value.trim()) {
     ElMessage.warning('请输入指标需求')
     return
   }
-  ElMessage.success('开始分析指标')
+  analyzing.value = true
+  indicatorAnalysis.value = ''
+
+  try {
+    const data = await api.post('/qa/chat', {
+      query: inputMessage.value,
+      top_k: 5
+    })
+    indicatorAnalysis.value = data.answer
+    ElMessage.success('指标分析完成')
+  } catch (e) {
+    indicatorAnalysis.value = '分析失败，请检查网络连接和大模型配置。'
+    ElMessage.error('分析请求失败')
+  } finally {
+    analyzing.value = false
+  }
+
   initTreeChart()
 }
 
@@ -406,6 +409,19 @@ onMounted(() => {
 .detail-section h3 {
   margin: 0 0 1rem 0;
   color: #374151;
+}
+
+.analysis-result {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+  line-height: 1.8;
+  font-size: 1.05rem;
+  color: #374151;
+  white-space: pre-wrap;
+  max-height: 400px;
+  overflow-y: auto;
 }
 
 .empty-detail {

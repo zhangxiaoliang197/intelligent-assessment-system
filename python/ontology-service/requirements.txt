@@ -1,16 +1,4 @@
-{
-  "name": "ontology-service",
-  "version": "1.0.0",
-  "description": "本体模型服务 - 本体构建与知识图谱展示",
-  "main": "main.py",
-  "scripts": {
-    "start": "uvicorn main:app --host 0.0.0.0 --port 8005",
-    "dev": "uvicorn main:app --reload --host 0.0.0.0 --port 8005"
-  },
-  "dependencies": {
-    "fastapi": "^0.109.2",
-    "uvicorn": "^0.27.1",
-    "pydantic": "^2.6.1",
-    "pyvis": "^0.3.2"
-  }
-}
+fastapi==0.95.2
+uvicorn==0.22.0
+pydantic==1.10.13
+python-multipart==0.0.6

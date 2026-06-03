@@ -1,24 +1,9 @@
-FROM eclipse-temurin:17-jdk-alpine AS builder
-
+FROM eclipse-temurin:17-jdk-alpine
 WORKDIR /app
-
-COPY java/admin-service/pom.xml .
-COPY java/admin-service/pom.xml ${user.home}/.m2/
-
 RUN apk add --no-cache maven
-
-RUN mvn dependency:go-offline -B
-
+COPY docker/settings.xml /root/.m2/settings.xml
+COPY java/admin-service/pom.xml .
 COPY java/admin-service/src ./src
-
-RUN mvn package -DskipTests
-
-FROM eclipse-temurin:17-jre-alpine
-
-WORKDIR /app
-
-COPY --from=builder /app/target/*.jar app.jar
-
-EXPOSE 8081
-
+RUN mvn package -DskipTests -q -B -Dmaven.wagon.http.retryHandler.count=10 -Dmaven.wagon.http.retryHandler.requestSentEnabled=true && cp target/*.jar app.jar && mvn clean && rm -rf src pom.xml
+EXPOSE 10258
 ENTRYPOINT ["java", "-jar", "app.jar"]

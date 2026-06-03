@@ -200,6 +200,7 @@ import { ref, computed, onMounted } from 'vue'
 import { Document, SuccessFilled, Clock, Folder } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import Layout from '@/components/Layout.vue'
+import api from '@/services/api'
 
 const searchQuery = ref('')
 const filterCategory = ref('')
@@ -224,12 +225,7 @@ const editForm = ref({
 
 const viewData = ref<any>(null)
 
-const knowledgeList = ref<any[]>([
-  { id: '1', title: '作战效能评估标准', filename: '作战效能评估标准.pdf', file_type: 'PDF文档', category: '评估标准', tags: ['效能', '评估'], status: '已完成', upload_time: '2026-05-27 10:30', parse_time: '2026-05-27 10:35', content: '作战效能评估标准文档内容...' },
-  { id: '2', title: '指标体系构建方法', filename: '指标体系构建方法.docx', file_type: 'Word文档', category: '方法论', tags: ['指标', '方法'], status: '已完成', upload_time: '2026-05-26 15:20', parse_time: '2026-05-26 15:25', content: '指标体系构建方法文档内容...' },
-  { id: '3', title: '历史评估案例', filename: '历史评估案例.xlsx', file_type: 'Excel表格', category: '案例库', tags: ['案例', '历史'], status: '待解析', upload_time: '2026-05-25 09:15', parse_time: null, content: '' },
-  { id: '4', title: '打击能力分析报告', filename: '打击能力分析报告.pdf', file_type: 'PDF文档', category: '作战数据', tags: ['打击', '分析'], status: '解析中', upload_time: '2026-05-24 14:00', parse_time: null, content: '' }
-])
+const knowledgeList = ref<any[]>([])
 
 const categories = ref(['评估标准', '方法论', '案例库', '技术文档', '作战数据', '未分类'])
 
@@ -259,44 +255,44 @@ const getStatusType = (status: string) => {
   return typeMap[status] || 'info'
 }
 
-const loadData = () => {
-  ElMessage.info('数据已刷新')
+const loadData = async () => {
+  try {
+    const res = await api.get('/knowledge/list?page_size=100')
+    if (res.items) {
+      knowledgeList.value = res.items
+    }
+  } catch (e) {
+    ElMessage.error('加载知识列表失败')
+  }
 }
 
 const handleFileChange = (file: any, files: any[]) => {
   uploadFileList.value = files
 }
 
-const uploadKnowledge = () => {
+const uploadKnowledge = async () => {
   if (uploadFileList.value.length === 0) {
     ElMessage.warning('请选择要上传的文件')
     return
   }
 
-  uploadFileList.value.forEach(file => {
-    const newKnowledge = {
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-      title: file.name.replace(/\.[^/.]+$/, ''),
-      filename: file.name,
-      file_type: getFileType(file.name),
-      category: uploadForm.value.category,
-      tags: uploadForm.value.tags.split(',').filter(t => t.trim()),
-      status: '待解析',
-      upload_time: new Date().toLocaleString(),
-      parse_time: null,
-      content: ''
-    }
-    knowledgeList.value.unshift(newKnowledge)
-  })
+  const formData = new FormData()
+  formData.append('file', uploadFileList.value[0].raw || uploadFileList.value[0])
+  formData.append('category', uploadForm.value.category)
+  formData.append('tags', uploadForm.value.tags)
 
-  stats.value.total_documents = knowledgeList.value.length
-  stats.value.pending_documents = knowledgeList.value.filter(k => k.status === '待解析').length
-
-  showUploadDialog.value = false
-  uploadFileList.value = []
-  uploadForm.value = { category: '未分类', tags: '' }
-
-  ElMessage.success(`成功上传 ${uploadFileList.value.length} 个文件`)
+  try {
+    const res = await api.post('/knowledge/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+    ElMessage.success(res.message || '上传成功')
+    showUploadDialog.value = false
+    uploadFileList.value = []
+    uploadForm.value = { category: '未分类', tags: '' }
+    await loadData()
+  } catch (e) {
+    ElMessage.error('上传失败')
+  }
 }
 
 const getFileType = (filename: string) => {
@@ -318,42 +314,28 @@ const viewKnowledge = (row: any) => {
   showViewDialog.value = true
 }
 
-const parseKnowledge = (row: any) => {
+const parseKnowledge = async (row: any) => {
   row.status = '解析中'
-  ElMessage.info(`正在解析：${row.title}`)
-
-  setTimeout(() => {
-    row.status = '已完成'
-    row.parse_time = new Date().toLocaleString()
-    row.content = `这是知识文档"${row.title}"的解析内容。包含关键信息和数据提取结果...`
-    stats.value.parsed_documents = knowledgeList.value.filter(k => k.status === '已完成').length
-    stats.value.pending_documents = knowledgeList.value.filter(k => k.status !== '已完成').length
-    ElMessage.success(`解析完成：${row.title}`)
-  }, 2000)
+  try {
+    const res = await api.post(`/knowledge/parse/${row.id}`)
+    if (res.success) {
+      ElMessage.success(res.message || '解析完成')
+    }
+    await loadData()
+  } catch (e) {
+    row.status = '解析失败'
+    ElMessage.error('解析失败')
+  }
 }
 
-const parseAll = () => {
-  const pendingList = knowledgeList.value.filter(k => k.status === '待解析')
-  if (pendingList.length === 0) {
-    ElMessage.warning('没有待解析的文档')
-    return
+const parseAll = async () => {
+  try {
+    const res = await api.post('/knowledge/parse/all')
+    ElMessage.success(res.message || '批量解析完成')
+    await loadData()
+  } catch (e) {
+    ElMessage.error('批量解析失败')
   }
-
-  ElMessage.info(`开始批量解析 ${pendingList.length} 个文档`)
-
-  pendingList.forEach((item, index) => {
-    setTimeout(() => {
-      item.status = '已完成'
-      item.parse_time = new Date().toLocaleString()
-      item.content = `这是知识文档"${item.title}"的解析内容...`
-      stats.value.parsed_documents = knowledgeList.value.filter(k => k.status === '已完成').length
-      stats.value.pending_documents = knowledgeList.value.filter(k => k.status !== '已完成').length
-
-      if (index === pendingList.length - 1) {
-        ElMessage.success('批量解析完成')
-      }
-    }, (index + 1) * 2000)
-  })
 }
 
 const editKnowledge = (row: any) => {
@@ -377,17 +359,19 @@ const saveEdit = () => {
   }
 }
 
-const deleteKnowledge = (row: any) => {
+const deleteKnowledge = async (row: any) => {
   ElMessageBox.confirm(`确定删除知识文档"${row.title}"吗？`, '提示', {
     confirmButtonText: '确定',
     cancelButtonText: '取消',
     type: 'warning'
-  }).then(() => {
-    knowledgeList.value = knowledgeList.value.filter(k => k.id !== row.id)
-    stats.value.total_documents = knowledgeList.value.length
-    stats.value.parsed_documents = knowledgeList.value.filter(k => k.status === '已完成').length
-    stats.value.pending_documents = knowledgeList.value.filter(k => k.status !== '已完成').length
-    ElMessage.success('删除成功')
+  }).then(async () => {
+    try {
+      await api.delete(`/knowledge/${row.id}`)
+      ElMessage.success('删除成功')
+      await loadData()
+    } catch (e) {
+      ElMessage.error('删除失败')
+    }
   }).catch(() => {})
 }
 
@@ -396,7 +380,7 @@ const refreshData = () => {
 }
 
 onMounted(() => {
-  ElMessage.info('知识库加载完成')
+  loadData()
 })
 </script>
 

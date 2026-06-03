@@ -119,10 +119,12 @@ import { useRouter } from 'vue-router'
 import { Search, Collection, Box, ChatLineRound, ChatDotRound, Promotion } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import Layout from '@/components/Layout.vue'
+import api from '@/services/api'
 
 const router = useRouter()
 const searchQuery = ref('')
 const inputMessage = ref('')
+const sessionId = ref('')
 const messages = ref<Array<any>>([])
 const historyList = ref([
   { id: 1, title: '作战效能指标体系' },
@@ -157,7 +159,7 @@ const selectQuestion = (question: string) => {
   sendMessage()
 }
 
-const sendMessage = () => {
+const sendMessage = async () => {
   if (!inputMessage.value.trim()) {
     ElMessage.warning('请输入问题')
     return
@@ -171,17 +173,34 @@ const sendMessage = () => {
   const userQuestion = inputMessage.value
   inputMessage.value = ''
 
-  setTimeout(() => {
+  const loadingMsg = {
+    role: 'assistant',
+    content: '正在思考...'
+  }
+  messages.value.push(loadingMsg)
+
+  try {
+    const data = await api.post('/qa/chat', {
+      query: userQuestion,
+      session_id: sessionId.value,
+      top_k: 5
+    })
+    messages.value.pop()
     messages.value.push({
       role: 'assistant',
-      content: `基于RAG知识库检索，关于"${userQuestion}"的分析结果如下：\n\n1. 指标定义\n2. 计算方法\n3. 评估标准\n4. 应用场景\n\n详细内容请参考相关文献。`,
-      references: [
-        '文献1: 作战效能评估标准',
-        '文献2: 指标体系构建方法',
-        '文献3: 评估模型研究'
-      ]
+      content: data.answer,
+      references: data.references || []
     })
-  }, 1000)
+    if (data.session_id) {
+      sessionId.value = data.session_id
+    }
+  } catch (e) {
+    messages.value.pop()
+    messages.value.push({
+      role: 'assistant',
+      content: '抱歉，请求失败，请检查网络连接或大模型配置。'
+    })
+  }
 }
 
 onMounted(() => {
@@ -339,7 +358,8 @@ onMounted(() => {
 .message-text {
   padding: 1rem;
   border-radius: 0.75rem;
-  line-height: 1.6;
+  line-height: 1.8;
+  font-size: 1.05rem;
   white-space: pre-wrap;
 }
 
@@ -359,12 +379,13 @@ onMounted(() => {
   padding: 1rem;
   background: #f9fafb;
   border-radius: 0.5rem;
-  font-size: 0.9rem;
+  font-size: 0.95rem;
 }
 
 .references h5 {
   margin: 0 0 0.5rem 0;
   color: #64748b;
+  font-size: 0.95rem;
 }
 
 .references ul {

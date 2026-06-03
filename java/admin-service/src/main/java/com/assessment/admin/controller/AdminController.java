@@ -16,7 +16,7 @@ public class AdminController {
 
     private static final Map<String, Map<String, Object>> databases = new LinkedHashMap<>();
     private static final List<Map<String, Object>> drivers = new ArrayList<>();
-    private static final Map<String, Map<String, Object>> datasets = new ArrayList<>();
+    private static final List<Map<String, Object>> datasets = new ArrayList<>();
     private static final Map<String, Object> indicators = new LinkedHashMap<>();
     private static final Map<String, Object> llmConfig = new HashMap<>();
 
@@ -306,7 +306,8 @@ public class AdminController {
     @PutMapping("/indicator/{indicatorId}")
     public ResponseEntity<Map<String, Object>> updateIndicator(@PathVariable String indicatorId, @RequestBody Map<String, Object> indicatorConfig) {
         if (indicators.containsKey(indicatorId)) {
-            Map<String, Object> indicator = indicators.get(indicatorId);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> indicator = (Map<String, Object>) indicators.get(indicatorId);
             indicator.put("name", indicatorConfig.get("name"));
             indicator.put("category", indicatorConfig.get("category"));
             indicator.put("formula", indicatorConfig.get("formula"));

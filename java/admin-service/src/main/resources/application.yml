@@ -1,31 +1,16 @@
 server:
-  port: 8081
+  port: 10258
 
 spring:
   application:
     name: admin-service
-  servlet:
-    multipart:
-      enabled: true
-      max-file-size: 100MB
-      max-request-size: 100MB
   datasource:
-    url: jdbc:h2:mem:assessment_db
+    url: jdbc:h2:mem:assessment
     driver-class-name: org.h2.Driver
-    username: sa
-    password:
-  h2:
-    console:
-      enabled: true
   jpa:
     hibernate:
       ddl-auto: update
     show-sql: false
-
-logging:
-  level:
-    root: INFO
-    com.assessment: DEBUG
 
 management:
   endpoints:

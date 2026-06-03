@@ -24,11 +24,31 @@ export default defineConfig({
     }
   },
   server: {
-    port: 3000,
+    port: 10086,
     host: '0.0.0.0',
     proxy: {
+      '/api/config': {
+        target: 'http://localhost:10253',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      },
+      '/api/qa': {
+        target: 'http://localhost:10253',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      },
+      '/api/knowledge': {
+        target: 'http://localhost:10252',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      },
+      '/api/admin': {
+        target: 'http://localhost:10258',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/admin/, '')
+      },
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:10257',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')
       }
