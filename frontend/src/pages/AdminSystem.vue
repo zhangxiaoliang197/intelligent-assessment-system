@@ -529,15 +529,50 @@ const addIndicator = () => {
 
 const saveLlmConfig = async () => {
   try {
+    // 保存到后端
     await api.post('/config/llm', llmConfig.value)
+    
+    // 同时保存到本地存储作为备份
+    localStorage.setItem('llmConfig', JSON.stringify(llmConfig.value))
+    
     ElMessage.success('大模型配置保存成功')
   } catch (e) {
-    ElMessage.error('配置保存失败，请检查网络连接')
+    // 即使后端保存失败，也保存到本地存储
+    localStorage.setItem('llmConfig', JSON.stringify(llmConfig.value))
+    ElMessage.warning('后端保存失败，但配置已保存到本地，刷新后将自动加载')
+  }
+}
+
+const loadLlmConfig = async () => {
+  // 首先尝试从本地存储加载
+  const savedConfig = localStorage.getItem('llmConfig')
+  if (savedConfig) {
+    try {
+      const config = JSON.parse(savedConfig)
+      llmConfig.value = config
+      console.log('✓ 从本地存储加载大模型配置成功')
+    } catch (e) {
+      console.error('加载本地配置失败:', e)
+    }
+  }
+  
+  // 然后尝试从后端加载（优先使用后端配置）
+  try {
+    const response = await api.get('/config/llm')
+    if (response && response.success && response.data) {
+      llmConfig.value = response.data
+      // 保存到本地存储
+      localStorage.setItem('llmConfig', JSON.stringify(response.data))
+      console.log('✓ 从服务器加载大模型配置成功')
+    }
+  } catch (err) {
+    console.warn('无法从服务器加载配置，将使用现有配置:', err)
   }
 }
 
 onMounted(() => {
   ElMessage.info('基础管理系统加载完成')
+  loadLlmConfig()
 })
 </script>
 

@@ -114,7 +114,10 @@ def call_llm_api(query, context=""):
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", f"Bearer {api_key}")
 
+    # 创建不验证SSL证书的上下文（适用于内部部署的自签名证书）
     ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
 
     try:
         with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp:

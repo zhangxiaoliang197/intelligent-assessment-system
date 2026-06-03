@@ -17,83 +17,156 @@
           <h3 class="sidebar-title">历史记录</h3>
           <div class="history-list custom-scroll">
             <div
-              v-for="item in historyList"
+              v-for="item in filteredHistoryList"
               :key="item.id"
               class="history-item"
               @click="loadHistory(item)"
             >
               <el-icon><PieChart /></el-icon>
-              <span>{{ item.title }}</span>
+              <div class="history-item-content">
+                <span class="history-item-title">{{ item.title }}</span>
+                <span class="history-item-time">{{ item.time }}</span>
+              </div>
             </div>
+          </div>
+          <div class="search-bar history-search">
+            <el-input
+              v-model="searchQuery"
+              placeholder="搜索历史记录..."
+              :prefix-icon="Search"
+              clearable
+            />
           </div>
         </div>
       </div>
       <div class="main-content">
-        <div class="tags-section">
-          <div class="tag-group">
-            <h4>推荐指标</h4>
-            <div class="tags">
-              <el-tag
-                v-for="tag in recommendedIndicators"
-                :key="tag"
-                class="tag-item"
-                @click="selectIndicator(tag)"
-              >
-                {{ tag }}
-              </el-tag>
+        <div class="chat-area custom-scroll" ref="chatArea">
+          <div v-if="messages.length === 0" class="empty-state">
+            <el-icon :size="80" color="#d1d5db"><PieChart /></el-icon>
+            <p>开始指标分析</p>
+            <div class="tags-section">
+              <div class="tag-group">
+                <h4>推荐指标</h4>
+                <div class="tags">
+                  <el-tag
+                    v-for="tag in allIndicators"
+                    :key="tag.text"
+                    class="tag-item"
+                    :type="tag.isHot ? 'warning' : ''"
+                    @click="selectIndicator(tag.text)"
+                  >
+                    {{ tag.text }}
+                  </el-tag>
+                </div>
+              </div>
             </div>
           </div>
-          <div class="tag-group">
-            <h4>热门指标</h4>
-            <div class="tags">
-              <el-tag
-                v-for="tag in hotIndicators"
-                :key="tag"
-                type="warning"
-                class="tag-item"
-                @click="selectIndicator(tag)"
-              >
-                {{ tag }}
-              </el-tag>
+          <div v-else class="message-list">
+            <div
+              v-for="(msg, index) in messages"
+              :key="index"
+              :class="['message', msg.role]"
+            >
+              <div class="message-avatar">
+                <el-avatar :size="40">
+                  {{ msg.role === 'user' ? '我' : 'AI' }}
+                </el-avatar>
+              </div>
+              <div class="message-content">
+                <!-- 用户消息 -->
+                <div v-if="msg.role === 'user'" class="message-text">
+                  {{ msg.content }}
+                </div>
+                
+                <!-- AI消息：包含文本、结构化数据、树状图、指标卡片 -->
+                <div v-else class="ai-response">
+                  <!-- 文本回答 -->
+                  <div v-if="msg.content" class="message-text">{{ msg.content }}</div>
+                  
+                  <!-- 分析总结 -->
+                  <div v-if="msg.summary" class="summary-section">
+                    <h5>分析总结</h5>
+                    <p>{{ msg.summary }}</p>
+                  </div>
+                  
+                  <!-- 指标树状结构 -->
+                  <div v-if="msg.tree" class="tree-section">
+                    <h5>指标树状结构</h5>
+                    <div :ref="el => setTreeChartRef(el, index)" class="tree-chart"></div>
+                  </div>
+                  
+                  <!-- 指标卡片列表 -->
+                  <div v-if="msg.indicators && msg.indicators.length > 0" class="indicators-section">
+                    <h5>指标计算方式</h5>
+                    <div class="indicator-list">
+                      <div v-for="(ind, idx) in msg.indicators" :key="idx" class="indicator-card">
+                        <div class="indicator-header">
+                          <span class="indicator-name">{{ ind.name }}</span>
+                          <el-tag :type="ind.type === 'knowledge' ? 'primary' : 'info'" size="small">
+                            {{ ind.type === 'knowledge' ? '知识库' : 'AI生成' }}
+                          </el-tag>
+                        </div>
+                        <div class="indicator-body">
+                          <div v-if="ind.definition" class="indicator-definition">
+                            <strong>定义：</strong>{{ ind.definition }}
+                          </div>
+                          <div v-if="ind.formula" class="indicator-formula">
+                            <strong>公式：</strong>{{ ind.formula }}
+                          </div>
+                          <div v-if="ind.criteria" class="indicator-criteria">
+                            <strong>标准：</strong>{{ ind.criteria }}
+                          </div>
+                          <div v-if="ind.weight" class="indicator-weight">
+                            <strong>权重：</strong>{{ ind.weight }}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <!-- 参考来源 -->
+                  <div v-if="msg.references && msg.references.length > 0" class="references-section">
+                    <h5>参考来源</h5>
+                    <ul>
+                      <li v-for="(ref, idx) in msg.references" :key="idx">{{ ref }}</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-        <div class="indicator-tree-container">
-          <div class="tree-header">
-            <h3>指标树状图</h3>
-            <div class="tree-legend">
-              <span class="legend-item">
-                <span class="legend-color" style="background: #3b82f6"></span>
-                知识库指标
-              </span>
-              <span class="legend-item">
-                <span class="legend-color" style="background: #9ca3af"></span>
-                大模型生成
-              </span>
-            </div>
-          </div>
-          <div ref="treeChartRef" class="tree-chart"></div>
-        </div>
-        <div class="detail-section">
-          <h3>分析结果</h3>
-          <div v-if="indicatorAnalysis" class="analysis-result">{{ indicatorAnalysis }}</div>
-          <div v-else class="empty-detail">
-            <el-icon :size="48" color="#d1d5db"><PieChart /></el-icon>
-            <p>输入指标需求后点击"分析指标"，将为您生成专业分析</p>
           </div>
         </div>
         <div class="input-area">
-          <el-input
-            v-model="inputMessage"
-            type="textarea"
-            :rows="2"
-            placeholder="输入指标需求，如：帮我分析火力打击任务完成度指标..."
-            @keyup.enter="analyzeIndicator"
-          />
-          <div class="input-actions">
-            <el-button type="primary" @click="analyzeIndicator" :loading="analyzing">
-              {{ analyzing ? '分析中...' : '分析指标' }}
-            </el-button>
+          <div class="input-wrapper">
+            <el-input
+              v-model="inputMessage"
+              type="textarea"
+              :rows="2"
+              placeholder="输入指标需求，如：帮我分析火力打击任务完成度指标..."
+              @keyup.enter="analyzeIndicator"
+            />
+            <div class="input-actions">
+              <el-button type="primary" @click="analyzeIndicator" :loading="analyzing">
+                {{ analyzing ? '分析中...' : '分析指标' }}
+              </el-button>
+            </div>
+          </div>
+          
+          <!-- 工具按钮 -->
+          <div class="tools-bar">
+            <div
+              v-for="tool in tools"
+              :key="tool.id"
+              :class="['tool-item', { 'current': tool.current }]"
+              @click="navigateToTool(tool.path)"
+            >
+              <div class="tool-icon">
+                <el-icon :size="16" :color="tool.current ? 'white' : tool.color">
+                  <component :is="tool.icon" />
+                </el-icon>
+              </div>
+              <span class="tool-name">{{ tool.name }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -102,25 +175,58 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { Collection, Box, PieChart } from '@element-plus/icons-vue'
+import { Search, Collection, Box, PieChart, ChatDotRound, Document } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
 import api from '@/services/api'
 
 const router = useRouter()
-const treeChartRef = ref<HTMLElement | null>(null)
+
+// 工具配置
+const tools = [
+  {
+    id: 1,
+    name: '智能问答',
+    icon: ChatDotRound,
+    color: '#409eff',
+    path: '/qa',
+    current: false
+  },
+  {
+    id: 2,
+    name: '指标分析',
+    icon: PieChart,
+    color: '#67c23a',
+    path: '/indicator',
+    current: true
+  },
+  {
+    id: 3,
+    name: '方案评估',
+    icon: Document,
+    color: '#e6a23c',
+    path: '/evaluation',
+    current: false
+  }
+]
+
+// 跳转工具
+const navigateToTool = (path: string) => {
+  router.push(path)
+}
+
 const inputMessage = ref('')
-const selectedIndicator = ref<any>(null)
-const indicatorAnalysis = ref('')
 const analyzing = ref(false)
-const indicatorData = ref<any[]>([])
-const historyList = ref([
-  { id: 1, title: '作战效能指标' },
-  { id: 2, title: '打击能力指标' }
-])
+const messages = ref<Array<any>>([])
+const historyList = ref<Array<any>>([])
+const sessionMessages = ref<Record<string, Array<any>>>({})
+const sessionId = ref('')
+const searchQuery = ref('')
+const chatArea = ref<HTMLElement | null>(null)
+const treeChartRefs = ref<HTMLElement[]>([])
 
 const recommendedIndicators = [
   '作战效能',
@@ -136,12 +242,26 @@ const hotIndicators = [
   '覆盖率'
 ]
 
+const allIndicators = computed(() => [
+  ...recommendedIndicators.map(text => ({ text, isHot: false })),
+  ...hotIndicators.map(text => ({ text, isHot: true }))
+])
+
 const goTo = (path: string) => {
   router.push(path)
 }
 
 const loadHistory = (item: any) => {
-  ElMessage.info('加载历史记录')
+  if (sessionMessages.value[item.id]) {
+    messages.value = [...sessionMessages.value[item.id]]
+    sessionId.value = item.id
+    ElMessage.success('已加载历史记录')
+    nextTick(() => {
+      renderTreesForMessages()
+    })
+  } else {
+    ElMessage.warning('暂无该历史记录内容')
+  }
 }
 
 const selectIndicator = async (indicator: string) => {
@@ -154,73 +274,153 @@ const analyzeIndicator = async () => {
     ElMessage.warning('请输入指标需求')
     return
   }
+
+  const userQuestion = inputMessage.value
+  inputMessage.value = ''
   analyzing.value = true
-  indicatorAnalysis.value = ''
+
+  messages.value.push({
+    role: 'user',
+    content: userQuestion
+  })
+
+  const loadingMsg = {
+    role: 'assistant',
+    content: '正在分析指标，请稍候...'
+  }
+  messages.value.push(loadingMsg)
 
   try {
-    const data = await api.post('/qa/chat', {
-      query: inputMessage.value,
-      top_k: 5
+    // 调用后端API获取指标分析结果
+    const res = await api.post('/indicator/analyze', {
+      query: userQuestion
     })
-    indicatorAnalysis.value = data.answer
-    ElMessage.success('指标分析完成')
+    
+    messages.value.pop()
+    
+    // 构建响应消息，包含结构化数据
+    const responseMsg = {
+      role: 'assistant',
+      content: res.answer || '',
+      summary: res.summary || '',
+      tree: res.tree || null,
+      indicators: res.indicators || [],
+      references: res.references || []
+    }
+    messages.value.push(responseMsg)
+
+    const newSessionId = 'session_' + Date.now()
+    sessionId.value = newSessionId
+    saveHistory(newSessionId, userQuestion)
+    sessionMessages.value[newSessionId] = [...messages.value]
+
+    // 延迟渲染树状图，确保DOM已更新
+    nextTick(() => {
+      setTimeout(() => {
+        renderTreesForMessages()
+        scrollToBottom()
+      }, 300)
+    })
+
   } catch (e) {
-    indicatorAnalysis.value = '分析失败，请检查网络连接和大模型配置。'
-    ElMessage.error('分析请求失败')
+    messages.value.pop()
+    messages.value.push({
+      role: 'assistant',
+      content: '分析失败，请检查网络连接或大模型配置。',
+      summary: '',
+      tree: null,
+      indicators: [],
+      references: []
+    })
   } finally {
     analyzing.value = false
   }
-
-  initTreeChart()
 }
 
-const initTreeChart = () => {
-  if (!treeChartRef.value) return
+const saveHistory = (id: string, question: string) => {
+  const exists = historyList.value.find(item => item.id === id)
+  if (!exists) {
+    historyList.value.unshift({
+      id: id,
+      title: question.length > 20 ? question.substring(0, 20) + '...' : question,
+      time: new Date().toLocaleString()
+    })
+  } else {
+    exists.title = question.length > 20 ? question.substring(0, 20) + '...' : question
+    exists.time = new Date().toLocaleString()
+    const index = historyList.value.indexOf(exists)
+    if (index > 0) {
+      historyList.value.splice(index, 1)
+      historyList.value.unshift(exists)
+    }
+  }
+}
 
-  const chart = echarts.init(treeChartRef.value)
+const setTreeChartRef = (el: any, index: number) => {
+  if (el) {
+    treeChartRefs.value[index] = el
+  }
+}
+
+const renderTreesForMessages = () => {
+  messages.value.forEach((msg, index) => {
+    if (msg.tree && treeChartRefs.value[index]) {
+      nextTick(() => {
+        const container = treeChartRefs.value[index]
+        if (container) {
+          initTreeChart(container, msg.tree)
+        }
+      })
+    }
+  })
+}
+
+const initTreeChart = (container: HTMLElement, data: any) => {
+  if (!container || !data) return
+  
+  const chart = echarts.getInstanceByDom(container)
+  if (chart) {
+    chart.dispose()
+  }
+  
+  const newChart = echarts.init(container)
+
+  const processTreeData = (node: any): any => {
+    const processed: any = {
+      name: node.name || '未知指标',
+      children: []
+    }
+    
+    if (node.children && Array.isArray(node.children)) {
+      processed.children = node.children.map((child: any) => processTreeData(child))
+    }
+    
+    processed.itemStyle = {
+      color: node.source === 'knowledge' ? '#409eff' : '#909399'
+    }
+    
+    return processed
+  }
 
   const option = {
     tooltip: {
       trigger: 'item',
-      triggerOn: 'mousemove'
+      triggerOn: 'mousemove',
+      formatter: (params: any) => {
+        return `${params.name}<br/>来源: ${params.data.source || '未知'}`
+      }
     },
     series: [
       {
         type: 'tree',
-        data: [
-          {
-            name: '作战效能',
-            children: [
-              {
-                name: '打击能力',
-                children: [
-                  { name: '命中率', source: 'knowledge' },
-                  { name: '摧毁率', source: 'knowledge' },
-                  { name: '突防率', source: 'llm' }
-                ]
-              },
-              {
-                name: '生存能力',
-                children: [
-                  { name: '存活率', source: 'knowledge' },
-                  { name: '防护能力', source: 'llm' }
-                ]
-              },
-              {
-                name: '保障能力',
-                children: [
-                  { name: '补给效率', source: 'knowledge' },
-                  { name: '维护能力', source: 'llm' }
-                ]
-              }
-            ]
-          }
-        ],
-        symbolSize: 10,
+        data: [processTreeData(data)],
+        symbolSize: 14,
         label: {
           position: 'left',
           verticalAlign: 'middle',
-          align: 'right'
+          align: 'right',
+          fontSize: 12,
+          formatter: '{b}'
         },
         leaves: {
           label: {
@@ -230,30 +430,42 @@ const initTreeChart = () => {
           }
         },
         expandAndCollapse: true,
-        initialTreeDepth: -1
+        initialTreeDepth: 3,
+        animationDuration: 550,
+        animationDurationUpdate: 750,
+        lineStyle: {
+          width: 2,
+          curveness: 0.5
+        },
+        emphasis: {
+          focus: 'ancestor'
+        }
       }
     ]
   }
 
-  chart.setOption(option)
+  newChart.setOption(option)
 
-  chart.on('click', (params: any) => {
-    if (params.data.source) {
-      selectedIndicator.value = {
-        name: params.data.name,
-        source: params.data.source,
-        definition: '该指标的定义和详细说明在此展示...',
-        formula: '计算公式：X = (A + B) / C × 100%',
-        criteria: '优秀: ≥90, 良好: ≥80, 合格: ≥70'
-      }
-    }
+  window.addEventListener('resize', () => {
+    newChart.resize()
   })
 }
 
+const scrollToBottom = () => {
+  if (chatArea.value) {
+    chatArea.value.scrollTop = chatArea.value.scrollHeight
+  }
+}
+
+const filteredHistoryList = computed(() => {
+  if (!searchQuery.value.trim()) return historyList.value
+  return historyList.value.filter(item => 
+    item.title.toLowerCase().includes(searchQuery.value.toLowerCase())
+  )
+})
+
 onMounted(() => {
-  nextTick(() => {
-    initTreeChart()
-  })
+  ElMessage.info('指标分析系统加载完成')
 })
 </script>
 
@@ -321,6 +533,27 @@ onMounted(() => {
   color: #374151;
 }
 
+.history-item-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.history-item-title {
+  font-size: 0.9rem;
+  color: #374151;
+}
+
+.history-item-time {
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+
+.history-search {
+  margin-top: 1rem;
+}
+
 .main-content {
   flex: 1;
   display: flex;
@@ -329,107 +562,223 @@ onMounted(() => {
   overflow-y: auto;
 }
 
-.tags-section {
+.chat-area {
+  flex: 1;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: #f9fafb;
+  border-radius: 0.75rem;
+}
+
+.empty-state {
   display: flex;
-  gap: 2rem;
-  margin-bottom: 1.5rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 3rem;
+  color: #9ca3af;
+  height: 100%;
+}
+
+.empty-state p {
+  margin-top: 1rem;
+  font-size: 1.1rem;
+}
+
+.tags-section {
+  margin-top: 2rem;
+  width: 100%;
+  max-width: 900px;
 }
 
 .tag-group {
-  flex: 1;
+  margin-bottom: 1.5rem;
 }
 
 .tag-group h4 {
-  font-size: 0.9rem;
-  color: #64748b;
-  margin-bottom: 0.75rem;
+  font-size: 1.1rem;
+  color: #475569;
+  margin-bottom: 1rem;
+  text-align: center;
 }
 
 .tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 1rem;
+  justify-content: center;
 }
 
 .tag-item {
   cursor: pointer;
   transition: all 0.2s;
+  padding: 0.75rem 1.25rem !important;
+  font-size: 1.05rem !important;
 }
 
 .tag-item:hover {
   transform: scale(1.05);
 }
 
-.indicator-tree-container {
-  margin-bottom: 1.5rem;
-  padding: 1.5rem;
-  background: #f9fafb;
-  border-radius: 0.75rem;
-}
-
-.tree-header {
+.message-list {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1rem;
-}
-
-.tree-header h3 {
-  margin: 0;
-  color: #374151;
-}
-
-.tree-legend {
-  display: flex;
+  flex-direction: column;
   gap: 1.5rem;
 }
 
-.legend-item {
+.message {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9rem;
-  color: #6b7280;
+  gap: 1rem;
 }
 
-.legend-color {
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
+.message.user {
+  flex-direction: row-reverse;
 }
 
-.tree-chart {
-  height: 300px;
+.message-content {
+  max-width: 90%;
 }
 
-.detail-section {
-  margin-bottom: 1.5rem;
+.message-text {
+  padding: 1rem;
+  border-radius: 0.75rem;
+  line-height: 1.8;
+  font-size: 1.05rem;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
-.detail-section h3 {
-  margin: 0 0 1rem 0;
+.message.user .message-text {
+  background: #409eff;
+  color: white;
+}
+
+.message.assistant .message-text {
+  background: white;
+  border: 1px solid #e2e8f0;
   color: #374151;
 }
 
-.analysis-result {
+/* AI响应区域样式 */
+.ai-response {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.summary-section {
+  padding: 1rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 0.75rem;
+  color: white;
+}
+
+.summary-section h5 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.summary-section p {
+  margin: 0;
+  line-height: 1.6;
+  font-size: 1rem;
+}
+
+.tree-section,
+.indicators-section,
+.references-section {
+  padding: 1.5rem;
   background: white;
   border: 1px solid #e2e8f0;
   border-radius: 0.75rem;
-  padding: 1.25rem;
-  line-height: 1.8;
-  font-size: 1.05rem;
-  color: #374151;
-  white-space: pre-wrap;
-  max-height: 400px;
-  overflow-y: auto;
 }
 
-.empty-detail {
-  padding: 3rem;
-  text-align: center;
-  color: #9ca3af;
-  background: #f9fafb;
-  border-radius: 0.5rem;
+.tree-section h5,
+.indicators-section h5,
+.references-section h5 {
+  margin: 0 0 1rem 0;
+  color: #374151;
+  font-size: 1rem;
+  font-weight: 600;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #409eff;
+}
+
+.tree-chart {
+  width: 100%;
+  height: 400px;
+}
+
+.indicator-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+.indicator-card {
+  background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%);
+  border-radius: 0.75rem;
+  border-left: 4px solid #409eff;
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.indicator-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.indicator-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background: white;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.indicator-name {
+  font-weight: 600;
+  color: #374151;
+  font-size: 1rem;
+}
+
+.indicator-body {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.indicator-definition,
+.indicator-formula,
+.indicator-criteria,
+.indicator-weight {
+  font-size: 0.95rem;
+  color: #606266;
+  line-height: 1.6;
+}
+
+.indicator-formula {
+  background: white;
+  padding: 0.5rem;
+  border-radius: 0.25rem;
+  font-family: 'Courier New', monospace;
+  color: #409eff;
+}
+
+.references-section ul {
+  list-style: disc;
+  padding-left: 1.5rem;
+  margin: 0;
+  color: #606266;
+}
+
+.references-section li {
+  padding: 0.25rem 0;
+  font-size: 0.95rem;
 }
 
 .input-area {
@@ -439,8 +788,69 @@ onMounted(() => {
   box-shadow: 0 -4px 6px rgba(0, 0, 0, 0.05);
 }
 
+.tools-bar {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.tools-bar .tool-item {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 1rem;
+  background: #f5f7fa;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.tools-bar .tool-item:hover {
+  background: #eff6ff;
+  border-color: #409eff;
+}
+
+.tools-bar .tool-item.current {
+  background: #409eff;
+  border-color: #409eff;
+  cursor: default;
+}
+
+.tools-bar .tool-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tools-bar .tool-item.current .tool-icon {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.tools-bar .tool-name {
+  color: #606266;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.tools-bar .tool-item.current .tool-name {
+  color: white;
+}
+
+.input-wrapper {
+  position: relative;
+}
+
 .input-actions {
-  margin-top: 1rem;
+  position: absolute;
+  bottom: 1rem;
+  right: 1rem;
   display: flex;
   justify-content: flex-end;
 }

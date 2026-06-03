@@ -54,6 +54,28 @@
             </div>
           </div>
         </el-card>
+        <el-card class="stat-card">
+          <div class="stat-content">
+            <div class="stat-icon cyan">
+              <el-icon :size="40"><Files /></el-icon>
+            </div>
+            <div class="stat-info">
+              <h3>{{ stats.total_chunks || 0 }}</h3>
+              <p>知识分片</p>
+            </div>
+          </div>
+        </el-card>
+        <el-card class="stat-card">
+          <div class="stat-content">
+            <div class="stat-icon pink">
+              <el-icon :size="40"><DataAnalysis /></el-icon>
+            </div>
+            <div class="stat-info">
+              <h3>{{ stats.total_size_formatted || '0 MB' }}</h3>
+              <p>总大小</p>
+            </div>
+          </div>
+        </el-card>
       </div>
 
       <div class="content-section">
@@ -92,7 +114,11 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="upload_time" label="上传时间" width="180" />
+          <el-table-column prop="upload_time" label="上传时间" width="180">
+            <template #default="scope">
+              {{ formatTime(scope.row.upload_time) }}
+            </template>
+          </el-table-column>
           <el-table-column label="操作" width="300" fixed="right">
             <template #default="scope">
               <el-button size="small" @click="viewKnowledge(scope.row)">查看</el-button>
@@ -106,7 +132,7 @@
         </el-table>
       </div>
 
-      <el-dialog v-model="showUploadDialog" title="上传知识文档" width="600px">
+      <el-dialog v-model="showUploadDialog" title="上传知识文档" width="700px">
         <el-form :model="uploadForm" label-width="100px">
           <el-form-item label="选择文件">
             <el-upload
@@ -114,15 +140,26 @@
               :auto-upload="false"
               :limit="10"
               multiple
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.md"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.csv"
               :file-list="uploadFileList"
               @change="handleFileChange"
+              @remove="handleFileRemove"
             >
               <el-button type="primary">选择文件</el-button>
               <template #tip>
                 <div class="el-upload__tip">支持PDF、Word、Excel、TXT、Markdown格式，单个文件不超过100MB</div>
               </template>
             </el-upload>
+          </el-form-item>
+          <el-form-item label="已选文件">
+            <div class="selected-files">
+              <div v-for="(file, index) in uploadFileList" :key="index" class="file-item">
+                <el-icon><Document /></el-icon>
+                <span>{{ file.name }}</span>
+                <span class="file-size">{{ formatFileSize(file.size) }}</span>
+              </div>
+              <div v-if="uploadFileList.length === 0" class="no-files">未选择文件</div>
+            </div>
           </el-form-item>
           <el-form-item label="知识分类">
             <el-select v-model="uploadForm.category" placeholder="选择分类" style="width: 100%">
@@ -140,7 +177,7 @@
         </el-form>
         <template #footer>
           <el-button @click="showUploadDialog = false">取消</el-button>
-          <el-button type="primary" @click="uploadKnowledge">上传</el-button>
+          <el-button type="primary" @click="uploadKnowledge" :loading="uploading">上传 ({{ uploadFileList.length }}个文件)</el-button>
         </template>
       </el-dialog>
 
@@ -178,7 +215,9 @@
           <el-descriptions-item label="状态">
             <el-tag :type="getStatusType(viewData.status)">{{ viewData.status }}</el-tag>
           </el-descriptions-item>
-          <el-descriptions-item label="上传时间">{{ viewData.upload_time }}</el-descriptions-item>
+          <el-descriptions-item label="上传时间">{{ formatTime(viewData.upload_time) }}</el-descriptions-item>
+          <el-descriptions-item label="文件大小">{{ formatFileSize(viewData.file_size) }}</el-descriptions-item>
+          <el-descriptions-item label="内容长度">{{ viewData.content_length || 0 }} 字符</el-descriptions-item>
           <el-descriptions-item label="解析时间" :span="2">{{ viewData.parse_time || '未解析' }}</el-descriptions-item>
           <el-descriptions-item label="标签" :span="2">
             <el-tag v-for="tag in viewData.tags" :key="tag" size="small" style="margin-right: 0.5rem">{{ tag }}</el-tag>
@@ -197,7 +236,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Document, SuccessFilled, Clock, Folder } from '@element-plus/icons-vue'
+import { Document, SuccessFilled, Clock, Folder, Files, DataAnalysis } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import Layout from '@/components/Layout.vue'
 import api from '@/services/api'
@@ -210,6 +249,7 @@ const showEditDialog = ref(false)
 const showViewDialog = ref(false)
 const uploadFileList = ref<any[]>([])
 const uploadRef = ref()
+const uploading = ref(false)
 
 const uploadForm = ref({
   category: '未分类',
@@ -230,10 +270,13 @@ const knowledgeList = ref<any[]>([])
 const categories = ref(['评估标准', '方法论', '案例库', '技术文档', '作战数据', '未分类'])
 
 const stats = ref({
-  total_documents: 4,
-  parsed_documents: 2,
-  pending_documents: 2,
-  categories: 5
+  total_documents: 0,
+  parsed_documents: 0,
+  pending_documents: 0,
+  categories: 0,
+  total_chunks: 0,
+  total_size: 0,
+  total_size_formatted: '0 MB'
 })
 
 const filteredKnowledge = computed(() => {
@@ -255,12 +298,54 @@ const getStatusType = (status: string) => {
   return typeMap[status] || 'info'
 }
 
+const formatTime = (time: string) => {
+  if (!time) return ''
+  try {
+    const date = new Date(time)
+    return date.toLocaleString('zh-CN')
+  } catch {
+    return time
+  }
+}
+
+const formatFileSize = (bytes: number) => {
+  if (!bytes) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let size = bytes
+  let unitIndex = 0
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex++
+  }
+  return `${size.toFixed(2)} ${units[unitIndex]}`
+}
+
+const loadStats = async () => {
+  try {
+    const res = await api.get('/knowledge/stats')
+    if (res.success && res.data) {
+      stats.value = {
+        total_documents: res.data.total_documents || 0,
+        parsed_documents: res.data.parsed_documents || 0,
+        pending_documents: res.data.pending_documents || 0,
+        categories: res.data.categories || 0,
+        total_chunks: res.data.total_chunks || 0,
+        total_size: res.data.total_size || 0,
+        total_size_formatted: res.data.total_size_formatted || '0 MB'
+      }
+    }
+  } catch (e) {
+    console.error('加载统计数据失败:', e)
+  }
+}
+
 const loadData = async () => {
   try {
     const res = await api.get('/knowledge/list?page_size=100')
     if (res.items) {
       knowledgeList.value = res.items
     }
+    await loadStats()
   } catch (e) {
     ElMessage.error('加载知识列表失败')
   }
@@ -270,29 +355,50 @@ const handleFileChange = (file: any, files: any[]) => {
   uploadFileList.value = files
 }
 
+const handleFileRemove = (file: any, files: any[]) => {
+  uploadFileList.value = files
+}
+
 const uploadKnowledge = async () => {
   if (uploadFileList.value.length === 0) {
     ElMessage.warning('请选择要上传的文件')
     return
   }
 
-  const formData = new FormData()
-  formData.append('file', uploadFileList.value[0].raw || uploadFileList.value[0])
-  formData.append('category', uploadForm.value.category)
-  formData.append('tags', uploadForm.value.tags)
+  uploading.value = true
+  let successCount = 0
+  let failCount = 0
 
-  try {
-    const res = await api.post('/knowledge/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
-    ElMessage.success(res.message || '上传成功')
-    showUploadDialog.value = false
-    uploadFileList.value = []
-    uploadForm.value = { category: '未分类', tags: '' }
-    await loadData()
-  } catch (e) {
-    ElMessage.error('上传失败')
+  for (const file of uploadFileList.value) {
+    try {
+      const formData = new FormData()
+      const rawFile = file.raw || file
+      formData.append('file', rawFile)
+      formData.append('category', uploadForm.value.category)
+      formData.append('tags', uploadForm.value.tags)
+
+      await api.post('/knowledge/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      successCount++
+    } catch (e) {
+      failCount++
+      console.error(`文件 ${file.name} 上传失败:`, e)
+    }
   }
+
+  uploading.value = false
+  
+  if (failCount === 0) {
+    ElMessage.success(`成功上传 ${successCount} 个文件`)
+  } else {
+    ElMessage.warning(`上传完成：${successCount} 个成功，${failCount} 个失败`)
+  }
+  
+  showUploadDialog.value = false
+  uploadFileList.value = []
+  uploadForm.value = { category: '未分类', tags: '' }
+  await loadData()
 }
 
 const getFileType = (filename: string) => {
@@ -309,9 +415,19 @@ const getFileType = (filename: string) => {
   return typeMap[ext || ''] || '未知类型'
 }
 
-const viewKnowledge = (row: any) => {
-  viewData.value = row
-  showViewDialog.value = true
+const viewKnowledge = async (row: any) => {
+  try {
+    const res = await api.get(`/knowledge/${row.id}`)
+    if (res.success && res.data) {
+      viewData.value = res.data
+    } else {
+      viewData.value = row
+    }
+    showViewDialog.value = true
+  } catch (e) {
+    viewData.value = row
+    showViewDialog.value = true
+  }
 }
 
 const parseKnowledge = async (row: any) => {
@@ -320,8 +436,8 @@ const parseKnowledge = async (row: any) => {
     const res = await api.post(`/knowledge/parse/${row.id}`)
     if (res.success) {
       ElMessage.success(res.message || '解析完成')
+      await loadData()
     }
-    await loadData()
   } catch (e) {
     row.status = '解析失败'
     ElMessage.error('解析失败')
@@ -330,9 +446,12 @@ const parseKnowledge = async (row: any) => {
 
 const parseAll = async () => {
   try {
+    ElMessage.info('开始批量解析...')
     const res = await api.post('/knowledge/parse/all')
-    ElMessage.success(res.message || '批量解析完成')
-    await loadData()
+    if (res.success) {
+      ElMessage.success(res.message || '批量解析完成')
+      await loadData()
+    }
   } catch (e) {
     ElMessage.error('批量解析失败')
   }
@@ -343,19 +462,24 @@ const editKnowledge = (row: any) => {
     id: row.id,
     title: row.title,
     category: row.category,
-    tags: row.tags.join(',')
+    tags: Array.isArray(row.tags) ? row.tags.join(',') : row.tags
   }
   showEditDialog.value = true
 }
 
-const saveEdit = () => {
-  const knowledge = knowledgeList.value.find(k => k.id === editForm.value.id)
-  if (knowledge) {
-    knowledge.title = editForm.value.title
-    knowledge.category = editForm.value.category
-    knowledge.tags = editForm.value.tags.split(',').filter(t => t.trim())
-    showEditDialog.value = false
-    ElMessage.success('修改成功')
+const saveEdit = async () => {
+  try {
+    const res = await api.put(`/knowledge/${editForm.value.id}`, {
+      category: editForm.value.category,
+      tags: editForm.value.tags
+    })
+    if (res.success) {
+      ElMessage.success('修改成功')
+      showEditDialog.value = false
+      await loadData()
+    }
+  } catch (e) {
+    ElMessage.error('修改失败')
   }
 }
 
@@ -377,6 +501,7 @@ const deleteKnowledge = async (row: any) => {
 
 const refreshData = () => {
   loadData()
+  ElMessage.success('数据已刷新')
 }
 
 onMounted(() => {
@@ -412,7 +537,7 @@ onMounted(() => {
 
 .stats-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 1.5rem;
   margin-bottom: 2rem;
 }
@@ -456,6 +581,16 @@ onMounted(() => {
   color: #909399;
 }
 
+.stat-icon.cyan {
+  background: rgba(64, 211, 255, 0.1);
+  color: #00d5ff;
+}
+
+.stat-icon.pink {
+  background: rgba(255, 0, 135, 0.1);
+  color: #ff0087;
+}
+
 .stat-info h3 {
   margin: 0;
   font-size: 1.8rem;
@@ -492,5 +627,38 @@ onMounted(() => {
   font-size: 0.9rem;
   color: #606266;
   white-space: pre-wrap;
+}
+
+.selected-files {
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 1rem;
+  background: #f5f7fa;
+  border-radius: 4px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #ebeef5;
+  font-size: 0.9rem;
+}
+
+.file-item:last-child {
+  border-bottom: none;
+}
+
+.file-item .file-size {
+  margin-left: auto;
+  color: #909399;
+  font-size: 0.85rem;
+}
+
+.no-files {
+  color: #909399;
+  text-align: center;
+  padding: 2rem;
 }
 </style>

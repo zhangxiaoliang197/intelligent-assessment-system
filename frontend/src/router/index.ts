@@ -3,7 +3,7 @@ import Layout from '@/components/Layout.vue'
 import Portal from '@/pages/Portal.vue'
 import QAService from '@/pages/QAService.vue'
 import IndicatorAnalysis from '@/pages/IndicatorAnalysis.vue'
-import EvaluationScheme from '@/pages/EvaluationScheme.vue'
+import SolutionEvaluation from '@/pages/SolutionEvaluation.vue'
 import KnowledgeBase from '@/pages/KnowledgeBase.vue'
 import OntologyModel from '@/pages/OntologyModel.vue'
 import AdminSystem from '@/pages/AdminSystem.vue'
@@ -26,8 +26,8 @@ const routes: Array<RouteRecordRaw> = [
   },
   {
     path: '/evaluation',
-    name: 'EvaluationScheme',
-    component: EvaluationScheme
+    name: 'SolutionEvaluation',
+    component: SolutionEvaluation
   },
   {
     path: '/knowledge',
