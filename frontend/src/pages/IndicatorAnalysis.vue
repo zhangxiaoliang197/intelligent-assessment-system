@@ -3,7 +3,12 @@
     <div class="indicator-container">
       <div class="sidebar">
         <div class="sidebar-section">
-          <h3 class="sidebar-title">导航</h3>
+          <div class="sidebar-section-header">
+            <h3 class="sidebar-title">导航</h3>
+            <el-button size="small" type="primary" text @click="newSession">
+              <el-icon><Plus /></el-icon> 新会话
+            </el-button>
+          </div>
           <div class="nav-item" @click="goTo('/knowledge')">
             <el-icon><Collection /></el-icon>
             <span>知识库</span>
@@ -19,14 +24,18 @@
             <div
               v-for="item in filteredHistoryList"
               :key="item.id"
-              class="history-item"
-              @click="loadHistory(item)"
+              :class="['history-item', { active: item.id === sessionId }]"
             >
-              <el-icon><PieChart /></el-icon>
-              <div class="history-item-content">
-                <span class="history-item-title">{{ item.title }}</span>
-                <span class="history-item-time">{{ item.time }}</span>
+              <div class="history-item-main" @click="loadHistory(item)">
+                <el-icon><PieChart /></el-icon>
+                <div class="history-item-content">
+                  <span class="history-item-title">{{ item.title }}</span>
+                  <span class="history-item-time">{{ item.time }}</span>
+                </div>
               </div>
+              <el-button class="history-delete-btn" size="small" text type="danger" @click.stop="deleteHistory(item.id)">
+                <el-icon><Delete /></el-icon>
+              </el-button>
             </div>
           </div>
           <div class="search-bar history-search">
@@ -177,7 +186,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, Collection, Box, PieChart, ChatDotRound, Document } from '@element-plus/icons-vue'
+import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
@@ -218,15 +227,27 @@ const navigateToTool = (path: string) => {
   router.push(path)
 }
 
+// localStorage 持久化 key
+const LS_SESSION_ID = 'indicator_session_id'
+const LS_HISTORY_LIST = 'indicator_history_list'
+const LS_SESSION_MSGS = 'indicator_session_msgs'
+
 const inputMessage = ref('')
 const analyzing = ref(false)
 const messages = ref<Array<any>>([])
-const historyList = ref<Array<any>>([])
-const sessionMessages = ref<Record<string, Array<any>>>({})
-const sessionId = ref('')
+const historyList = ref<Array<any>>(JSON.parse(localStorage.getItem(LS_HISTORY_LIST) || '[]'))
+const sessionMessages = ref<Record<string, Array<any>>>(JSON.parse(localStorage.getItem(LS_SESSION_MSGS) || '{}'))
+const sessionId = ref(localStorage.getItem(LS_SESSION_ID) || '')
 const searchQuery = ref('')
 const chatArea = ref<HTMLElement | null>(null)
 const treeChartRefs = ref<HTMLElement[]>([])
+
+// 持久化辅助函数
+const persistState = () => {
+  localStorage.setItem(LS_SESSION_ID, sessionId.value)
+  localStorage.setItem(LS_HISTORY_LIST, JSON.stringify(historyList.value))
+  localStorage.setItem(LS_SESSION_MSGS, JSON.stringify(sessionMessages.value))
+}
 
 const recommendedIndicators = [
   '作战效能',
@@ -255,6 +276,7 @@ const loadHistory = (item: any) => {
   if (sessionMessages.value[item.id]) {
     messages.value = [...sessionMessages.value[item.id]]
     sessionId.value = item.id
+    persistState()
     ElMessage.success('已加载历史记录')
     nextTick(() => {
       renderTreesForMessages()
@@ -262,6 +284,24 @@ const loadHistory = (item: any) => {
   } else {
     ElMessage.warning('暂无该历史记录内容')
   }
+}
+
+const newSession = () => {
+  sessionId.value = ''
+  messages.value = []
+  persistState()
+  ElMessage.success('已创建新会话')
+}
+
+const deleteHistory = (id: string) => {
+  delete sessionMessages.value[id]
+  historyList.value = historyList.value.filter(item => item.id !== id)
+  if (sessionId.value === id) {
+    sessionId.value = ''
+    messages.value = []
+  }
+  persistState()
+  ElMessage.success('已删除会话')
 }
 
 const selectIndicator = async (indicator: string) => {
@@ -284,37 +324,86 @@ const analyzeIndicator = async () => {
     content: userQuestion
   })
 
-  const loadingMsg = {
+  const msgIndex = messages.value.length
+  messages.value.push({
     role: 'assistant',
-    content: '正在分析指标，请稍候...'
-  }
-  messages.value.push(loadingMsg)
+    content: '',
+    summary: '',
+    tree: null,
+    indicators: [],
+    references: []
+  })
 
   try {
-    // 调用后端API获取指标分析结果
-    const res = await api.post('/indicator/analyze', {
-      query: userQuestion
+    const response = await fetch('/api/indicator/analyze/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: userQuestion,
+        session_id: sessionId.value || undefined
+      })
     })
-    
-    messages.value.pop()
-    
-    // 构建响应消息，包含结构化数据
-    const responseMsg = {
-      role: 'assistant',
-      content: res.answer || '',
-      summary: res.summary || '',
-      tree: res.tree || null,
-      indicators: res.indicators || [],
-      references: res.references || []
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
+    const reader = response.body?.getReader()
+    if (!reader) throw new Error('无法获取流式响应')
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let fullText = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (!line.trim()) continue
+        try {
+          const data = JSON.parse(line)
+          if (data.type === 'text') {
+            fullText += data.content
+            messages.value[msgIndex] = { ...messages.value[msgIndex], content: fullText }
+          } else if (data.type === 'result') {
+            messages.value[msgIndex] = {
+              ...messages.value[msgIndex],
+              content: fullText || data.summary || '',
+              tree: data.tree || null,
+              indicators: data.indicators || [],
+              summary: data.summary || ''
+            }
+
+            if (data.session_id) {
+              if (!sessionId.value) {
+                sessionId.value = data.session_id
+                saveHistory(data.session_id, userQuestion)
+              }
+            }
+          }
+        } catch (e) {
+          // 忽略解析错误
+        }
+      }
     }
-    messages.value.push(responseMsg)
 
-    const newSessionId = 'session_' + Date.now()
-    sessionId.value = newSessionId
-    saveHistory(newSessionId, userQuestion)
-    sessionMessages.value[newSessionId] = [...messages.value]
+    if (!fullText && !messages.value[msgIndex].summary) {
+      messages.value[msgIndex] = { ...messages.value[msgIndex], content: '分析失败，请检查网络连接或大模型配置。' }
+    }
 
-    // 延迟渲染树状图，确保DOM已更新
+    // 保存会话
+    if (!sessionId.value) {
+      const newSessionId = 'session_' + Date.now()
+      sessionId.value = newSessionId
+      saveHistory(newSessionId, userQuestion)
+    }
+    sessionMessages.value[sessionId.value] = [...messages.value]
+    persistState()
+
+    // 延迟渲染树状图
     nextTick(() => {
       setTimeout(() => {
         renderTreesForMessages()
@@ -322,16 +411,8 @@ const analyzeIndicator = async () => {
       }, 300)
     })
 
-  } catch (e) {
-    messages.value.pop()
-    messages.value.push({
-      role: 'assistant',
-      content: '分析失败，请检查网络连接或大模型配置。',
-      summary: '',
-      tree: null,
-      indicators: [],
-      references: []
-    })
+  } catch (e: any) {
+    messages.value[msgIndex] = { ...messages.value[msgIndex], content: `分析失败，请检查网络连接或大模型配置。` }
   } finally {
     analyzing.value = false
   }
@@ -354,6 +435,7 @@ const saveHistory = (id: string, question: string) => {
       historyList.value.unshift(exists)
     }
   }
+  persistState()
 }
 
 const setTreeChartRef = (el: any, index: number) => {
@@ -465,6 +547,13 @@ const filteredHistoryList = computed(() => {
 })
 
 onMounted(() => {
+  // 恢复上次会话的消息
+  if (sessionId.value && sessionMessages.value[sessionId.value]) {
+    messages.value = [...sessionMessages.value[sessionId.value]]
+    nextTick(() => {
+      setTimeout(() => renderTreesForMessages(), 300)
+    })
+  }
   ElMessage.info('指标分析系统加载完成')
 })
 </script>
@@ -496,6 +585,17 @@ onMounted(() => {
   margin-bottom: 1rem;
 }
 
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.sidebar-section-header .sidebar-title {
+  margin-bottom: 0;
+}
+
 .nav-item {
   display: flex;
   align-items: center;
@@ -520,7 +620,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.75rem;
+  padding: 0.5rem 0.75rem;
   border-radius: 0.5rem;
   cursor: pointer;
   transition: all 0.2s;
@@ -531,6 +631,29 @@ onMounted(() => {
 .history-item:hover {
   background: #e2e8f0;
   color: #374151;
+}
+
+.history-item.active {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+
+.history-item-main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.history-delete-btn {
+  opacity: 0;
+  transition: opacity 0.2s;
+  flex-shrink: 0;
+}
+
+.history-item:hover .history-delete-btn {
+  opacity: 1;
 }
 
 .history-item-content {

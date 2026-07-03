@@ -5,12 +5,17 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, AsyncGenerator
 import json
 import os
+import tempfile
 import urllib.request
 import urllib.error
 import ssl
 import datetime
 import uuid
 import asyncio
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("solution-evaluation-service")
 
 app = FastAPI(
     title="Solution Evaluation Service",
@@ -30,17 +35,46 @@ app.add_middleware(
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 SKILLS_FILE = os.path.join(DATA_DIR, 'skills.json')
 HISTORY_FILE = os.path.join(DATA_DIR, 'history.json')
+SESSIONS_FILE = os.path.join(DATA_DIR, 'sessions.json')
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # 外部服务地址
 QA_SERVICE_URL = os.getenv("QA_SERVICE_URL", "http://localhost:10253")
 INDICATOR_SERVICE_URL = os.getenv("INDICATOR_SERVICE_URL", "http://localhost:10254")
 
+# 滑动窗口大小
+MAX_CONTEXT = int(os.getenv("SOLUTION_CONTEXT_ROUNDS", "5"))
+
+
+def atomic_json_write(filepath, data):
+    dirpath = os.path.dirname(filepath)
+    fd, tmp_path = tempfile.mkstemp(dir=dirpath, suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+        bak_path = filepath + '.bak'
+        if os.path.exists(filepath):
+            try:
+                import shutil
+                shutil.copy2(filepath, bak_path)
+            except Exception:
+                pass
+        if os.name == 'nt' and os.path.exists(filepath):
+            os.remove(filepath)
+        os.rename(tmp_path, filepath)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+
+
 # 数据模型
 class EvaluationRequest(BaseModel):
     query: str
+    session_id: Optional[str] = None
     dataSourceId: Optional[str] = None
     skillId: Optional[str] = None
+
 
 class Skill(BaseModel):
     id: str
@@ -50,6 +84,7 @@ class Skill(BaseModel):
     promptTemplate: str
     createdAt: str
     updatedAt: str
+
 
 # Skill管理
 def load_skills():
@@ -77,170 +112,146 @@ def load_skills():
         }
     ]
 
+
 def save_skills(skills):
     with open(SKILLS_FILE, 'w', encoding='utf-8') as f:
         json.dump(skills, f, ensure_ascii=False, indent=2)
 
+
+# ========== 会话管理 ==========
+
+def load_sessions():
+    if os.path.exists(SESSIONS_FILE):
+        try:
+            with open(SESSIONS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load sessions: {e}")
+            bak = SESSIONS_FILE + '.bak'
+            if os.path.exists(bak):
+                try:
+                    with open(bak, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                except Exception:
+                    pass
+    return {}
+
+
+def save_sessions():
+    atomic_json_write(SESSIONS_FILE, sessions)
+    logger.info("Solution-evaluation sessions saved")
+
+
+sessions = load_sessions()
+logger.info(f"Solution-evaluation service started: {len(sessions)} sessions, context rounds={MAX_CONTEXT}")
+
+
 # 历史记录管理
 def load_history():
     if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
     return []
 
+
 def save_history(history):
-    with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    atomic_json_write(HISTORY_FILE, history)
+
 
 # 数据源配置
 def get_data_sources():
     return [
-        {
-            "id": "ds-mission-data",
-            "name": "任务执行数据",
-            "type": "database",
-            "status": "available"
-        },
-        {
-            "id": "ds-battle-data",
-            "name": "战场态势数据",
-            "type": "database",
-            "status": "available"
-        },
-        {
-            "id": "ds-weapon-data",
-            "name": "武器装备数据",
-            "type": "database",
-            "status": "available"
-        }
+        {"id": "ds-mission-data", "name": "任务执行数据", "type": "database", "status": "available"},
+        {"id": "ds-battle-data", "name": "战场态势数据", "type": "database", "status": "available"},
+        {"id": "ds-weapon-data", "name": "武器装备数据", "type": "database", "status": "available"}
     ]
+
 
 # 调用其他服务
 def call_qa_service(query: str, top_k: int = 5):
     try:
-        body = json.dumps({
-            "query": query,
-            "top_k": top_k
-        }).encode("utf-8")
-        
-        req = urllib.request.Request(
-            f"{QA_SERVICE_URL}/qa/chat",
-            data=body,
-            method="POST"
-        )
+        body = json.dumps({"query": query, "top_k": top_k}).encode("utf-8")
+        req = urllib.request.Request(f"{QA_SERVICE_URL}/qa/chat", data=body, method="POST")
         req.add_header("Content-Type", "application/json")
-        
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        
         with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
-        return {
-            "answer": f"知识库查询失败: {str(e)}",
-            "references": []
-        }
+        return {"answer": f"知识库查询失败: {str(e)}", "references": []}
+
 
 def call_indicator_service(query: str):
     try:
-        body = json.dumps({
-            "query": query
-        }).encode("utf-8")
-        
-        req = urllib.request.Request(
-            f"{INDICATOR_SERVICE_URL}/indicator/analyze",
-            data=body,
-            method="POST"
-        )
+        body = json.dumps({"query": query}).encode("utf-8")
+        req = urllib.request.Request(f"{INDICATOR_SERVICE_URL}/indicator/analyze", data=body, method="POST")
         req.add_header("Content-Type", "application/json")
-        
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        
         with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
-        return {
-            "answer": f"指标分析失败: {str(e)}",
-            "tree": None,
-            "indicators": []
-        }
+        return {"answer": f"指标分析失败: {str(e)}", "tree": None, "indicators": []}
+
 
 # 意图识别
 def parse_intent(query: str):
     query_lower = query.lower()
-    
     if any(keyword in query_lower for keyword in ['制空权', '制空', '优势对比', '红蓝双方', '空中优势']):
-        return {
-            "intent": "air_superiority",
-            "skillId": "skill-air-superiority",
-            "confidence": 0.92,
-            "analysis": "识别到制空权分析需求，正在调用制空权分析Agent"
-        }
+        return {"intent": "air_superiority", "skillId": "skill-air-superiority", "confidence": 0.92, "analysis": "识别到制空权分析需求，正在调用制空权分析Agent"}
     elif any(keyword in query_lower for keyword in ['指标', '计算', '查询结果', '完成率', '效能']):
-        return {
-            "intent": "calculate_indicator",
-            "skillId": "skill-calculate-indicator",
-            "confidence": 0.88,
-            "analysis": "识别到指标计算需求，正在调用指标计算Agent"
-        }
+        return {"intent": "calculate_indicator", "skillId": "skill-calculate-indicator", "confidence": 0.88, "analysis": "识别到指标计算需求，正在调用指标计算Agent"}
     else:
-        return {
-            "intent": "general_analysis",
-            "skillId": None,
-            "confidence": 0.65,
-            "analysis": "通用分析需求，使用默认分析流程"
-        }
+        return {"intent": "general_analysis", "skillId": None, "confidence": 0.65, "analysis": "通用分析需求，使用默认分析流程"}
+
 
 # 流式生成执行步骤
 async def stream_execution_steps(
-    query: str, 
+    query: str,
     data_source_id: Optional[str],
     skill_id: Optional[str],
-    skills: List[Dict]
+    skills: List[Dict],
+    session_id: str
 ) -> AsyncGenerator[bytes, None]:
-    """流式返回执行步骤"""
-    
+
     async def send_data(data: dict):
         yield json.dumps(data, ensure_ascii=False).encode('utf-8') + b'\n'
-    
+
     # 步骤1: 理解用户意图
     intent_result = parse_intent(query)
     yield json.dumps({
         "type": "step",
         "step": {
-            "step": 1,
-            "type": "intent_parse",
-            "description": "理解用户意图",
-            "status": "completed",
-            "detail": f"正在分析: {query[:30]}...",
+            "step": 1, "type": "intent_parse", "description": "理解用户意图",
+            "status": "completed", "detail": f"正在分析: {query[:30]}...",
             "thinking": intent_result["analysis"]
         }
     }, ensure_ascii=False).encode('utf-8') + b'\n'
     await asyncio.sleep(0.8)
-    
+
     # 步骤2: 匹配分析技能
     matched_skill = None
     if skill_id:
         matched_skill = next((s for s in skills if s["id"] == skill_id), None)
     elif intent_result.get("skillId"):
         matched_skill = next((s for s in skills if s["id"] == intent_result["skillId"]), None)
-    
+
     yield json.dumps({
         "type": "step",
         "step": {
-            "step": 2,
-            "type": "skill_match",
-            "description": "匹配分析技能",
+            "step": 2, "type": "skill_match", "description": "匹配分析技能",
             "status": "completed",
             "detail": f"已匹配: {matched_skill['name'] if matched_skill else '默认分析'}",
             "skillInfo": matched_skill if matched_skill else None
         }
     }, ensure_ascii=False).encode('utf-8') + b'\n'
     await asyncio.sleep(0.8)
-    
+
     # 步骤3: 获取数据源
     data_source_name = "默认数据源"
     if data_source_id:
@@ -248,97 +259,66 @@ async def stream_execution_steps(
         selected_ds = next((ds for ds in data_sources if ds["id"] == data_source_id), None)
         if selected_ds:
             data_source_name = selected_ds['name']
-    
+
     yield json.dumps({
         "type": "step",
         "step": {
-            "step": 3,
-            "type": "data_source",
-            "description": "获取数据源",
-            "status": "completed",
-            "detail": f"已连接: {data_source_name}",
+            "step": 3, "type": "data_source", "description": "获取数据源",
+            "status": "completed", "detail": f"已连接: {data_source_name}",
             "dataSource": data_source_name
         }
     }, ensure_ascii=False).encode('utf-8') + b'\n'
     await asyncio.sleep(0.8)
-    
+
     # 步骤4: 执行分析
     yield json.dumps({
         "type": "step",
         "step": {
-            "step": 4,
-            "type": "analysis",
-            "description": "执行分析计算",
-            "status": "in_progress",
-            "detail": "正在调用分析模型...",
-            "progress": 0
+            "step": 4, "type": "analysis", "description": "执行分析计算",
+            "status": "in_progress", "detail": "正在调用分析模型...", "progress": 0
         }
     }, ensure_ascii=False).encode('utf-8') + b'\n'
-    
-    # 根据不同意图执行不同分析
+
     analysis_result = None
-    
+
     if intent_result["intent"] == "air_superiority":
-        # 制空权分析
         yield json.dumps({
             "type": "step",
             "step": {
-                "step": 4,
-                "type": "analysis",
-                "description": "执行分析计算",
-                "status": "in_progress",
-                "detail": "正在分析制空权对比...",
-                "progress": 30,
-                "subStep": "air_analysis"
+                "step": 4, "type": "analysis", "description": "执行分析计算",
+                "status": "in_progress", "detail": "正在分析制空权对比...",
+                "progress": 30, "subStep": "air_analysis"
             }
         }, ensure_ascii=False).encode('utf-8') + b'\n'
         await asyncio.sleep(1.0)
-        
-        # 调用知识库
+
         yield json.dumps({
             "type": "step",
             "step": {
-                "step": 4,
-                "type": "analysis",
-                "description": "执行分析计算",
-                "status": "in_progress",
-                "detail": "正在检索相关知识...",
-                "progress": 50,
-                "subStep": "knowledge_retrieval"
+                "step": 4, "type": "analysis", "description": "执行分析计算",
+                "status": "in_progress", "detail": "正在检索相关知识...",
+                "progress": 50, "subStep": "knowledge_retrieval"
             }
         }, ensure_ascii=False).encode('utf-8') + b'\n'
         await asyncio.sleep(1.0)
-        
+
         qa_result = call_qa_service(query)
-        
+
         yield json.dumps({
             "type": "step",
             "step": {
-                "step": 4,
-                "type": "analysis",
-                "description": "执行分析计算",
-                "status": "in_progress",
-                "detail": "正在生成分析报告...",
-                "progress": 80,
-                "subStep": "report_generation"
+                "step": 4, "type": "analysis", "description": "执行分析计算",
+                "status": "in_progress", "detail": "正在生成分析报告...",
+                "progress": 80, "subStep": "report_generation"
             }
         }, ensure_ascii=False).encode('utf-8') + b'\n'
         await asyncio.sleep(1.0)
-        
+
         analysis_result = {
             "type": "air_superiority",
             "summary": "根据知识库分析，制空权优势主要取决于以下因素：",
-            "factors": [
-                "战斗机数量与质量优势",
-                "预警指挥系统能力",
-                "地面防空体系完善度",
-                "电子战能力",
-                "作战经验与训练水平"
-            ],
-            "redScore": 82,
-            "blueScore": 71,
-            "advantage": "红方",
-            "advantageMargin": 11,
+            "factors": ["战斗机数量与质量优势", "预警指挥系统能力", "地面防空体系完善度", "电子战能力", "作战经验与训练水平"],
+            "redScore": 82, "blueScore": 71, "advantage": "红方", "advantageMargin": 11,
             "knowledgeReference": qa_result.get("references", []),
             "analysisDetails": {
                 "strengthsRed": ["三代半战机数量优势", "预警机覆盖范围更广", "地面防空密度高"],
@@ -346,24 +326,18 @@ async def stream_execution_steps(
                 "recommendations": "建议红方利用数量优势和体系作战能力，蓝方应发挥质量优势和战术灵活性"
             }
         }
-        
+
     elif intent_result["intent"] == "calculate_indicator":
-        # 指标计算
         yield json.dumps({
             "type": "step",
             "step": {
-                "step": 4,
-                "type": "analysis",
-                "description": "执行分析计算",
-                "status": "in_progress",
-                "detail": "正在生成指标计算SQL...",
-                "progress": 30,
-                "subStep": "sql_generation"
+                "step": 4, "type": "analysis", "description": "执行分析计算",
+                "status": "in_progress", "detail": "正在生成指标计算SQL...",
+                "progress": 30, "subStep": "sql_generation"
             }
         }, ensure_ascii=False).encode('utf-8') + b'\n'
         await asyncio.sleep(1.0)
-        
-        # 生成SQL
+
         sql = """-- 任务完成率指标计算
 SELECT 
     region,
@@ -380,35 +354,25 @@ ORDER BY success_rate DESC"""
         yield json.dumps({
             "type": "step",
             "step": {
-                "step": 4,
-                "type": "analysis",
-                "description": "执行分析计算",
-                "status": "in_progress",
-                "detail": "正在执行SQL查询...",
-                "progress": 50,
-                "subStep": "sql_execution",
-                "generatedSql": sql
+                "step": 4, "type": "analysis", "description": "执行分析计算",
+                "status": "in_progress", "detail": "正在执行SQL查询...",
+                "progress": 50, "subStep": "sql_execution", "generatedSql": sql
             }
         }, ensure_ascii=False).encode('utf-8') + b'\n'
         await asyncio.sleep(1.0)
-        
-        # 调用指标分析服务
+
         yield json.dumps({
             "type": "step",
             "step": {
-                "step": 4,
-                "type": "analysis",
-                "description": "执行分析计算",
-                "status": "in_progress",
-                "detail": "正在调用指标分析模型...",
-                "progress": 70,
-                "subStep": "indicator_analysis"
+                "step": 4, "type": "analysis", "description": "执行分析计算",
+                "status": "in_progress", "detail": "正在调用指标分析模型...",
+                "progress": 70, "subStep": "indicator_analysis"
             }
         }, ensure_ascii=False).encode('utf-8') + b'\n'
         await asyncio.sleep(1.0)
-        
+
         indicator_result = call_indicator_service(query)
-        
+
         analysis_result = {
             "type": "indicator_calculation",
             "generatedSql": sql,
@@ -421,111 +385,151 @@ ORDER BY success_rate DESC"""
                 ]
             },
             "indicatorData": indicator_result,
-            "statistics": {
-                "totalMissions": 365,
-                "totalSuccess": 298,
-                "overallRate": "81.6%"
-            }
+            "statistics": {"totalMissions": 365, "totalSuccess": 298, "overallRate": "81.6%"}
         }
-        
+
     else:
-        # 通用分析
         yield json.dumps({
             "type": "step",
             "step": {
-                "step": 4,
-                "type": "analysis",
-                "description": "执行分析计算",
-                "status": "in_progress",
-                "detail": "正在调用知识库...",
-                "progress": 40
+                "step": 4, "type": "analysis", "description": "执行分析计算",
+                "status": "in_progress", "detail": "正在调用知识库...", "progress": 40
             }
         }, ensure_ascii=False).encode('utf-8') + b'\n'
         await asyncio.sleep(1.0)
-        
+
         qa_result = call_qa_service(query)
-        
+
         yield json.dumps({
             "type": "step",
             "step": {
-                "step": 4,
-                "type": "analysis",
-                "description": "执行分析计算",
-                "status": "in_progress",
-                "detail": "正在生成分析报告...",
-                "progress": 80
+                "step": 4, "type": "analysis", "description": "执行分析计算",
+                "status": "in_progress", "detail": "正在生成分析报告...", "progress": 80
             }
         }, ensure_ascii=False).encode('utf-8') + b'\n'
         await asyncio.sleep(1.0)
-        
+
         analysis_result = {
             "type": "general",
             "answer": qa_result.get("answer", "分析完成"),
             "knowledgeReference": qa_result.get("references", [])
         }
-    
-    # 完成分析步骤
+
     yield json.dumps({
         "type": "step",
         "step": {
-            "step": 4,
-            "type": "analysis",
-            "description": "执行分析计算",
-            "status": "completed",
-            "detail": "分析计算完成",
-            "progress": 100
+            "step": 4, "type": "analysis", "description": "执行分析计算",
+            "status": "completed", "detail": "分析计算完成", "progress": 100
         }
     }, ensure_ascii=False).encode('utf-8') + b'\n'
     await asyncio.sleep(0.5)
-    
-    # 步骤5: 整理结果
+
     yield json.dumps({
         "type": "step",
         "step": {
-            "step": 5,
-            "type": "result_format",
-            "description": "结果整理输出",
-            "status": "completed",
-            "detail": "正在格式化输出结果..."
+            "step": 5, "type": "result_format", "description": "结果整理输出",
+            "status": "completed", "detail": "正在格式化输出结果..."
         }
     }, ensure_ascii=False).encode('utf-8') + b'\n'
     await asyncio.sleep(0.8)
-    
-    # 返回最终结果
+
+    # 保存会话记录
+    now_str = datetime.datetime.now().isoformat()
+    sessions[session_id].append({"role": "user", "content": query, "timestamp": now_str})
+    sessions[session_id].append({
+        "role": "assistant",
+        "content": json.dumps(analysis_result, ensure_ascii=False)[:500],
+        "timestamp": now_str
+    })
+    if len(sessions[session_id]) > MAX_CONTEXT * 4:
+        sessions[session_id] = sessions[session_id][-(MAX_CONTEXT * 4):]
+    save_sessions()
+
     yield json.dumps({
         "type": "result",
         "result": analysis_result,
-        "intent": intent_result
+        "intent": intent_result,
+        "session_id": session_id
     }, ensure_ascii=False).encode('utf-8') + b'\n'
 
-# API端点
+
+# ========== API端点 ==========
+
 @app.get("/")
 async def root():
-    return {
-        "service": "solution-evaluation-service",
-        "version": "1.0.0",
-        "status": "running"
-    }
+    return {"service": "solution-evaluation-service", "version": "1.0.0", "status": "running"}
+
 
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
 
+
+# ========== 会话管理 API ==========
+
+@app.get("/solution/sessions")
+async def list_sessions():
+    session_list = []
+    for sid, msgs in sessions.items():
+        if not msgs:
+            continue
+        latest_question = ""
+        for msg in reversed(msgs):
+            if msg.get("role") == "user":
+                q = msg.get("content", "").strip()
+                latest_question = q[:30] if len(q) > 30 else q
+                break
+        last_time = msgs[-1].get("timestamp", datetime.datetime.now().isoformat())
+        session_list.append({
+            "id": sid,
+            "title": latest_question or "(空会话)",
+            "message_count": len(msgs),
+            "last_active": last_time
+        })
+    session_list.sort(key=lambda x: x.get("last_active", ""), reverse=True)
+    return {"success": True, "sessions": session_list}
+
+
+@app.post("/solution/session/new")
+async def new_session():
+    new_id = str(uuid.uuid4())
+    sessions[new_id] = []
+    save_sessions()
+    return {"success": True, "session_id": new_id}
+
+
+@app.delete("/solution/session/{session_id}")
+async def delete_session(session_id: str):
+    if session_id in sessions:
+        del sessions[session_id]
+        save_sessions()
+        return {"success": True}
+    raise HTTPException(status_code=404, detail="会话不存在")
+
+
+@app.get("/solution/history")
+async def get_history(session_id: str):
+    if session_id not in sessions:
+        return {"messages": []}
+    return {
+        "messages": [
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in sessions[session_id]
+        ]
+    }
+
+
 # 数据源
 @app.get("/data-sources")
 async def get_data_sources_api():
-    return {
-        "success": True,
-        "dataSources": get_data_sources()
-    }
+    return {"success": True, "dataSources": get_data_sources()}
+
 
 # Skills管理
 @app.get("/skills")
 async def get_skills():
-    return {
-        "success": True,
-        "skills": load_skills()
-    }
+    return {"success": True, "skills": load_skills()}
+
 
 @app.post("/skills")
 async def create_skill(skill: Skill):
@@ -538,6 +542,7 @@ async def create_skill(skill: Skill):
     skills.append(skill_dict)
     save_skills(skills)
     return {"success": True, "skill": skill_dict}
+
 
 @app.put("/skills/{skill_id}")
 async def update_skill(skill_id: str, skill: Skill):
@@ -553,6 +558,7 @@ async def update_skill(skill_id: str, skill: Skill):
             return {"success": True, "skill": skill_dict}
     raise HTTPException(status_code=404, detail="Skill not found")
 
+
 @app.delete("/skills/{skill_id}")
 async def delete_skill(skill_id: str):
     skills = load_skills()
@@ -560,27 +566,29 @@ async def delete_skill(skill_id: str):
     save_skills(skills)
     return {"success": True}
 
+
 # 历史记录
 @app.get("/history")
-async def get_history():
-    return {
-        "success": True,
-        "history": load_history()
-    }
+async def get_history_flat():
+    return {"success": True, "history": load_history()}
+
 
 # 流式评估接口
 @app.post("/analyze/stream")
 async def analyze_evaluation_stream(request: EvaluationRequest):
-    """流式评估接口，实时返回执行步骤"""
-    
     skills = load_skills()
-    
+    session_id = request.session_id or str(uuid.uuid4())
+
+    if session_id not in sessions:
+        sessions[session_id] = []
+
     return StreamingResponse(
         stream_execution_steps(
             request.query,
             request.dataSourceId,
             request.skillId,
-            skills
+            skills,
+            session_id
         ),
         media_type="application/x-ndjson",
         headers={
@@ -590,41 +598,58 @@ async def analyze_evaluation_stream(request: EvaluationRequest):
         }
     )
 
-# 历史记录（保留旧的同步接口作为备用）
+
+# 同步评估接口（备用）
 @app.post("/analyze")
 async def analyze_evaluation_sync(request: EvaluationRequest):
-    """同步评估接口"""
     skills = load_skills()
+    session_id = request.session_id or str(uuid.uuid4())
+
+    if session_id not in sessions:
+        sessions[session_id] = []
+
     intent_result = parse_intent(request.query)
-    
-    # 简单返回，不使用流式
+
     matched_skill = None
     if request.skillId:
         matched_skill = next((s for s in skills if s["id"] == request.skillId), None)
     elif intent_result.get("skillId"):
         matched_skill = next((s for s in skills if s["id"] == intent_result["skillId"]), None)
-    
+
+    now_str = datetime.datetime.now().isoformat()
+    sessions[session_id].append({"role": "user", "content": request.query, "timestamp": now_str})
+    sessions[session_id].append({
+        "role": "assistant",
+        "content": f"意图: {intent_result['intent']}, 技能: {matched_skill['name'] if matched_skill else '默认'}",
+        "timestamp": now_str
+    })
+    if len(sessions[session_id]) > MAX_CONTEXT * 4:
+        sessions[session_id] = sessions[session_id][-(MAX_CONTEXT * 4):]
+    save_sessions()
+
     # 保存历史
     history = load_history()
     history_item = {
         "id": "history-" + str(uuid.uuid4())[:12],
         "query": request.query,
         "skillName": matched_skill["name"] if matched_skill else None,
-        "timestamp": datetime.datetime.now().isoformat(),
+        "timestamp": now_str,
         "status": "success"
     }
     history.insert(0, history_item)
     if len(history) > 50:
         history = history[:50]
     save_history(history)
-    
+
     return {
         "success": True,
         "query": request.query,
+        "session_id": session_id,
         "intent": intent_result,
         "matchedSkill": matched_skill,
         "historyId": history_item["id"]
     }
+
 
 if __name__ == "__main__":
     import uvicorn

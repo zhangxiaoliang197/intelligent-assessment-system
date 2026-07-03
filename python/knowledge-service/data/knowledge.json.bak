@@ -1,0 +1,10 @@
+{
+  "knowledge_db": [],
+  "chunks_db": [],
+  "categories_db": {
+    "test": []
+  },
+  "tags_db": {
+    "test-tag": []
+  }
+}

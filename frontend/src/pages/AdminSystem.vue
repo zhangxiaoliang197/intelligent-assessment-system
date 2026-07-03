@@ -126,7 +126,6 @@
                 <el-select v-model="llmConfig.type" placeholder="请选择模型类型" style="width: 100%">
                   <el-option label="DeepSeek" value="deepseek" />
                   <el-option label="OpenAI兼容" value="openai" />
-                  <el-option label="Ollama（本地部署）" value="ollama" />
                   <el-option label="Qwen（通义千问）" value="qwen" />
                   <el-option label="ChatGLM（智谱）" value="chatglm" />
                 </el-select>
@@ -139,7 +138,6 @@
               </el-form-item>
               <el-form-item label="API密钥">
                 <el-input v-model="llmConfig.apiKey" type="password" placeholder="sk-xxxxxxxxxxxxxxxx" show-password />
-                <div class="form-tip">Ollama 本地部署无需填写密钥</div>
               </el-form-item>
               <el-form-item label="Temperature">
                 <el-slider v-model="llmConfig.temperature" :min="0" :max="1" :step="0.1" show-stops :marks="tempMarks" />
@@ -613,10 +611,4 @@ onMounted(() => {
 .llm-form {
   max-width: 600px;
 }
-.form-tip {
-  font-size: 12px;
-  color: #999;
-  margin-top: 4px;
-}
-
 </style>

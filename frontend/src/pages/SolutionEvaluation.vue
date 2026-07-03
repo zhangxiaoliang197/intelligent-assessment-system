@@ -4,7 +4,12 @@
       <!-- 左侧边栏 -->
       <div class="sidebar">
         <div class="sidebar-section">
-          <h3 class="sidebar-title">导航</h3>
+          <div class="sidebar-section-header">
+            <h3 class="sidebar-title">导航</h3>
+            <el-button size="small" type="primary" text @click="newSession">
+              <el-icon><Plus /></el-icon> 新会话
+            </el-button>
+          </div>
           <div class="nav-item" @click="goTo('/knowledge')">
             <el-icon><Collection /></el-icon>
             <span>知识库</span>
@@ -20,14 +25,18 @@
             <div
               v-for="item in historyList"
               :key="item.id"
-              class="history-item"
-              @click="loadHistory(item)"
+              :class="['history-item', { active: item.id === sessionId }]"
             >
-              <el-icon><Document /></el-icon>
-              <div class="history-item-content">
-                <span class="history-item-title">{{ item.query.length > 20 ? item.query.substring(0, 20) + '...' : item.query }}</span>
-                <span class="history-item-time">{{ formatTime(item.timestamp) }}</span>
+              <div class="history-item-main" @click="loadHistory(item)">
+                <el-icon><Document /></el-icon>
+                <div class="history-item-content">
+                  <span class="history-item-title">{{ item.title ? (item.title.length > 20 ? item.title.substring(0, 20) + '...' : item.title) : (item.query ? (item.query.length > 20 ? item.query.substring(0, 20) + '...' : item.query) : '') }}</span>
+                  <span class="history-item-time">{{ item.time || formatTime(item.timestamp || item.last_active) }}</span>
+                </div>
               </div>
+              <el-button class="history-delete-btn" size="small" text type="danger" @click.stop="deleteHistory(item.id)">
+                <el-icon><Delete /></el-icon>
+              </el-button>
             </div>
           </div>
         </div>
@@ -363,12 +372,19 @@ import {
   ChatDotRound,
   Loading,
   Cpu,
-  PieChart
+  PieChart,
+  Plus,
+  Delete
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
 import api from '@/services/api'
 
 const router = useRouter()
+
+// localStorage 持久化 key
+const LS_SESSION_ID = 'solution_session_id'
+const LS_HISTORY_LIST = 'solution_history_list'
+const LS_SESSION_MSGS = 'solution_session_msgs'
 
 // 工具配置
 const tools = [
@@ -407,12 +423,21 @@ const navigateToTool = (path: string) => {
 const inputMessage = ref('')
 const analyzing = ref(false)
 const messages = ref<Array<any>>([])
-const historyList = ref<Array<any>>([])
+const historyList = ref<Array<any>>(JSON.parse(localStorage.getItem(LS_HISTORY_LIST) || '[]'))
+const sessionMessages = ref<Record<string, Array<any>>>(JSON.parse(localStorage.getItem(LS_SESSION_MSGS) || '{}'))
+const sessionId = ref(localStorage.getItem(LS_SESSION_ID) || '')
 const dataSources = ref<Array<any>>([])
 const selectedDataSourceId = ref<string | null>(null)
 const dataSourceDialogVisible = ref(false)
 const showExecutionPanel = ref(true)
 const executionSteps = ref<Array<any>>([])
+
+// 持久化辅助函数
+const persistState = () => {
+  localStorage.setItem(LS_SESSION_ID, sessionId.value)
+  localStorage.setItem(LS_HISTORY_LIST, JSON.stringify(historyList.value))
+  localStorage.setItem(LS_SESSION_MSGS, JSON.stringify(sessionMessages.value))
+}
 
 // 制空权分析示例
 const airSuperiorityExamples = [
@@ -521,6 +546,7 @@ const sendMessage = async () => {
       },
       body: JSON.stringify({
         query: query,
+        session_id: sessionId.value || undefined,
         dataSourceId: selectedDataSourceId.value || null,
         skillId: null
       })
@@ -597,6 +623,16 @@ const sendMessage = async () => {
               aiMessage.content = resultContent
               aiMessage.result = normalizeResult(data.result)
               
+              // 保存会话
+              if (data.session_id) {
+                if (!sessionId.value) {
+                  sessionId.value = data.session_id
+                  saveHistory(data.session_id, query)
+                }
+                sessionMessages.value[sessionId.value || data.session_id] = [...messages.value]
+                persistState()
+              }
+              
               // 滚动到结果
               scrollToBottom()
             }
@@ -657,7 +693,55 @@ const scrollToBottom = () => {
 
 // 加载历史记录
 const loadHistory = (item: any) => {
-  ElMessage.info('加载历史记录')
+  if (sessionMessages.value[item.id]) {
+    messages.value = [...sessionMessages.value[item.id]]
+    sessionId.value = item.id
+    executionSteps.value = []
+    persistState()
+    ElMessage.success('已加载历史记录')
+  } else {
+    ElMessage.warning('暂无该历史记录内容')
+  }
+}
+
+const newSession = () => {
+  sessionId.value = ''
+  messages.value = []
+  executionSteps.value = []
+  persistState()
+  ElMessage.success('已创建新会话')
+}
+
+const deleteHistory = (id: string) => {
+  delete sessionMessages.value[id]
+  historyList.value = historyList.value.filter(item => item.id !== id)
+  if (sessionId.value === id) {
+    sessionId.value = ''
+    messages.value = []
+    executionSteps.value = []
+  }
+  persistState()
+  ElMessage.success('已删除会话')
+}
+
+const saveHistory = (id: string, question: string) => {
+  const exists = historyList.value.find(item => item.id === id)
+  if (!exists) {
+    historyList.value.unshift({
+      id: id,
+      title: question.length > 20 ? question.substring(0, 20) + '...' : question,
+      time: new Date().toLocaleString()
+    })
+  } else {
+    exists.title = question.length > 20 ? question.substring(0, 20) + '...' : question
+    exists.time = new Date().toLocaleString()
+    const index = historyList.value.indexOf(exists)
+    if (index > 0) {
+      historyList.value.splice(index, 1)
+      historyList.value.unshift(exists)
+    }
+  }
+  persistState()
 }
 
 // 初始化数据
@@ -689,6 +773,10 @@ const initData = async () => {
 }
 
 onMounted(() => {
+  // 恢复上次会话的消息
+  if (sessionId.value && sessionMessages.value[sessionId.value]) {
+    messages.value = [...sessionMessages.value[sessionId.value]]
+  }
   initData()
 })
 </script>
@@ -720,6 +808,17 @@ onMounted(() => {
   margin-bottom: 1rem;
 }
 
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.sidebar-section-header .sidebar-title {
+  margin-bottom: 0;
+}
+
 .nav-item {
   display: flex;
   align-items: center;
@@ -744,7 +843,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.75rem;
+  padding: 0.5rem 0.75rem;
   border-radius: 0.5rem;
   cursor: pointer;
   transition: all 0.2s;
@@ -755,6 +854,29 @@ onMounted(() => {
 .history-item:hover {
   background: #e2e8f0;
   color: #374151;
+}
+
+.history-item.active {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+
+.history-item-main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.history-delete-btn {
+  opacity: 0;
+  transition: opacity 0.2s;
+  flex-shrink: 0;
+}
+
+.history-item:hover .history-delete-btn {
+  opacity: 1;
 }
 
 .history-item-content {

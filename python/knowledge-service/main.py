@@ -3,11 +3,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
+import logging
 import os
 import shutil
 import uuid
 import json
 import re
+import tempfile
+import traceback
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="知识库服务 - RAG",
@@ -41,26 +47,74 @@ class Chunk:
         self.tags = tags
         self.source_file = source_file
 
-# ---------- 内存存储 ----------
+# ---------- 持久化存储 ----------
 def load_db():
+    """从 JSON 文件加载数据，带容错备份恢复"""
     if os.path.exists(KNOWLEDGE_FILE):
-        with open(KNOWLEDGE_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        try:
+            with open(KNOWLEDGE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
             kdb = data.get('knowledge_db', [])
             cdb = [Chunk(**c) for c in data.get('chunks_db', [])]
             cats = data.get('categories_db', {})
             tags = data.get('tags_db', {})
+            logger.info(f"Loaded from {KNOWLEDGE_FILE}: {len(kdb)} docs, {len(cdb)} chunks")
             return kdb, cdb, cats, tags
+        except Exception as e:
+            logger.error(f"Failed to load knowledge.json: {e}\n{traceback.format_exc()}")
+            # 尝试从备份恢复
+            backup_file = KNOWLEDGE_FILE + '.bak'
+            if os.path.exists(backup_file):
+                try:
+                    logger.info(f"Attempting recovery from backup: {backup_file}")
+                    with open(backup_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    kdb = data.get('knowledge_db', [])
+                    cdb = [Chunk(**c) for c in data.get('chunks_db', [])]
+                    cats = data.get('categories_db', {})
+                    tags = data.get('tags_db', {})
+                    logger.info(f"Recovered from backup: {len(kdb)} docs, {len(cdb)} chunks")
+                    return kdb, cdb, cats, tags
+                except Exception as e2:
+                    logger.error(f"Backup recovery also failed: {e2}")
+            logger.warning("Starting with empty knowledge base")
+    else:
+        logger.info(f"No existing knowledge.json found at {KNOWLEDGE_FILE}, starting fresh")
     return [], [], {}, {}
 
 def save_db():
-    with open(KNOWLEDGE_FILE, 'w', encoding='utf-8') as f:
-        json.dump({
-            'knowledge_db': knowledge_db,
-            'chunks_db': [vars(c) for c in chunks_db],
-            'categories_db': categories_db,
-            'tags_db': tags_db
-        }, f, ensure_ascii=False, indent=2, default=str)
+    """原子写入：先写临时文件，成功后再替换，失败保留旧文件"""
+    data = {
+        'knowledge_db': knowledge_db,
+        'chunks_db': [vars(c) for c in chunks_db],
+        'categories_db': categories_db,
+        'tags_db': tags_db
+    }
+    try:
+        # 验证可序列化
+        json.dumps(data, ensure_ascii=False, default=str)
+
+        # 原子写入：写临时文件 -> 备份旧文件 -> 替换
+        dir_path = os.path.dirname(KNOWLEDGE_FILE)
+        fd, tmp_path = tempfile.mkstemp(dir=dir_path, suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+            # 备份旧文件
+            if os.path.exists(KNOWLEDGE_FILE):
+                if os.path.exists(KNOWLEDGE_FILE + '.bak'):
+                    os.remove(KNOWLEDGE_FILE + '.bak')
+                os.rename(KNOWLEDGE_FILE, KNOWLEDGE_FILE + '.bak')
+            # 原子替换
+            os.rename(tmp_path, KNOWLEDGE_FILE)
+            logger.info(f"Saved: {len(knowledge_db)} docs, {len(chunks_db)} chunks to {KNOWLEDGE_FILE}")
+        except Exception:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
+    except Exception as e:
+        logger.error(f"save_db FAILED: {e}\n{traceback.format_exc()}")
+        raise
 
 knowledge_db, chunks_db, categories_db, tags_db = load_db()
 DELIMITER = r'[。！？\n;；!?]'
