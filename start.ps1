@@ -10,7 +10,8 @@ $root = "$PSScriptRoot"
 $nodeBin = "C:\Program Files\nodejs"
 $javaHome = "$env:USERPROFILE\jdk17\jdk-17.0.14+7"
 $javaBin = "$javaHome\bin"
-$env:Path = "$nodeBin;$javaBin;" + $env:Path
+$gitBin = "$env:USERPROFILE\git\cmd"
+$env:Path = "$nodeBin;$javaBin;$gitBin;" + $env:Path
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Starting all services..." -ForegroundColor Cyan
