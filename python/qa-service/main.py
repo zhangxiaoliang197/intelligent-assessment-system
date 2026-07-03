@@ -74,9 +74,6 @@ def call_llm_api(query, context=""):
     temperature = config.get("temperature", 0.7)
     max_tokens = config.get("maxTokens", 2000)
 
-    if not api_key:
-        return "大模型 API Key 未配置，请在「基础管理 → 大模型配置」中设置。", [], []
-
     knowledge_chunks = search_knowledge(query, top_k=5)
     knowledge_context = ""
     references = []
@@ -117,7 +114,8 @@ def call_llm_api(query, context=""):
     url = f"{api_url}/chat/completions"
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", f"Bearer {api_key}")
+    if api_key:
+        req.add_header("Authorization", f"Bearer {api_key}")
 
     # 创建不验证SSL证书的上下文（适用于内部部署的自签名证书）
     ssl_ctx = ssl.create_default_context()
