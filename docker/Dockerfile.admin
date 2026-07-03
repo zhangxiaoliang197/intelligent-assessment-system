@@ -1,0 +1,9 @@
+FROM eclipse-temurin:17-jdk-alpine
+WORKDIR /app
+RUN apk add --no-cache maven
+COPY docker/settings.xml /root/.m2/settings.xml
+COPY java/admin-service/pom.xml .
+COPY java/admin-service/src ./src
+RUN mvn package -DskipTests -q -B -Dmaven.wagon.http.retryHandler.count=10 -Dmaven.wagon.http.retryHandler.requestSentEnabled=true && cp target/*.jar app.jar && mvn clean && rm -rf src pom.xml
+EXPOSE 10258
+ENTRYPOINT ["java", "-jar", "app.jar"]

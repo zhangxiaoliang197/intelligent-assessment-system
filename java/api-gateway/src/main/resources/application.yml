@@ -1,0 +1,12 @@
+server:
+  port: 10257
+
+spring:
+  application:
+    name: api-gateway
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

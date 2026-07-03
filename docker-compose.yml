@@ -1,0 +1,87 @@
+services:
+  frontend:
+    image: assessment-frontend:latest
+    container_name: assessment-frontend
+    ports:
+      - "10086:80"
+    restart: always
+    depends_on:
+      - api-gateway
+    networks:
+      - assessment-net
+
+  knowledge-service:
+    image: assessment-knowledge:latest
+    container_name: assessment-knowledge
+    ports:
+      - "10252:10252"
+    restart: always
+    networks:
+      - assessment-net
+
+  qa-service:
+    image: assessment-qa:latest
+    container_name: assessment-qa
+    ports:
+      - "10253:10253"
+    restart: always
+    networks:
+      - assessment-net
+
+  indicator-service:
+    image: assessment-indicator:latest
+    container_name: assessment-indicator
+    ports:
+      - "10254:10254"
+    restart: always
+    networks:
+      - assessment-net
+
+  evaluation-service:
+    image: assessment-evaluation:latest
+    container_name: assessment-evaluation
+    ports:
+      - "10255:10255"
+    restart: always
+    networks:
+      - assessment-net
+
+  ontology-service:
+    image: assessment-ontology:latest
+    container_name: assessment-ontology
+    ports:
+      - "10256:10256"
+    restart: always
+    networks:
+      - assessment-net
+
+  api-gateway:
+    image: assessment-gateway:latest
+    container_name: assessment-gateway
+    ports:
+      - "10257:10257"
+    restart: always
+    networks:
+      - assessment-net
+
+  admin-service:
+    image: assessment-admin:latest
+    container_name: assessment-admin
+    ports:
+      - "10258:10258"
+    restart: always
+    networks:
+      - assessment-net
+
+  solution-evaluation-service:
+    image: assessment-solution-evaluation:latest
+    container_name: assessment-solution-evaluation
+    ports:
+      - "10259:10259"
+    restart: always
+    networks:
+      - assessment-net
+
+networks:
+  assessment-net:
+    driver: bridge
