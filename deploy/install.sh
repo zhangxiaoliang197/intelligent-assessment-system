@@ -75,11 +75,12 @@ log_info "前端文件已复制到 $BASE_DIR/frontend-dist/"
 log_info "Step 4/5: 部署 Python 服务..."
 
 SERVICES=(
-    "knowledge-service:8001"
-    "qa-service:8002"
-    "indicator-service:8003"
-    "evaluation-service:8004"
-    "ontology-service:8005"
+    "knowledge-service:10252"
+    "qa-service:10253"
+    "indicator-service:10254"
+    "evaluation-service:10255"
+    "ontology-service:10256"
+    "solution-evaluation-service:10259"
 )
 
 for svc_info in "${SERVICES[@]}"; do
@@ -112,30 +113,35 @@ fi
 echo "智能评估系统 - 启动所有服务..."
 echo ""
 
-echo "[启动] 知识库服务 (8001)..."
-nohup $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 8001 \
+echo "[启动] 知识库服务 (10252)..."
+nohup $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 10252 \
     > "$LOG_DIR/knowledge.log" 2>&1 &
 echo $! > "$BASE_DIR/pids/knowledge.pid"
 
-echo "[启动] 智能问答服务 (8002)..."
-nohup $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 8002 \
+echo "[启动] 智能问答服务 (10253)..."
+nohup $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 10253 \
     > "$LOG_DIR/qa.log" 2>&1 &
 echo $! > "$BASE_DIR/pids/qa.pid"
 
-echo "[启动] 指标分析服务 (8003)..."
-nohup $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 8003 \
+echo "[启动] 指标分析服务 (10254)..."
+nohup $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 10254 \
     > "$LOG_DIR/indicator.log" 2>&1 &
 echo $! > "$BASE_DIR/pids/indicator.pid"
 
-echo "[启动] 方案评估服务 (8004)..."
-nohup $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 8004 \
+echo "[启动] 方案评估服务 (10255)..."
+nohup $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 10255 \
     > "$LOG_DIR/evaluation.log" 2>&1 &
 echo $! > "$BASE_DIR/pids/evaluation.pid"
 
-echo "[启动] 本体模型服务 (8005)..."
-nohup $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 8005 \
+echo "[启动] 本体模型服务 (10256)..."
+nohup $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 10256 \
     > "$LOG_DIR/ontology.log" 2>&1 &
 echo $! > "$BASE_DIR/pids/ontology.pid"
+
+echo "[启动] 题解评估服务 (10259)..."
+nohup $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 10259 \
+    > "$LOG_DIR/solution-evaluation.log" 2>&1 &
+echo $! > "$BASE_DIR/pids/solution-evaluation.pid"
 
 echo ""
 echo "前端可通过 nginx 或 Python http.server 服务:"
@@ -156,11 +162,12 @@ check_port() {
     fi
 }
 
-check_port 8001 "知识库服务"
-check_port 8002 "智能问答服务"
-check_port 8003 "指标分析服务"
-check_port 8004 "方案评估服务"
-check_port 8005 "本体模型服务"
+check_port 10252 "知识库服务"
+check_port 10253 "智能问答服务"
+check_port 10254 "指标分析服务"
+check_port 10255 "方案评估服务"
+check_port 10256 "本体模型服务"
+check_port 10259 "方案评估服务(多Agent)"
 check_port 3000 "前端服务"
 
 echo ""
@@ -199,11 +206,12 @@ stop_service() {
     fi
 }
 
-stop_service "knowledge" "8001"
-stop_service "qa" "8002"
-stop_service "indicator" "8003"
-stop_service "evaluation" "8004"
-stop_service "ontology" "8005"
+stop_service "knowledge" "10252"
+stop_service "qa" "10253"
+stop_service "indicator" "10254"
+stop_service "evaluation" "10255"
+stop_service "ontology" "10256"
+stop_service "solution-evaluation" "10259"
 
 pkill -f "http.server 3000" 2>/dev/null && echo "[停止] 前端服务" || true
 
@@ -228,11 +236,12 @@ check_port() {
 }
 
 check_port 3000 "前端界面"
-check_port 8001 "知识库服务"
-check_port 8002 "智能问答服务"
-check_port 8003 "指标分析服务"
-check_port 8004 "方案评估服务"
-check_port 8005 "本体模型服务"
+check_port 10252 "知识库服务"
+check_port 10253 "智能问答服务"
+check_port 10254 "指标分析服务"
+check_port 10255 "方案评估服务"
+check_port 10256 "本体模型服务"
+check_port 10259 "方案评估服务(多Agent)"
 
 echo "========================================"
 STATUSSCRIPT
@@ -243,7 +252,7 @@ chmod +x "$BASE_DIR/start.sh" "$BASE_DIR/stop.sh" "$BASE_DIR/status.sh"
 # ---------- 配置防火墙 ----------
 log_info "配置防火墙规则..."
 if systemctl is-active --quiet firewalld 2>/dev/null; then
-    for port in 3000 8001 8002 8003 8004 8005; do
+    for port in 3000 10252 10253 10254 10255 10256 10259; do
         firewall-cmd --permanent --add-port=$port/tcp 2>/dev/null || true
     done
     firewall-cmd --reload 2>/dev/null || true

@@ -47,6 +47,9 @@ save_image "evaluation"
 build_image "ontology" "ontology"
 save_image "ontology"
 
+build_image "solution-evaluation" "solution-evaluation"
+save_image "solution-evaluation"
+
 echo ""
 echo "=== 第3步: 构建 Java 服务 ==="
 build_image "gateway" "gateway"

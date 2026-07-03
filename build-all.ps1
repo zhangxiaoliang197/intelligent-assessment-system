@@ -55,17 +55,18 @@ function Build-And-Save {
     Write-Host "  [OK] assessment-$ImageName.tar ($([math]::Round($size, 1)) MB)" -ForegroundColor Green
 }
 
-# ---- 阶段1: Python 服务 (5个) ----
+# ---- 阶段1: Python 服务 (6个) ----
 Write-Host ""
 Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host "阶段 1/3: 构建 Python 微服务 (5个)" -ForegroundColor Cyan
+Write-Host "阶段 1/3: 构建 Python 微服务 (6个)" -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 
-Build-And-Save "knowledge"   "knowledge"   "8001" "知识库服务"
-Build-And-Save "qa"          "qa"          "8002" "智能问答服务"
-Build-And-Save "indicator"   "indicator"   "8003" "指标分析服务"
-Build-And-Save "evaluation"  "evaluation"  "8004" "方案评估服务"
-Build-And-Save "ontology"    "ontology"    "8005" "本体模型服务"
+Build-And-Save "knowledge"             "knowledge"             "10252" "知识库服务"
+Build-And-Save "qa"                    "qa"                    "10253" "智能问答服务"
+Build-And-Save "indicator"             "indicator"             "10254" "指标分析服务"
+Build-And-Save "evaluation"            "evaluation"            "10255" "方案评估服务"
+Build-And-Save "ontology"              "ontology"              "10256" "本体模型服务"
+Build-And-Save "solution-evaluation"   "solution-evaluation"   "10259" "方案评估服务(多Agent)"
 
 # ---- 阶段2: Java 服务 (2个) ----
 Write-Host ""
@@ -73,8 +74,8 @@ Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host "阶段 2/3: 构建 Java 服务 (2个)" -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 
-Build-And-Save "gateway"     "gateway"     "8080" "API网关服务"
-Build-And-Save "admin"       "admin"       "8081" "基础管理服务"
+Build-And-Save "gateway"     "gateway"     "10257" "API网关服务"
+Build-And-Save "admin"       "admin"       "10258" "基础管理服务"
 
 # ---- 阶段3: 前端 ----
 Write-Host ""
@@ -87,7 +88,7 @@ Build-And-Save "frontend"    "frontend"    "80"   "前端界面"
 # ---- 汇总 ----
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "全部 8 个镜像构建完成!" -ForegroundColor Green
+Write-Host "全部 9 个镜像构建完成!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Get-ChildItem $IMAGES_DIR | ForEach-Object {

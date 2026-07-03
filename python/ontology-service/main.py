@@ -5,6 +5,7 @@ from typing import List, Optional, Dict
 from datetime import datetime
 import uuid
 import json
+import os
 
 app = FastAPI(
     title="本体模型服务",
@@ -48,9 +49,34 @@ class OntologyModel(BaseModel):
     update_time: datetime
     status: str
 
-ontologies_db: List[OntologyModel] = []
-entities_db: List[Entity] = []
-relations_db: List[Relation] = []
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+ONTOLOGIES_FILE = os.path.join(DATA_DIR, 'ontologies.json')
+ENTITIES_FILE = os.path.join(DATA_DIR, 'entities.json')
+RELATIONS_FILE = os.path.join(DATA_DIR, 'relations.json')
+os.makedirs(DATA_DIR, exist_ok=True)
+
+def load_db():
+    result = {'ontologies': [], 'entities': [], 'relations': []}
+    if os.path.exists(ONTOLOGIES_FILE):
+        with open(ONTOLOGIES_FILE, 'r', encoding='utf-8') as f:
+            result['ontologies'] = [OntologyModel(**item) for item in json.load(f)]
+    if os.path.exists(ENTITIES_FILE):
+        with open(ENTITIES_FILE, 'r', encoding='utf-8') as f:
+            result['entities'] = [Entity(**item) for item in json.load(f)]
+    if os.path.exists(RELATIONS_FILE):
+        with open(RELATIONS_FILE, 'r', encoding='utf-8') as f:
+            result['relations'] = [Relation(**item) for item in json.load(f)]
+    return result['ontologies'], result['entities'], result['relations']
+
+def save_db():
+    with open(ONTOLOGIES_FILE, 'w', encoding='utf-8') as f:
+        json.dump([o.dict() for o in ontologies_db], f, ensure_ascii=False, indent=2, default=str)
+    with open(ENTITIES_FILE, 'w', encoding='utf-8') as f:
+        json.dump([e.dict() for e in entities_db], f, ensure_ascii=False, indent=2, default=str)
+    with open(RELATIONS_FILE, 'w', encoding='utf-8') as f:
+        json.dump([r.dict() for r in relations_db], f, ensure_ascii=False, indent=2, default=str)
+
+ontologies_db, entities_db, relations_db = load_db()
 
 def get_graph_data():
     nodes = []
@@ -106,6 +132,7 @@ async def create_ontology(
     )
     ontologies_db.append(ontology)
 
+    save_db()
     return {
         "success": True,
         "message": "本体模型创建成功",
@@ -142,6 +169,7 @@ async def update_ontology(
             ontology.name = name
             ontology.description = description
             ontology.update_time = datetime.now()
+            save_db()
             return {
                 "success": True,
                 "message": "本体模型更新成功"
@@ -161,6 +189,7 @@ async def delete_ontology(ontology_id: str):
             entities_db = [e for e in entities_db if e.id not in entity_ids]
             relations_db = [r for r in relations_db if r.source_id not in entity_ids and r.target_id not in entity_ids]
 
+            save_db()
             return {
                 "success": True,
                 "message": "本体模型删除成功"
@@ -197,6 +226,7 @@ async def add_entity(
             ontology.entities_count = len(entities_db)
             ontology.update_time = datetime.now()
 
+    save_db()
     return {
         "success": True,
         "message": "实体添加成功",
@@ -258,6 +288,7 @@ async def update_entity(
             entity.type = entity_type
             entity.properties = properties_dict
             entity.update_time = datetime.now()
+            save_db()
             return {
                 "success": True,
                 "message": "实体更新成功"
@@ -282,6 +313,7 @@ async def delete_entity(entity_id: str):
                 ontology.entities_count = len(entities_db)
                 ontology.relations_count = len(relations_db)
 
+            save_db()
             return {
                 "success": True,
                 "message": "实体删除成功"
@@ -324,6 +356,7 @@ async def add_relation(
     for ontology in ontologies_db:
         ontology.relations_count = len(relations_db)
 
+    save_db()
     return {
         "success": True,
         "message": "关系添加成功",
@@ -379,6 +412,7 @@ async def delete_relation(relation_id: str):
             for ontology in ontologies_db:
                 ontology.relations_count = len(relations_db)
 
+            save_db()
             return {
                 "success": True,
                 "message": "关系删除成功"
@@ -457,6 +491,7 @@ async def import_ontology(file: UploadFile = File(...)):
             )
             relations_db.append(relation)
 
+        save_db()
         return {
             "success": True,
             "message": "本体模型导入成功",

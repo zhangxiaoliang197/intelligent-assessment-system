@@ -4,6 +4,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 import uuid
+import json
+import os
 
 app = FastAPI(
     title="方案评估服务",
@@ -33,7 +35,22 @@ class CreateSchemeRequest(BaseModel):
     description: str
     indicators: List[str]
 
-schemes_db = []
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+SCHEMES_FILE = os.path.join(DATA_DIR, 'schemes.json')
+os.makedirs(DATA_DIR, exist_ok=True)
+
+def load_schemes():
+    if os.path.exists(SCHEMES_FILE):
+        with open(SCHEMES_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return [EvaluationScheme(**item) for item in data]
+    return []
+
+def save_schemes():
+    with open(SCHEMES_FILE, 'w', encoding='utf-8') as f:
+        json.dump([s.dict() for s in schemes_db], f, ensure_ascii=False, indent=2, default=str)
+
+schemes_db = load_schemes()
 
 @app.get("/")
 async def root():
@@ -59,6 +76,7 @@ async def create_scheme(request: CreateSchemeRequest):
         update_time=datetime.now()
     )
     schemes_db.append(scheme)
+    save_schemes()
     return scheme
 
 @app.get("/evaluation/scheme/list")
@@ -121,6 +139,7 @@ async def execute_scheme(scheme_id: str):
             scheme.status = "已完成"
             scheme.update_time = datetime.now()
 
+            save_schemes()
             return result
 
     raise HTTPException(status_code=404, detail="评估方案不存在")
@@ -130,6 +149,7 @@ async def delete_scheme(scheme_id: str):
     for i, scheme in enumerate(schemes_db):
         if scheme.id == scheme_id:
             schemes_db.pop(i)
+            save_schemes()
             return {"message": "评估方案已删除"}
 
     raise HTTPException(status_code=404, detail="评估方案不存在")

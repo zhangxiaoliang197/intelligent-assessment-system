@@ -26,6 +26,11 @@ app.add_middleware(
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "llm_config.json")
 
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+SESSIONS_FILE = os.path.join(DATA_DIR, 'sessions.json')
+HISTORY_FILE = os.path.join(DATA_DIR, 'history.json')
+os.makedirs(DATA_DIR, exist_ok=True)
+
 def load_llm_config():
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -166,8 +171,29 @@ class LlmConfigRequest(BaseModel):
     maxTokens: int = 2000
     topP: float = 0.9
 
-sessions = {}
-chat_history = []
+def load_sessions():
+    if os.path.exists(SESSIONS_FILE):
+        with open(SESSIONS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+def save_sessions():
+    with open(SESSIONS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(sessions, f, ensure_ascii=False, indent=2, default=str)
+
+def load_history():
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return [HistoryItem(**item) for item in data]
+    return []
+
+def save_history():
+    with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+        json.dump([h.dict() for h in chat_history], f, ensure_ascii=False, indent=2, default=str)
+
+sessions = load_sessions()
+chat_history = load_history()
 
 @app.get("/")
 async def root():
@@ -203,6 +229,8 @@ async def chat(request: ChatRequest):
         timestamp=datetime.now()
     ))
 
+    save_sessions()
+    save_history()
     return ChatResponse(
         answer=answer,
         references=references,
@@ -243,6 +271,7 @@ async def list_history():
 async def clear_history(session_id: str):
     if session_id in sessions:
         sessions[session_id] = []
+        save_sessions()
         return {"message": "历史记录已清空"}
 
     raise HTTPException(status_code=404, detail="会话不存在")

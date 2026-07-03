@@ -37,23 +37,24 @@ build_and_save() {
 }
 
 echo "========================================="
-echo "阶段 1/3: 构建 Python 微服务 (5个)"
+echo "阶段 1/3: 构建 Python 微服务 (6个)"
 echo "========================================="
 echo ""
 
-build_and_save "knowledge"   "knowledge"   "8001" "知识库服务"
-build_and_save "qa"          "qa"          "8002" "智能问答服务"
-build_and_save "indicator"   "indicator"   "8003" "指标分析服务"
-build_and_save "evaluation"  "evaluation"  "8004" "方案评估服务"
-build_and_save "ontology"    "ontology"    "8005" "本体模型服务"
+build_and_save "knowledge"             "knowledge"             "10252" "知识库服务"
+build_and_save "qa"                    "qa"                    "10253" "智能问答服务"
+build_and_save "indicator"             "indicator"             "10254" "指标分析服务"
+build_and_save "evaluation"            "evaluation"            "10255" "方案评估服务"
+build_and_save "ontology"              "ontology"              "10256" "本体模型服务"
+build_and_save "solution-evaluation"   "solution-evaluation"   "10259" "方案评估服务(多Agent)"
 
 echo "========================================="
 echo "阶段 2/3: 构建 Java 服务 (2个)"
 echo "========================================="
 echo ""
 
-build_and_save "gateway"     "gateway"     "8080" "API网关服务"
-build_and_save "admin"       "admin"       "8081" "基础管理服务"
+build_and_save "gateway"     "gateway"     "10257" "API网关服务"
+build_and_save "admin"       "admin"       "10258" "基础管理服务"
 
 echo "========================================="
 echo "阶段 3/3: 构建前端"
@@ -64,7 +65,7 @@ build_and_save "frontend"    "frontend"    "80"   "前端界面"
 
 echo ""
 echo "========================================"
-echo -e "${GREEN}全部 8 个镜像构建完成!${NC}"
+echo -e "${GREEN}全部 9 个镜像构建完成!${NC}"
 echo "========================================"
 echo ""
 echo "镜像文件位于: $IMAGES_DIR/"

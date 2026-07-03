@@ -5,6 +5,8 @@ services:
     ports:
       - "10086:80"
     restart: always
+    depends_on:
+      - api-gateway
     networks:
       - assessment-net
 
@@ -67,6 +69,15 @@ services:
     container_name: assessment-admin
     ports:
       - "10258:10258"
+    restart: always
+    networks:
+      - assessment-net
+
+  solution-evaluation-service:
+    image: assessment-solution-evaluation:latest
+    container_name: assessment-solution-evaluation
+    ports:
+      - "10259:10259"
     restart: always
     networks:
       - assessment-net

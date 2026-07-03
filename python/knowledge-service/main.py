@@ -26,6 +26,10 @@ app.add_middleware(
 UPLOAD_DIR = "./uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+KNOWLEDGE_FILE = os.path.join(DATA_DIR, 'knowledge.json')
+os.makedirs(DATA_DIR, exist_ok=True)
+
 # ---------- Chunk 数据模型 ----------
 class Chunk:
     def __init__(self, chunk_id, doc_id, text, title, category, tags, source_file):
@@ -38,10 +42,27 @@ class Chunk:
         self.source_file = source_file
 
 # ---------- 内存存储 ----------
-knowledge_db = []
-chunks_db: List[Chunk] = []
-categories_db = {}
-tags_db = {}
+def load_db():
+    if os.path.exists(KNOWLEDGE_FILE):
+        with open(KNOWLEDGE_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            kdb = data.get('knowledge_db', [])
+            cdb = [Chunk(**c) for c in data.get('chunks_db', [])]
+            cats = data.get('categories_db', {})
+            tags = data.get('tags_db', {})
+            return kdb, cdb, cats, tags
+    return [], [], {}, {}
+
+def save_db():
+    with open(KNOWLEDGE_FILE, 'w', encoding='utf-8') as f:
+        json.dump({
+            'knowledge_db': knowledge_db,
+            'chunks_db': [vars(c) for c in chunks_db],
+            'categories_db': categories_db,
+            'tags_db': tags_db
+        }, f, ensure_ascii=False, indent=2, default=str)
+
+knowledge_db, chunks_db, categories_db, tags_db = load_db()
 DELIMITER = r'[。！？\n;；!?]'
 
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> List[str]:
@@ -246,6 +267,7 @@ async def upload_knowledge(
                 tags_db[tag] = []
             tags_db[tag].append(file_id)
 
+        save_db()
         return {
             "success": True,
             "message": f"上传并解析完成 ({len(text_chunks)} 个分片)",
@@ -301,6 +323,7 @@ async def parse_knowledge(knowledge_id: str):
             item["status"] = "已完成"
             item["content_length"] = len(raw_text)
             item["chunk_count"] = len(text_chunks)
+            save_db()
             return {"success": True, "message": f"解析完成 ({len(text_chunks)} 个分片)", "data": {"id": knowledge_id, "status": "已完成"}}
     raise HTTPException(status_code=404, detail="文档不存在")
 
@@ -327,6 +350,7 @@ async def parse_all_knowledge():
             item["chunk_count"] = len(text_chunks)
             count += 1
 
+    save_db()
     return {"success": True, "message": f"批量解析完成，共处理 {count} 个文档"}
 
 @app.post("/knowledge/search")
@@ -432,6 +456,7 @@ async def create_category(name: str = Form(...)):
     if name in categories_db:
         raise HTTPException(status_code=400, detail="分类已存在")
     categories_db[name] = []
+    save_db()
     return {"success": True, "message": f"分类 '{name}' 创建成功"}
 
 @app.delete("/knowledge/category/{category_name}")
@@ -445,6 +470,7 @@ async def delete_category(category_name: str):
                 categories_db["未分类"] = []
             categories_db["未分类"].append(item["id"])
     del categories_db[category_name]
+    save_db()
     return {"success": True, "message": f"分类 '{category_name}' 删除成功"}
 
 @app.get("/knowledge/tags")
@@ -475,6 +501,7 @@ async def update_knowledge(knowledge_id: str, category: str = Form(...), tags: s
                 if ch.doc_id == knowledge_id:
                     ch.category = category
                     ch.tags = item["tags"]
+            save_db()
             return {"success": True, "message": "更新成功"}
     raise HTTPException(status_code=404, detail="文档不存在")
 
@@ -494,6 +521,7 @@ async def delete_knowledge(knowledge_id: str):
                     tags_db[t].remove(knowledge_id)
             knowledge_db.pop(i)
             chunks_db = [c for c in chunks_db if c.doc_id != knowledge_id]
+            save_db()
             return {"success": True, "message": "删除成功"}
     raise HTTPException(status_code=404, detail="文档不存在")
 

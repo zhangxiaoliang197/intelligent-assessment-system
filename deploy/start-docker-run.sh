@@ -64,6 +64,26 @@ docker run -d --name assessment-admin \
     --restart always \
     assessment-admin:latest
 
+echo "[启动] 方案评估服务(多Agent) (10259)..."
+docker run -d --name assessment-solution-evaluation \
+    --network "$NET_NAME" \
+    -p 10259:10259 \
+    --restart always \
+    assessment-solution-evaluation:latest
+
+echo ""
+echo "等待 API网关就绪 (Java启动较慢, 约60秒)..."
+for i in $(seq 1 60); do
+    if curl -s http://127.0.0.1:10257/actuator/health >/dev/null 2>&1; then
+        echo "  API网关已就绪 (${i}s)"
+        break
+    fi
+    if [ $i -eq 60 ]; then
+        echo "  WARNING: API网关超时, 前端启动可能失败"
+    fi
+    sleep 1
+done
+
 echo "[启动] 前端界面 (10086)..."
 docker run -d --name assessment-frontend \
     --network "$NET_NAME" \
@@ -72,9 +92,6 @@ docker run -d --name assessment-frontend \
     assessment-frontend:latest
 
 echo ""
-echo "等待服务就绪..."
-sleep 5
-echo ""
 echo "========================================"
 echo "服务状态:"
 echo "========================================"
@@ -82,4 +99,5 @@ docker ps --filter "name=assessment" --format "table {{.Names}}\t{{.Status}}\t{{
 echo ""
 IP=$(hostname -I | awk '{print $1}')
 echo "访问地址: http://${IP}:10086"
+echo "共启动 9 个服务"
 echo "========================================"
