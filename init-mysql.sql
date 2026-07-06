@@ -110,11 +110,33 @@ CREATE TABLE IF NOT EXISTS `ass_llm_config` (
     PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 2.6 数据库驱动
+CREATE TABLE IF NOT EXISTS `ass_driver` (
+    `id`             VARCHAR(32)   NOT NULL,
+    `name`           VARCHAR(100)  NOT NULL,
+    `driver_class`   VARCHAR(200)  DEFAULT NULL,
+    `url_template`   VARCHAR(500)  DEFAULT NULL,
+    `jar_file_name`  VARCHAR(200)  DEFAULT NULL,
+    `jar_file_path`  VARCHAR(500)  DEFAULT NULL,
+    `create_time`    DATETIME      DEFAULT NULL,
+    `update_time`    DATETIME      DEFAULT NULL,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ============================================================
 -- 3. 插入初始数据（仅当表为空时）
 -- ============================================================
 
--- 3.1 默认大模型配置（DeepSeek）
+-- 3.1 数据库驱动（JAR 包需放在项目 drivers/ 目录下）
+INSERT IGNORE INTO `ass_driver` (`id`, `name`, `driver_class`, `url_template`, `jar_file_name`, `jar_file_path`, `create_time`, `update_time`)
+VALUES
+('driver_mysql',      'MySQL',           'com.mysql.cj.jdbc.Driver',               'jdbc:mysql://{host}:{port}/{database}?useSSL=false&serverTimezone=Asia/Shanghai&connectionCollation=utf8mb4_unicode_ci&sessionVariables=character_set_client=utf8mb4,character_set_connection=utf8mb4,character_set_results=utf8mb4', 'mysql-connector-j.jar',  'drivers/mysql-connector-j.jar',  NOW(), NOW()),
+('driver_postgresql', 'PostgreSQL',      'org.postgresql.Driver',                  'jdbc:postgresql://{host}:{port}/{database}', 'postgresql.jar', 'drivers/postgresql.jar', NOW(), NOW()),
+('driver_sqlserver',  'SQL Server',      'com.microsoft.sqlserver.jdbc.SQLServerDriver', 'jdbc:sqlserver://{host}:{port};databaseName={database}', 'mssql-jdbc.jar', 'drivers/mssql-jdbc.jar', NOW(), NOW()),
+('driver_oracle',     'Oracle',          'oracle.jdbc.OracleDriver',               'jdbc:oracle:thin:@{host}:{port}:{database}', NULL, NULL, NOW(), NOW()),
+('driver_dameng',     '达梦数据库V8.1',    'dm.jdbc.driver.DmDriver',                'jdbc:dm://{host}:{port}/{database}', NULL, NULL, NOW(), NOW());
+
+-- 3.2 默认大模型配置（DeepSeek）
 INSERT IGNORE INTO `ass_llm_config` (`id`, `name`, `llm_type`, `api_url`, `api_key`, `model`, `temperature`, `max_tokens`, `top_p`, `is_active`, `create_time`, `update_time`)
 VALUES ('llm_001', 'DeepSeek 默认', 'deepseek', 'https://api.deepseek.com/v1', '', 'deepseek-chat', 0.7, 2000, 0.9, 1, NOW(), NOW());
 
