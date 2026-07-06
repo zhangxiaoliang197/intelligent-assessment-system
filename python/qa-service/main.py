@@ -30,7 +30,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "llm_config.json")
+# LLM 配置现在从 Java admin-service 的 MySQL 数据库中获取
+# 支持多配置管理和活跃配置切换
+ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 SESSIONS_FILE = os.path.join(DATA_DIR, 'sessions.json')
@@ -63,9 +65,21 @@ def atomic_json_write(filepath, data):
         raise
 
 def load_llm_config():
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+    """从 Java admin-service API 获取当前活跃的大模型配置"""
+    try:
+        req = urllib.request.Request(
+            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/active",
+            method="GET"
+        )
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("success") and data.get("data"):
+                return data["data"]
+            # fallback to default
+            logger.warning("No active LLM config found, using defaults")
+    except Exception as e:
+        logger.warning(f"Failed to fetch LLM config from admin-service: {e}")
     return {
         "type": "deepseek",
         "apiUrl": "https://api.deepseek.com/v1",
@@ -75,11 +89,6 @@ def load_llm_config():
         "maxTokens": 2000,
         "topP": 0.9
     }
-
-def save_llm_config(config):
-    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=4, ensure_ascii=False)
 
 KNOWLEDGE_SERVICE_URL = os.getenv("KNOWLEDGE_SERVICE_URL", "http://localhost:10252")
 
@@ -140,13 +149,15 @@ def call_llm_api(query, context=""):
 def get_llm_messages(query, context=""):
     """构建 LLM 请求消息（复用逻辑）"""
     config = load_llm_config()
+    llm_type = config.get("type", "deepseek")
     api_key = config.get("apiKey", "")
     api_url = config.get("apiUrl", "https://api.deepseek.com/v1").rstrip("/")
     model = config.get("model", "deepseek-chat")
     temperature = config.get("temperature", 0.7)
     max_tokens = config.get("maxTokens", 2000)
 
-    if not api_key:
+    # vLLM 是本地部署，无需 API Key
+    if not api_key and llm_type != "vllm":
         return None, None, None, None, None, None, "大模型 API Key 未配置，请在「基础管理 → 大模型配置」中设置。"
 
     knowledge_chunks = search_knowledge(query, top_k=5)
@@ -538,16 +549,79 @@ async def clear_history(session_id: str):
     raise HTTPException(status_code=404, detail="会话不存在")
 
 # ========== LLM 配置 API ==========
+# 现在从 Java admin-service 获取 MySQL 中持久化的配置
 
 @app.get("/config/llm")
 async def get_llm_config():
-    config = load_llm_config()
-    return {"success": True, "data": config}
+    """获取当前活跃的大模型配置"""
+    try:
+        req = urllib.request.Request(
+            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/active",
+            method="GET"
+        )
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        logger.warning(f"Failed to fetch LLM config: {e}")
+        return {"success": False, "message": "无法连接到管理服务", "data": load_llm_config()}
+
+@app.get("/config/llm/list")
+async def list_llm_configs():
+    """列出所有大模型配置"""
+    try:
+        req = urllib.request.Request(
+            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/list",
+            method="GET"
+        )
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        return {"success": False, "message": f"获取失败: {str(e)}"}
 
 @app.post("/config/llm")
 async def save_llm_config_endpoint(config: LlmConfigRequest):
-    save_llm_config(config.dict())
-    return {"success": True, "message": "大模型配置保存成功"}
+    """保存新的大模型配置"""
+    try:
+        body = json.dumps(config.dict()).encode("utf-8")
+        req = urllib.request.Request(
+            f"{ADMIN_SERVICE_URL}/api/admin/config/llm",
+            data=body, method="POST"
+        )
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        return {"success": False, "message": f"保存失败: {str(e)}"}
+
+@app.put("/config/llm/{config_id}/activate")
+async def activate_llm_config(config_id: str):
+    """激活指定的大模型配置"""
+    try:
+        req = urllib.request.Request(
+            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/{config_id}/activate",
+            method="PUT"
+        )
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        return {"success": False, "message": f"切换失败: {str(e)}"}
+
+@app.delete("/config/llm/{config_id}")
+async def delete_llm_config(config_id: str):
+    """删除大模型配置"""
+    try:
+        req = urllib.request.Request(
+            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/{config_id}",
+            method="DELETE"
+        )
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        return {"success": False, "message": f"删除失败: {str(e)}"}
 
 if __name__ == "__main__":
     import uvicorn
