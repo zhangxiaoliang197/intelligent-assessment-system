@@ -47,14 +47,23 @@
             <el-table :data="drivers" stripe>
               <el-table-column prop="name" label="驱动名称" min-width="150" />
               <el-table-column prop="driverClass" label="驱动类" min-width="200" />
-              <el-table-column label="类型" width="80">
-                <template #default>
-                  <el-tag type="success" size="small">内置</el-tag>
+              <el-table-column prop="urlTemplate" label="连接模板" min-width="250" show-overflow-tooltip />
+              <el-table-column label="状态" width="80">
+                <template #default="scope">
+                  <el-tag :type="scope.row.hasJar ? 'success' : 'warning'" size="small">
+                    {{ scope.row.hasJar ? '已上传' : '待上传' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="JAR文件" min-width="140">
+                <template #default="scope">
+                  <span v-if="scope.row.jarFileName" style="font-size:12px;color:#909399">{{ scope.row.jarFileName }}</span>
+                  <span v-else style="color:#c0c4cc">-</span>
                 </template>
               </el-table-column>
               <el-table-column label="操作" width="80">
                 <template #default="scope">
-                  <el-button size="small" type="danger" disabled>删除</el-button>
+                  <el-button size="small" type="danger" @click="deleteDriver(scope.row)">删除</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -62,22 +71,24 @@
             <!-- 上传驱动对话框 -->
             <el-dialog v-model="showUploadDriver" title="上传数据库驱动" width="500px">
               <el-form :model="driverForm" label-width="100px">
-                <el-form-item label="驱动名称">
-                  <el-input v-model="driverForm.name" placeholder="请输入驱动名称" />
+                <el-form-item label="数据库类型" required>
+                  <el-select v-model="driverForm.type" placeholder="请选择数据库类型" style="width: 100%" @change="onDriverTypeChange">
+                    <el-option v-for="d in driverPresets" :key="d" :label="d" :value="d" />
+                  </el-select>
                 </el-form-item>
-                <el-form-item label="驱动类">
-                  <el-input v-model="driverForm.driverClass" placeholder="如：dm.jdbc.driver.DmDriver" />
+                <el-form-item label="驱动名称" required>
+                  <el-input v-model="driverForm.name" placeholder="如：MySQL 8.0、PostgreSQL 16" />
                 </el-form-item>
-                <el-form-item label="JAR包">
-                  <el-upload :auto-upload="false" :limit="1" accept=".jar">
+                <el-form-item label="JAR包" required>
+                  <el-upload ref="driverUploadRef" :auto-upload="false" :limit="1" accept=".jar" :on-change="onDriverFileChange">
                     <el-button>选择JAR文件</el-button>
-                    <template #tip><div class="el-upload__tip">仅支持 .jar 格式</div></template>
+                    <template #tip><div class="el-upload__tip">同一数据库不同版本可上传不同JAR包</div></template>
                   </el-upload>
                 </el-form-item>
               </el-form>
               <template #footer>
                 <el-button @click="showUploadDriver = false">取消</el-button>
-                <el-button type="primary" @click="uploadDriver">上传</el-button>
+                <el-button type="primary" @click="uploadDriver" :loading="uploadingDriver">上传</el-button>
               </template>
             </el-dialog>
           </div>
@@ -87,7 +98,7 @@
           <div class="tab-content">
             <div class="section-header">
               <h3>数据集列表</h3>
-              <el-button type="primary" @click="openAddDataset">创建数据集</el-button>
+              <el-button type="primary" @click="openSelectDataset">选择数据集</el-button>
             </div>
 
             <el-table :data="datasets" stripe>
@@ -231,11 +242,7 @@
           </el-form-item>
           <el-form-item label="数据库类型">
             <el-select v-model="dbForm.type" placeholder="请选择数据库类型" style="width: 100%">
-              <el-option label="MySQL" value="MySQL" />
-              <el-option label="PostgreSQL" value="PostgreSQL" />
-              <el-option label="Oracle" value="Oracle" />
-              <el-option label="达梦数据库V8.1" value="达梦数据库V8.1" />
-              <el-option label="SQL Server" value="SQL Server" />
+              <el-option v-for="d in drivers" :key="d.id" :label="d.name + (d.hasJar ? '' : ' (需上传JAR)')" :value="d.name" :disabled="!d.hasJar" />
             </el-select>
           </el-form-item>
           <el-form-item label="主机地址">
@@ -262,27 +269,42 @@
         </template>
       </el-dialog>
 
-      <!-- 新增/编辑数据集对话框 -->
-      <el-dialog v-model="showDsDialog" title="创建数据集" width="600px">
-        <el-form :model="dsForm" label-width="100px">
-          <el-form-item label="数据集名称">
-            <el-input v-model="dsForm.name" placeholder="请输入数据集名称" />
-          </el-form-item>
-          <el-form-item label="描述">
-            <el-input v-model="dsForm.description" type="textarea" :rows="3" placeholder="请输入描述" />
-          </el-form-item>
-          <el-form-item label="关联数据库">
-            <el-select v-model="dsForm.databaseId" placeholder="请选择关联数据库" style="width: 100%">
-              <el-option v-for="db in databases" :key="db.id" :label="db.name" :value="db.id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="SQL">
-            <el-input v-model="dsForm.sql" type="textarea" :rows="5" placeholder="请输入SQL查询" />
-          </el-form-item>
-        </el-form>
+      <!-- 选择数据集对话框 -->
+      <el-dialog v-model="showSelectDsDialog" title="选择数据集" width="700px">
+        <div style="margin-bottom: 16px;">
+          <span style="color: #606266; font-weight: 500;">选择数据库：</span>
+          <el-select v-model="selectDsDbId" placeholder="请选择已连接的数据库" style="width: 300px; margin-left: 8px;" @change="onSelectDsDbChange" :loading="loadingDbTables">
+            <el-option v-for="db in connectedDatabases" :key="db.id" :label="db.name" :value="db.id" />
+          </el-select>
+        </div>
+
+        <div v-if="selectDsDbId && !loadingDbTables">
+          <div style="margin-bottom: 12px; color: #606266;">
+            <span>数据表列表</span>
+            <span style="margin-left: 12px; color: #909399; font-size: 12px;">共 {{ dbTables.length }} 张表，点击选择</span>
+          </div>
+          <el-table :data="dbTables" stripe max-height="400" highlight-current-row @row-click="onSelectTable">
+            <el-table-column type="index" label="#" width="50" />
+            <el-table-column prop="tableName" label="表名" min-width="200" />
+            <el-table-column label="操作" width="100" align="center">
+              <template #default="{ row }">
+                <el-button type="primary" size="small" @click.stop="onSelectTable(row)">选择</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+        <div v-if="selectDsDbId && loadingDbTables" style="text-align: center; padding: 40px; color: #909399;">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span style="margin-left: 8px;">正在加载数据表...</span>
+        </div>
+
+        <div v-if="!selectDsDbId" style="text-align: center; padding: 40px; color: #909399;">
+          请先选择一个已连接的数据库
+        </div>
+
         <template #footer>
-          <el-button @click="showDsDialog = false">取消</el-button>
-          <el-button type="primary" @click="saveDataset">创建</el-button>
+          <el-button @click="showSelectDsDialog = false">取消</el-button>
         </template>
       </el-dialog>
 
@@ -407,14 +429,18 @@ const activeTab = ref('database')
 // ==================== 数据库配置 ====================
 const databases = ref<any[]>([])
 const drivers = ref<any[]>([])
+const driverPresets = ['MySQL', 'PostgreSQL', 'Oracle', '达梦数据库V8.1', 'SQL Server']
 const showDbDialog = ref(false)
 const editingDbId = ref<string | null>(null)
 const savingDb = ref(false)
 const showUploadDriver = ref(false)
+const uploadingDriver = ref(false)
+const driverUploadRef = ref<any>(null)
 const driverForm = ref({
-  name: '',
-  driverClass: ''
+  type: '',
+  name: ''
 })
+const driverFile = ref<File | null>(null)
 
 const dbForm = ref({
   name: '',
@@ -468,26 +494,62 @@ async function loadDrivers() {
   }
 }
 
+function onDriverFileChange(file: any) {
+  driverFile.value = file.raw
+}
+
+function onDriverTypeChange(type: string) {
+  if (!driverForm.value.name) {
+    driverForm.value.name = type
+  }
+}
+
 async function uploadDriver() {
-  if (!driverForm.value.name || !driverForm.value.driverClass) {
-    ElMessage.warning('请填写驱动名称和驱动类')
+  if (!driverForm.value.type) {
+    ElMessage.warning('请选择数据库类型')
     return
   }
+  if (!driverForm.value.name.trim()) {
+    ElMessage.warning('请输入驱动名称')
+    return
+  }
+  if (!driverFile.value) {
+    ElMessage.warning('请选择JAR文件')
+    return
+  }
+  uploadingDriver.value = true
   try {
-    const res = await api.post('/admin/driver', driverForm.value)
+    const formData = new FormData()
+    formData.append('file', driverFile.value)
+    formData.append('name', driverForm.value.name.trim())
+    formData.append('type', driverForm.value.type)
+    const res = await api.post('/admin/driver/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
     if (res && res.success) {
-      drivers.value.push({
-        id: res.id || 'driver_' + Date.now(),
-        name: driverForm.value.name,
-        driverClass: driverForm.value.driverClass,
-        urlTemplate: 'jdbc:custom://localhost:port/database'
-      })
-      ElMessage.success('驱动已上传')
+      ElMessage.success('驱动上传成功')
       showUploadDriver.value = false
-      driverForm.value = { name: '', driverClass: '' }
+      driverForm.value = { type: '', name: '' }
+      driverFile.value = null
+      await loadDrivers()
     }
   } catch (e: any) {
-    ElMessage.error('上传失败: ' + (e.message || '未知错误'))
+    ElMessage.error('上传失败: ' + (e?.serverMessage || e?.message || '未知错误'))
+  } finally {
+    uploadingDriver.value = false
+  }
+}
+
+async function deleteDriver(row: any) {
+  try {
+    await ElMessageBox.confirm(`确定删除驱动"${row.name}"吗？`, '提示', {
+      confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning'
+    })
+    await api.delete(`/admin/driver/${row.id}`)
+    drivers.value = drivers.value.filter((d: any) => d.id !== row.id)
+    ElMessage.success('驱动已删除')
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('删除失败: ' + (e?.serverMessage || ''))
   }
 }
 
@@ -542,7 +604,7 @@ async function saveDatabase() {
     }
     showDbDialog.value = false
   } catch (e: any) {
-    ElMessage.error('保存失败: ' + (e.message || '未知错误'))
+    ElMessage.error('保存失败: ' + (e?.serverMessage || e?.message || '未知错误'))
   } finally {
     savingDb.value = false
   }
@@ -565,8 +627,8 @@ async function testConnection(row: any) {
     }
   } catch (e: any) {
     row.status = '失败'
-    row.errorMsg = e.message || '请求异常'
-    ElMessage.error('请求失败: ' + (e.message || '未知错误'))
+    row.errorMsg = e?.serverMessage || e?.message || '请求异常'
+    ElMessage.error('连接失败: ' + row.errorMsg)
   } finally {
     row.testing = false
   }
@@ -584,7 +646,7 @@ async function deleteDatabase(row: any) {
     ElMessage.success('已删除')
   } catch (e: any) {
     if (e !== 'cancel') {
-      ElMessage.error('删除失败: ' + (e.message || '未知错误'))
+      ElMessage.error('删除失败: ' + (e?.serverMessage || e?.message || '未知错误'))
     }
   }
 }
@@ -596,8 +658,15 @@ function getDbName(dbId: string) {
 
 // ==================== 数据集 ====================
 const datasets = ref<any[]>([])
-const showDsDialog = ref(false)
-const dsForm = ref({ name: '', description: '', databaseId: '', sql: '' })
+const showSelectDsDialog = ref(false)
+const selectDsDbId = ref('')
+const dbTables = ref<any[]>([])
+const loadingDbTables = ref(false)
+
+// 仅显示已连接的数据库
+const connectedDatabases = computed(() => 
+  databases.value.filter((db: any) => db.status === '已连接')
+)
 
 async function loadDatasets() {
   try {
@@ -610,35 +679,81 @@ async function loadDatasets() {
   }
 }
 
-function openAddDataset() {
-  dsForm.value = { name: '', description: '', databaseId: '', sql: '' }
-  showDsDialog.value = true
+function openSelectDataset() {
+  selectDsDbId.value = ''
+  dbTables.value = []
+  showSelectDsDialog.value = true
 }
 
-async function saveDataset() {
-  if (!dsForm.value.name) {
-    ElMessage.warning('请填写数据集名称')
+async function onSelectDsDbChange(dbId: string) {
+  if (!dbId) return
+  loadingDbTables.value = true
+  dbTables.value = []
+  try {
+    const res = await api.get(`/admin/database/${dbId}/tables`)
+    if (res && res.success && res.tables) {
+      dbTables.value = res.tables
+    } else {
+      ElMessage.warning(res?.message || '获取数据表失败')
+    }
+  } catch (e: any) {
+    ElMessage.error('获取数据表失败: ' + (e.message || ''))
+  } finally {
+    loadingDbTables.value = false
+  }
+}
+
+async function onSelectTable(row: any) {
+  const tableName = row.tableName
+  const dbId = selectDsDbId.value
+  const db = databases.value.find((d: any) => d.id === dbId)
+  if (!db) return
+
+  // 检查是否已存在相同的数据集
+  const exists = datasets.value.find((d: any) => d.databaseId === dbId && d.tableName === tableName)
+  if (exists) {
+    ElMessage.warning(`数据表「${tableName}」已添加`)
     return
   }
+
   try {
-    const res = await api.post('/admin/dataset', dsForm.value)
+    const res = await api.post('/admin/dataset', {
+      name: `${db.name} - ${tableName}`,
+      description: `来自数据库 ${db.name} 的数据表 ${tableName}`,
+      databaseId: dbId,
+      tableName: tableName
+    })
     if (res && res.success) {
       datasets.value.push({
         id: res.id,
-        ...dsForm.value,
+        name: `${db.name} - ${tableName}`,
+        description: `来自数据库 ${db.name} 的数据表 ${tableName}`,
+        databaseId: dbId,
+        tableName: tableName,
         records: 0
       })
-      showDsDialog.value = false
-      ElMessage.success('数据集已创建')
+      showSelectDsDialog.value = false
+      ElMessage.success(`已添加数据集：${tableName}`)
     }
   } catch (e: any) {
-    ElMessage.error('创建失败: ' + (e.message || '未知错误'))
+    ElMessage.error('添加失败: ' + (e.message || '未知错误'))
   }
 }
 
 async function editDataset(row: any) {
-  dsForm.value = { ...row }
-  showDsDialog.value = true
+  // 简化编辑：直接弹窗修改名称和描述
+  try {
+    const { value } = await ElMessageBox.prompt('请输入数据集名称', '编辑数据集', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputValue: row.name
+    })
+    if (value) {
+      await api.put(`/admin/dataset/${row.id}`, { name: value, description: row.description })
+      row.name = value
+      ElMessage.success('已更新')
+    }
+  } catch { /* cancelled */ }
 }
 
 async function deleteDataset(row: any) {
