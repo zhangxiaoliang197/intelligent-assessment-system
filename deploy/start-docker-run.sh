@@ -37,56 +37,31 @@ echo "  数据目录: $DATA_DIR"
 docker network inspect "$NET_NAME" >/dev/null 2>&1 || \
     docker network create "$NET_NAME"
 
-# ─── 0. MySQL 初始化 (必须优先执行) ───
+# ─── 0. 等待 MySQL 就绪 ───
 echo "========================================"
-echo "[0/9] 初始化 MySQL 数据库..."
+echo "[0/9] 等待 MySQL 就绪..."
 echo "========================================"
+echo "  MySQL: ${MYSQL_USER}@${MYSQL_HOST}:${MYSQL_PORT}"
 
-MYSQL_SCRIPT="$BASE_DIR/init-mysql.sql"
-if [ -f "$MYSQL_SCRIPT" ]; then
-    # 尝试多种 mysql 客户端路径
-    MYSQL_BIN=""
-    for candidate in mysql /usr/bin/mysql /usr/local/bin/mysql; do
-        if command -v "$candidate" &>/dev/null; then
-            MYSQL_BIN="$candidate"
-            break
-        fi
-    done
-
-    if [ -n "$MYSQL_BIN" ]; then
-        echo "  检测到 MySQL 客户端: $MYSQL_BIN"
-        echo "  等待 MySQL 就绪..."
-        for i in $(seq 1 30); do
-            if $MYSQL_BIN -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" -e "SELECT 1" >/dev/null 2>&1; then
-                echo "  MySQL 已就绪 (${i}s)"
-                break
-            fi
-            if [ $i -eq 30 ]; then
-                # 如果宿主机没装 mysql 客户端，尝试用 docker 执行
-                echo "  WARNING: 无法直接连接 MySQL，尝试用 Docker 执行..."
-                docker run --rm \
-                    --network "$NET_NAME" \
-                    -v "$BASE_DIR/init-mysql.sql:/init-mysql.sql" \
-                    mysql:5.7 \
-                    mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" < /dev/null 2>&1 && \
-                    echo "  Docker MySQL 客户端连接成功" && break
-            fi
-            sleep 1
-        done
-
-        echo "  执行 init-mysql.sql..."
-        if $MYSQL_BIN -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" --default-character-set=utf8mb4 < "$MYSQL_SCRIPT" 2>/dev/null; then
-            echo "  [OK] MySQL 初始化完成"
-        else
-            echo "  [WARN] SQL 执行有警告（可能表已存在），继续..."
-        fi
-    else
-        echo "  [WARN] 未找到 MySQL 客户端，跳过 SQL 初始化"
-        echo "  请手动执行: mysql -h $MYSQL_HOST -u $MYSQL_USER -p < init-mysql.sql"
+# 简单 TCP 端口探测，不需要 mysql 客户端
+for i in $(seq 1 30); do
+    if timeout 2 bash -c "echo >/dev/tcp/${MYSQL_HOST}/${MYSQL_PORT}" 2>/dev/null; then
+        echo "  MySQL 端口已开放 (${i}s)"
+        break
     fi
-else
-    echo "  [WARN] 未找到 $MYSQL_SCRIPT，跳过"
-fi
+    # 兜底：用 docker run 一个临时 mysql 客户端检测
+    if [ $i -eq 10 ]; then
+        docker run --rm --network "$NET_NAME" \
+            mysql:5.7 \
+            mysqladmin ping -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" 2>/dev/null && \
+            echo "  MySQL 可连接" && break
+    fi
+    if [ $i -eq 30 ]; then
+        echo "  WARNING: MySQL 未就绪，admin 服务启动可能失败"
+    fi
+    sleep 1
+done
+echo "  (admin 服务启动后将自动建库建表)"
 
 # ─── 1-6. Python 服务 ───
 echo ""
