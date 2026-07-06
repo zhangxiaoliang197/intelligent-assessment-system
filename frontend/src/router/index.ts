@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router'
-import Layout from '@/components/Layout.vue'
 import Portal from '@/pages/Portal.vue'
 import QAService from '@/pages/QAService.vue'
 import IndicatorAnalysis from '@/pages/IndicatorAnalysis.vue'

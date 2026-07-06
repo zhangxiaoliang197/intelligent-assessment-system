@@ -760,8 +760,8 @@ const initData = async () => {
     // 获取历史记录
     try {
       const historyResp = await api.get('/evaluation/history')
-      if (historyResp.history) {
-        historyList.value = historyResp.history
+      if (historyResp.data.history) {
+        historyList.value = historyResp.data.history
       }
     } catch (e) {
       console.log('历史记录接口暂时不可用')
