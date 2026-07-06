@@ -16,7 +16,7 @@
     <artifactId>admin-service</artifactId>
     <version>1.0.0</version>
     <name>admin-service</name>
-    <description>基础管理系统 - 系统配置与管理</description>
+    <description>基础管理系统 - MySQL持久化 + 真实JDBC连接</description>
 
     <properties>
         <java.version>17</java.version>
@@ -33,11 +33,22 @@
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
 
+        <!-- MySQL JDBC Driver -->
         <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <scope>runtime</scope>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <version>8.0.33</version>
         </dependency>
+
+        <!-- PostgreSQL JDBC Driver -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.1</version>
+        </dependency>
+
+        <!-- Dameng JDBC Driver: NOT in Maven Central. If needed, download DmJdbcDriver18.jar
+             from https://www.dameng.com and add to classpath manually. -->
 
         <dependency>
             <groupId>org.projectlombok</groupId>

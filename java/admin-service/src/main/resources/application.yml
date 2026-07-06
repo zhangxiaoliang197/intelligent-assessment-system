@@ -1,19 +1,51 @@
 server:
-  port: 10258
+  port: ${SERVER_PORT:10258}
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
 
 spring:
   application:
     name: admin-service
-  datasource:
-    url: jdbc:h2:file:./data/assessment
-    driver-class-name: org.h2.Driver
+  http:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
   jpa:
     hibernate:
       ddl-auto: update
     show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        connection:
+          characterEncoding: UTF-8
+          useUnicode: true
+          charSet: UTF-8
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info
+
+# ─── 数据库类型配置（docker/环境变量覆盖）───
+# DB_TYPE=mysql   → MySQL 8.x
+# DB_TYPE=postgresql → PostgreSQL 16+
+db:
+  type: ${DB_TYPE:mysql}
+  mysql:
+    host: ${MYSQL_HOST:localhost}
+    port: ${MYSQL_PORT:3306}
+    database: ${MYSQL_DATABASE:assessment}
+    user: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:root}
+  postgresql:
+    host: ${PG_HOST:localhost}
+    port: ${PG_PORT:5432}
+    database: ${PG_DATABASE:assessment}
+    user: ${PG_USER:postgres}
+    password: ${PG_PASSWORD:postgres}

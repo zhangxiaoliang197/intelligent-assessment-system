@@ -27,14 +27,17 @@ service.interceptors.response.use(
   (response) => {
     const res = response.data
     if (res.success === false) {
-      ElMessage.error(res.message || '请求失败')
-      return Promise.reject(new Error(res.message || '请求失败'))
+      const serverMsg = res.message || '请求失败'
+      return Promise.reject({ ...response, serverMessage: serverMsg })
     }
     return res
   },
   (error) => {
-    console.error('响应错误:', error)
-    ElMessage.error(error.message || '网络请求失败')
+    // Extract server error message if available
+    const serverMsg = error?.response?.data?.message
+    const msg = serverMsg || error.message || '网络请求失败'
+    console.error('响应错误:', msg)
+    error.serverMessage = msg
     return Promise.reject(error)
   }
 )
