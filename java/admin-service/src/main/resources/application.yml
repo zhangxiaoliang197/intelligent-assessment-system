@@ -37,6 +37,7 @@ management:
         include: health,info
 
 # ─── 数据库类型配置（docker/环境变量覆盖）───
+# DB_TYPE=h2   → H2 内存数据库
 # DB_TYPE=mysql   → MySQL 8.x
 # DB_TYPE=postgresql → PostgreSQL 16+
 db:
@@ -46,7 +47,7 @@ db:
     port: ${MYSQL_PORT:3306}
     database: ${MYSQL_DATABASE:assessment}
     user: ${MYSQL_USER:root}
-    password: ${MYSQL_PASSWORD:root}
+    password: ${MYSQL_PASSWORD:10251124}
   postgresql:
     host: ${PG_HOST:localhost}
     port: ${PG_PORT:5432}

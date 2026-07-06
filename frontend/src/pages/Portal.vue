@@ -1,32 +1,58 @@
 <template>
-  <Layout>
-    <div class="portal-container">
-      <div class="portal-content">
-        <div class="logo-section">
-          <div class="logo">
-            <img src="/logo.jpg" alt="天基" class="logo-img" />
-          </div>
-          <h1 class="system-name">智能评估系统</h1>
-          <p class="system-subtitle">Intelligent Assessment System</p>
-        </div>
+  <div class="portal-page">
+    <div class="portal-bg">
+      <div class="bg-glow bg-glow-1"></div>
+      <div class="bg-glow bg-glow-2"></div>
+      <div class="bg-grid"></div>
+    </div>
 
-        <div class="search-section">
+    <div class="portal-wrapper">
+      <header class="portal-header">
+        <div class="header-left">
+          <div class="logo-wrap">
+            <div class="logo-icon">
+              <el-icon :size="22"><Cpu /></el-icon>
+            </div>
+            <span class="logo-text">智能评估系统</span>
+          </div>
+        </div>
+        <div class="header-right">
+          <el-button :icon="Setting" circle @click="goToAdmin" />
+          <el-avatar :size="36">{{ username?.charAt(0) || '用' }}</el-avatar>
+        </div>
+      </header>
+
+      <main class="portal-main">
+        <section class="hero-section">
+          <div class="hero-icon">
+            <el-icon :size="44"><MagicStick /></el-icon>
+          </div>
+          <h1 class="hero-title">
+            有什么可以帮您评估？
+          </h1>
+          <p class="hero-subtitle">
+            基于知识库与本体模型，为您提供智能问答、指标分析、方案评估等专业能力
+          </p>
+        </section>
+
+        <section class="search-section">
           <div class="search-box">
             <el-input
               v-model="searchQuery"
-              placeholder="请输入您的问题..."
+              placeholder="请输入您的问题，回车或点击发送"
               size="large"
               class="search-input"
               @keyup.enter="handleSearch"
             >
               <template #prefix>
-                <el-icon><Search /></el-icon>
+                <el-icon class="search-prefix-icon"><Search /></el-icon>
               </template>
               <template #suffix>
-                <div class="search-actions">
-                  <el-button :icon="Upload" text @click="handleFileUpload" />
-                  <el-button :icon="Microphone" text @click="handleVoiceInput" />
-                  <el-button :icon="VideoPlay" text @click="handleVoiceOutput" />
+                <div class="search-suffix">
+                  <el-button :icon="Upload" circle @click="handleFileUpload" />
+                  <el-button type="primary" :icon="Promotion" @click="handleSearch">
+                    发送
+                  </el-button>
                 </div>
               </template>
             </el-input>
@@ -36,42 +62,50 @@
             <div
               v-for="tool in tools"
               :key="tool.id"
-              class="tool-item"
+              class="tool-pill"
+              :style="{ '--tool-color': tool.color }"
               @click="navigateToTool(tool.path)"
             >
-              <div class="tool-icon">
-                <el-icon :size="20" :color="tool.color">
-                  <component :is="tool.icon" />
-                </el-icon>
-              </div>
-              <span class="tool-name">{{ tool.name }}</span>
+              <el-icon :size="16">
+                <component :is="tool.icon" />
+              </el-icon>
+              <span>{{ tool.name }}</span>
             </div>
           </div>
-        </div>
+        </section>
 
-        <div class="systems-section">
-          <h3 class="section-title">辅助系统</h3>
-          <div class="systems-grid">
+        <section class="suggest-section">
+          <div class="section-header">
+            <h3 class="section-title">推荐试试这些</h3>
+          </div>
+          <div class="suggest-grid">
             <div
-              v-for="system in systems"
-              :key="system.id"
-              class="system-card"
-              @click="navigateToSystem(system.path)"
+              v-for="item in suggestList"
+              :key="item.id"
+              class="suggest-card"
+              @click="selectSuggest(item)"
             >
-              <div class="system-icon">
-                <el-icon :size="24" :color="system.color">
-                  <component :is="system.icon" />
+              <div class="suggest-icon" :style="{ '--icon-color': item.color }">
+                <el-icon :size="18">
+                  <component :is="item.icon" />
                 </el-icon>
               </div>
-              <div class="system-info">
-                <h4>{{ system.name }}</h4>
-                <p>{{ system.description }}</p>
+              <div class="suggest-content">
+                <h4>{{ item.title }}</h4>
+                <p>{{ item.desc }}</p>
               </div>
+              <el-icon class="suggest-arrow"><ArrowRight /></el-icon>
             </div>
           </div>
-        </div>
-      </div>
+        </section>
+      </main>
+
+      <footer class="portal-footer">
+        <span>Intelligent Assessment System · 智能评估平台</span>
+      </footer>
     </div>
+
+    <FloatingSidebar />
 
     <input
       ref="fileInputRef"
@@ -79,68 +113,104 @@
       style="display: none"
       @change="handleFileChange"
     />
-  </Layout>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, Upload, Microphone, VideoPlay, ChatDotRound, PieChart, Document, Collection, Box, Cpu } from '@element-plus/icons-vue'
+import {
+  Search,
+  Upload,
+  Promotion,
+  ChatDotRound,
+  PieChart,
+  Document,
+  Setting,
+  ArrowRight,
+  MagicStick,
+  Guide,
+  DataAnalysis,
+  Aim,
+  Box
+} from '@element-plus/icons-vue'
+import FloatingSidebar from '@/components/FloatingSidebar.vue'
 import { ElMessage } from 'element-plus'
-import Layout from '@/components/Layout.vue'
+import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
+const userStore = useUserStore()
 const searchQuery = ref('')
 const fileInputRef = ref<HTMLInputElement | null>(null)
+
+const username = userStore.username || '评估员'
 
 const tools = [
   {
     id: 1,
     name: '智能问答',
     icon: ChatDotRound,
-    color: '#409eff',
+    color: '#3b82f6',
     path: '/qa'
   },
   {
     id: 2,
     name: '指标分析',
     icon: PieChart,
-    color: '#67c23a',
+    color: '#10b981',
     path: '/indicator'
   },
   {
     id: 3,
     name: '方案评估',
     icon: Document,
-    color: '#e6a23c',
+    color: '#f59e0b',
     path: '/evaluation'
   }
 ]
 
-const systems = [
+const suggestList = [
   {
     id: 1,
-    name: '知识库',
-    description: '知识管理与检索',
-    icon: Collection,
-    color: '#909399',
-    path: '/knowledge'
+    title: '装备作战效能评估',
+    desc: '分析装备在复杂战场环境下的综合作战效能',
+    icon: Aim,
+    color: '#3b82f6'
   },
   {
     id: 2,
-    name: '本体模型',
-    description: '本体构建与图谱展示',
-    icon: Box,
-    color: '#f56c6c',
-    path: '/ontology'
+    title: '战斗力指标体系分析',
+    desc: '构建并分析战斗力相关的关键指标体系',
+    icon: DataAnalysis,
+    color: '#10b981'
   },
   {
     id: 3,
-    name: '基础管理',
-    description: '系统配置与管理',
-    icon: Cpu,
-    color: '#5a5ad6',
-    path: '/admin'
+    title: '作战方案可行性评估',
+    desc: '对多套作战方案进行智能对比与评估',
+    icon: Guide,
+    color: '#f59e0b'
+  },
+  {
+    id: 4,
+    title: '知识库检索问答',
+    desc: '基于知识库内容进行精准问答与知识溯源',
+    icon: ChatDotRound,
+    color: '#8b5cf6'
+  },
+  {
+    id: 5,
+    title: '本体模型关系图谱',
+    desc: '可视化展示本体模型的数据关联与层次结构',
+    icon: Box,
+    color: '#ec4899'
+  },
+  {
+    id: 6,
+    title: '评估算法配置管理',
+    desc: '配置与管理各类评估指标的计算算法',
+    icon: PieChart,
+    color: '#06b6d4'
   }
 ]
 
@@ -149,7 +219,10 @@ const handleSearch = () => {
     ElMessage.warning('请输入问题')
     return
   }
-  ElMessage.info('搜索功能开发中')
+  router.push({
+    path: '/qa',
+    query: { q: searchQuery.value }
+  })
 }
 
 const handleFileUpload = () => {
@@ -164,205 +237,347 @@ const handleFileChange = (event: Event) => {
   }
 }
 
-const handleVoiceInput = () => {
-  ElMessage.info('语音输入功能开发中')
-}
-
-const handleVoiceOutput = () => {
-  ElMessage.info('语音输出功能开发中')
+const selectSuggest = (item: any) => {
+  searchQuery.value = item.title
+  setTimeout(() => {
+    handleSearch()
+  }, 100)
 }
 
 const navigateToTool = (path: string) => {
   router.push(path)
 }
 
-const navigateToSystem = (path: string) => {
-  router.push(path)
+const goToAdmin = () => {
+  router.push('/admin')
 }
 </script>
 
 <style scoped>
-.portal-container {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+.portal-page {
+  position: relative;
+  min-height: 100vh;
+  background: var(--bg-page);
+  overflow-x: hidden;
 }
 
-.portal-content {
-  max-width: 700px;
-  width: 100%;
-  z-index: 10;
-  padding: 3rem 2rem;
-}
-
-.logo-section {
-  text-align: center;
-  margin-bottom: 3rem;
-}
-
-.logo {
-  width: 90px;
-  height: 90px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto 1.5rem;
+.portal-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
   overflow: hidden;
 }
 
-.logo-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.bg-glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.4;
 }
 
-.system-name {
+.bg-glow-1 {
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.25) 0%, transparent 70%);
+  top: -150px;
+  right: -100px;
+}
+
+.bg-glow-2 {
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.15) 0%, transparent 70%);
+  bottom: 10%;
+  left: -100px;
+}
+
+.bg-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.1) 1px, transparent 1px);
+  background-size: 60px 60px;
+  mask-image: radial-gradient(ellipse at center top, black 30%, transparent 70%);
+  -webkit-mask-image: radial-gradient(ellipse at center top, black 30%, transparent 70%);
+}
+
+.portal-wrapper {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 180px 0 80px;
+}
+
+.portal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+  flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+}
+
+.logo-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logo-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--primary-500), var(--primary-600));
   color: white;
-  font-size: 2.2rem;
-  font-weight: 600;
-  margin: 0 0 0.5rem 0;
-  letter-spacing: 2px;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
 }
 
-.system-subtitle {
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 0.95rem;
+.logo-text {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.5px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.portal-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 40px 0;
+  gap: 48px;
+}
+
+.hero-section {
+  text-align: center;
+}
+
+.hero-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 20px;
+  border-radius: var(--radius-xl);
+  background: linear-gradient(135deg, var(--primary-500), var(--primary-600));
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.35);
+}
+
+.hero-title {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 12px 0;
+  letter-spacing: -0.5px;
+  line-height: 1.3;
+}
+
+.hero-subtitle {
+  font-size: var(--text-lg);
+  color: var(--text-tertiary);
   margin: 0;
-  letter-spacing: 1px;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+  line-height: 1.6;
 }
 
 .search-section {
-  margin-bottom: 3rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
 }
 
 .search-box {
-  background: white;
-  border-radius: 12px;
-  padding: 0.5rem;
-  margin-bottom: 1.5rem;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+  width: 100%;
+  max-width: 720px;
 }
 
-.search-input :deep(.el-input__wrapper) {
-  background: transparent;
-  box-shadow: none;
-  padding: 1rem 1.5rem;
+.search-input {
+  font-size: var(--text-lg);
 }
 
-.search-input :deep(.el-input__inner) {
-  color: #303133;
-  font-size: 1rem;
+.search-prefix-icon {
+  color: var(--text-muted);
+  font-size: 18px;
 }
 
-.search-input :deep(.el-input__inner::placeholder) {
-  color: #909399;
-}
-
-.search-actions {
+.search-suffix {
   display: flex;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 8px;
+}
+
+.search-suffix .el-button {
+  height: 36px;
 }
 
 .tools-row {
   display: flex;
-  gap: 1rem;
-  justify-content: center;
+  gap: 12px;
   flex-wrap: wrap;
-}
-
-.tool-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 1.2rem;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.tool-item:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-}
-
-.tool-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: rgba(64, 158, 255, 0.1);
-  display: flex;
-  align-items: center;
   justify-content: center;
 }
 
-.tool-name {
-  color: #303133;
-  font-size: 0.9rem;
+.tool-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-normal);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-size: var(--text-sm);
   font-weight: 500;
+  color: var(--text-secondary);
 }
 
-.systems-section {
-  text-align: center;
+.tool-pill:hover {
+  border-color: var(--tool-color);
+  color: var(--tool-color);
+  background: color-mix(in srgb, var(--tool-color) 8%, white);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+.tool-pill .el-icon {
+  color: var(--tool-color);
+}
+
+.section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 16px;
 }
 
 .section-title {
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 0.9rem;
+  font-size: var(--text-lg);
   font-weight: 600;
-  margin: 0 0 1.5rem 0;
-  text-transform: uppercase;
-  letter-spacing: 2px;
+  color: var(--text-primary);
+  margin: 0;
 }
 
-.systems-grid {
+.section-desc {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.suggest-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 1.5rem;
+  gap: 14px;
 }
 
-.system-card {
-  background: white;
-  border-radius: 12px;
-  padding: 1.5rem;
+.suggest-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transition: all var(--transition-fast);
 }
 
-.system-card:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.15);
+.suggest-card:hover {
+  border-color: var(--border-normal);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
 }
 
-.system-icon {
-  width: 50px;
-  height: 50px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+.suggest-icon {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--icon-color) 12%, white);
+  color: var(--icon-color);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0 auto 1rem;
 }
 
-.system-info h4 {
-  color: #303133;
-  font-size: 0.95rem;
+.suggest-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.suggest-content h4 {
+  font-size: var(--text-base);
   font-weight: 600;
-  margin: 0 0 0.5rem 0;
+  color: var(--text-primary);
+  margin: 0 0 4px 0;
 }
 
-.system-info p {
-  color: #909399;
-  font-size: 0.8rem;
+.suggest-content p {
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
   margin: 0;
+  line-height: 1.5;
+}
+
+.suggest-arrow {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: all var(--transition-fast);
+  align-self: center;
+}
+
+.suggest-card:hover .suggest-arrow {
+  opacity: 1;
+  transform: translateX(2px);
+  color: var(--primary-500);
+}
+
+.portal-footer {
+  flex-shrink: 0;
+  text-align: center;
+  padding: 24px 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+  .portal-wrapper {
+    padding: 0 20px;
+  }
+
+  .hero-title {
+    font-size: 28px;
+  }
+
+  .hero-subtitle {
+    font-size: var(--text-base);
+  }
+
+  .suggest-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

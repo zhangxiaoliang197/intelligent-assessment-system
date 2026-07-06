@@ -6,7 +6,7 @@
         <div class="sidebar-section">
           <div class="sidebar-section-header">
             <h3 class="sidebar-title">导航</h3>
-            <el-button size="small" type="primary" text @click="newSession">
+            <el-button class="new-session-btn" type="primary" @click="newSession">
               <el-icon><Plus /></el-icon> 新会话
             </el-button>
           </div>
@@ -70,38 +70,27 @@
             <div class="chat-area custom-scroll" ref="chatArea">
               <!-- 初始推荐问题 -->
               <div v-if="messages.length === 0" class="empty-state">
-                <el-icon :size="80" color="#d1d5db"><DocumentChecked /></el-icon>
-                <p>开始方案评估</p>
                 <div class="tags-section">
-                  <!-- 制空权分析示例 -->
-                  <div class="tag-group">
-                    <h4>制空权分析</h4>
-                    <div class="tags">
-                      <el-tag
-                        v-for="q in airSuperiorityExamples"
-                        :key="q"
-                        class="tag-item"
-                        @click="selectQuestion(q)"
+                  <div class="suggest-cards">
+                      <div
+                        v-for="(item, index) in allSuggestions"
+                        :key="index"
+                        class="suggest-card"
+                        :style="{ '--card-color': item.color }"
+                        @click="selectQuestion(item.text)"
                       >
-                        {{ q }}
-                      </el-tag>
+                        <div class="suggest-icon">
+                          <el-icon :size="20">
+                            <component :is="item.icon" />
+                          </el-icon>
+                        </div>
+                        <div class="suggest-content">
+                          <div class="suggest-title">{{ item.text }}</div>
+                          <div class="suggest-desc">{{ item.desc }}</div>
+                        </div>
+                        <el-icon class="suggest-arrow"><ArrowRight /></el-icon>
+                      </div>
                     </div>
-                  </div>
-                  
-                  <!-- 指标计算示例 -->
-                  <div class="tag-group">
-                    <h4>指标计算</h4>
-                    <div class="tags">
-                      <el-tag
-                        v-for="q in indicatorExamples"
-                        :key="q"
-                        class="tag-item"
-                        @click="selectQuestion(q)"
-                      >
-                        {{ q }}
-                      </el-tag>
-                    </div>
-                  </div>
                 </div>
               </div>
               
@@ -295,7 +284,7 @@
             <el-input
               v-model="inputMessage"
               type="textarea"
-              :rows="2"
+              :rows="3"
               placeholder="输入您的评估需求，如：分析XXX区域的红蓝双方制空权优势对比..."
               @keyup.enter.ctrl="sendMessage"
             />
@@ -374,7 +363,14 @@ import {
   Cpu,
   PieChart,
   Plus,
-  Delete
+  Delete,
+  ArrowRight,
+  Aim,
+  Guide,
+  DataAnalysis,
+  Histogram,
+  TrendCharts,
+  Coin
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
 import api from '@/services/api'
@@ -441,16 +437,51 @@ const persistState = () => {
 
 // 制空权分析示例
 const airSuperiorityExamples = [
-  '分析A区域的红蓝双方制空权优势对比',
-  '评估B区域的空中优势情况',
-  '对比红蓝双方的制空能力'
+  {
+    text: '分析A区域的红蓝双方制空权优势对比',
+    desc: '区域空中优势对比分析',
+    icon: 'Aim',
+    color: '#3b82f6'
+  },
+  {
+    text: '评估B区域的空中优势情况',
+    desc: '区域制空能力评估',
+    icon: 'Guide',
+    color: '#ef4444'
+  },
+  {
+    text: '对比红蓝双方的制空能力',
+    desc: '双方制空能力综合对比',
+    icon: 'TrendCharts',
+    color: '#8b5cf6'
+  }
 ]
 
 // 指标计算示例
 const indicatorExamples = [
-  '计算本月任务完成率指标',
-  '查询各区域作战效能指标',
-  '统计武器系统作战成功率'
+  {
+    text: '计算本月任务完成率指标',
+    desc: '任务完成率统计分析',
+    icon: 'DataAnalysis',
+    color: '#10b981'
+  },
+  {
+    text: '查询各区域作战效能指标',
+    desc: '区域效能指标分布查询',
+    icon: 'Histogram',
+    color: '#f59e0b'
+  },
+  {
+    text: '统计武器系统作战成功率',
+    desc: '武器系统效能统计',
+    icon: 'Coin',
+    color: '#ec4899'
+  }
+]
+
+const allSuggestions = [
+  ...airSuperiorityExamples,
+  ...indicatorExamples
 ]
 
 // 导航
@@ -785,88 +816,115 @@ onMounted(() => {
 .solution-container {
   display: flex;
   height: 100%;
-  background: white;
+  background: transparent;
 }
 
 .sidebar {
   width: 260px;
-  background: #f8fafc;
-  border-right: 1px solid #e2e8f0;
-  padding: 1.5rem;
+  flex-shrink: 0;
+  padding: 16px 12px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .sidebar-section {
-  margin-bottom: 2rem;
-}
-
-.sidebar-title {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: #64748b;
-  text-transform: uppercase;
-  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 0;
 }
 
 .sidebar-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0;
+  padding: 0 8px;
 }
 
-.sidebar-section-header .sidebar-title {
+.sidebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
   margin-bottom: 0;
+}
+
+.new-session-btn {
+  height: 32px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  padding: 0 12px !important;
+  border-radius: 8px !important;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem;
-  border-radius: 0.5rem;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
-  color: #374151;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .nav-item:hover {
-  background: #e2e8f0;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text-primary);
 }
 
 .history-list {
-  max-height: 400px;
+  flex: 1;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: none;
 }
 
 .history-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.5rem;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
-  color: #6b7280;
-  font-size: 0.9rem;
+  color: var(--text-secondary);
 }
 
 .history-item:hover {
-  background: #e2e8f0;
-  color: #374151;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text-primary);
 }
 
 .history-item.active {
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--primary-600);
+  border: none;
 }
 
 .history-item-main {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 10px;
   flex: 1;
   min-width: 0;
+}
+
+.history-item .el-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.history-item.active .el-icon {
+  color: var(--primary-500);
 }
 
 .history-delete-btn {
@@ -883,62 +941,79 @@ onMounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 2px;
+  min-width: 0;
 }
 
 .history-item-title {
-  font-size: 0.9rem;
-  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .history-item-time {
-  font-size: 0.75rem;
-  color: #9ca3af;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .main-content {
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-width: 0;
   overflow: hidden;
+  gap: 0;
+  background: var(--bg-card);
+  border-left: none;
+  border-right: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .top-bar {
   display: flex;
   justify-content: flex-end;
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid #e2e8f0;
-  background: #fafafa;
+  padding: 14px 24px;
+  border-bottom: none;
+  background: transparent;
+  flex-shrink: 0;
 }
 
 .data-source-selector {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 10px;
 }
 
 .label {
-  font-size: 0.9rem;
-  color: #64748b;
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
 }
 
 .content-area {
   flex: 1;
   display: flex;
   overflow: hidden;
+  gap: 0;
 }
 
 .chat-panel {
   flex: 1;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #e2e8f0;
+  border-right: none;
+  padding: 0;
+  gap: 0;
 }
 
 .chat-area {
   flex: 1;
   overflow-y: auto;
-  padding: 1.5rem;
+  padding: 24px 20px;
 }
 
 .empty-state {
@@ -946,50 +1021,147 @@ onMounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  padding-top: 2rem;
-  color: #9ca3af;
+  padding-top: 80px;
   height: 100%;
+  color: var(--text-muted);
+  gap: 0;
+}
+
+.empty-state > .el-icon {
+  color: var(--gray-200) !important;
 }
 
 .empty-state p {
-  margin-top: 1rem;
-  font-size: 1.1rem;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .tags-section {
-  margin-top: 2rem;
+  margin-top: 0;
   width: 100%;
-  max-width: 800px;
+  max-width: 720px;
+  padding: 0 20px;
 }
 
 .tag-group {
-  margin-bottom: 2rem;
+  margin-bottom: 0;
 }
 
 .tag-group h4 {
-  font-size: 1.1rem;
-  color: #475569;
-  margin-bottom: 1rem;
-  text-align: center;
+  font-size: 14px;
   font-weight: 600;
+  color: var(--text-tertiary);
+  margin-bottom: 16px;
+  text-align: center;
+  letter-spacing: 0.5px;
 }
 
-.tags {
+.suggest-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.suggest-card {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  justify-content: center;
-}
-
-.tag-item {
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--gray-50);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
   cursor: pointer;
-  transition: all 0.2s;
-  padding: 0.6rem 1rem !important;
-  font-size: 0.95rem !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
 }
 
-.tag-item:hover {
+.suggest-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--card-color);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.suggest-card:hover {
+  background: white;
+  border-color: color-mix(in srgb, var(--card-color) 30%, white);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+}
+
+.suggest-card:hover::before {
+  opacity: 1;
+}
+
+.suggest-icon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--card-color) 12%, white);
+  color: var(--card-color);
+  transition: all 0.2s;
+}
+
+.suggest-card:hover .suggest-icon {
+  background: var(--card-color);
+  color: white;
   transform: scale(1.05);
+}
+
+.suggest-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.suggest-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
+  transition: color 0.2s;
+}
+
+.suggest-card:hover .suggest-title {
+  color: var(--card-color);
+}
+
+.suggest-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.suggest-arrow {
+  flex-shrink: 0;
+  font-size: 14px;
+  color: var(--text-muted);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: all 0.2s;
+}
+
+.suggest-card:hover .suggest-arrow {
+  opacity: 1;
+  transform: translateX(0);
+  color: var(--card-color);
 }
 
 .message-list {
@@ -1385,9 +1557,13 @@ onMounted(() => {
 }
 
 .input-area {
-  background: white;
-  padding: 1rem;
-  border-top: 1px solid #e2e8f0;
+  flex-shrink: 0;
+  padding: 16px 40px 24px;
+  background: linear-gradient(to top, var(--bg-card) 60%, transparent);
+  border: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
 .tools-bar {
@@ -1447,14 +1623,46 @@ onMounted(() => {
 
 .input-wrapper {
   position: relative;
+  max-width: 1000px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.input-wrapper :deep(.el-textarea__inner) {
+  border-radius: 16px !important;
+  border-color: var(--border-normal) !important;
+  padding: 16px 100px 16px 20px !important;
+  font-size: 15px !important;
+  line-height: 1.6 !important;
+  transition: all 0.2s !important;
+  background: var(--gray-50) !important;
+  resize: none;
+}
+
+.input-wrapper :deep(.el-textarea__inner:hover) {
+  border-color: var(--primary-400) !important;
+  background: white !important;
+}
+
+.input-wrapper :deep(.el-textarea__inner:focus) {
+  border-color: var(--primary-500) !important;
+  background: white !important;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1) !important;
 }
 
 .input-actions {
   position: absolute;
-  bottom: 1rem;
-  right: 1rem;
+  bottom: 14px;
+  right: 16px;
   display: flex;
   justify-content: flex-end;
+}
+
+.input-actions .el-button {
+  height: 38px;
+  padding: 0 22px;
+  border-radius: 10px;
+  font-weight: 500;
 }
 
 .data-source-list {

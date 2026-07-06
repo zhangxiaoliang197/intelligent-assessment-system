@@ -47,6 +47,13 @@
             <version>42.7.1</version>
         </dependency>
 
+        <!-- H2 内存数据库（开发环境） -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Dameng JDBC Driver: NOT in Maven Central. If needed, download DmJdbcDriver18.jar
              from https://www.dameng.com and add to classpath manually. -->
 

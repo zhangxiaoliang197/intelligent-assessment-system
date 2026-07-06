@@ -5,7 +5,7 @@
         <div class="sidebar-section">
           <div class="sidebar-section-header">
             <h3 class="sidebar-title">导航</h3>
-            <el-button size="small" type="primary" text @click="newSession">
+            <el-button class="new-session-btn" type="primary" @click="newSession">
               <el-icon><Plus /></el-icon> 新会话
             </el-button>
           </div>
@@ -51,23 +51,27 @@
       <div class="main-content">
         <div class="chat-area custom-scroll" ref="chatArea">
           <div v-if="messages.length === 0" class="empty-state">
-            <el-icon :size="80" color="#d1d5db"><PieChart /></el-icon>
-            <p>开始指标分析</p>
             <div class="tags-section">
-              <div class="tag-group">
-                <h4>推荐指标</h4>
-                <div class="tags">
-                  <el-tag
-                    v-for="tag in allIndicators"
-                    :key="tag.text"
-                    class="tag-item"
-                    :type="tag.isHot ? 'warning' : ''"
-                    @click="selectIndicator(tag.text)"
+              <div class="suggest-cards">
+                  <div
+                    v-for="(item, index) in allIndicators"
+                    :key="index"
+                    class="suggest-card"
+                    :style="{ '--card-color': item.color }"
+                    @click="selectIndicator(item.text)"
                   >
-                    {{ tag.text }}
-                  </el-tag>
+                    <div class="suggest-icon">
+                      <el-icon :size="20">
+                        <component :is="item.icon" />
+                      </el-icon>
+                    </div>
+                    <div class="suggest-content">
+                      <div class="suggest-title">{{ item.text }}</div>
+                      <div class="suggest-desc">{{ item.desc }}</div>
+                    </div>
+                    <el-icon class="suggest-arrow"><ArrowRight /></el-icon>
+                  </div>
                 </div>
-              </div>
             </div>
           </div>
           <div v-else class="message-list">
@@ -150,7 +154,7 @@
             <el-input
               v-model="inputMessage"
               type="textarea"
-              :rows="2"
+              :rows="3"
               placeholder="输入指标需求，如：帮我分析火力打击任务完成度指标..."
               @keyup.enter="analyzeIndicator"
             />
@@ -186,7 +190,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete } from '@element-plus/icons-vue'
+import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete, ArrowRight, Aim, Guide, DataAnalysis, Shield, CircleCheck, Timer, Bullseye, Coin, Histogram } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
@@ -250,22 +254,62 @@ const persistState = () => {
 }
 
 const recommendedIndicators = [
-  '作战效能',
-  '打击能力',
-  '生存能力',
-  '保障能力'
+  {
+    text: '作战效能',
+    desc: '综合作战效能指标体系分析',
+    icon: 'Aim',
+    color: '#3b82f6'
+  },
+  {
+    text: '打击能力',
+    desc: '装备打击能力评估指标',
+    icon: 'Guide',
+    color: '#ef4444'
+  },
+  {
+    text: '生存能力',
+    desc: '战场生存能力评估维度',
+    icon: 'Shield',
+    color: '#8b5cf6'
+  },
+  {
+    text: '保障能力',
+    desc: '后勤保障能力评估体系',
+    icon: 'Box',
+    color: '#06b6d4'
+  }
 ]
 
 const hotIndicators = [
-  '任务完成度',
-  '响应时间',
-  '准确率',
-  '覆盖率'
+  {
+    text: '任务完成度',
+    desc: '作战任务完成情况分析',
+    icon: 'CircleCheck',
+    color: '#10b981'
+  },
+  {
+    text: '响应时间',
+    desc: '系统响应速度指标分析',
+    icon: 'Timer',
+    color: '#f59e0b'
+  },
+  {
+    text: '准确率',
+    desc: '命中精度与准确性评估',
+    icon: 'Bullseye',
+    color: '#ec4899'
+  },
+  {
+    text: '覆盖率',
+    desc: '探测与打击覆盖范围',
+    icon: 'Histogram',
+    color: '#14b8a6'
+  }
 ]
 
 const allIndicators = computed(() => [
-  ...recommendedIndicators.map(text => ({ text, isHot: false })),
-  ...hotIndicators.map(text => ({ text, isHot: true }))
+  ...recommendedIndicators.map(q => ({ ...q, isHot: false })),
+  ...hotIndicators.map(q => ({ ...q, isHot: true }))
 ])
 
 const goTo = (path: string) => {
@@ -562,88 +606,115 @@ onMounted(() => {
 .indicator-container {
   display: flex;
   height: 100%;
-  background: white;
+  background: transparent;
 }
 
 .sidebar {
   width: 260px;
-  background: #f8fafc;
-  border-right: 1px solid #e2e8f0;
-  padding: 1.5rem;
+  flex-shrink: 0;
+  padding: 16px 12px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .sidebar-section {
-  margin-bottom: 2rem;
-}
-
-.sidebar-title {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: #64748b;
-  text-transform: uppercase;
-  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 0;
 }
 
 .sidebar-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0;
+  padding: 0 8px;
 }
 
-.sidebar-section-header .sidebar-title {
+.sidebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
   margin-bottom: 0;
+}
+
+.new-session-btn {
+  height: 32px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  padding: 0 12px !important;
+  border-radius: 8px !important;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem;
-  border-radius: 0.5rem;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
-  color: #374151;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .nav-item:hover {
-  background: #e2e8f0;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text-primary);
 }
 
 .history-list {
-  max-height: 400px;
+  flex: 1;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: none;
 }
 
 .history-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.5rem;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
-  color: #6b7280;
-  font-size: 0.9rem;
+  color: var(--text-secondary);
 }
 
 .history-item:hover {
-  background: #e2e8f0;
-  color: #374151;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text-primary);
 }
 
 .history-item.active {
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--primary-600);
+  border: none;
 }
 
 .history-item-main {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 10px;
   flex: 1;
   min-width: 0;
+}
+
+.history-item .el-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.history-item.active .el-icon {
+  color: var(--primary-500);
 }
 
 .history-delete-btn {
@@ -660,38 +731,56 @@ onMounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 2px;
+  min-width: 0;
 }
 
 .history-item-title {
-  font-size: 0.9rem;
-  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .history-item-time {
-  font-size: 0.75rem;
-  color: #9ca3af;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .history-search {
-  margin-top: 1rem;
+  margin-top: 4px;
+}
+
+.history-search :deep(.el-input__wrapper) {
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--border-normal) inset;
+  background: var(--bg-card);
 }
 
 .main-content {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 1.5rem;
-  overflow-y: auto;
+  min-width: 0;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  background: var(--bg-card);
+  border-left: 1px solid var(--border-light);
+  border-right: 1px solid var(--border-light);
 }
 
 .chat-area {
   flex: 1;
   overflow-y: auto;
-  margin-bottom: 1rem;
-  padding: 1rem;
-  background: #f9fafb;
-  border-radius: 0.75rem;
+  margin-bottom: 0;
+  padding: 40px 0 20px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .empty-state {
@@ -699,60 +788,160 @@ onMounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  padding-top: 3rem;
-  color: #9ca3af;
+  padding-top: 80px;
   height: 100%;
+  color: var(--text-muted);
+  gap: 0;
+}
+
+.empty-state > .el-icon {
+  color: var(--gray-200) !important;
 }
 
 .empty-state p {
-  margin-top: 1rem;
-  font-size: 1.1rem;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .tags-section {
-  margin-top: 2rem;
+  margin-top: 0;
   width: 100%;
-  max-width: 900px;
+  max-width: 800px;
+  padding: 0 40px;
 }
 
 .tag-group {
-  margin-bottom: 1.5rem;
+  margin-bottom: 24px;
 }
 
 .tag-group h4 {
-  font-size: 1.1rem;
-  color: #475569;
-  margin-bottom: 1rem;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
   text-align: center;
 }
 
-.tags {
+.suggest-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.suggest-card {
   display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  justify-content: center;
-}
-
-.tag-item {
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--gray-50);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
   cursor: pointer;
-  transition: all 0.2s;
-  padding: 0.75rem 1.25rem !important;
-  font-size: 1.05rem !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
 }
 
-.tag-item:hover {
+.suggest-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--card-color);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.suggest-card:hover {
+  background: white;
+  border-color: color-mix(in srgb, var(--card-color) 30%, white);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+}
+
+.suggest-card:hover::before {
+  opacity: 1;
+}
+
+.suggest-icon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--card-color) 12%, white);
+  color: var(--card-color);
+  transition: all 0.2s;
+}
+
+.suggest-card:hover .suggest-icon {
+  background: var(--card-color);
+  color: white;
   transform: scale(1.05);
+}
+
+.suggest-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.suggest-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
+  transition: color 0.2s;
+}
+
+.suggest-card:hover .suggest-title {
+  color: var(--card-color);
+}
+
+.suggest-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.suggest-arrow {
+  flex-shrink: 0;
+  font-size: 14px;
+  color: var(--text-muted);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: all 0.2s;
+}
+
+.suggest-card:hover .suggest-arrow {
+  opacity: 1;
+  transform: translateX(0);
+  color: var(--card-color);
 }
 
 .message-list {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 28px;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 40px;
 }
 
 .message {
   display: flex;
-  gap: 1rem;
+  gap: 16px;
 }
 
 .message.user {
@@ -760,27 +949,42 @@ onMounted(() => {
 }
 
 .message-content {
-  max-width: 90%;
+  max-width: 85%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.message.user .message-content {
+  align-items: flex-end;
+}
+
+.message-avatar {
+  flex-shrink: 0;
+  padding-top: 2px;
 }
 
 .message-text {
-  padding: 1rem;
-  border-radius: 0.75rem;
-  line-height: 1.8;
-  font-size: 1.05rem;
+  padding: 14px 18px;
+  border-radius: 16px;
+  line-height: 1.75;
+  font-size: 15px;
   white-space: pre-wrap;
   word-wrap: break-word;
 }
 
 .message.user .message-text {
-  background: #409eff;
+  background: linear-gradient(135deg, #4f8cff 0%, #3b82f6 100%);
   color: white;
+  border-bottom-right-radius: 4px;
 }
 
 .message.assistant .message-text {
-  background: white;
-  border: 1px solid #e2e8f0;
-  color: #374151;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 0;
+  border-radius: 0;
+  border: none;
 }
 
 /* AI响应区域样式 */
@@ -905,76 +1109,123 @@ onMounted(() => {
 }
 
 .input-area {
-  background: white;
-  padding: 1rem;
-  border-radius: 0.75rem;
-  box-shadow: 0 -4px 6px rgba(0, 0, 0, 0.05);
+  flex-shrink: 0;
+  padding: 16px 40px 24px;
+  background: linear-gradient(to top, var(--bg-card) 60%, transparent);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
 .tools-bar {
   display: flex;
-  gap: 0.75rem;
+  gap: 8px;
   justify-content: center;
   flex-wrap: wrap;
-  margin-bottom: 1rem;
+  margin-bottom: 14px;
 }
 
 .tools-bar .tool-item {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
-  padding: 0.5rem 1rem;
-  background: #f5f7fa;
-  border-radius: 6px;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--gray-50);
+  border-radius: 20px;
   cursor: pointer;
-  transition: all 0.2s ease;
-  border: 1px solid transparent;
+  transition: all 0.2s;
+  border: 1px solid var(--border-light);
 }
 
 .tools-bar .tool-item:hover {
-  background: #eff6ff;
-  border-color: #409eff;
+  background: white;
+  border-color: var(--primary-300);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
 }
 
 .tools-bar .tool-item.current {
-  background: #409eff;
-  border-color: #409eff;
+  background: var(--primary-500);
+  border-color: var(--primary-500);
   cursor: default;
 }
 
 .tools-bar .tool-icon {
-  width: 24px;
-  height: 24px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.8);
   display: flex;
   align-items: center;
   justify-content: center;
+  color: inherit;
 }
 
 .tools-bar .tool-item.current .tool-icon {
-  background: rgba(255, 255, 255, 0.2);
+  background: transparent;
 }
 
 .tools-bar .tool-name {
-  color: #606266;
-  font-size: 0.85rem;
+  font-size: 13px;
   font-weight: 500;
+  color: var(--text-secondary);
 }
 
 .tools-bar .tool-item.current .tool-name {
   color: white;
 }
 
+.tools-bar .tool-item:hover .tool-name {
+  color: var(--primary-600);
+}
+
+.tools-bar .tool-item.current:hover .tool-name {
+  color: white;
+}
+
 .input-wrapper {
   position: relative;
+  max-width: 1000px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.input-wrapper :deep(.el-textarea__inner) {
+  border-radius: 16px !important;
+  border-color: var(--border-normal) !important;
+  padding: 16px 100px 16px 20px !important;
+  font-size: 15px !important;
+  line-height: 1.6 !important;
+  transition: all 0.2s !important;
+  background: var(--gray-50) !important;
+  resize: none;
+}
+
+.input-wrapper :deep(.el-textarea__inner:hover) {
+  border-color: var(--primary-400) !important;
+  background: white !important;
+}
+
+.input-wrapper :deep(.el-textarea__inner:focus) {
+  border-color: var(--primary-500) !important;
+  background: white !important;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1) !important;
 }
 
 .input-actions {
   position: absolute;
-  bottom: 1rem;
-  right: 1rem;
+  bottom: 14px;
+  right: 16px;
   display: flex;
   justify-content: flex-end;
+}
+
+.input-actions .el-button {
+  height: 38px;
+  padding: 0 22px;
+  border-radius: 10px;
+  font-weight: 500;
+  font-size: 14px;
 }
 </style>

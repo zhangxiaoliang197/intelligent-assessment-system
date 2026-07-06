@@ -5,7 +5,7 @@
         <div class="sidebar-section">
           <div class="sidebar-section-header">
             <h3 class="sidebar-title">导航</h3>
-            <el-button size="small" type="primary" text @click="newSession">
+            <el-button class="new-session-btn" type="primary" @click="newSession">
               <el-icon><Plus /></el-icon> 新会话
             </el-button>
           </div>
@@ -51,23 +51,27 @@
       <div class="main-content">
         <div class="chat-area custom-scroll">
           <div v-if="messages.length === 0" class="empty-state">
-            <el-icon :size="80" color="#d1d5db"><ChatDotRound /></el-icon>
-            <p>开始智能问答之旅</p>
             <div class="tags-section">
-              <div class="tag-group">
-                <h4>推荐问题</h4>
-                <div class="tags">
-                  <el-tag
-                    v-for="tag in allQuestions"
-                    :key="tag"
-                    class="tag-item"
-                    :type="tag.isHot ? 'warning' : ''"
-                    @click="selectQuestion(tag.text)"
+              <div class="suggest-cards">
+                  <div
+                    v-for="(item, index) in allQuestions"
+                    :key="index"
+                    class="suggest-card"
+                    :style="{ '--card-color': item.color }"
+                    @click="selectQuestion(item.text)"
                   >
-                    {{ tag.text }}
-                  </el-tag>
+                    <div class="suggest-icon">
+                      <el-icon :size="20">
+                        <component :is="item.icon" />
+                      </el-icon>
+                    </div>
+                    <div class="suggest-content">
+                      <div class="suggest-title">{{ item.text }}</div>
+                      <div class="suggest-desc">{{ item.desc }}</div>
+                    </div>
+                    <el-icon class="suggest-arrow"><ArrowRight /></el-icon>
+                  </div>
                 </div>
-              </div>
             </div>
           </div>
           <div v-else class="message-list">
@@ -134,7 +138,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, Collection, Box, ChatLineRound, ChatDotRound, Promotion, PieChart, Document, Plus, Delete } from '@element-plus/icons-vue'
+import { Search, Collection, Box, ChatLineRound, ChatDotRound, Promotion, PieChart, Document, Plus, Delete, ArrowRight, Aim, Guide, DataAnalysis, Shield, CircleCheck } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import Layout from '@/components/Layout.vue'
 import api from '@/services/api'
@@ -194,22 +198,62 @@ const persistState = () => {
 }
 
 const recommendedQuestions = [
-  '作战效能指标有哪些？',
-  '如何评估打击能力？',
-  '评估方案查询',
-  '指标算法详解'
+  {
+    text: '作战效能指标有哪些？',
+    desc: '了解作战效能评估的核心指标体系',
+    icon: 'Aim',
+    color: '#3b82f6'
+  },
+  {
+    text: '如何评估打击能力？',
+    desc: '分析装备打击能力的评估方法',
+    icon: 'Guide',
+    color: '#ef4444'
+  },
+  {
+    text: '评估方案查询',
+    desc: '快速检索已有的评估方案',
+    icon: 'Document',
+    color: '#10b981'
+  },
+  {
+    text: '指标算法详解',
+    desc: '深入了解各项指标的计算方法',
+    icon: 'DataAnalysis',
+    color: '#f59e0b'
+  }
 ]
 
 const hotQuestions = [
-  '生存能力指标',
-  '保障能力指标',
-  '任务完成度评估',
-  '综合效能分析'
+  {
+    text: '生存能力指标',
+    desc: '装备战场生存能力评估维度',
+    icon: 'Shield',
+    color: '#8b5cf6'
+  },
+  {
+    text: '保障能力指标',
+    desc: '后勤保障能力评估体系',
+    icon: 'Box',
+    color: '#06b6d4'
+  },
+  {
+    text: '任务完成度评估',
+    desc: '作战任务完成情况分析方法',
+    icon: 'CircleCheck',
+    color: '#ec4899'
+  },
+  {
+    text: '综合效能分析',
+    desc: '多维度综合作战效能评估',
+    icon: 'PieChart',
+    color: '#14b8a6'
+  }
 ]
 
 const allQuestions = computed(() => [
-  ...recommendedQuestions.map(text => ({ text, isHot: false })),
-  ...hotQuestions.map(text => ({ text, isHot: true }))
+  ...recommendedQuestions.map(q => ({ ...q, isHot: false })),
+  ...hotQuestions.map(q => ({ ...q, isHot: true }))
 ])
 
 const goTo = (path: string) => {
@@ -379,88 +423,115 @@ onMounted(() => {
 .qa-container {
   display: flex;
   height: 100%;
-  background: white;
+  background: transparent;
 }
 
 .sidebar {
   width: 260px;
-  background: #f8fafc;
-  border-right: 1px solid #e2e8f0;
-  padding: 1.5rem;
+  flex-shrink: 0;
+  padding: 16px 12px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .sidebar-section {
-  margin-bottom: 2rem;
-}
-
-.sidebar-title {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: #64748b;
-  text-transform: uppercase;
-  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .sidebar-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.5rem;
+  padding: 0 8px;
 }
 
-.sidebar-section-header .sidebar-title {
-  margin-bottom: 0;
+.sidebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  margin: 0;
+}
+
+.new-session-btn {
+  height: 32px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  padding: 0 12px !important;
+  border-radius: 8px !important;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem;
-  border-radius: 0.5rem;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
-  color: #374151;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .nav-item:hover {
-  background: #e2e8f0;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text-primary);
+}
+
+.nav-item .el-icon {
+  font-size: 18px;
 }
 
 .history-list {
-  max-height: 400px;
+  flex: 1;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .history-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.5rem;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
-  color: #6b7280;
-  font-size: 0.9rem;
+  color: var(--text-secondary);
 }
 
 .history-item:hover {
-  background: #e2e8f0;
-  color: #374151;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text-primary);
 }
 
 .history-item.active {
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--primary-600);
 }
 
 .history-item-main {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 10px;
   flex: 1;
   min-width: 0;
+}
+
+.history-item .el-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.history-item.active .el-icon {
+  color: var(--primary-500);
 }
 
 .history-delete-btn {
@@ -477,73 +548,48 @@ onMounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 2px;
+  min-width: 0;
 }
 
 .history-item-title {
-  font-size: 0.9rem;
-  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .history-item-time {
-  font-size: 0.75rem;
-  color: #9ca3af;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .history-search {
-  margin-top: 1rem;
+  margin-top: 4px;
+}
+
+.history-search :deep(.el-input__wrapper) {
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--border-normal) inset;
+  background: var(--bg-card);
 }
 
 .main-content {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 1.5rem;
-  overflow: hidden;
-}
-
-.tags-section {
-  margin-top: 2rem;
-  width: 100%;
-  max-width: 900px;
-}
-
-.tag-group {
-  margin-bottom: 1.5rem;
-}
-
-.tag-group h4 {
-  font-size: 1.1rem;
-  color: #475569;
-  margin-bottom: 1rem;
-  text-align: center;
-}
-
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  justify-content: center;
-}
-
-.tag-item {
-  cursor: pointer;
-  transition: all 0.2s;
-  padding: 0.75rem 1.25rem !important;
-  font-size: 1.05rem !important;
-}
-
-.tag-item:hover {
-  transform: scale(1.05);
+  min-width: 0;
+  background: var(--bg-card);
+  border-left: 1px solid var(--border-light);
+  border-right: 1px solid var(--border-light);
 }
 
 .chat-area {
   flex: 1;
   overflow-y: auto;
-  margin-bottom: 1rem;
-  padding: 1rem;
-  background: #f9fafb;
-  border-radius: 0.75rem;
+  padding: 40px 0 20px;
 }
 
 .empty-state {
@@ -551,25 +597,161 @@ onMounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  padding-top: 3rem;
-  color: #9ca3af;
+  padding-top: 80px;
   height: 100%;
+  color: var(--text-muted);
+  gap: 0;
+}
+
+.empty-state > .el-icon {
+  color: var(--gray-200) !important;
 }
 
 .empty-state p {
-  margin-top: 1rem;
-  font-size: 1.1rem;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tags-section {
+  margin-top: 0;
+  width: 100%;
+  max-width: 720px;
+  padding: 0 20px;
+}
+
+.tag-group {
+  margin-bottom: 0;
+}
+
+.tag-group h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  margin-bottom: 16px;
+  text-align: center;
+  letter-spacing: 0.5px;
+}
+
+.suggest-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.suggest-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--gray-50);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.suggest-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--card-color);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.suggest-card:hover {
+  background: white;
+  border-color: color-mix(in srgb, var(--card-color) 30%, white);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+}
+
+.suggest-card:hover::before {
+  opacity: 1;
+}
+
+.suggest-icon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--card-color) 12%, white);
+  color: var(--card-color);
+  transition: all 0.2s;
+}
+
+.suggest-card:hover .suggest-icon {
+  background: var(--card-color);
+  color: white;
+  transform: scale(1.05);
+}
+
+.suggest-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.suggest-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
+  transition: color 0.2s;
+}
+
+.suggest-card:hover .suggest-title {
+  color: var(--card-color);
+}
+
+.suggest-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.suggest-arrow {
+  flex-shrink: 0;
+  font-size: 14px;
+  color: var(--text-muted);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: all 0.2s;
+}
+
+.suggest-card:hover .suggest-arrow {
+  opacity: 1;
+  transform: translateX(0);
+  color: var(--card-color);
 }
 
 .message-list {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 28px;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 40px;
 }
 
 .message {
   display: flex;
-  gap: 1rem;
+  gap: 16px;
 }
 
 .message.user {
@@ -577,119 +759,212 @@ onMounted(() => {
 }
 
 .message-content {
-  max-width: 70%;
+  max-width: 80%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.message.user .message-content {
+  align-items: flex-end;
+}
+
+.message-avatar {
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.message.user .message-avatar {
+  padding-top: 2px;
 }
 
 .message-text {
-  padding: 1rem;
-  border-radius: 0.75rem;
-  line-height: 1.8;
-  font-size: 1.05rem;
+  padding: 14px 18px;
+  border-radius: 16px;
+  line-height: 1.75;
+  font-size: 15px;
   white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 .message.user .message-text {
-  background: #3b82f6;
+  background: linear-gradient(135deg, #4f8cff 0%, #3b82f6 100%);
   color: white;
+  border-bottom-right-radius: 4px;
 }
 
 .message.assistant .message-text {
-  background: white;
-  border: 1px solid #e2e8f0;
-  color: #374151;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 0;
+  border-radius: 0;
 }
 
 .references {
-  margin-top: 1rem;
-  padding: 1rem;
-  background: #f9fafb;
-  border-radius: 0.5rem;
-  font-size: 0.95rem;
+  margin-top: 8px;
+  padding: 12px 16px;
+  background: var(--gray-50);
+  border-radius: 12px;
+  font-size: 13px;
+  border: 1px solid var(--border-light);
 }
 
 .references h5 {
-  margin: 0 0 0.5rem 0;
-  color: #64748b;
-  font-size: 0.95rem;
+  margin: 0 0 8px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .references ul {
   margin: 0;
-  padding-left: 1.5rem;
-  color: #6b7280;
+  padding-left: 20px;
+  color: var(--text-tertiary);
 }
 
 .input-area {
-  background: white;
-  padding: 1rem;
-  border-radius: 0.75rem;
-  box-shadow: 0 -4px 6px rgba(0, 0, 0, 0.05);
+  flex-shrink: 0;
+  padding: 16px 40px 24px;
+  background: linear-gradient(to top, var(--bg-card) 60%, transparent);
 }
 
 .tools-bar {
   display: flex;
-  gap: 0.75rem;
+  gap: 8px;
   justify-content: center;
   flex-wrap: wrap;
-  margin-bottom: 1rem;
+  margin-bottom: 14px;
 }
 
 .tools-bar .tool-item {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
-  padding: 0.5rem 1rem;
-  background: #f5f7fa;
-  border-radius: 6px;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--gray-50);
+  border-radius: 20px;
   cursor: pointer;
-  transition: all 0.2s ease;
-  border: 1px solid transparent;
+  transition: all 0.2s;
+  border: 1px solid var(--border-light);
 }
 
 .tools-bar .tool-item:hover {
-  background: #eff6ff;
-  border-color: #409eff;
+  background: white;
+  border-color: var(--primary-300);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
 }
 
 .tools-bar .tool-item.current {
-  background: #409eff;
-  border-color: #409eff;
+  background: var(--primary-500);
+  border-color: var(--primary-500);
   cursor: default;
 }
 
 .tools-bar .tool-icon {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.8);
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.tools-bar .tool-item.current .tool-icon {
-  background: rgba(255, 255, 255, 0.2);
+  color: inherit;
 }
 
 .tools-bar .tool-name {
-  color: #606266;
-  font-size: 0.85rem;
+  font-size: 13px;
   font-weight: 500;
+  color: var(--text-secondary);
 }
 
 .tools-bar .tool-item.current .tool-name {
   color: white;
 }
 
+.tools-bar .tool-item:hover .tool-name {
+  color: var(--primary-600);
+}
+
+.tools-bar .tool-item.current:hover .tool-name {
+  color: white;
+}
+
 .input-wrapper {
   position: relative;
+  max-width: 1000px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.input-wrapper :deep(.el-textarea__inner) {
+  border-radius: 16px !important;
+  border-color: var(--border-normal) !important;
+  padding: 16px 100px 16px 20px !important;
+  font-size: 15px !important;
+  line-height: 1.6 !important;
+  transition: all 0.2s !important;
+  background: var(--gray-50) !important;
+  resize: none;
+}
+
+.input-wrapper :deep(.el-textarea__inner:hover) {
+  border-color: var(--primary-400) !important;
+  background: white !important;
+}
+
+.input-wrapper :deep(.el-textarea__inner:focus) {
+  border-color: var(--primary-500) !important;
+  background: white !important;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1) !important;
 }
 
 .input-actions {
   position: absolute;
-  bottom: 1rem;
-  right: 1rem;
+  bottom: 14px;
+  right: 16px;
   display: flex;
   justify-content: flex-end;
+}
+
+.input-actions .el-button {
+  height: 38px;
+  padding: 0 22px;
+  border-radius: 10px;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+@media (max-width: 768px) {
+  .qa-container {
+    padding: 0;
+    gap: 0;
+  }
+  
+  .sidebar {
+    width: 200px;
+    padding: 12px 8px;
+  }
+  
+  .chat-area {
+    padding: 20px 0 16px;
+  }
+  
+  .message-list {
+    padding: 0 20px;
+  }
+  
+  .input-area {
+    padding: 12px 20px 20px;
+  }
+  
+  .message-content {
+    max-width: 85%;
+  }
+  
+  .tags-section {
+    padding: 0 20px;
+  }
+  
+  .tags {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

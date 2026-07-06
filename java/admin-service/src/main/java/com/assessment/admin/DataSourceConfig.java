@@ -51,7 +51,12 @@ public class DataSourceConfig {
     @Primary
     public DataSource dataSource() {
         HikariDataSource ds = new HikariDataSource();
-        if ("postgresql".equalsIgnoreCase(dbType)) {
+        if ("h2".equalsIgnoreCase(dbType)) {
+            ds.setJdbcUrl("jdbc:h2:mem:assessment;DB_CLOSE_DELAY=-1;MODE=MySQL");
+            ds.setDriverClassName("org.h2.Driver");
+            ds.setUsername("sa");
+            ds.setPassword("");
+        } else if ("postgresql".equalsIgnoreCase(dbType)) {
             ds.setJdbcUrl(String.format("jdbc:postgresql://%s:%d/%s", pgHost, pgPort, pgDb));
             ds.setDriverClassName("org.postgresql.Driver");
             ds.setUsername(pgUser);
@@ -78,6 +83,8 @@ public class DataSourceConfig {
         HibernateJpaVendorAdapter adapter = new HibernateJpaVendorAdapter();
         if ("postgresql".equalsIgnoreCase(dbType)) {
             adapter.setDatabasePlatform("org.hibernate.dialect.PostgreSQLDialect");
+        } else if ("h2".equalsIgnoreCase(dbType)) {
+            adapter.setDatabasePlatform("org.hibernate.dialect.H2Dialect");
         } else {
             adapter.setDatabasePlatform("org.hibernate.dialect.MySQLDialect");
         }
@@ -91,6 +98,8 @@ public class DataSourceConfig {
         props.put("hibernate.connection.charSet", "UTF-8");
         if ("postgresql".equalsIgnoreCase(dbType)) {
             props.put("hibernate.dialect", "org.hibernate.dialect.PostgreSQLDialect");
+        } else if ("h2".equalsIgnoreCase(dbType)) {
+            props.put("hibernate.dialect", "org.hibernate.dialect.H2Dialect");
         } else {
             props.put("hibernate.dialect", "org.hibernate.dialect.MySQLDialect");
         }
