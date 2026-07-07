@@ -34,6 +34,14 @@ mkdir -p "$DATA_DIR/config"
 
 echo "  数据目录: $DATA_DIR"
 
+QUERIES_FILE="$DATA_DIR/config/queries.json"
+if [ ! -f "$QUERIES_FILE" ]; then
+    echo "  首次部署: 复制 queries.json 模板到 $QUERIES_FILE"
+    cp "$BASE_DIR/deploy/queries.json" "$QUERIES_FILE" 2>/dev/null || \
+        cp "/opt/intelligent-assessment/deploy/queries.json" "$QUERIES_FILE" 2>/dev/null || \
+        echo '[]' > "$QUERIES_FILE"
+fi
+
 # ─── 创建网络 ───
 docker network inspect "$NET_NAME" >/dev/null 2>&1 || \
     docker network create "$NET_NAME"
@@ -119,6 +127,7 @@ docker run -d --name assessment-solution-evaluation \
     -p 10259:10259 \
     -e QA_SERVICE_URL="http://assessment-qa:10253" \
     -e INDICATOR_SERVICE_URL="http://assessment-indicator:10254" \
+    -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
     -e COMBAT_QUERIES_PATH="/app/queries-custom.json" \
     -v "$DATA_DIR/solution-eval:/app/data" \
     -v "$DATA_DIR/config/queries.json:/app/queries-custom.json:ro" \
