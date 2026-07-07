@@ -76,10 +76,29 @@ def load_llm_config():
             data = json.loads(resp.read().decode("utf-8"))
             if data.get("success") and data.get("data"):
                 return data["data"]
-            # fallback to default
-            logger.warning("No active LLM config found, using defaults")
+            # 没有活跃配置，尝试从配置列表中取第一个可用配置作为兜底
+            logger.warning("No active LLM config found, trying config list fallback...")
     except Exception as e:
         logger.warning(f"Failed to fetch LLM config from admin-service: {e}")
+
+    # 兜底：从配置列表中取第一个可用配置
+    try:
+        req = urllib.request.Request(
+            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/list",
+            method="GET"
+        )
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            list_data = json.loads(resp.read().decode("utf-8"))
+            if list_data.get("success") and list_data.get("data"):
+                configs = list_data["data"]
+                if isinstance(configs, list) and len(configs) > 0:
+                    logger.info(f"Using first config from list: type={configs[0].get('type')}, model={configs[0].get('model')}")
+                    return configs[0]
+    except Exception:
+        pass
+
+    logger.warning("No LLM config available, using hardcoded defaults")
     return {
         "type": "deepseek",
         "apiUrl": "https://api.deepseek.com/v1",
@@ -622,6 +641,14 @@ async def delete_llm_config(config_id: str):
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
         return {"success": False, "message": f"删除失败: {str(e)}"}
+
+# ========== 方案评估 API（多智能体） ==========
+try:
+    from evaluation_api import evaluation_router
+    app.include_router(evaluation_router)
+    logger.info("Evaluation router registered")
+except Exception as e:
+    logger.warning(f"Failed to register evaluation router: {e}")
 
 if __name__ == "__main__":
     import uvicorn
