@@ -81,7 +81,7 @@ def load_llm_config():
     except Exception as e:
         logger.warning(f"Failed to fetch LLM config from admin-service: {e}")
 
-    # 兜底：从配置列表中取第一个可用配置
+    # 兜底：从配置列表中取第一个可用配置（优先 vllm > openai > deepseek > 其他）
     try:
         req = urllib.request.Request(
             f"{ADMIN_SERVICE_URL}/api/admin/config/llm/list",
@@ -93,7 +93,20 @@ def load_llm_config():
             if list_data.get("success") and list_data.get("data"):
                 configs = list_data["data"]
                 if isinstance(configs, list) and len(configs) > 0:
-                    logger.info(f"Using first config from list: type={configs[0].get('type')}, model={configs[0].get('model')}")
+                    # 优先找 vllm/openai/deepseek 类型的配置
+                    priority_order = ["vllm", "openai", "deepseek"]
+                    for pt in priority_order:
+                        for c in configs:
+                            if c.get("type") == pt and c.get("apiUrl"):
+                                logger.info(f"Using {pt} config from list: model={c.get('model')}, url={c.get('apiUrl')}")
+                                return c
+                    # 没匹配到优先类型，取第一个有 apiUrl 的
+                    for c in configs:
+                        if c.get("apiUrl"):
+                            logger.info(f"Using fallback config: type={c.get('type')}, model={c.get('model')}")
+                            return c
+                    # 所有配置都没有 apiUrl，取第一个
+                    logger.info(f"Using first config from list: type={configs[0].get('type')}")
                     return configs[0]
     except Exception:
         pass

@@ -1087,8 +1087,9 @@ const apiUrlPlaceholder = computed(() => {
 const apiKeyTypeVal = computed(() => llmForm.value.type === 'vllm' ? 'text' : 'password')
 const apiKeyPlaceholderVal = computed(() => llmForm.value.type === 'vllm' ? '本地部署无需密钥' : '请输入API Key')
 
-// 切换类型时自动填充默认值
-watch(() => llmForm.value.type, (newType) => {
+// 切换类型时自动填充默认值（仅新增模式生效，编辑模式跳过避免覆盖用户配置）
+watch(() => llmForm.value.type, (newType, oldType) => {
+  if (editingLlmId.value) return  // 编辑模式跳过，保留原有配置
   const preset = llmPresets[newType]
   if (preset) {
     if (preset.apiUrl) llmForm.value.apiUrl = preset.apiUrl as string
