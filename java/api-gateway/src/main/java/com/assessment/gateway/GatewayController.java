@@ -1,15 +1,20 @@
 package com.assessment.gateway;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 
+import java.io.*;
 import java.net.URI;
 import java.util.*;
 
 @RestController
 public class GatewayController {
+
+    private static final Logger log = LoggerFactory.getLogger(GatewayController.class);
 
     private final RestTemplate restTemplate = new RestTemplate();
 
@@ -44,27 +49,44 @@ public class GatewayController {
             }
         }
 
-        HttpEntity<String> entity = new HttpEntity<>(headers);
+        byte[] bodyBytes = new byte[0];
         try {
-            ResponseEntity<String> response = restTemplate.exchange(
+            InputStream inputStream = request.getInputStream();
+            if (inputStream != null) {
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                byte[] buf = new byte[4096];
+                int n;
+                while ((n = inputStream.read(buf)) != -1) {
+                    bos.write(buf, 0, n);
+                }
+                bodyBytes = bos.toByteArray();
+            }
+        } catch (IOException ignored) {
+        }
+
+        HttpEntity<byte[]> entity = new HttpEntity<>(bodyBytes, headers);
+        try {
+            ResponseEntity<byte[]> response = restTemplate.exchange(
                 URI.create(url),
                 HttpMethod.valueOf(request.getMethod()),
                 entity,
-                String.class
+                byte[].class
             );
-            return ResponseEntity.status(response.getStatusCode())
-                .headers(response.getHeaders())
-                .body(response.getBody());
+
+            HttpHeaders respHeaders = new HttpHeaders();
+            respHeaders.addAll(response.getHeaders());
+            respHeaders.remove(HttpHeaders.TRANSFER_ENCODING);
+
+            return new ResponseEntity<>(response.getBody(), respHeaders, response.getStatusCode());
         } catch (Exception e) {
-            Map<String, String> error = new HashMap<>();
-            error.put("error", "evaluation service unavailable: " + e.getMessage());
+            log.error("Evaluation proxy failed: url={}, error={}", url, e.getMessage());
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .body("{\"error\":\"方案评估服务暂不可用\"}");
+                .body("{\"error\":\"方案评估服务暂不可用\",\"detail\":\"" + e.getMessage() + "\"}");
         }
     }
 
     private Map<String, String> getAvailableServices() {
-        Map<String, String> services = new HashMap<>();
+        Map<String, String> services = new LinkedHashMap<>();
         services.put("admin-service", "http://assessment-admin:10258");
         services.put("knowledge-service", "http://assessment-knowledge:10252");
         services.put("qa-service", "http://assessment-qa:10253");
