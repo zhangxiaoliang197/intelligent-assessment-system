@@ -10,7 +10,6 @@ SERVICES=(
     assessment-frontend
     assessment-solution-evaluation
     assessment-admin
-    assessment-gateway
     assessment-ontology
     assessment-evaluation
     assessment-indicator

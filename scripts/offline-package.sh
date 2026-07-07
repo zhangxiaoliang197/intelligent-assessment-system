@@ -10,7 +10,6 @@ cd "$PROJECT_DIR"
 
 echo "1. 导出Docker镜像..."
 docker save -o docker/images/admin-service.tar admin-service:latest
-docker save -o docker/images/api-gateway.tar api-gateway:latest
 docker save -o docker/images/knowledge-service.tar knowledge-service:latest
 docker save -o docker/images/qa-service.tar qa-service:latest
 docker save -o docker/images/indicator-service.tar indicator-service:latest

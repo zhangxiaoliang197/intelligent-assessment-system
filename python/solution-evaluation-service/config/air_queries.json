@@ -1,0 +1,61 @@
+{
+  "regionRules": {
+    "patterns": [
+      {"regex": "([A-Z])\\s*区域", "group": 1, "suffix": "区域"},
+      {"regex": "([A-Z])\\s*区", "group": 1, "suffix": "区"},
+      {"regex": "([^，。\\s]{2,6}?)\\s*(?:区域|空域|战区|防区)", "group": 1, "suffix": "区域"}
+    ],
+    "placeholder": "{region}",
+    "defaultValue": "全部区域"
+  },
+  "groups": [
+    {
+      "group": "占位能力",
+      "description": "双方在某区域的空中占位能力对比",
+      "queries": [
+        {
+          "label": "红蓝双方占位能力对比",
+          "keywords": ["占位", "部署", "空中巡逻", "巡逻"],
+          "sql": "SELECT side, capability_score, aircraft_count, patrol_coverage FROM air_capability WHERE region = '{region}' AND capability_type = 'occupation'",
+          "vizType": "bar"
+        }
+      ]
+    },
+    {
+      "group": "打击能力",
+      "description": "双方在某区域的空中打击能力对比",
+      "queries": [
+        {
+          "label": "红蓝双方打击能力对比",
+          "keywords": ["打击", "攻击", "摧毁", "命中"],
+          "sql": "SELECT side, capability_score, weapon_count, strike_range FROM air_capability WHERE region = '{region}' AND capability_type = 'strike'",
+          "vizType": "bar"
+        }
+      ]
+    },
+    {
+      "group": "侦察能力",
+      "description": "双方在某区域的空中侦察能力对比",
+      "queries": [
+        {
+          "label": "红蓝双方侦察能力对比",
+          "keywords": ["侦察", "探测", "预警", "感知"],
+          "sql": "SELECT side, capability_score, recon_range, detection_accuracy FROM air_capability WHERE region = '{region}' AND capability_type = 'recon'",
+          "vizType": "bar"
+        }
+      ]
+    },
+    {
+      "group": "总体能力",
+      "description": "双方在某区域的总体制空能力综合对比",
+      "queries": [
+        {
+          "label": "红蓝双方总体制空能力对比",
+          "keywords": ["总体", "综合", "制空权", "制空能力"],
+          "sql": "SELECT side, total_score, occupation_score, strike_score, recon_score FROM air_overall WHERE region = '{region}'",
+          "vizType": "bar"
+        }
+      ]
+    }
+  ]
+}

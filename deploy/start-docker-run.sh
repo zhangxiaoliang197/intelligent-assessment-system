@@ -42,6 +42,14 @@ if [ ! -f "$QUERIES_FILE" ]; then
         echo '[]' > "$QUERIES_FILE"
 fi
 
+AIR_QUERIES_FILE="$DATA_DIR/config/air_queries.json"
+if [ ! -f "$AIR_QUERIES_FILE" ]; then
+    echo "  首次部署: 复制 air_queries.json 模板到 $AIR_QUERIES_FILE"
+    cp "$BASE_DIR/deploy/air_queries.json" "$AIR_QUERIES_FILE" 2>/dev/null || \
+        cp "/opt/intelligent-assessment/deploy/air_queries.json" "$AIR_QUERIES_FILE" 2>/dev/null || \
+        echo '{"regionRules":{"patterns":[],"placeholder":"{region}","defaultValue":"全部区域"},"groups":[]}' > "$AIR_QUERIES_FILE"
+fi
+
 # ─── 创建网络 ───
 docker network inspect "$NET_NAME" >/dev/null 2>&1 || \
     docker network create "$NET_NAME"
@@ -128,9 +136,8 @@ docker run -d --name assessment-solution-evaluation \
     -e QA_SERVICE_URL="http://assessment-qa:10253" \
     -e INDICATOR_SERVICE_URL="http://assessment-indicator:10254" \
     -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
-    -e COMBAT_QUERIES_PATH="/app/queries-custom.json" \
     -v "$DATA_DIR/solution-eval:/app/data" \
-    -v "$DATA_DIR/config/queries.json:/app/queries-custom.json:ro" \
+    -v "$DATA_DIR/config:/app/config" \
     --restart always \
     assessment-solution-evaluation:latest
 
@@ -139,13 +146,6 @@ echo ""
 echo "========================================"
 echo "[2/9] 启动 Java 服务..."
 echo "========================================"
-
-echo "[启动] API网关服务 (10257)..."
-docker run -d --name assessment-gateway \
-    --network "$NET_NAME" \
-    -p 10257:10257 \
-    --restart always \
-    assessment-gateway:latest
 
 echo "[启动] 基础管理服务 (10258)..."
 docker run -d --name assessment-admin \
@@ -161,18 +161,18 @@ docker run -d --name assessment-admin \
     -e DB_TYPE="mysql" \
     assessment-admin:latest
 
-# ─── 9. 等待网关就绪后启动前端 ───
+# ─── 9. 等待管理服务就绪后启动前端 ───
 echo ""
 echo "========================================"
-echo "[3/9] 等待 API网关就绪..."
+echo "[3/9] 等待管理服务就绪..."
 echo "========================================"
 for i in $(seq 1 90); do
-    if curl -s http://127.0.0.1:10257/actuator/health >/dev/null 2>&1; then
-        echo "  API网关已就绪 (${i}s)"
+    if curl -s http://127.0.0.1:10258/actuator/health >/dev/null 2>&1; then
+        echo "  管理服务已就绪 (${i}s)"
         break
     fi
     if [ $i -eq 90 ]; then
-        echo "  WARNING: API网关超时, 前端启动可能失败"
+        echo "  WARNING: 管理服务超时, 前端启动可能失败"
     fi
     sleep 1
 done
@@ -195,5 +195,5 @@ IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [ -z "$IP" ] && IP="<服务器IP>"
 echo "  访问地址: http://${IP}:10086"
 echo "  MySQL:    ${MYSQL_USER}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}"
-echo "  共启动 9 个服务"
+echo "  共启动 8 个服务"
 echo "========================================"

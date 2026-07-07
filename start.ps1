@@ -1,4 +1,4 @@
-﻿# ========================================
+# ========================================
 # Intelligent Assessment System - Start Script
 # Usage: .\start.ps1
 # ========================================
@@ -33,21 +33,14 @@ foreach ($svc in $pyServices) {
 }
 
 # Java services
-Write-Host "`n[2/4] Starting Java services (2)..." -ForegroundColor Yellow
+Write-Host "`n[2/4] Starting Java services (1)..." -ForegroundColor Yellow
 $adminJar = "$root\java\admin-service\target\admin-service-1.0.0.jar"
-$gatewayJar = "$root\java\api-gateway\target\api-gateway-1.0.0.jar"
 if (-not (Test-Path $adminJar)) {
     Write-Host "  Building admin-service..." -ForegroundColor Yellow
     Push-Location "$root\java\admin-service"; mvn package -DskipTests -q; Pop-Location
 }
-if (-not (Test-Path $gatewayJar)) {
-    Write-Host "  Building api-gateway..." -ForegroundColor Yellow
-    Push-Location "$root\java\api-gateway"; mvn package -DskipTests -q; Pop-Location
-}
 Start-Process -FilePath "$javaBin\java.exe" -ArgumentList "-jar $adminJar" -WindowStyle Hidden
 Write-Host "  Started Admin (10258)" -ForegroundColor Green
-Start-Process -FilePath "$javaBin\java.exe" -ArgumentList "-jar $gatewayJar" -WindowStyle Hidden
-Write-Host "  Started Gateway (10257)" -ForegroundColor Green
 
 # Frontend
 Write-Host "`n[3/4] Starting frontend..." -ForegroundColor Yellow
@@ -66,8 +59,8 @@ Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host "Service Status" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
-$allPorts = @(10086, 10252, 10253, 10254, 10255, 10256, 10257, 10258, 10259)
-$allNames = @("Frontend","Knowledge","QA","Indicator","Evaluation","Ontology","Gateway","Admin","SolutionEval")
+$allPorts = @(10086, 10252, 10253, 10254, 10255, 10256, 10258, 10259)
+$allNames = @("Frontend","Knowledge","QA","Indicator","Evaluation","Ontology","Admin","SolutionEval")
 for ($i = 0; $i -lt $allPorts.Count; $i++) {
     $p = $allPorts[$i]
     $n = $allNames[$i]

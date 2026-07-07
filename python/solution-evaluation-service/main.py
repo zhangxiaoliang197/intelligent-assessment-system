@@ -18,6 +18,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("solution-evaluation-service")
 
 from agents.combat_effectiveness_agent import run_stream as run_combat_effectiveness_stream
+from agents.air_superiority_agent import run_stream as run_air_superiority_stream
 
 app = FastAPI(
     title="Solution Evaluation Service",
@@ -182,12 +183,12 @@ def get_data_sources():
                         continue
                     sources.append({
                         "id": db_id,
-                        "name": db.get("name", db.get("dbName", "未命名")),
+                        "name": db.get("name", db.get("database", "未命名")),
                         "type": db.get("type", ""),
                         "status": "available" if db.get("status") == "已连接" else "unavailable",
                         "host": db.get("host", ""),
                         "port": db.get("port", 0),
-                        "dbName": db.get("dbName", "")
+                        "dbName": db.get("database", "")
                     })
                 if sources:
                     return sources
@@ -312,50 +313,29 @@ async def stream_execution_steps(
     analysis_result = None
 
     if intent_result["intent"] == "air_superiority":
-        yield json.dumps({
-            "type": "step",
-            "step": {
-                "step": 4, "type": "analysis", "description": "执行分析计算",
-                "status": "in_progress", "detail": "正在分析制空权对比...",
-                "progress": 30, "subStep": "air_analysis"
-            }
-        }, ensure_ascii=False).encode('utf-8') + b'\n'
-        await asyncio.sleep(1.0)
-
-        yield json.dumps({
-            "type": "step",
-            "step": {
-                "step": 4, "type": "analysis", "description": "执行分析计算",
-                "status": "in_progress", "detail": "正在检索相关知识...",
-                "progress": 50, "subStep": "knowledge_retrieval"
-            }
-        }, ensure_ascii=False).encode('utf-8') + b'\n'
-        await asyncio.sleep(1.0)
-
-        qa_result = call_qa_service(query)
-
-        yield json.dumps({
-            "type": "step",
-            "step": {
-                "step": 4, "type": "analysis", "description": "执行分析计算",
-                "status": "in_progress", "detail": "正在生成分析报告...",
-                "progress": 80, "subStep": "report_generation"
-            }
-        }, ensure_ascii=False).encode('utf-8') + b'\n'
-        await asyncio.sleep(1.0)
-
-        analysis_result = {
-            "type": "air_superiority",
-            "summary": "根据知识库分析，制空权优势主要取决于以下因素：",
-            "factors": ["战斗机数量与质量优势", "预警指挥系统能力", "地面防空体系完善度", "电子战能力", "作战经验与训练水平"],
-            "redScore": 82, "blueScore": 71, "advantage": "红方", "advantageMargin": 11,
-            "knowledgeReference": qa_result.get("references", []),
-            "analysisDetails": {
-                "strengthsRed": ["三代半战机数量优势", "预警机覆盖范围更广", "地面防空密度高"],
-                "strengthsBlue": ["四代机质量优势", "电子战能力突出", "战术灵活"],
-                "recommendations": "建议红方利用数量优势和体系作战能力，蓝方应发挥质量优势和战术灵活性"
-            }
-        }
+        if not data_source_id:
+            yield json.dumps({
+                "type": "step",
+                "step": {"step": 4, "type": "analysis", "description": "执行分析计算",
+                         "status": "completed", "detail": "缺少数据源, 请在页面选择数据源后再试", "progress": 100}
+            }, ensure_ascii=False).encode('utf-8') + b'\n'
+            analysis_result = {"type": "air_superiority", "queryResults": [], "summary": "未选择数据源"}
+        else:
+            gen = run_air_superiority_stream(query, data_source_id)
+            for chunk in gen:
+                line = chunk.decode("utf-8").strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    if data.get("type") == "result":
+                        analysis_result = data.get("result", {})
+                    else:
+                        yield chunk
+                except json.JSONDecodeError:
+                    yield chunk
+            if analysis_result is None:
+                analysis_result = {"type": "air_superiority", "queryResults": [], "summary": "分析完成"}
 
     elif intent_result["intent"] == "combat_effectiveness":
         if not data_source_id:

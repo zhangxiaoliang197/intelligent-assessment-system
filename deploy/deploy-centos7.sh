@@ -90,8 +90,6 @@ services:
     ports:
       - "10086:80"
     restart: always
-    depends_on:
-      - api-gateway
     networks:
       - assessment-net
 
@@ -151,15 +149,6 @@ services:
     restart: always
     volumes:
       - "$DEPLOY_TARGET/data/ontology:/app/data"
-    networks:
-      - assessment-net
-
-  api-gateway:
-    image: assessment-gateway:latest
-    container_name: assessment-gateway
-    ports:
-      - "10257:10257"
-    restart: always
     networks:
       - assessment-net
 
@@ -258,7 +247,7 @@ chmod +x "$DEPLOY_TARGET"/*.sh
 # ---------- 防火墙 ----------
 if systemctl is-active --quiet firewalld 2>/dev/null; then
     log_info "配置防火墙..."
-    for port in 10086 10252 10253 10254 10255 10256 10257 10258 10259; do
+    for port in 10086 10252 10253 10254 10255 10256 10258 10259; do
         firewall-cmd --permanent --add-port=$port/tcp 2>/dev/null || true
     done
     firewall-cmd --reload 2>/dev/null || true

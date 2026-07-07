@@ -111,46 +111,39 @@
                     <div v-if="msg.result" class="result-section">
                       <div v-if="msg.result.type === 'air_superiority'" class="air-superiority-result">
                         <div class="result-header">
-                          <h5>制空权优势对比分析</h5>
+                          <h5>制空权分析结果<span v-if="msg.result.region"> - {{ msg.result.region }}</span></h5>
                         </div>
-                        <div class="score-display">
-                          <div class="team red">
-                            <div class="team-name">红方</div>
-                            <div class="team-score">{{ msg.result.redScore }}</div>
-                          </div>
-                          <div class="vs">VS</div>
-                          <div class="team blue">
-                            <div class="team-name">蓝方</div>
-                            <div class="team-score">{{ msg.result.blueScore }}</div>
-                          </div>
+                        <div v-for="(qr, idx) in msg.result.queryResults" :key="idx" class="query-result-item">
+                          <div class="query-result-title">{{ qr.group }} - {{ qr.label }}</div>
+                          <div class="query-result-insight">{{ qr.insight }}</div>
+                          <v-chart v-if="qr.vizType !== 'table' && getChartOption(qr.vizType, qr.columns, qr.rows)" :option="getChartOption(qr.vizType, qr.columns, qr.rows)" autoresize style="height: 280px" />
+                          <el-table v-else-if="qr.rows && qr.rows.length > 0" :data="toTableData(qr.columns, qr.rows)" size="small" border stripe style="width: 100%">
+                            <el-table-column v-for="col in qr.columns" :key="col" :prop="col" :label="col" min-width="100" show-overflow-tooltip />
+                          </el-table>
+                          <div v-else class="no-data">暂无数据</div>
                         </div>
-                        <div class="advantage-banner">
-                          <span class="winner">{{ msg.result.advantage }}</span>
-                          <span class="text">优势 ({{ msg.result.advantageMargin }}分)</span>
+                        <div class="summary-section">
+                          <h6>综合评估</h6>
+                          <p>{{ msg.result.summary }}</p>
                         </div>
-                        <div v-if="msg.result.analysisDetails" class="analysis-details">
-                          <div class="detail-section">
-                            <h6>红方优势</h6>
-                            <ul>
-                              <li v-for="(item, idx) in msg.result.analysisDetails.strengthsRed" :key="idx">{{ item }}</li>
-                            </ul>
-                          </div>
-                          <div class="detail-section">
-                            <h6>蓝方优势</h6>
-                            <ul>
-                              <li v-for="(item, idx) in msg.result.analysisDetails.strengthsBlue" :key="idx">{{ item }}</li>
-                            </ul>
-                          </div>
-                          <div class="recommendations">
-                            <h6>作战建议</h6>
-                            <p>{{ msg.result.analysisDetails.recommendations }}</p>
-                          </div>
+                      </div>
+                      
+                      <div v-if="msg.result.type === 'combat_effectiveness'" class="combat-result">
+                        <div class="result-header">
+                          <h5>作战效能评估结果</h5>
                         </div>
-                        <div class="factors-section">
-                          <h6>关键影响因素</h6>
-                          <ul>
-                            <li v-for="(factor, idx) in msg.result.factors" :key="idx">{{ factor }}</li>
-                          </ul>
+                        <div v-for="(r, idx) in msg.result.results" :key="idx" class="query-result-item">
+                          <div class="query-result-title">{{ r.group }} - {{ r.label }}</div>
+                          <div class="query-result-insight">{{ r.insight }}</div>
+                          <v-chart v-if="r.vizType !== 'table' && getChartOption(r.vizType, r.columns, r.rows)" :option="getChartOption(r.vizType, r.columns, r.rows)" autoresize style="height: 280px" />
+                          <el-table v-else-if="r.rows && r.rows.length > 0" :data="toTableData(r.columns, r.rows)" size="small" border stripe style="width: 100%">
+                            <el-table-column v-for="col in r.columns" :key="col" :prop="col" :label="col" min-width="100" show-overflow-tooltip />
+                          </el-table>
+                          <div v-else class="no-data">暂无数据</div>
+                        </div>
+                        <div class="summary-section">
+                          <h6>综合评估</h6>
+                          <p>{{ msg.result.summary }}</p>
                         </div>
                       </div>
                       
@@ -363,6 +356,13 @@ import {
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
 import api from '@/services/api'
+import { use } from 'echarts/core'
+import { CanvasRenderer } from 'echarts/renderers'
+import { BarChart, PieChart, LineChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent, LegendComponent, TitleComponent } from 'echarts/components'
+import VChart from 'vue-echarts'
+
+use([CanvasRenderer, BarChart, PieChart, LineChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent])
 
 const router = useRouter()
 
@@ -562,6 +562,52 @@ const formatSubStep = (subStep: string) => {
   return subStepMap[subStep] || subStep
 }
 
+// ECharts图表配置生成
+const getChartOption = (vizType: string, columns: string[], rows: any[]) => {
+  if (!columns || !rows || rows.length === 0) return null
+
+  if (vizType === 'bar' || vizType === 'line') {
+    const categories = rows.map(r => String(r[0]))
+    const series = columns.slice(1).map((col, i) => ({
+      name: col,
+      type: vizType,
+      data: rows.map(r => Number(r[i + 1]) || 0),
+      barMaxWidth: 40
+    }))
+    return {
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      legend: { data: columns.slice(1), top: 0 },
+      grid: { left: '3%', right: '4%', bottom: '3%', top: 40, containLabel: true },
+      xAxis: { type: 'category', data: categories },
+      yAxis: { type: 'value' },
+      series
+    }
+  } else if (vizType === 'pie') {
+    return {
+      tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+      legend: { orient: 'vertical', left: 'left' },
+      series: [{
+        type: 'pie',
+        radius: ['40%', '65%'],
+        center: ['55%', '50%'],
+        data: rows.map(r => ({ name: String(r[0]), value: Number(r[1]) || 0 })),
+        itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 }
+      }]
+    }
+  }
+  return null
+}
+
+// 行列数据转表格数据
+const toTableData = (columns: string[], rows: any[]) => {
+  if (!columns || !rows) return []
+  return rows.map(row => {
+    const obj: Record<string, any> = {}
+    columns.forEach((col, i) => { obj[col] = row[i] })
+    return obj
+  })
+}
+
 // 发送消息 - 使用 fetch API 实现流式读取
 const sendMessage = async () => {
   if (!inputMessage.value.trim()) {
@@ -648,22 +694,12 @@ const sendMessage = async () => {
               }
               aiMessage.content = '正在分析...'
             } else if (data.type === 'result') {
-              // 收到最终结果 — 后端字段平铺在 data 中
-              const answer = data.final_answer || '分析完成'
-              aiMessage.content = answer
+              // 收到最终结果
+              const result = data.result || {}
+              aiMessage.content = result.summary || result.answer || '分析完成'
+              aiMessage.result = result
               
-              // 构建结构化结果供模板使用
-              aiMessage.result = {
-                type: data.query_type || 'general',
-                answer: answer,
-                generatedSql: data.generated_sql || '',
-                totalRows: data.total_rows || 0,
-                intent: data.intent || '',
-                databaseUsed: data.database_used || '',
-                rawResults: data.raw_results || []
-              }
-              
-              // 保存会话 — 只存干净的问答对，不含执行步骤
+              // 保存会话
               if (data.session_id) {
                 if (!sessionId.value) {
                   sessionId.value = data.session_id
@@ -671,7 +707,7 @@ const sendMessage = async () => {
                 }
                 sessionMessages.value[sessionId.value || data.session_id] = [
                   { role: 'user', content: query },
-                  { role: 'assistant', content: answer }
+                  { role: 'assistant', content: result.summary || result.answer || '分析完成' }
                 ]
                 persistState()
               }
@@ -1188,6 +1224,60 @@ onMounted(() => {
 .result-header h5 {
   margin: 0;
   color: #374151;
+}
+
+.query-result-item {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: white;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+}
+
+.query-result-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 0.5rem;
+}
+
+.query-result-insight {
+  font-size: 13px;
+  color: #6b7280;
+  line-height: 1.6;
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: #f0f9ff;
+  border-radius: 6px;
+  border-left: 3px solid #409eff;
+}
+
+.summary-section {
+  margin-top: 0.5rem;
+  padding: 1rem;
+  background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+  border-radius: 0.5rem;
+  border: 1px solid #bae6fd;
+}
+
+.summary-section h6 {
+  margin: 0 0 0.5rem;
+  color: #0369a1;
+  font-size: 14px;
+}
+
+.summary-section p {
+  margin: 0;
+  color: #075985;
+  line-height: 1.8;
+  font-size: 14px;
+}
+
+.no-data {
+  text-align: center;
+  padding: 1.5rem;
+  color: #9ca3af;
+  font-size: 13px;
 }
 
 .air-superiority-result .score-display {
