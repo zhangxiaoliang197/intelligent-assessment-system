@@ -599,8 +599,8 @@ const sendMessage = async () => {
       body: JSON.stringify({
         query: query,
         session_id: sessionId.value || undefined,
-        database_id: selectedDataSourceId.value || '',
-        database_name: selectedDataSourceName.value || ''
+        dataSourceId: selectedDataSourceId.value || null,
+        skillId: null
       })
     })
     

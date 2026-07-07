@@ -50,7 +50,7 @@ export default defineConfig({
       '/api/evaluation': {
         target: 'http://localhost:10259',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
+        rewrite: (path) => path.replace(/^\/api\/evaluation/, '')
       },
       '/api/ontology': {
         target: 'http://localhost:10256',
