@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS `ass_indicator` (
     `description`        TEXT          DEFAULT NULL,
     `weight`             DOUBLE        DEFAULT NULL,
     `dataset_id`         VARCHAR(32)   DEFAULT NULL,
-    `field_mapping`      JSON          DEFAULT NULL,
+    `field_mapping`      TEXT          DEFAULT NULL,
     `calculation_method` TEXT          DEFAULT NULL,
     `create_time`        DATETIME      DEFAULT NULL,
     `update_time`        DATETIME      DEFAULT NULL,
