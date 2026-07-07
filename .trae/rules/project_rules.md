@@ -15,6 +15,7 @@
   4. Gateway 控制器中的容器名与 `start-docker-run.sh` 的 `--name` 一致
   5. `.sh` / `.json` / `.py` / `.yml` 换行符为 LF（`.gitattributes` 已配置）
   6. 所有受影响的服务 JAR/dist 都已重新编译，**然后一次性** `docker build + save` 全部 9 个镜像
+  7. **Java 服务必须 commit 之后、打包之前重新 compile**。严格顺序: 改代码→commit→编译JAR→docker build。禁止用旧JAR打包新镜像
 
 ## 本机环境
 | 工具 | 路径 | 备注 |

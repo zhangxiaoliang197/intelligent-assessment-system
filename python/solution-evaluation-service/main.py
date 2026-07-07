@@ -164,35 +164,8 @@ def save_history(history):
     atomic_json_write(HISTORY_FILE, history)
 
 
-# 数据源配置 — 从 admin 服务获取真实数据库配置
+# 数据源配置 — 从 admin 获取已配置的数据库列表
 def get_data_sources():
-    try:
-        req = urllib.request.Request(
-            f"{ADMIN_SERVICE_URL}/api/admin/dataset/list",
-            method="GET"
-        )
-        req.add_header("Content-Type", "application/json")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            if data.get("success") and data.get("datasets"):
-                sources = []
-                for ds in data["datasets"]:
-                    db_id = ds.get("databaseId", "")
-                    if db_id:
-                        sources.append({
-                            "id": db_id,
-                            "name": ds.get("name", "未命名"),
-                            "type": "database",
-                            "status": "available",
-                            "datasetId": ds.get("id", ""),
-                            "tableName": ds.get("tableName", ""),
-                            "description": ds.get("description", "")
-                        })
-                if sources:
-                    return sources
-    except Exception as e:
-        logger.warning(f"获取数据源(数据集列表)失败: {e}")
-
     try:
         req = urllib.request.Request(
             f"{ADMIN_SERVICE_URL}/api/admin/database/list",
@@ -204,12 +177,14 @@ def get_data_sources():
             if data.get("success") and data.get("databases"):
                 sources = []
                 for db in data["databases"]:
+                    db_id = db.get("id", "")
+                    if not db_id:
+                        continue
                     sources.append({
-                        "id": db.get("id", ""),
+                        "id": db_id,
                         "name": db.get("name", db.get("dbName", "未命名")),
-                        "type": "database",
+                        "type": db.get("type", ""),
                         "status": "available" if db.get("status") == "已连接" else "unavailable",
-                        "dbType": db.get("type", ""),
                         "host": db.get("host", ""),
                         "port": db.get("port", 0),
                         "dbName": db.get("dbName", "")
@@ -218,7 +193,6 @@ def get_data_sources():
                     return sources
     except Exception as e:
         logger.warning(f"获取数据库列表失败: {e}")
-
     return []
 
 
