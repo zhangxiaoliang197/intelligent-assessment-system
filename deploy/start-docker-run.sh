@@ -92,6 +92,7 @@ docker run -d --name assessment-indicator \
     --network "$NET_NAME" \
     -p 10254:10254 \
     -e QA_SERVICE_URL="http://assessment-qa:10253" \
+    -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
     --restart always \
     assessment-indicator:latest
 
