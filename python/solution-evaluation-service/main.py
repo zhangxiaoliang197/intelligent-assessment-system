@@ -17,7 +17,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("solution-evaluation-service")
 
-from agents.combat_effectiveness_agent import run as run_combat_effectiveness_agent
+from agents.combat_effectiveness_agent import run_stream as run_combat_effectiveness_stream
 
 app = FastAPI(
     title="Solution Evaluation Service",
@@ -201,18 +201,6 @@ def call_indicator_service(query: str):
         return {"answer": f"指标分析失败: {str(e)}"}
 
 
-async def _run_combat_effectiveness(query, data_source_id, intent_result):
-    if not data_source_id:
-        return None
-    try:
-        result = await asyncio.to_thread(run_combat_effectiveness_agent, data_source_id)
-        return result
-    except Exception as e:
-        logger.warning(f"Combat effectiveness agent failed: {e}")
-        return None
-
-
-#
 
 
 # 意图识别
@@ -346,7 +334,32 @@ async def stream_execution_steps(
         }
 
     elif intent_result["intent"] == "combat_effectiveness":
-        analysis_result = await _run_combat_effectiveness(query, data_source_id, intent_result)
+        if not data_source_id:
+            yield json.dumps({
+                "type": "step",
+                "step": {"step": 4, "type": "analysis", "description": "执行分析计算",
+                         "status": "completed", "detail": "缺少数据源, 请在页面选择数据源后再试", "progress": 100}
+            }, ensure_ascii=False).encode('utf-8') + b'\n'
+            analysis_result = {"type": "combat_effectiveness", "results": [], "summary": "未选择数据源"}
+        else:
+            gen = run_combat_effectiveness_stream(data_source_id)
+            result_chunks = []
+            for chunk in gen:
+                line = chunk.decode("utf-8").strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    if data.get("type") == "result":
+                        analysis_result = data.get("result", {})
+                    else:
+                        result_chunks.append(chunk)
+                        yield chunk
+                except json.JSONDecodeError:
+                    result_chunks.append(chunk)
+                    yield chunk
+            if analysis_result is None:
+                analysis_result = {"type": "combat_effectiveness", "results": [], "summary": "分析完成"}
 
     elif intent_result["intent"] == "calculate_indicator":
         yield json.dumps({
@@ -410,33 +423,31 @@ ORDER BY success_rate DESC"""
         }
 
     else:
-        analysis_result = await _run_combat_effectiveness(query, data_source_id, intent_result)
-        if not analysis_result:
-            yield json.dumps({
-                "type": "step",
-                "step": {
-                    "step": 4, "type": "analysis", "description": "执行分析计算",
-                    "status": "in_progress", "detail": "正在调用知识库...", "progress": 40
-                }
-            }, ensure_ascii=False).encode('utf-8') + b'\n'
-            await asyncio.sleep(1.0)
-
-            qa_result = call_qa_service(query)
-
-            yield json.dumps({
-                "type": "step",
-                "step": {
-                    "step": 4, "type": "analysis", "description": "执行分析计算",
-                    "status": "in_progress", "detail": "正在生成分析报告...", "progress": 80
-                }
-            }, ensure_ascii=False).encode('utf-8') + b'\n'
-            await asyncio.sleep(1.0)
-
-            analysis_result = {
-                "type": "general",
-                "answer": qa_result.get("answer", "分析完成"),
-                "knowledgeReference": qa_result.get("references", [])
+        yield json.dumps({
+            "type": "step",
+            "step": {
+                "step": 4, "type": "analysis", "description": "执行分析计算",
+                "status": "in_progress", "detail": "正在调用知识库...", "progress": 40
             }
+        }, ensure_ascii=False).encode('utf-8') + b'\n'
+        await asyncio.sleep(1.0)
+
+        qa_result = call_qa_service(query)
+
+        yield json.dumps({
+            "type": "step",
+            "step": {
+                "step": 4, "type": "analysis", "description": "执行分析计算",
+                "status": "in_progress", "detail": "正在生成分析报告...", "progress": 80
+            }
+        }, ensure_ascii=False).encode('utf-8') + b'\n'
+        await asyncio.sleep(1.0)
+
+        analysis_result = {
+            "type": "general",
+            "answer": qa_result.get("answer", "分析完成"),
+            "knowledgeReference": qa_result.get("references", [])
+        }
 
     yield json.dumps({
         "type": "step",

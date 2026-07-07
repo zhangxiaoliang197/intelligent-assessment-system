@@ -23,13 +23,6 @@ def load_queries():
         return json.load(f)
 
 
-def _api_get(url, timeout=10):
-    req = urllib.request.Request(url, method="GET")
-    req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
 def execute_sql(database_id, sql):
     body = json.dumps({"databaseId": database_id, "sql": sql}).encode("utf-8")
     req = urllib.request.Request(
@@ -62,9 +55,34 @@ def analyze_with_llm(prompt):
         return f"大模型分析失败: {str(e)[:200]}"
 
 
-def run(database_id):
+def _make_step(step_num, step_type, description, status, detail, progress, sub_step=None):
+    s = {
+        "step": step_num,
+        "type": step_type,
+        "description": description,
+        "status": status,
+        "detail": detail,
+        "progress": progress
+    }
+    if sub_step:
+        s["subStep"] = sub_step
+    return json.dumps({"type": "step", "step": s}, ensure_ascii=False).encode("utf-8") + b"\n"
+
+
+def run_stream(database_id):
     queries = load_queries()
-    results = []
+    total_queries = sum(len(g["queries"]) for g in queries)
+    executed = 0
+
+    if not queries:
+        yield _make_step(4, "analysis", "执行分析计算", "completed",
+                         "未找到SQL配置, 请检查 config/queries.json", 100)
+        return
+
+    yield _make_step(4, "analysis", "执行分析计算", "in_progress",
+                     f"正在连接数据源并执行 {total_queries} 条分析查询...", 5)
+
+    all_results = []
     all_summaries = []
 
     for group in queries:
@@ -74,32 +92,34 @@ def run(database_id):
             viz_type = q.get("vizType", "table")
             sql = q.get("sql", "")
 
-            logger.info(f"Executing: {group_name}/{label}")
+            yield _make_step(4, "analysis", "执行分析计算", "in_progress",
+                             f"正在查询: {group_name} - {label}", int(5 + 80 * executed / max(total_queries, 1)),
+                             sub_step=group_name)
+
             exec_result = execute_sql(database_id, sql)
+            executed += 1
 
             if exec_result.get("success") and exec_result.get("rowCount", 0) > 0:
                 columns = exec_result.get("columns", [])
                 rows = exec_result.get("rows", [])
 
-                data_sample = {
-                    "columns": columns,
-                    "rows": rows[:10],
-                    "totalRows": len(rows)
-                }
+                yield _make_step(4, "analysis", "执行分析计算", "in_progress",
+                                 f"正在分析: {group_name} - {label} (共{exec_result.get('rowCount')}条)",
+                                 int(5 + 80 * executed / max(total_queries, 1)),
+                                 sub_step=group_name)
 
                 insight_prompt = f"""请基于以下数据做简要分析(200字以内):
 查询类型: {group_name} - {label}
 列: {columns}
-数据(前10行): {rows[:10]}
+数据(前10行): {str(rows[:10])}
 总行数: {len(rows)}
 
 请给出1-2句关键发现。"""
                 insight = analyze_with_llm(insight_prompt)
             else:
-                data_sample = None
                 insight = exec_result.get("message", "查询无数据")
 
-            results.append({
+            all_results.append({
                 "group": group_name,
                 "label": label,
                 "vizType": viz_type,
@@ -110,16 +130,24 @@ def run(database_id):
             })
             all_summaries.append(f"[{group_name}-{label}]: {insight}")
 
-            time.sleep(0.3)
+            time.sleep(0.2)
+
+    yield _make_step(4, "analysis", "执行分析计算", "in_progress",
+                     "正在生成综合评估总结...", 90, sub_step="综合评估")
 
     if all_summaries:
-        summary_prompt = f"请基于以下各维度的简要分析，给出50字以内的整体作战效能评估总结:\n" + "\n".join(all_summaries)
+        summary_prompt = "请基于以下各维度的简要分析，给出50字以内的整体作战效能评估总结:\n" + "\n".join(all_summaries)
         summary = analyze_with_llm(summary_prompt)
     else:
         summary = "暂无有效数据可供评估"
 
-    return {
+    yield _make_step(4, "analysis", "执行分析计算", "completed",
+                     "分析计算完成", 100)
+
+    final_result = {
         "type": "combat_effectiveness",
-        "results": results,
+        "results": all_results,
         "summary": summary
     }
+
+    yield json.dumps({"type": "result", "result": final_result}, ensure_ascii=False, default=str).encode("utf-8") + b"\n"
