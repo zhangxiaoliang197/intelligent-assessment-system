@@ -4,6 +4,17 @@
 - **"启动本地服务" = 直接在终端运行命令，无需沙箱测试**
 - Python/前端可在沙箱启动，Java 编译和启动必须在用户本地终端
 
+## Docker 镜像生成规则（重要！）
+- **禁止逐个修复逐个生成镜像**。镜像用于向内网拷贝，频繁生成浪费用户时间
+- **每轮修改完成后，一次性检查、一次性生成全量镜像**
+- 生成前必须逐项确认：
+  1. `git pull` 或代码修改后，diff 中所有 Java/Python/前端文件都审查过
+  2. 所有跨服务调用 URL（`os.getenv` / `@Value` / 容器名）与 `start-docker-run.sh` 的 `-e` 对照通过
+  3. `vite.config.ts` 代理目标端口与 Python 服务端口一致
+  4. Gateway 控制器中的容器名与 `start-docker-run.sh` 的 `--name` 一致
+  5. `.sh` / `.json` / `.py` / `.yml` 换行符为 LF（`.gitattributes` 已配置）
+  6. 所有受影响的服务 JAR/dist 都已重新编译，**然后一次性** `docker build + save` 全部 9 个镜像
+
 ## 本机环境
 | 工具 | 路径 | 备注 |
 |------|------|------|
