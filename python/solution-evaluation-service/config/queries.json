@@ -5,16 +5,19 @@
     "queries": [
       {
         "label": "单位战损统计",
+        "keywords": ["战损", "损失", "伤亡", "损毁", "战损"],
         "sql": "SELECT unit_name, SUM(loss_count) as total_loss FROM combat_loss GROUP BY unit_name ORDER BY total_loss DESC",
         "vizType": "bar"
       },
       {
         "label": "装备类型战损分布",
+        "keywords": ["装备", "战损", "损毁", "类型"],
         "sql": "SELECT equipment_type, COUNT(*) as loss_count, SUM(damage_level) as total_damage FROM combat_loss GROUP BY equipment_type",
         "vizType": "pie"
       },
       {
         "label": "战损明细",
+        "keywords": ["战损", "明细", "记录", "损失"],
         "sql": "SELECT unit_name, equipment_type, loss_count, loss_reason, report_time FROM combat_loss ORDER BY report_time DESC LIMIT 50",
         "vizType": "table"
       }
@@ -26,11 +29,13 @@
     "queries": [
       {
         "label": "各单位战果对比",
+        "keywords": ["战果", "打击效果", "摧毁", "命中", "战果"],
         "sql": "SELECT unit_name, SUM(hit_count) as total_hits, SUM(destroy_count) as total_destroys FROM combat_result GROUP BY unit_name ORDER BY total_hits DESC",
         "vizType": "bar"
       },
       {
         "label": "打击类型分布",
+        "keywords": ["打击", "类型", "分布", "攻击"],
         "sql": "SELECT attack_type, COUNT(*) as count, SUM(effect_score) as total_score FROM combat_result GROUP BY attack_type",
         "vizType": "pie"
       }
@@ -42,11 +47,13 @@
     "queries": [
       {
         "label": "资源消耗趋势",
+        "keywords": ["消耗", "趋势", "时间", "变化"],
         "sql": "SELECT DATE(consume_time) as date, resource_type, SUM(amount) as total_amount FROM resource_consume GROUP BY DATE(consume_time), resource_type ORDER BY date",
         "vizType": "line"
       },
       {
         "label": "各类资源消耗总量",
+        "keywords": ["消耗", "弹药", "燃料", "物资", "补给"],
         "sql": "SELECT resource_type, SUM(amount) as total_amount, unit FROM resource_consume GROUP BY resource_type, unit",
         "vizType": "bar"
       }

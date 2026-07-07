@@ -342,7 +342,7 @@ async def stream_execution_steps(
             }, ensure_ascii=False).encode('utf-8') + b'\n'
             analysis_result = {"type": "combat_effectiveness", "results": [], "summary": "未选择数据源"}
         else:
-            gen = run_combat_effectiveness_stream(data_source_id)
+            gen = run_combat_effectiveness_stream(query, data_source_id)
             result_chunks = []
             for chunk in gen:
                 line = chunk.decode("utf-8").strip()
