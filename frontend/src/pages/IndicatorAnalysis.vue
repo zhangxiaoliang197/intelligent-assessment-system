@@ -191,11 +191,10 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete, ArrowRight, Aim, Guide, DataAnalysis, Shield, CircleCheck, Timer, Bullseye, Coin, Histogram } from '@element-plus/icons-vue'
+import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete, ArrowRight } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
-import api from '@/services/api'
 
 const router = useRouter()
 

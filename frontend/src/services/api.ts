@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { type AxiosRequestConfig } from 'axios'
 
 const service = axios.create({
   baseURL: '/api',
@@ -41,4 +41,13 @@ service.interceptors.response.use(
   }
 )
 
-export default service
+// 拦截器已将 response 解包为 response.data，覆盖类型让调用方直接拿到 data
+export interface ApiInstance {
+  get<T = any>(url: string, config?: AxiosRequestConfig): Promise<T>
+  post<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T>
+  put<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T>
+  delete<T = any>(url: string, config?: AxiosRequestConfig): Promise<T>
+  patch<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T>
+}
+
+export default service as unknown as ApiInstance

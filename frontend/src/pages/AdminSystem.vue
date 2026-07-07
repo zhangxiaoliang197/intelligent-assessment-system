@@ -163,7 +163,7 @@
               <el-table-column prop="name" label="配置名称" min-width="120" />
               <el-table-column prop="type" label="模型类型" width="120">
                 <template #default="{ row }">
-                  <el-tag size="small" :type="row.type === 'vllm' ? 'warning' : ''">{{ row.type }}</el-tag>
+                  <el-tag size="small" :type="row.type === 'vllm' ? 'warning' : undefined">{{ row.type }}</el-tag>
                 </template>
               </el-table-column>
               <el-table-column prop="model" label="模型" min-width="140" />
@@ -453,7 +453,7 @@ const dbForm = ref({
 })
 
 const getDbTypeTag = (type: string) => {
-  const m: Record<string, string> = {
+  const m: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = {
     MySQL: 'primary',
     PostgreSQL: 'success',
     Oracle: 'warning',
@@ -774,7 +774,6 @@ const showStructDialog = ref(false)
 const structColumns = ref<any[]>([])
 const currentStructDs = ref<string>('')
 const currentStructTable = ref('')
-const structTableInput = ref('')
 
 async function openTableStructure(row: any) {
   currentStructDs.value = row.id
@@ -1088,7 +1087,7 @@ const apiKeyTypeVal = computed(() => llmForm.value.type === 'vllm' ? 'text' : 'p
 const apiKeyPlaceholderVal = computed(() => llmForm.value.type === 'vllm' ? '本地部署无需密钥' : '请输入API Key')
 
 // 切换类型时自动填充默认值（仅新增模式生效，编辑模式跳过避免覆盖用户配置）
-watch(() => llmForm.value.type, (newType, oldType) => {
+watch(() => llmForm.value.type, (newType, _oldType) => {
   if (editingLlmId.value) return  // 编辑模式跳过，保留原有配置
   const preset = llmPresets[newType]
   if (preset) {

@@ -246,7 +246,7 @@ const ontologies = ref([
   { id: '3', name: '战术动作本体', description: '战术动作和策略', entities: 67, relations: 98 }
 ])
 
-const entities = ref([
+const entities = ref<{ id: string; name: string; type: string; properties: Record<string, string> }[]>([
   { id: '1', name: '作战效能', type: '概念', properties: { 定义: '综合评估指标', 重要性: '高' } },
   { id: '2', name: '打击能力', type: '概念', properties: { 定义: '武器打击效果', 权重: '0.4' } },
   { id: '3', name: '生存能力', type: '概念', properties: { 定义: '存活概率', 权重: '0.3' } },
@@ -401,7 +401,7 @@ const initGraph = () => {
 
   const chart = echarts.init(graphRef.value)
 
-  const nodes = entities.value.map((entity, index) => ({
+  const nodes = entities.value.map((entity) => ({
     name: entity.name,
     category: entity.type,
     draggable: true

@@ -289,7 +289,7 @@ const filteredKnowledge = computed(() => {
 })
 
 const getStatusType = (status: string) => {
-  const typeMap: Record<string, string> = {
+  const typeMap: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = {
     '已完成': 'success',
     '解析中': 'warning',
     '待解析': 'info',
@@ -351,11 +351,11 @@ const loadData = async () => {
   }
 }
 
-const handleFileChange = (file: any, files: any[]) => {
+const handleFileChange = (_file: any, files: any[]) => {
   uploadFileList.value = files
 }
 
-const handleFileRemove = (file: any, files: any[]) => {
+const handleFileRemove = (_file: any, files: any[]) => {
   uploadFileList.value = files
 }
 
@@ -399,20 +399,6 @@ const uploadKnowledge = async () => {
   uploadFileList.value = []
   uploadForm.value = { category: '未分类', tags: '' }
   await loadData()
-}
-
-const getFileType = (filename: string) => {
-  const ext = filename.split('.').pop()?.toLowerCase()
-  const typeMap: Record<string, string> = {
-    'pdf': 'PDF文档',
-    'doc': 'Word文档',
-    'docx': 'Word文档',
-    'xls': 'Excel表格',
-    'xlsx': 'Excel表格',
-    'txt': '文本文件',
-    'md': 'Markdown文档'
-  }
-  return typeMap[ext || ''] || '未知类型'
 }
 
 const viewKnowledge = async (row: any) => {

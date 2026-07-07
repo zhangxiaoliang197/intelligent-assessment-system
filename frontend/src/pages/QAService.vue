@@ -148,10 +148,9 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, Collection, Box, ChatLineRound, ChatDotRound, Promotion, PieChart, Document, Plus, Delete, ArrowRight, Aim, Guide, DataAnalysis, Shield, CircleCheck } from '@element-plus/icons-vue'
+import { Search, Collection, Box, ChatLineRound, ChatDotRound, Promotion, PieChart, Document, Plus, Delete, ArrowRight } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import Layout from '@/components/Layout.vue'
-import api from '@/services/api'
 
 const router = useRouter()
 

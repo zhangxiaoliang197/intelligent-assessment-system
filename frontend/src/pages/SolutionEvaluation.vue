@@ -159,10 +159,10 @@
                           <h6>查询结果</h6>
                           <el-table :data="msg.result.queryResult.sampleData" style="width: 100%" size="small">
                             <el-table-column
-                              v-for="(value, key) in msg.result.queryResult.sampleData[0]"
+                              v-for="(_value, key) in msg.result.queryResult.sampleData[0]"
                               :key="key"
-                              :prop="key"
-                              :label="msg.result.queryResult.columns ? msg.result.queryResult.columns[Object.keys(msg.result.queryResult.sampleData[0]).indexOf(key)] : key"
+                              :prop="String(key)"
+                              :label="msg.result.queryResult.columns ? msg.result.queryResult.columns[Object.keys(msg.result.queryResult.sampleData[0]).indexOf(String(key))] : String(key)"
                             />
                           </el-table>
                         </div>
@@ -230,7 +230,7 @@
             <div class="resize-handle" @mousedown="startResize"></div>
             <div class="panel-header">
               <span>系统执行过程</span>
-              <el-icon class="panel-close" @click="showExecutionPanel = false"><Close /></el-icon>
+              <el-icon class="panel-close" @click="showExecutionPanel = false" title="收起"><Close /></el-icon>
             </div>
             <div class="execution-content custom-scroll">
               <div v-if="executionSteps.length === 0 && !analyzing" class="empty-execution">
@@ -257,6 +257,11 @@
                 </div>
               </div>
             </div>
+          </div>
+          <!-- 收起状态下的展开按钮 -->
+          <div v-else class="execution-panel-toggle" @click="showExecutionPanel = true" title="展开系统执行过程">
+            <el-icon><ArrowRight /></el-icon>
+            <span class="toggle-text">执行过程</span>
           </div>
         </div>
 
@@ -332,10 +337,7 @@ import {
   Collection,
   Box,
   Document,
-  DocumentChecked,
   Setting,
-  DArrowLeft,
-  DArrowRight,
   Promotion,
   CircleCheck,
   CircleClose,
@@ -343,26 +345,20 @@ import {
   ChatDotRound,
   Loading,
   Cpu,
-  PieChart,
   Plus,
   Delete,
   ArrowRight,
-  Aim,
-  Guide,
-  DataAnalysis,
-  Histogram,
-  TrendCharts,
-  Coin
+  PieChart as ElPieChart
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
 import api from '@/services/api'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { BarChart, PieChart, LineChart } from 'echarts/charts'
+import { BarChart, PieChart as EChartsPieChart, LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent, TitleComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 
-use([CanvasRenderer, BarChart, PieChart, LineChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent])
+use([CanvasRenderer, BarChart, EChartsPieChart, LineChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent] as any)
 
 const router = useRouter()
 
@@ -384,7 +380,7 @@ const tools = [
   {
     id: 2,
     name: '指标分析',
-    icon: PieChart,
+    icon: ElPieChart,
     color: '#67c23a',
     path: '/indicator',
     current: false
@@ -549,29 +545,16 @@ const getStepStatusClass = (status: string) => {
   return statusMap[status] || 'pending'
 }
 
-// 格式化子步骤
-const formatSubStep = (subStep: string) => {
-  const subStepMap: Record<string, string> = {
-    'air_analysis': '制空权分析',
-    'knowledge_retrieval': '知识检索',
-    'report_generation': '报告生成',
-    'sql_generation': 'SQL生成',
-    'sql_execution': 'SQL执行',
-    'indicator_analysis': '指标分析'
-  }
-  return subStepMap[subStep] || subStep
-}
-
 // ECharts图表配置生成
-const getChartOption = (vizType: string, columns: string[], rows: any[]) => {
+const getChartOption = (vizType: string, columns: any[], rows: any[]): any => {
   if (!columns || !rows || rows.length === 0) return null
 
   if (vizType === 'bar' || vizType === 'line') {
-    const categories = rows.map(r => String(r[0]))
-    const series = columns.slice(1).map((col, i) => ({
+    const categories = rows.map((r: any) => String(r[0]))
+    const series = columns.slice(1).map((col: any, i: number) => ({
       name: col,
       type: vizType,
-      data: rows.map(r => Number(r[i + 1]) || 0),
+      data: rows.map((r: any) => Number(r[i + 1]) || 0),
       barMaxWidth: 40
     }))
     return {
@@ -590,7 +573,7 @@ const getChartOption = (vizType: string, columns: string[], rows: any[]) => {
         type: 'pie',
         radius: ['40%', '65%'],
         center: ['55%', '50%'],
-        data: rows.map(r => ({ name: String(r[0]), value: Number(r[1]) || 0 })),
+        data: rows.map((r: any) => ({ name: String(r[0]), value: Number(r[1]) || 0 })),
         itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 }
       }]
     }
@@ -599,11 +582,11 @@ const getChartOption = (vizType: string, columns: string[], rows: any[]) => {
 }
 
 // 行列数据转表格数据
-const toTableData = (columns: string[], rows: any[]) => {
+const toTableData = (columns: any[], rows: any[]) => {
   if (!columns || !rows) return []
-  return rows.map(row => {
+  return rows.map((row: any) => {
     const obj: Record<string, any> = {}
-    columns.forEach((col, i) => { obj[col] = row[i] })
+    columns.forEach((col: any, i: number) => { obj[col] = row[i] })
     return obj
   })
 }
@@ -1436,6 +1419,36 @@ onMounted(() => {
   list-style: disc;
   padding-left: 1.5rem;
   color: #64748b;
+}
+
+.execution-panel-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 32px;
+  flex-shrink: 0;
+  background: #fafafa;
+  border-left: 1px solid #e2e8f0;
+  border-right: 1px solid #e2e8f0;
+  cursor: pointer;
+  color: #9ca3af;
+  transition: background 0.2s, color 0.2s;
+  writing-mode: vertical-rl;
+}
+.execution-panel-toggle .el-icon {
+  writing-mode: horizontal-tb;
+  font-size: 16px;
+}
+.execution-panel-toggle .toggle-text {
+  font-size: 13px;
+  letter-spacing: 2px;
+  user-select: none;
+}
+.execution-panel-toggle:hover {
+  background: #f0f7ff;
+  color: #409eff;
 }
 
 .execution-panel {
