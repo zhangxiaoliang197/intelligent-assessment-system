@@ -30,6 +30,7 @@ mkdir -p "$DATA_DIR/qa"
 mkdir -p "$DATA_DIR/ontology"
 mkdir -p "$DATA_DIR/evaluation"
 mkdir -p "$DATA_DIR/solution-eval"
+mkdir -p "$DATA_DIR/config"
 
 echo "  数据目录: $DATA_DIR"
 
@@ -118,7 +119,9 @@ docker run -d --name assessment-solution-evaluation \
     -p 10259:10259 \
     -e QA_SERVICE_URL="http://assessment-qa:10253" \
     -e INDICATOR_SERVICE_URL="http://assessment-indicator:10254" \
+    -e COMBAT_QUERIES_PATH="/app/queries-custom.json" \
     -v "$DATA_DIR/solution-eval:/app/data" \
+    -v "$DATA_DIR/config/queries.json:/app/queries-custom.json:ro" \
     --restart always \
     assessment-solution-evaluation:latest
 

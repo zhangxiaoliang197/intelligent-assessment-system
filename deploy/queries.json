@@ -1,0 +1,35 @@
+[
+  {
+    "group": "战损分析",
+    "description": "参与评估的作战力量的战损情况",
+    "queries": [
+      {
+        "label": "战损明细",
+        "sql": "SELECT unit_name, equipment_type, loss_count, loss_reason, report_time FROM combat_loss ORDER BY report_time DESC LIMIT 50",
+        "vizType": "table"
+      }
+    ]
+  },
+  {
+    "group": "战果分析",
+    "description": "本次作战打击效果与战果",
+    "queries": [
+      {
+        "label": "战果汇总",
+        "sql": "SELECT unit_name, SUM(hit_count) as total_hits, SUM(destroy_count) as total_destroys FROM combat_result GROUP BY unit_name ORDER BY total_hits DESC",
+        "vizType": "bar"
+      }
+    ]
+  },
+  {
+    "group": "消耗分析",
+    "description": "作战过程中的弹药/燃料/物资消耗",
+    "queries": [
+      {
+        "label": "消耗明细",
+        "sql": "SELECT resource_type, SUM(amount) as total_amount, unit FROM resource_consume GROUP BY resource_type, unit",
+        "vizType": "bar"
+      }
+    ]
+  }
+]
