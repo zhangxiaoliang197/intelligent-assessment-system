@@ -30,7 +30,7 @@ public class GatewayController {
     public ResponseEntity<String> proxyEvaluation(HttpServletRequest request) {
         String path = request.getRequestURI().replaceFirst("^/api/evaluation", "");
         String query = request.getQueryString();
-        String url = "http://solution-evaluation-service:10259" + path;
+        String url = "http://assessment-solution-evaluation:10259" + path;
         if (query != null) {
             url += "?" + query;
         }
