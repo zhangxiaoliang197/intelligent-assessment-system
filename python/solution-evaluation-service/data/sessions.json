@@ -1,0 +1,14 @@
+{
+  "9bd0bc9e-0c9f-4daf-8f6d-feb123d531d5": [
+    {
+      "role": "user",
+      "content": "分析A区域的制空权情况",
+      "timestamp": "2026-07-07T23:02:41.043847"
+    },
+    {
+      "role": "assistant",
+      "content": "{\"type\": \"air_superiority\", \"region\": \"A区域\", \"queryResults\": [{\"group\": \"占位能力\", \"label\": \"红蓝双方占位能力对比\", \"vizType\": \"bar\", \"columns\": [], \"rows\": [], \"rowCount\": 0, \"insight\": \"HTTP Error 400: \"}, {\"group\": \"打击能力\", \"label\": \"红蓝双方打击能力对比\", \"vizType\": \"bar\", \"columns\": [], \"rows\": [], \"rowCount\": 0, \"insight\": \"HTTP Error 400: \"}, {\"group\": \"侦察能力\", \"label\": \"红蓝双方侦察能力对比\", \"vizType\": \"bar\", \"columns\": [], \"rows\": [], \"rowCount\": 0, \"insight\": \"HTTP Error 400: \"}, {\"group\": \"总体能力\", \"label\": \"红蓝双方总体制空能力对",
+      "timestamp": "2026-07-07T23:02:41.043847"
+    }
+  ]
+}
