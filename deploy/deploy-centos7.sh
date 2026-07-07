@@ -76,7 +76,13 @@ log_info "Step 3/4: 部署项目文件..."
 
 mkdir -p "$DEPLOY_TARGET"
 
-cat > "$DEPLOY_TARGET/docker-compose.yml" << 'DOCKERCOMPOSE'
+MYSQL_HOST="${MYSQL_HOST:-172.17.0.1}"
+MYSQL_PORT="${MYSQL_PORT:-3306}"
+MYSQL_DATABASE="${MYSQL_DATABASE:-assessment}"
+MYSQL_USER="${MYSQL_USER:-root}"
+MYSQL_PASSWORD="${MYSQL_PASSWORD:-root}"
+
+cat > "$DEPLOY_TARGET/docker-compose.yml" << DOCKERCOMPOSE
 services:
   frontend:
     image: assessment-frontend:latest
@@ -95,6 +101,8 @@ services:
     ports:
       - "10252:10252"
     restart: always
+    volumes:
+      - "$DEPLOY_TARGET/data/knowledge:/app/data"
     networks:
       - assessment-net
 
@@ -104,6 +112,11 @@ services:
     ports:
       - "10253:10253"
     restart: always
+    environment:
+      - ADMIN_SERVICE_URL=http://assessment-admin:10258
+      - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
+    volumes:
+      - "$DEPLOY_TARGET/data/qa:/app/data"
     networks:
       - assessment-net
 
@@ -113,6 +126,9 @@ services:
     ports:
       - "10254:10254"
     restart: always
+    environment:
+      - QA_SERVICE_URL=http://assessment-qa:10253
+      - ADMIN_SERVICE_URL=http://assessment-admin:10258
     networks:
       - assessment-net
 
@@ -122,6 +138,8 @@ services:
     ports:
       - "10255:10255"
     restart: always
+    volumes:
+      - "$DEPLOY_TARGET/data/evaluation:/app/data"
     networks:
       - assessment-net
 
@@ -131,6 +149,8 @@ services:
     ports:
       - "10256:10256"
     restart: always
+    volumes:
+      - "$DEPLOY_TARGET/data/ontology:/app/data"
     networks:
       - assessment-net
 
@@ -149,6 +169,15 @@ services:
     ports:
       - "10258:10258"
     restart: always
+    environment:
+      - MYSQL_HOST=$MYSQL_HOST
+      - MYSQL_PORT=$MYSQL_PORT
+      - MYSQL_DATABASE=$MYSQL_DATABASE
+      - MYSQL_USER=$MYSQL_USER
+      - MYSQL_PASSWORD=$MYSQL_PASSWORD
+      - DB_TYPE=mysql
+    volumes:
+      - "$DEPLOY_TARGET/data/drivers:/app/drivers"
     networks:
       - assessment-net
 
@@ -158,6 +187,14 @@ services:
     ports:
       - "10259:10259"
     restart: always
+    environment:
+      - QA_SERVICE_URL=http://assessment-qa:10253
+      - INDICATOR_SERVICE_URL=http://assessment-indicator:10254
+      - ADMIN_SERVICE_URL=http://assessment-admin:10258
+      - COMBAT_QUERIES_PATH=/app/queries-custom.json
+    volumes:
+      - "$DEPLOY_TARGET/data/solution-eval:/app/data"
+      - "$DEPLOY_TARGET/data/config/queries.json:/app/queries-custom.json:ro"
     networks:
       - assessment-net
 
@@ -165,6 +202,10 @@ networks:
   assessment-net:
     driver: bridge
 DOCKERCOMPOSE
+
+mkdir -p "$DEPLOY_TARGET/data"/{drivers,knowledge,qa,ontology,evaluation,solution-eval,config}
+
+cp "$DEPLOY_DIR/queries.json" "$DEPLOY_TARGET/data/config/queries.json" 2>/dev/null || echo '[]' > "$DEPLOY_TARGET/data/config/queries.json"
 
 log_info "docker-compose.yml 已部署"
 
