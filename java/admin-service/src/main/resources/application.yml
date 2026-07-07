@@ -47,7 +47,7 @@ db:
     port: ${MYSQL_PORT:3306}
     database: ${MYSQL_DATABASE:assessment}
     user: ${MYSQL_USER:root}
-    password: ${MYSQL_PASSWORD:10251124}
+    password: ${MYSQL_PASSWORD:root}
   postgresql:
     host: ${PG_HOST:localhost}
     port: ${PG_PORT:5432}

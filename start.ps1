@@ -60,7 +60,7 @@ Write-Host "  Started Frontend (10086)" -ForegroundColor Green
 
 # Verify
 Write-Host "`n[4/4] Waiting for startup..." -ForegroundColor Yellow
-Start-Sleep 10
+Start-Sleep 18
 
 Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host "Service Status" -ForegroundColor Cyan

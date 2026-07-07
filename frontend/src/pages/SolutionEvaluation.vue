@@ -48,7 +48,7 @@
         <div class="top-bar">
           <div class="data-source-selector">
             <span class="label">数据源：</span>
-            <el-select v-model="selectedDataSourceId" placeholder="选择数据源" size="small" style="width: 200px">
+            <el-select v-model="selectedDataSourceId" placeholder="选择数据源" size="small" style="width: 200px" @change="onDataSourceChange">
               <el-option
                 v-for="ds in dataSources"
                 :key="ds.id"
@@ -107,9 +107,7 @@
                     </el-avatar>
                   </div>
                   <div class="message-content">
-                    <div class="message-text">{{ msg.content }}</div>
-                    
-                    <!-- 结果展示区 -->
+                    <!-- 结果展示区（SQL + 数据表格）放在建议前面 -->
                     <div v-if="msg.result" class="result-section">
                       <div v-if="msg.result.type === 'air_superiority'" class="air-superiority-result">
                         <div class="result-header">
@@ -194,12 +192,29 @@
                         </div>
                       </div>
                       
-                      <div v-if="msg.result.type === 'general'" class="general-result">
-                        <div class="result-header">
-                          <h5>分析结果</h5>
+                      <div v-if="msg.result.type === 'general' || msg.result.type === 'data_query'" class="general-result">
+                        <!-- 执行的SQL -->
+                        <div v-if="msg.result.generatedSql" class="sql-section">
+                          <h6>生成的SQL</h6>
+                          <pre class="sql-code">{{ msg.result.generatedSql }}</pre>
                         </div>
-                        <div class="answer-text">
-                          {{ msg.result.answer }}
+                        <!-- 数据表格 -->
+                        <div v-if="msg.result.rawResults && msg.result.rawResults.length > 0" class="data-section">
+                          <h6>查询结果（共 {{ msg.result.totalRows || msg.result.rawResults.length }} 行）</h6>
+                          <el-table :data="msg.result.rawResults" style="width: 100%" size="small" max-height="400" border stripe>
+                            <el-table-column
+                              v-for="col in Object.keys(msg.result.rawResults[0] || {})"
+                              :key="col"
+                              :prop="col"
+                              :label="col"
+                              min-width="100"
+                              show-overflow-tooltip
+                            />
+                          </el-table>
+                        </div>
+                        <!-- 数据为空提示 -->
+                        <div v-if="msg.result.rawResults && msg.result.rawResults.length === 0" class="data-empty">
+                          查询执行成功，但未返回数据
                         </div>
                       </div>
                       
@@ -210,72 +225,46 @@
                         </ul>
                       </div>
                     </div>
+                    <!-- 分析建议（2-3条） -->
+                    <div class="message-text">{{ msg.content }}</div>
                   </div>
                 </div>
               </div>
             </div>
           </div>
-          
-          <!-- 右侧：执行过程区 -->
-          <transition name="slide">
-            <div v-if="showExecutionPanel" class="execution-panel">
-              <div class="panel-header">
-                <h4>系统执行过程</h4>
-                <el-button link @click="showExecutionPanel = false" type="info">
-                  <el-icon><DArrowRight /></el-icon>
-                </el-button>
+          <!-- 执行过程侧边栏 -->
+          <div v-if="showExecutionPanel" class="execution-panel" :style="{ width: executionPanelWidth + 'px' }">
+            <div class="resize-handle" @mousedown="startResize"></div>
+            <div class="panel-header">
+              <span>系统执行过程</span>
+              <el-icon class="panel-close" @click="showExecutionPanel = false"><Close /></el-icon>
+            </div>
+            <div class="execution-content custom-scroll">
+              <div v-if="executionSteps.length === 0 && !analyzing" class="empty-execution">
+                <el-icon :size="32" color="#d1d5db"><Cpu /></el-icon>
+                <p>暂无执行步骤</p>
               </div>
-              <div class="execution-content custom-scroll">
-                <div v-if="executionSteps.length === 0 && !analyzing" class="empty-execution">
-                  <el-icon :size="48" color="#d1d5db"><Cpu /></el-icon>
-                  <p>开始评估后显示执行过程</p>
-                </div>
-                <div v-else-if="analyzing" class="analyzing-indicator">
-                  <el-icon class="is-loading" :size="24"><Loading /></el-icon>
-                  <span>正在分析...</span>
-                </div>
-                <div v-else class="steps-list">
-                  <div
-                    v-for="step in executionSteps"
-                    :key="step.step + '-' + step.status"
-                    :class="['step-item', getStepStatusClass(step.status)]"
-                  >
-                    <div class="step-icon">
+              <div v-else class="steps-list">
+                <div
+                  v-for="step in executionSteps"
+                  :key="step.step"
+                  :class="['inline-step', getStepStatusClass(step.status)]"
+                >
+                  <div class="inline-step-header">
+                    <span class="inline-step-icon">
                       <el-icon v-if="step.status === 'completed'"><CircleCheck /></el-icon>
                       <el-icon v-else-if="step.status === 'in_progress'"><Loading class="is-loading" /></el-icon>
                       <el-icon v-else-if="step.status === 'error'"><CircleClose /></el-icon>
                       <el-icon v-else><Clock /></el-icon>
-                    </div>
-                    <div class="step-content">
-                      <div class="step-title">
-                        步骤 {{ step.step }}: {{ step.description }}
-                      </div>
-                      <div class="step-detail">{{ step.detail }}</div>
-                      <!-- 显示Thinking内容 -->
-                      <div v-if="step.thinking" class="step-thinking">
-                        <el-icon><ChatDotRound /></el-icon>
-                        {{ step.thinking }}
-                      </div>
-                      <!-- 显示进度条 -->
-                      <div v-if="step.progress !== undefined && step.status === 'in_progress'" class="step-progress">
-                        <el-progress :percentage="step.progress" :stroke-width="6" />
-                      </div>
-                      <!-- 显示子步骤 -->
-                      <div v-if="step.subStep" class="step-substep">
-                        <el-tag size="small" type="info">{{ formatSubStep(step.subStep) }}</el-tag>
-                      </div>
-                    </div>
+                    </span>
+                    <span class="inline-step-title">步骤 {{ step.step }}: {{ step.description }}</span>
                   </div>
+                  <div class="inline-step-detail">{{ step.detail }}</div>
+                  <div v-if="step.thinking" class="inline-step-thinking">{{ step.thinking }}</div>
                 </div>
               </div>
             </div>
-          </transition>
-        </div>
-
-        <!-- 收起执行面板的按钮 -->
-        <div v-if="!showExecutionPanel" class="toggle-button" @click="showExecutionPanel = true">
-          <el-icon><DArrowLeft /></el-icon>
-          <span>执行过程</span>
+          </div>
         </div>
 
         <!-- 底部输入区 -->
@@ -424,9 +413,35 @@ const sessionMessages = ref<Record<string, Array<any>>>(JSON.parse(localStorage.
 const sessionId = ref(localStorage.getItem(LS_SESSION_ID) || '')
 const dataSources = ref<Array<any>>([])
 const selectedDataSourceId = ref<string | null>(null)
+const selectedDataSourceName = ref<string>('')
 const dataSourceDialogVisible = ref(false)
 const showExecutionPanel = ref(true)
+const executionPanelWidth = ref(460)
+const isResizing = ref(false)
 const executionSteps = ref<Array<any>>([])
+
+// 拖拽调整面板宽度
+const startResize = (e: MouseEvent) => {
+  isResizing.value = true
+  const startX = e.clientX
+  const startWidth = executionPanelWidth.value
+  const onMouseMove = (ev: MouseEvent) => {
+    if (!isResizing.value) return
+    const delta = startX - ev.clientX
+    executionPanelWidth.value = Math.min(700, Math.max(300, startWidth + delta))
+  }
+  const onMouseUp = () => {
+    isResizing.value = false
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
 
 // 持久化辅助函数
 const persistState = () => {
@@ -498,6 +513,13 @@ const selectQuestion = (question: string) => {
 // 选择数据源
 const selectDataSource = (ds: any) => {
   selectedDataSourceId.value = ds.id
+  selectedDataSourceName.value = ds.name || ''
+}
+
+// 下拉框切换数据源时同步名称
+const onDataSourceChange = (val: string) => {
+  const found = dataSources.value.find((ds: any) => ds.id === val)
+  selectedDataSourceName.value = found?.name || ''
 }
 
 const confirmDataSource = () => {
@@ -550,8 +572,6 @@ const sendMessage = async () => {
   const query = inputMessage.value.trim()
   inputMessage.value = ''
   analyzing.value = true
-  
-  // 清空执行步骤
   executionSteps.value = []
   
   // 添加用户消息
@@ -564,7 +584,8 @@ const sendMessage = async () => {
   const aiMessage = {
     role: 'assistant',
     content: '正在分析您的需求，请稍候...',
-    result: null
+    result: null,
+    executionSteps: [] as any[]
   }
   messages.value.push(aiMessage)
   
@@ -578,8 +599,8 @@ const sendMessage = async () => {
       body: JSON.stringify({
         query: query,
         session_id: sessionId.value || undefined,
-        dataSourceId: selectedDataSourceId.value || null,
-        skillId: null
+        database_id: selectedDataSourceId.value || '',
+        database_name: selectedDataSourceName.value || ''
       })
     })
     
@@ -612,55 +633,46 @@ const sendMessage = async () => {
       buffer = lines.pop() || '' // 保留未完成的行
       
       for (const line of lines) {
-        if (line.trim()) {
-          try {
-            const data = JSON.parse(line)
+        // 跳过 SSE 心跳注释行
+        if (!line.trim() || line.startsWith(':')) continue
+        try {
+          const data = JSON.parse(line)
             
             if (data.type === 'step') {
-              // 更新执行步骤
               const step = data.step
-              
-              // 检查是否已存在该步骤
               const existingIndex = executionSteps.value.findIndex(s => s.step === step.step)
               if (existingIndex >= 0) {
-                // 更新已存在的步骤
-                executionSteps.value[existingIndex] = step
+                executionSteps.value.splice(existingIndex, 1, step)
               } else {
-                // 添加新步骤
                 executionSteps.value.push(step)
               }
-              
-              // 滚动到底部
-              scrollExecutionPanel()
-              
-              // 更新AI消息内容
-              if (step.detail) {
-                aiMessage.content = step.detail
-              }
+              aiMessage.content = '正在分析...'
             } else if (data.type === 'result') {
-              // 收到最终结果
-              let resultContent = '分析完成'
+              // 收到最终结果 — 后端字段平铺在 data 中
+              const answer = data.final_answer || '分析完成'
+              aiMessage.content = answer
               
-              if (data.result) {
-                if (data.result.type === 'air_superiority') {
-                  resultContent = `已完成制空权优势分析，${data.result.advantage}占优（领先${data.result.advantageMargin}分）。`
-                } else if (data.result.type === 'indicator_calculation') {
-                  resultContent = `指标计算完成，总成功率${data.result.statistics?.overallRate || '未知'}。`
-                } else {
-                  resultContent = data.result.answer || '分析完成'
-                }
+              // 构建结构化结果供模板使用
+              aiMessage.result = {
+                type: data.query_type || 'general',
+                answer: answer,
+                generatedSql: data.generated_sql || '',
+                totalRows: data.total_rows || 0,
+                intent: data.intent || '',
+                databaseUsed: data.database_used || '',
+                rawResults: data.raw_results || []
               }
               
-              aiMessage.content = resultContent
-              aiMessage.result = normalizeResult(data.result)
-              
-              // 保存会话
+              // 保存会话 — 只存干净的问答对，不含执行步骤
               if (data.session_id) {
                 if (!sessionId.value) {
                   sessionId.value = data.session_id
                   saveHistory(data.session_id, query)
                 }
-                sessionMessages.value[sessionId.value || data.session_id] = [...messages.value]
+                sessionMessages.value[sessionId.value || data.session_id] = [
+                  { role: 'user', content: query },
+                  { role: 'assistant', content: answer }
+                ]
                 persistState()
               }
               
@@ -672,7 +684,6 @@ const sendMessage = async () => {
           }
         }
       }
-    }
   } catch (error) {
     console.error('Evaluation error:', error)
     aiMessage.content = '分析失败，请稍后重试'
@@ -680,36 +691,6 @@ const sendMessage = async () => {
   } finally {
     analyzing.value = false
   }
-}
-
-// 规范化结果数据（处理命名不一致）
-const normalizeResult = (result: any) => {
-  if (!result) return null
-  
-  return {
-    type: result.type,
-    redScore: result.redScore || result.red_score,
-    blueScore: result.blueScore || result.blue_score,
-    advantage: result.advantage,
-    advantageMargin: result.advantageMargin || result.advantage_margin,
-    factors: result.factors || [],
-    analysisDetails: result.analysisDetails || result.analysis_details,
-    generatedSql: result.generatedSql || result.generated_sql,
-    queryResult: result.queryResult || result.query_result,
-    statistics: result.statistics || result.stats,
-    answer: result.answer,
-    knowledgeReference: result.knowledgeReference || result.knowledge_reference || []
-  }
-}
-
-// 滚动执行面板到底部
-const scrollExecutionPanel = () => {
-  nextTick(() => {
-    const panel = document.querySelector('.execution-content') as HTMLElement
-    if (panel) {
-      panel.scrollTop = panel.scrollHeight
-    }
-  })
 }
 
 // 滚动聊天区域到底部
@@ -778,24 +759,14 @@ const saveHistory = (id: string, question: string) => {
 // 初始化数据
 const initData = async () => {
   try {
-    // 先检查服务是否可用
     const dsResp = await api.get('/evaluation/data-sources')
     
     if (dsResp.dataSources) {
       dataSources.value = dsResp.dataSources
       if (dataSources.value.length > 0) {
         selectedDataSourceId.value = dataSources.value[0].id
+        selectedDataSourceName.value = dataSources.value[0].name || ''
       }
-    }
-    
-    // 获取历史记录
-    try {
-      const historyResp = await api.get('/evaluation/history')
-      if (historyResp.data.history) {
-        historyList.value = historyResp.data.history
-      }
-    } catch (e) {
-      console.log('历史记录接口暂时不可用')
     }
   } catch (error) {
     console.error('Init data error:', error)
@@ -1378,34 +1349,53 @@ onMounted(() => {
 }
 
 .execution-panel {
-  width: 380px;
+  min-width: 300px;
+  max-width: 700px;
   background: #fafafa;
   display: flex;
   flex-direction: column;
   border-left: 1px solid #e2e8f0;
+  flex-shrink: 0;
+  position: relative;
 }
-
+.resize-handle {
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background 0.2s;
+}
+.resize-handle:hover,
+.resize-handle:active {
+  background: rgba(64, 158, 255, 0.35);
+}
 .panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem;
+  padding: 12px 16px;
   border-bottom: 1px solid #e2e8f0;
-  background: white;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 14px;
+  color: #1f2937;
+  background: #fff;
 }
-
-.panel-header h4 {
-  margin: 0;
-  font-size: 1rem;
+.panel-close {
+  cursor: pointer;
+  color: #9ca3af;
+}
+.panel-close:hover {
   color: #374151;
 }
-
 .execution-content {
   flex: 1;
   overflow-y: auto;
-  padding: 1rem;
+  padding: 8px;
 }
-
 .empty-execution {
   display: flex;
   flex-direction: column;
@@ -1413,147 +1403,73 @@ onMounted(() => {
   justify-content: center;
   height: 100%;
   color: #9ca3af;
-  text-align: center;
+  gap: 8px;
+  font-size: 13px;
 }
 
-.empty-execution p {
-  margin-top: 1rem;
-}
-
-.analyzing-indicator {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  padding: 2rem;
-  color: #409eff;
-  font-weight: 600;
-}
-
-.steps-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.step-item {
-  display: flex;
-  gap: 0.75rem;
-  padding: 1rem;
-  background: white;
-  border-radius: 0.5rem;
-  border: 2px solid #e2e8f0;
-  transition: all 0.3s;
-}
-
-.step-item.completed {
-  border-color: #10b981;
-  background: linear-gradient(135deg, #f0fdf4, #dcfce7);
-}
-
-.step-item.in-progress {
-  border-color: #f59e0b;
-  background: linear-gradient(135deg, #fffbeb, #fef3c7);
-  animation: pulse-border 2s infinite;
-}
-
-.step-item.error {
-  border-color: #ef4444;
-  background: linear-gradient(135deg, #fef2f2, #fee2e2);
-}
-
-.step-item.skipped {
-  opacity: 0.6;
-}
-
-@keyframes pulse-border {
-  0%, 100% { 
-    border-color: #f59e0b;
-    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
-  }
-  50% { 
-    border-color: #fbbf24;
-    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0);
-  }
-}
-
-.step-icon {
-  font-size: 1.5rem;
-  margin-top: 0.1rem;
-}
-
-.step-item.completed .step-icon {
-  color: #10b981;
-}
-
-.step-item.in-progress .step-icon {
-  color: #f59e0b;
-}
-
-.step-item.error .step-icon {
-  color: #ef4444;
-}
-
-.step-title {
-  font-weight: 600;
-  color: #374151;
-  margin-bottom: 0.5rem;
-}
-
-.step-detail {
-  font-size: 0.9rem;
-  color: #64748b;
-  margin-bottom: 0.5rem;
-}
-
-.step-thinking {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-  padding: 0.5rem;
-  background: #f8fafc;
-  border-radius: 0.25rem;
-  font-size: 0.85rem;
-  color: #64748b;
-  font-style: italic;
-}
-
-.step-progress {
-  margin-top: 0.5rem;
-}
-
-.step-substep {
-  margin-top: 0.5rem;
-}
-
-.toggle-button {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 1rem 0.5rem;
-  background: #409eff;
-  color: white;
-  border-radius: 0.5rem 0 0 0.5rem;
-  cursor: pointer;
-  font-size: 0.85rem;
-  z-index: 10;
-}
-
-.slide-enter-active,
-.slide-leave-active {
-  transition: width 0.3s ease;
-}
-
-.slide-enter-from,
-.slide-leave-to {
-  width: 0;
+/* 内联执行步骤样式 */
+.execution-inline {
+  margin-bottom: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
   overflow: hidden;
+  background: #f9fafb;
+}
+.inline-step {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+.inline-step:last-child {
+  border-bottom: none;
+}
+.inline-step-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.inline-step-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.inline-step-title {
+  font-weight: 500;
+  color: #1f2937;
+  flex: 1;
+  min-width: 0;
+}
+.inline-step-detail {
+  color: #6b7280;
+  font-size: 12px;
+  padding-left: 24px;
+}
+.inline-step-thinking {
+  margin-top: 4px;
+  padding: 8px 10px;
+  background: #f3f4f6;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #6b7280;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.inline-step.in-progress .inline-step-icon {
+  color: #409eff;
+}
+.inline-step.completed .inline-step-icon {
+  color: #67c23a;
+}
+.inline-step.error .inline-step-icon {
+  color: #f56c6c;
 }
 
 .input-area {
