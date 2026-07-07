@@ -81,6 +81,8 @@ echo "[启动] 智能问答服务 (10253)..."
 docker run -d --name assessment-qa \
     --network "$NET_NAME" \
     -p 10253:10253 \
+    -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
+    -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
     -v "$DATA_DIR/qa:/app/data" \
     --restart always \
     assessment-qa:latest
@@ -89,6 +91,7 @@ echo "[启动] 指标分析服务 (10254)..."
 docker run -d --name assessment-indicator \
     --network "$NET_NAME" \
     -p 10254:10254 \
+    -e QA_SERVICE_URL="http://assessment-qa:10253" \
     --restart always \
     assessment-indicator:latest
 
@@ -112,6 +115,8 @@ echo "[启动] 方案评估服务(多Agent) (10259)..."
 docker run -d --name assessment-solution-evaluation \
     --network "$NET_NAME" \
     -p 10259:10259 \
+    -e QA_SERVICE_URL="http://assessment-qa:10253" \
+    -e INDICATOR_SERVICE_URL="http://assessment-indicator:10254" \
     -v "$DATA_DIR/solution-eval:/app/data" \
     --restart always \
     assessment-solution-evaluation:latest
