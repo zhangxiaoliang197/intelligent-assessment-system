@@ -43,6 +43,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # 外部服务地址
 QA_SERVICE_URL = os.getenv("QA_SERVICE_URL", "http://localhost:10253")
 INDICATOR_SERVICE_URL = os.getenv("INDICATOR_SERVICE_URL", "http://localhost:10254")
+ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
 
 # 滑动窗口大小
 MAX_CONTEXT = int(os.getenv("SOLUTION_CONTEXT_ROUNDS", "5"))
@@ -163,13 +164,62 @@ def save_history(history):
     atomic_json_write(HISTORY_FILE, history)
 
 
-# 数据源配置
+# 数据源配置 — 从 admin 服务获取真实数据库配置
 def get_data_sources():
-    return [
-        {"id": "ds-mission-data", "name": "任务执行数据", "type": "database", "status": "available"},
-        {"id": "ds-battle-data", "name": "战场态势数据", "type": "database", "status": "available"},
-        {"id": "ds-weapon-data", "name": "武器装备数据", "type": "database", "status": "available"}
-    ]
+    try:
+        req = urllib.request.Request(
+            f"{ADMIN_SERVICE_URL}/api/admin/dataset/list",
+            method="GET"
+        )
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("success") and data.get("datasets"):
+                sources = []
+                for ds in data["datasets"]:
+                    db_id = ds.get("databaseId", "")
+                    if db_id:
+                        sources.append({
+                            "id": db_id,
+                            "name": ds.get("name", "未命名"),
+                            "type": "database",
+                            "status": "available",
+                            "datasetId": ds.get("id", ""),
+                            "tableName": ds.get("tableName", ""),
+                            "description": ds.get("description", "")
+                        })
+                if sources:
+                    return sources
+    except Exception as e:
+        logger.warning(f"获取数据源(数据集列表)失败: {e}")
+
+    try:
+        req = urllib.request.Request(
+            f"{ADMIN_SERVICE_URL}/api/admin/database/list",
+            method="GET"
+        )
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("success") and data.get("databases"):
+                sources = []
+                for db in data["databases"]:
+                    sources.append({
+                        "id": db.get("id", ""),
+                        "name": db.get("name", db.get("dbName", "未命名")),
+                        "type": "database",
+                        "status": "available" if db.get("status") == "已连接" else "unavailable",
+                        "dbType": db.get("type", ""),
+                        "host": db.get("host", ""),
+                        "port": db.get("port", 0),
+                        "dbName": db.get("dbName", "")
+                    })
+                if sources:
+                    return sources
+    except Exception as e:
+        logger.warning(f"获取数据库列表失败: {e}")
+
+    return []
 
 
 # 调用其他服务
