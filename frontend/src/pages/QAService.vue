@@ -49,7 +49,7 @@
         </div>
       </div>
       <div class="main-content">
-        <div class="chat-area custom-scroll">
+        <div class="chat-area custom-scroll" ref="chatArea">
           <div v-if="messages.length === 0" class="empty-state">
             <div class="tags-section">
               <div class="suggest-cards">
@@ -86,11 +86,21 @@
                 </el-avatar>
               </div>
               <div class="message-content">
-                <div class="message-text">{{ msg.content }}</div>
+                <div v-if="msg.role === 'assistant' && !msg.content" class="message-loading">分析中...</div>
+                <div v-else class="message-text">
+                  <div v-if="msg.knowledgeUsed && msg.role === 'assistant'" class="knowledge-badge">
+                    <el-tag size="small" type="primary" effect="plain">含知识库参考</el-tag>
+                  </div>
+                  {{ msg.content }}
+                </div>
                 <div v-if="msg.references && msg.references.length > 0" class="references">
-                  <h5>参考文献：</h5>
+                  <h5>参考来源：</h5>
                   <ul>
-                    <li v-for="ref in msg.references" :key="ref">{{ ref }}</li>
+                    <li v-for="(ref, idx) in msg.references" :key="idx">
+                      {{ ref }}
+                      <el-tag v-if="ref.includes('知识库')" size="small" type="primary" effect="plain">知识库</el-tag>
+                      <el-tag v-else size="small" type="info" effect="plain">AI生成</el-tag>
+                    </li>
                   </ul>
                 </div>
               </div>
@@ -136,7 +146,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { Search, Collection, Box, ChatLineRound, ChatDotRound, Promotion, PieChart, Document, Plus, Delete, ArrowRight, Aim, Guide, DataAnalysis, Shield, CircleCheck } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -187,6 +197,7 @@ const searchQuery = ref('')
 const inputMessage = ref('')
 const sessionId = ref(localStorage.getItem(LS_SESSION_ID) || '')
 const messages = ref<Array<any>>([])
+const chatArea = ref<HTMLElement | null>(null)
 const historyList = ref<Array<any>>(JSON.parse(localStorage.getItem(LS_HISTORY_LIST) || '[]'))
 const sessionMessages = ref<Record<string, Array<any>>>(JSON.parse(localStorage.getItem(LS_SESSION_MSGS) || '{}'))
 
@@ -294,6 +305,12 @@ const selectQuestion = (question: string) => {
   sendMessage()
 }
 
+const scrollToBottom = () => {
+  if (chatArea.value) {
+    chatArea.value.scrollTop = chatArea.value.scrollHeight
+  }
+}
+
 const sendMessage = async () => {
   if (!inputMessage.value.trim()) {
     ElMessage.warning('请输入问题')
@@ -314,6 +331,7 @@ const sendMessage = async () => {
     content: '',
     references: [] as string[]
   })
+  nextTick(() => scrollToBottom())
 
   try {
     const response = await fetch('/api/qa/chat/stream', {
@@ -350,11 +368,13 @@ const sendMessage = async () => {
           if (data.type === 'text') {
             fullText += data.content
             messages.value[msgIndex] = { ...messages.value[msgIndex], content: fullText }
+            nextTick(() => scrollToBottom())
           } else if (data.type === 'done') {
             messages.value[msgIndex] = {
               ...messages.value[msgIndex],
               content: fullText,
-              references: data.references || []
+              references: data.references || [],
+              knowledgeUsed: data.knowledge_used || false
             }
             if (data.session_id) {
               sessionId.value = data.session_id
@@ -881,6 +901,33 @@ onMounted(() => {
 
 .tools-bar .tool-item:hover .tool-name {
   color: var(--primary-600);
+}
+
+.message-loading {
+  padding: 12px 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.message-loading::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary-500);
+  animation: loading-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes loading-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.knowledge-badge {
+  margin-bottom: 8px;
 }
 
 .tools-bar .tool-item.current:hover .tool-name {

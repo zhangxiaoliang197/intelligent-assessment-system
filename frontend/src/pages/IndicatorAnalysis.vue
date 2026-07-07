@@ -93,8 +93,9 @@
                 
                 <!-- AI消息：包含文本、结构化数据、树状图、指标卡片 -->
                 <div v-else class="ai-response">
-                  <!-- 文本回答 -->
+                  <!-- 文本回答 / 分析中 -->
                   <div v-if="msg.content" class="message-text">{{ msg.content }}</div>
+                  <div v-else-if="!msg.summary && !msg.tree && (!msg.indicators || msg.indicators.length === 0)" class="message-loading">分析中...</div>
                   
                   <!-- 分析总结 -->
                   <div v-if="msg.summary" class="summary-section">
@@ -377,6 +378,7 @@ const analyzeIndicator = async () => {
     indicators: [],
     references: []
   })
+  nextTick(() => scrollToBottom())
 
   try {
     const response = await fetch('/api/indicator/analyze/stream', {
@@ -412,6 +414,7 @@ const analyzeIndicator = async () => {
           if (data.type === 'text') {
             fullText += data.content
             messages.value[msgIndex] = { ...messages.value[msgIndex], content: fullText }
+            nextTick(() => scrollToBottom())
           } else if (data.type === 'result') {
             messages.value[msgIndex] = {
               ...messages.value[msgIndex],

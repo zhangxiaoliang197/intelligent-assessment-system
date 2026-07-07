@@ -495,11 +495,13 @@ async def chat_stream(request: ChatRequest):
             # 获取 references 和 sources
             api_url, api_key, model, temp, mt, msgs, rs = get_llm_messages(request.query, context)
             references, sources = (rs if isinstance(rs, tuple) else ([], []))
+            knowledge_used = len(sources) > 0 if isinstance(sources, list) else False
             yield json.dumps({
                 "type": "done",
                 "session_id": session_id,
                 "references": references,
-                "sources": sources
+                "sources": sources,
+                "knowledge_used": knowledge_used
             }, ensure_ascii=False, default=str) + "\n"
         except Exception as e:
             yield json.dumps({"type": "error", "content": str(e)[:500]}, ensure_ascii=False) + "\n"

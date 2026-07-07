@@ -170,8 +170,8 @@ def call_llm_for_indicator_analysis(query: str, context: str = "") -> dict:
         logger.error(f"LLM call failed: {e}")
         return {
             "answer": f"调用大模型分析失败: {str(e)}",
-            "tree": get_default_tree(),
-            "indicators": get_default_indicators(),
+            "tree": None,
+            "indicators": [],
             "references": [],
             "summary": ""
         }
@@ -192,17 +192,10 @@ def parse_structured_response(answer: str) -> dict:
         json_str = json_str.strip()
         data = json.loads(json_str)
 
-        if "tree" not in data:
-            data["tree"] = get_default_tree()
-        if "indicators" not in data:
-            data["indicators"] = get_default_indicators()
-        if "summary" not in data:
-            data["summary"] = ""
-
         result = {
             "answer": answer,
-            "tree": data.get("tree", get_default_tree()),
-            "indicators": data.get("indicators", get_default_indicators()),
+            "tree": data.get("tree"),
+            "indicators": data.get("indicators", []),
             "summary": data.get("summary", ""),
             "references": []
         }
@@ -213,8 +206,8 @@ def parse_structured_response(answer: str) -> dict:
         logger.warning(f"JSON parse failed: {e}")
         return {
             "answer": answer,
-            "tree": get_default_tree(),
-            "indicators": get_default_indicators(),
+            "tree": None,
+            "indicators": [],
             "summary": "",
             "references": []
         }
@@ -398,8 +391,8 @@ async def analyze_indicator(request: AnalyzeRequest):
         "session_id": session_id,
         "answer": result.get("answer", ""),
         "summary": result.get("summary", ""),
-        "tree": result.get("tree", get_default_tree()),
-        "indicators": result.get("indicators", get_default_indicators()),
+        "tree": result.get("tree"),
+        "indicators": result.get("indicators", []),
         "references": result.get("references", []),
         "message": "指标分析完成"
     }
@@ -479,8 +472,8 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
 
         # 解析结构化结果
         result = parse_structured_response(full_text)
-        tree = result.get("tree", get_default_tree())
-        indicators = result.get("indicators", get_default_indicators())
+        tree = result.get("tree")
+        indicators = result.get("indicators", [])
         summary = result.get("summary", result.get("answer", full_text[:200]))
 
         yield json.dumps({
