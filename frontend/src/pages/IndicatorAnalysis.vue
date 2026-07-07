@@ -116,8 +116,8 @@
                       <div v-for="(ind, idx) in msg.indicators" :key="idx" class="indicator-card">
                         <div class="indicator-header">
                           <span class="indicator-name">{{ ind.name }}</span>
-                          <el-tag :type="ind.type === 'knowledge' ? 'primary' : 'info'" size="small">
-                            {{ ind.type === 'knowledge' ? '知识库' : 'AI生成' }}
+                          <el-tag :type="ind.type === 'admin-db' ? 'success' : ind.type === 'knowledge' ? 'primary' : 'info'" size="small">
+                            {{ ind.type === 'admin-db' ? '已配置' : ind.type === 'knowledge' ? '知识库' : 'AI生成' }}
                           </el-tag>
                         </div>
                         <div class="indicator-body">

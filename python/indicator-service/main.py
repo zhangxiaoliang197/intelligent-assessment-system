@@ -418,24 +418,57 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
     if context:
         ctx_str = f"\n\n历史对话上下文:\n{context}"
 
-    prompt = f"""请分析以下指标需求，并返回结构化的JSON数据：
+    # 从 admin 获取已配置的指标作为参考
+    db_indicators_text = ""
+    try:
+        req_db = urllib.request.Request(
+            f"{ADMIN_SERVICE_URL}/api/admin/indicator/list",
+            method="GET"
+        )
+        req_db.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req_db, timeout=5) as resp_db:
+            db_data = json.loads(resp_db.read().decode("utf-8"))
+            if db_data.get("success") and db_data.get("indicators"):
+                db_indicators_text = "\n## 系统中已配置的指标（来自数据库，可直接引用）:\n"
+                for ind in db_data["indicators"]:
+                    parts = [f"- {ind['name']}"]
+                    if ind.get("category"): parts.append(f"分类: {ind['category']}")
+                    if ind.get("formula"): parts.append(f"公式: {ind['formula']}")
+                    if ind.get("description"): parts.append(f"描述: {ind['description']}")
+                    if ind.get("weight") is not None: parts.append(f"权重: {ind['weight']}")
+                    db_indicators_text += ", ".join(parts) + "\n"
+                db_indicators_text += "\n上述已配置指标的数据来源标记为 \"admin-db\"。\n"
+    except Exception as e:
+        logger.warning(f"Failed to fetch indicators from admin: {e}")
+
+    prompt = f"""请分析以下指标需求，基于：1)系统已配置的指标数据库 2)知识库中的专业知识 3)你自身的领域知识，综合给出分析结果。
 
 需求：{request.query}{ctx_str}
+{db_indicators_text}
 
 请按照以下JSON格式返回分析结果（必须是可以被json.loads解析的JSON格式）：
 {{
     "tree": {{
-        "name": "根节点名称，如：作战效能指标体系",
-        "source": "knowledge 或 llm",
-        "children": [...]
+        "name": "根节点名称",
+        "source": "admin-db 或 knowledge 或 llm",
+        "children": [{{
+            "name": "子节点名称",
+            "source": "admin-db 或 knowledge 或 llm",
+            "children": [...]
+        }}]
     }},
     "indicators": [
-        {{"name": "指标名称", "type": "knowledge 或 llm", "definition": "定义", "formula": "公式", "criteria": "标准", "weight": "权重"}}
+        {{"name": "指标名称", "type": "admin-db 或 knowledge 或 llm", "definition": "定义", "formula": "公式", "criteria": "标准", "weight": "权重"}}
     ],
     "summary": "分析总结说明"
 }}
 
-要求：tree.children最多3层，indicators至少5个指标，每个指标须包含name/definition/formula"""
+来源标注规则：
+- \"admin-db\" = 来自系统已配置的指标数据库
+- \"knowledge\" = 来自知识库检索的参考资料
+- \"llm\" = 来自大模型自身知识推断补充
+
+要求：tree.children最多3层，indicators至少3个指标，每个指标须包含name/type/definition/formula，优先使用admin-db已有配置"""
 
     def generate():
         full_text = ""
