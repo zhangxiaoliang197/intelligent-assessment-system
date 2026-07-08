@@ -49,7 +49,7 @@ const pageTitle = computed(() => {
     'Portal': '',
     'QAService': '智能问答',
     'IndicatorAnalysis': '指标分析',
-    'SolutionEvaluation': '方案评估',
+    'SolutionEvaluation': '评估分析',
     'KnowledgeBase': '知识库',
     'OntologyModel': '本体模型',
     'AdminSystem': '基础管理系统'

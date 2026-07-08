@@ -48,9 +48,9 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api/, '')
       },
       '/api/evaluation': {
-        target: 'http://localhost:10259',
+        target: 'http://localhost:10253',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/evaluation/, '')
+        rewrite: (path) => path.replace(/^\/api/, '')
       },
       '/api/ontology': {
         target: 'http://localhost:10256',

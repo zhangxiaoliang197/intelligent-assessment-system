@@ -207,7 +207,7 @@ def get_llm_messages(query, context=""):
                 "score": ch.get("score", 0)
             })
 
-    system_prompt = "你是一个专业的智能评估系统助手，擅长作战效能评估、指标体系分析、方案评估等领域。请用中文回答，回答要专业、准确、有条理。"
+    system_prompt = "你是一个专业的智能评估系统助手，擅长作战效能评估、指标体系分析、评估分析等领域。请用中文回答，回答要专业、准确、有条理。"
 
     if knowledge_context:
         system_prompt += f"\n\n以下是知识库中检索到的相关参考资料，请优先基于这些资料回答问题：{knowledge_context}"
@@ -657,7 +657,7 @@ async def delete_llm_config(config_id: str):
     except Exception as e:
         return {"success": False, "message": f"删除失败: {str(e)}"}
 
-# ========== 方案评估 API（多智能体） ==========
+# ========== 评估分析 API（多智能体） ==========
 try:
     from evaluation_api import evaluation_router
     app.include_router(evaluation_router)

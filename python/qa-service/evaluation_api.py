@@ -1,5 +1,5 @@
 """
-方案评估 API — 多智能体协作流式端点
+评估分析 API — 多智能体协作流式端点
 """
 import json
 import logging
@@ -11,7 +11,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 from agents.workflow import run_evaluation_workflow
@@ -20,7 +20,7 @@ from agents.tools import fetch_all_databases
 logger = logging.getLogger("evaluation.api")
 _thread_pool = ThreadPoolExecutor(max_workers=8)
 
-evaluation_router = APIRouter(prefix="/evaluation", tags=["方案评估"])
+evaluation_router = APIRouter(prefix="/evaluation", tags=["评估分析"])
 
 # ─── 文件持久化 ───
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "solution-evaluation-service", "data")
@@ -82,7 +82,7 @@ def _save_session_to_file(sid: str, question: str, final_answer: str):
 class EvaluationRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
-    database_id: str = ""
+    database_id: str = Field(default="", alias="dataSourceId")
     database_name: str = ""
 
 

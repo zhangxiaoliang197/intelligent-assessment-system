@@ -84,7 +84,7 @@ cd python/indicator-service
 pip install -r requirements.txt
 python main.py
 
-# 终端4: 方案评估服务
+# 终端4: 评估分析服务
 cd python/evaluation-service
 pip install -r requirements.txt
 python main.py

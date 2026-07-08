@@ -8,7 +8,7 @@ import json
 import os
 
 app = FastAPI(
-    title="方案评估服务",
+    title="评估分析服务",
     description="评估方案的构建与管理",
     version="1.0.0"
 )

@@ -22,7 +22,7 @@ from agents.air_superiority_agent import run_stream as run_air_superiority_strea
 
 app = FastAPI(
     title="Solution Evaluation Service",
-    description="方案评估系统 - 多Agent协同分析",
+    description="评估分析系统 - 多Agent协同分析",
     version="1.0.0"
 )
 

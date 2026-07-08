@@ -201,6 +201,36 @@ public class SchemaService {
                 "WHERE c.table_name = '%s' ORDER BY c.ordinal_position",
                 tableName, tableName, tableName);
         }
+        if ("Oracle".equals(driverName) || "达梦数据库V8".equals(driverName)) {
+            return String.format(
+                "SELECT c.column_name, c.data_type, c.nullable AS is_nullable, " +
+                "CASE WHEN pk.column_name IS NOT NULL THEN 'YES' ELSE 'NO' END AS is_pk, " +
+                "COALESCE(cm.comments, '') AS column_comment " +
+                "FROM user_tab_columns c " +
+                "LEFT JOIN (SELECT cc.column_name FROM user_cons_columns cc " +
+                "JOIN user_constraints uc ON cc.constraint_name = uc.constraint_name " +
+                "WHERE uc.constraint_type = 'P' AND uc.table_name = '%s') pk " +
+                "ON c.column_name = pk.column_name " +
+                "LEFT JOIN user_col_comments cm ON c.table_name = cm.table_name AND c.column_name = cm.column_name " +
+                "WHERE c.table_name = '%s' ORDER BY c.column_id",
+                tableName, tableName);
+        }
+        if ("SQL Server".equals(driverName)) {
+            return String.format(
+                "SELECT c.COLUMN_NAME, c.DATA_TYPE, c.IS_NULLABLE, " +
+                "CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 'YES' ELSE 'NO' END AS is_pk, " +
+                "COALESCE(CAST(ep.value AS NVARCHAR(MAX)), '') AS column_comment " +
+                "FROM INFORMATION_SCHEMA.COLUMNS c " +
+                "LEFT JOIN (SELECT ku.TABLE_NAME, ku.COLUMN_NAME " +
+                "FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc " +
+                "JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku ON tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME " +
+                "WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' AND ku.TABLE_NAME = '%s') pk " +
+                "ON c.COLUMN_NAME = pk.COLUMN_NAME " +
+                "LEFT JOIN sys.extended_properties ep ON ep.major_id = OBJECT_ID('%s') " +
+                "AND ep.minor_id = c.ORDINAL_POSITION AND ep.name = 'MS_Description' " +
+                "WHERE c.TABLE_NAME = '%s' ORDER BY c.ORDINAL_POSITION",
+                tableName, tableName, tableName);
+        }
         return String.format(
             "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, " +
             "IF(COLUMN_KEY='PRI','YES','NO') AS IS_PK, " +

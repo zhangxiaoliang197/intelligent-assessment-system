@@ -31,7 +31,7 @@
             有什么可以帮您评估？
           </h1>
           <p class="hero-subtitle">
-            基于知识库与本体模型，为您提供智能问答、指标分析、方案评估等专业能力
+            基于知识库与本体模型，为您提供智能问答、指标分析、评估分析等专业能力
           </p>
         </section>
 
@@ -162,7 +162,7 @@ const tools = [
   },
   {
     id: 3,
-    name: '方案评估',
+    name: '评估分析',
     icon: Document,
     color: '#f59e0b',
     path: '/evaluation'

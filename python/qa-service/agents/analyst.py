@@ -1,11 +1,10 @@
 """
 分析回答智能体 (Analyst)
-负责：执行SQL获取数据 → 基于数据给出2-3条简洁建议
+负责：基于查询结果数据给出2-3条简洁建议（纯分析，不执行SQL）
 """
 import json
 import logging
 from .state import EvaluationState
-from .tools import execute_sql_on_database
 
 logger = logging.getLogger("evaluation.analyst")
 
@@ -42,47 +41,10 @@ ANALYST_SYSTEM_PROMPT = """你是数据分析专家。根据SQL查询结果，�
 
 
 async def run_analyst(state: EvaluationState, llm_call_fn) -> EvaluationState:
+    """基于已有的查询结果生成2-3条分析建议"""
     logger.info(f"Running analyst for: {state.question[:100]}")
 
-    if not state.sql_valid or not state.generated_sql:
-        state.add_step(100, "SQL执行", "skipped", "无需执行SQL")
-    else:
-        state.update_step(100, detail="正在连接数据库执行SQL...")
-
-        if state.database_id:
-            result = execute_sql_on_database(state.database_id, state.generated_sql)
-            if result.get("success"):
-                rows = result.get("rows", result.get("data", result.get("results", [])))
-                state.raw_results = rows
-                state.execution_error = None
-
-                preview_parts = []
-                if rows:
-                    sample = rows[0]
-                    if isinstance(sample, dict):
-                        col_names = list(sample.keys())
-                        preview_parts.append(f"列: {', '.join(col_names[:15])}")
-                    for i, row in enumerate(rows[:5]):
-                        if isinstance(row, dict):
-                            preview_parts.append(f"行{i+1}: {json.dumps(row, ensure_ascii=False)[:200]}")
-                        else:
-                            preview_parts.append(f"行{i+1}: {str(row)[:200]}")
-                    if len(rows) > 5:
-                        preview_parts.append(f"... 共 {len(rows)} 行")
-
-                state.update_step(100, status="completed",
-                                 detail=f"查询返回 {len(rows)} 行数据",
-                                 thinking=f"【SQL执行结果】\n" + "\n".join(preview_parts) +
-                                          f"\n\n【执行的SQL】\n{state.generated_sql[:500]}")
-            else:
-                state.execution_error = result.get("message", "SQL执行失败")
-                state.update_step(100, status="error",
-                                 detail=f"SQL执行失败: {state.execution_error[:200]}",
-                                 thinking=f"错误: {state.execution_error}")
-        else:
-            state.update_step(100, status="skipped", detail="未选择数据源")
-
-    state.add_step(101, "生成分析建议", "in_progress", "正在基于数据生成建议...")
+    state.add_step(101, "生成分析建议", "in_progress", "正在基于数据调用大模型生成建议...")
 
     result_summary = "未执行SQL"
     raw_data = "无"
@@ -124,11 +86,14 @@ async def run_analyst(state: EvaluationState, llm_call_fn) -> EvaluationState:
     except Exception as e:
         logger.error(f"Analyst failed: {e}")
         state.final_answer = f"生成建议时出错：{str(e)[:200]}"
+        state.update_step(101, status="error",
+                         detail=f"生成失败: {str(e)[:100]}")
 
     return state
 
 
 async def run_simple_analysis(state: EvaluationState, llm_call_fn) -> EvaluationState:
+    """直接问答模式：无需SQL，直接回答用户问题"""
     state.add_step(2, "直接分析", "in_progress", "正在分析问题...")
 
     response = await llm_call_fn(

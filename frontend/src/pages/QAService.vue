@@ -174,7 +174,7 @@ const tools = [
   },
   {
     id: 3,
-    name: '方案评估',
+    name: '评估分析',
     icon: Document,
     color: '#e6a23c',
     path: '/evaluation',

@@ -64,9 +64,9 @@ Write-Host "=========================================" -ForegroundColor Cyan
 Build-And-Save "knowledge"             "knowledge"             "10252" "知识库服务"
 Build-And-Save "qa"                    "qa"                    "10253" "智能问答服务"
 Build-And-Save "indicator"             "indicator"             "10254" "指标分析服务"
-Build-And-Save "evaluation"            "evaluation"            "10255" "方案评估服务"
+Build-And-Save "evaluation"            "evaluation"            "10255" "评估分析服务"
 Build-And-Save "ontology"              "ontology"              "10256" "本体模型服务"
-Build-And-Save "solution-evaluation"   "solution-evaluation"   "10259" "方案评估服务(多Agent)"
+Build-And-Save "solution-evaluation"   "solution-evaluation"   "10259" "评估分析服务(多Agent)"
 
 # ---- 阶段2: Java 服务 (1个) ----
 Write-Host ""

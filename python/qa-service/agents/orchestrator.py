@@ -14,18 +14,24 @@ ORCHESTRATOR_SYSTEM_PROMPT = """你是智能评估编排专家。分析用户问
 ## 数据源
 {data_source_context}
 
-## 问题
+## 用户问题
 {question}
 
+## 重要规则 — query_type 选择
+- **data_query**: 任何涉及"统计/对比/排名/指标/查询/评估/分析"数据的问题，只要数据源中有相关表，必须用 data_query。绝大多数问题都是 data_query。
+- **general_analysis**: 仅限纯理论问题（"什么是XX"、"如何理解XX"、"解释XX概念"），完全不涉及数据库查询。
+
 ## 任务
-输出JSON（不要markdown包裹）:
+输出 JSON（不要 markdown 包裹）:
 {{
-    "intent": "问题类型:指标计算/趋势分析/对比分析/数据查询/综合评估/理论问答",
-    "filters": "时间范围、条件等过滤",
-    "dimensions": ["分析维度"],
-    "analysis_plan": "具体分析步骤，注明需查询的表和字段",
-    "query_type": "data_query或general_analysis"
-}}"""
+    "intent": "问题类型: 指标计算/趋势分析/对比分析/数据查询/综合评估",
+    "filters": "时间范围、条件等过滤，如无可留空",
+    "dimensions": ["分析维度，如班级、部门、月份等"],
+    "analysis_plan": "具体步骤: 1.查哪些表/字段 2.如何计算 3.如何对比",
+    "query_type": "data_query"
+}}
+
+**注意: 只要数据源中列出了表，query_type 默认就是 data_query！**"""
 
 
 def parse_orchestrator_response(response_text: str) -> dict:

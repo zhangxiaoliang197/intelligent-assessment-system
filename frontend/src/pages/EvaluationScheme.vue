@@ -2,7 +2,7 @@
   <Layout>
     <div class="evaluation-container">
       <div class="page-header">
-        <h2>方案评估</h2>
+        <h2>评估分析</h2>
         <el-button type="primary" @click="createNewScheme">新建评估方案</el-button>
       </div>
       <div class="content">

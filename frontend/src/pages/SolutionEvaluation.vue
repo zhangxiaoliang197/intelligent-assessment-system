@@ -219,7 +219,7 @@
                       </div>
                     </div>
                     <!-- 分析建议（2-3条） -->
-                    <div class="message-text">{{ msg.content }}</div>
+                    <div class="message-text" v-html="renderMarkdown(msg.content)"></div>
                   </div>
                 </div>
               </div>
@@ -387,7 +387,7 @@ const tools = [
   },
   {
     id: 3,
-    name: '方案评估',
+    name: '评估分析',
     icon: Document,
     color: '#e6a23c',
     path: '/evaluation',
@@ -407,6 +407,22 @@ const messages = ref<Array<any>>([])
 const historyList = ref<Array<any>>(JSON.parse(localStorage.getItem(LS_HISTORY_LIST) || '[]'))
 const sessionMessages = ref<Record<string, Array<any>>>(JSON.parse(localStorage.getItem(LS_SESSION_MSGS) || '{}'))
 const sessionId = ref(localStorage.getItem(LS_SESSION_ID) || '')
+
+console.log('[SolutionEvaluation] component loaded')
+
+// 简单 markdown 渲染（处理 **加粗**、换行、列表）
+function renderMarkdown(text: string): string {
+  if (!text) return ''
+  let html = text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/\n/g, '<br/>')
+    .replace(/^(\d+)\.\s(.+)$/gm, '<div class="md-list-item"><span class="md-num">$1.</span> $2</div>')
+    .replace(/<br\/>(\d+)\.\s/g, '<br/><span class="md-num">$1.</span> ')
+  return html
+}
+
 const dataSources = ref<Array<any>>([])
 const selectedDataSourceId = ref<string | null>(null)
 const selectedDataSourceName = ref<string>('')
@@ -679,7 +695,8 @@ const sendMessage = async () => {
             } else if (data.type === 'result') {
               // 收到最终结果
               const result = data.result || {}
-              aiMessage.content = result.summary || result.answer || '分析完成'
+              const answerText = result.final_answer || result.summary || result.answer || '分析完成'
+              aiMessage.content = answerText
               aiMessage.result = result
               
               // 保存会话
@@ -690,7 +707,7 @@ const sendMessage = async () => {
                 }
                 sessionMessages.value[sessionId.value || data.session_id] = [
                   { role: 'user', content: query },
-                  { role: 'assistant', content: result.summary || result.answer || '分析完成' }
+                  { role: 'assistant', content: answerText }
                 ]
                 persistState()
               }
@@ -1189,6 +1206,21 @@ onMounted(() => {
   background: white;
   border: 1px solid #e2e8f0;
   color: #374151;
+}
+
+.assistant .message-text strong {
+  color: #374151;
+  font-weight: 600;
+}
+
+.md-list-item {
+  margin-bottom: 0.35rem;
+  padding-left: 0.5rem;
+}
+
+.md-num {
+  font-weight: 600;
+  color: #409eff;
 }
 
 .result-section {

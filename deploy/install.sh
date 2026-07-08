@@ -128,7 +128,7 @@ nohup $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 10254 \
     > "$LOG_DIR/indicator.log" 2>&1 &
 echo $! > "$BASE_DIR/pids/indicator.pid"
 
-echo "[启动] 方案评估服务 (10255)..."
+echo "[启动] 评估分析服务 (10255)..."
 nohup $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 10255 \
     > "$LOG_DIR/evaluation.log" 2>&1 &
 echo $! > "$BASE_DIR/pids/evaluation.pid"
@@ -165,9 +165,9 @@ check_port() {
 check_port 10252 "知识库服务"
 check_port 10253 "智能问答服务"
 check_port 10254 "指标分析服务"
-check_port 10255 "方案评估服务"
+check_port 10255 "评估分析服务"
 check_port 10256 "本体模型服务"
-check_port 10259 "方案评估服务(多Agent)"
+check_port 10259 "评估分析服务(多Agent)"
 check_port 3000 "前端服务"
 
 echo ""
@@ -239,9 +239,9 @@ check_port 3000 "前端界面"
 check_port 10252 "知识库服务"
 check_port 10253 "智能问答服务"
 check_port 10254 "指标分析服务"
-check_port 10255 "方案评估服务"
+check_port 10255 "评估分析服务"
 check_port 10256 "本体模型服务"
-check_port 10259 "方案评估服务(多Agent)"
+check_port 10259 "评估分析服务(多Agent)"
 
 echo "========================================"
 STATUSSCRIPT

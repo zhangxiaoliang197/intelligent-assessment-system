@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.*;
 
 /**
- * 方案评估控制器
+ * 评估分析控制器
  * 向 Python 多智能体系统提供数据上下文和 SQL 执行能力
  */
 @RestController

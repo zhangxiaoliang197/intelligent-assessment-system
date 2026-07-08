@@ -113,7 +113,7 @@ docker run -d --name assessment-indicator \
     --restart always \
     assessment-indicator:latest
 
-echo "[启动] 方案评估服务 (10255)..."
+echo "[启动] 评估分析服务 (10255)..."
 docker run -d --name assessment-evaluation \
     --network "$NET_NAME" \
     -p 10255:10255 \
@@ -129,7 +129,7 @@ docker run -d --name assessment-ontology \
     --restart always \
     assessment-ontology:latest
 
-echo "[启动] 方案评估服务(多Agent) (10259)..."
+echo "[启动] 评估分析服务(多Agent) (10259)..."
 docker run -d --name assessment-solution-evaluation \
     --network "$NET_NAME" \
     -p 10259:10259 \
