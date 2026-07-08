@@ -1,15 +1,16 @@
 """
 评估工作流引擎
 编排多智能体协作：
-  步骤0: 检查数据集管理 & 指标管理（用户预定义信息）
   步骤1: 分析问题意图（LLM）
-  步骤2: 数据源探查 → 发现表 → 筛选相关表
-  步骤3: 读取对应的表结构
-  步骤4: 生成SQL（LLM）
-  步骤5: 执行SQL → 获取查询结果
-  步骤6: 基于数据生成2-3条建议（LLM）
+  步骤2: 数据源探查 → 发现数据库所有表
+  步骤3: 检查数据集管理 & 指标管理 → 辅助选表
+  步骤4: 结合数据集/指标选表 → 读取表结构
+  步骤5: 生成SQL（LLM）
+  步骤6: 执行SQL → 获取查询结果
+  步骤7: 基于数据生成2-3条建议（LLM）
 """
 import asyncio
+import concurrent.futures
 import json
 import logging
 import re
@@ -22,6 +23,7 @@ from .tools import execute_sql_on_database
 logger = logging.getLogger("evaluation.workflow")
 
 _YIELD_DELAY = 0.25
+_DB_TIMEOUT = 8  # 数据库连接超时（秒）
 
 
 def _step_event(step_num, description, status, detail="", thinking="", progress=None):
@@ -81,67 +83,6 @@ async def run_evaluation_workflow(
                             database_id=database_id, database_name=database_name)
     try:
         # ═══════════════════════════════════════════
-        # 步骤 0: 检查数据集管理和指标管理
-        # ═══════════════════════════════════════════
-        yield _step_event(0, "检查数据集和指标", "in_progress",
-                          detail="正在检查数据集管理和指标管理中的预定义信息...")
-        await asyncio.sleep(_YIELD_DELAY)
-
-        from .tools import fetch_datasets_for_database, fetch_indicators_for_datasets
-
-        datasets_found = []
-        indicators_found = []
-        if state.database_id:
-            try:
-                datasets_found = fetch_datasets_for_database(state.database_id)
-            except Exception as e:
-                logger.warning(f"获取数据集失败: {e}")
-
-            if datasets_found:
-                ds_names = ", ".join(ds.get("name", "") for ds in datasets_found[:5])
-                ds_desc = "\n".join(
-                    f"  - {ds.get('name', '')}: {ds.get('description', '')[:100]}"
-                    for ds in datasets_found[:5]
-                )
-                yield _step_event(0.1, "查询数据集描述", "completed",
-                                  detail=f"发现 {len(datasets_found)} 个关联数据集: {ds_names}",
-                                  thinking=f"【数据集管理 — 用户预定义的描述】\n{ds_desc}")
-            else:
-                yield _step_event(0.1, "查询数据集描述", "completed",
-                                  detail="未找到关联的数据集（将直接使用数据库表结构）",
-                                  thinking="数据集管理中无与此数据源关联的数据集")
-            await asyncio.sleep(_YIELD_DELAY)
-
-            try:
-                ds_ids = [ds.get("id") for ds in datasets_found]
-                indicators_found = fetch_indicators_for_datasets(ds_ids)
-            except Exception as e:
-                logger.warning(f"获取指标失败: {e}")
-
-            if indicators_found:
-                ind_names = ", ".join(ind.get("name", "") for ind in indicators_found[:5])
-                ind_desc = "\n".join(
-                    f"  - {ind.get('name', '')}"
-                    + (f" (公式: {ind.get('formula', '')})" if ind.get('formula') else "")
-                    + (f" [说明: {ind.get('description', '')}]" if ind.get('description') else "")
-                    for ind in indicators_found[:5]
-                )
-                yield _step_event(0.2, "查询指标定义", "completed",
-                                  detail=f"发现 {len(indicators_found)} 个关联指标: {ind_names}",
-                                  thinking=f"【指标管理 — 用户预定义的指标】\n{ind_desc}")
-            else:
-                yield _step_event(0.2, "查询指标定义", "completed",
-                                  detail="未找到关联的指标定义",
-                                  thinking="指标管理中无与此数据源关联的指标")
-            await asyncio.sleep(_YIELD_DELAY)
-
-        total_extra = len(datasets_found) + len(indicators_found)
-        yield _step_event(0, "检查数据集和指标", "completed",
-                          detail=f"检查完成: {len(datasets_found)} 个数据集, {len(indicators_found)} 个指标",
-                          thinking=f"数据集数: {len(datasets_found)} | 指标数: {len(indicators_found)} | 总计额外上下文: {total_extra} 项")
-        await asyncio.sleep(_YIELD_DELAY)
-
-        # ═══════════════════════════════════════════
         # 步骤 1: 分析问题意图
         # ═══════════════════════════════════════════
         yield _step_event(1, "分析问题意图", "in_progress",
@@ -150,8 +91,8 @@ async def run_evaluation_workflow(
 
         sys_prompt, usr_prompt = build_orchestrator_prompt(state)
         yield _step_event(1.1, "大模型调用", "in_progress",
-                          detail="正在将问题及上下文发送给大模型进行意图识别...",
-                          thinking=f"【发送给模型】\n系统提示词: 约{len(sys_prompt)}字符\n用户问题: {question[:300]}")
+                          detail="正在将问题发送给大模型进行意图识别...",
+                          thinking=f"用户问题: {question[:300]}")
         await asyncio.sleep(_YIELD_DELAY)
 
         try:
@@ -160,13 +101,7 @@ async def run_evaluation_workflow(
             yield _step_event(1.1, "大模型调用", "error",
                               detail=f"调用失败: {str(e)[:100]}")
             await asyncio.sleep(_YIELD_DELAY)
-            state.intent = "general_analysis"
-            state.entities = {"filters": "", "dimensions": [], "query_type": "general_analysis"}
-            state.analysis_plan = "直接回答用户问题"
             state = await run_simple_analysis(state, llm_call_fn)
-            yield _step_event(99, "分析报告", "completed",
-                              detail="分析报告生成完成",
-                              thinking=state.final_answer[:800] if state.final_answer else "")
             yield _make_result(state, session_id)
             return
 
@@ -180,52 +115,34 @@ async def run_evaluation_workflow(
         query_type = state.entities.get("query_type", "")
         analysis_plan = state.analysis_plan or ""
 
-        yield _step_event(1.2, "意图识别结果", "completed",
-                          detail=f"意图: {intent} | 查询模式: {query_type}",
-                          thinking=(
-                              f"【意图识别结果】\n"
-                              f"问题类型: {intent}\n"
-                              f"查询模式: {query_type}\n"
-                              f"过滤条件: {state.entities.get('filters', '无')}\n"
-                              f"分析维度: {', '.join(state.entities.get('dimensions', [])) or '未指定'}\n"
-                              f"【分析计划】\n{analysis_plan[:500]}"
-                          ))
-        await asyncio.sleep(_YIELD_DELAY)
-
-        # ═══════════════════════════════════════════
-        # 路由兜底：只对 general_analysis 强转，保留军事领域 query_type
-        # ═══════════════════════════════════════════
+        # 路由兜底
         if state.database_id and query_type == "general_analysis":
             query_type = "data_query"
             state.entities["query_type"] = "data_query"
-            yield _step_event(1.3, "路由修正", "completed",
-                              detail="已选择数据源，自动切换为数据库查询模式",
-                              thinking="检测到已连接数据库，将 LLM 返回的 general_analysis 修正为 data_query")
+            yield _step_event(1.2, "路由修正", "completed",
+                              detail="已选择数据源，自动切换为数据库查询模式")
             await asyncio.sleep(_YIELD_DELAY)
 
-        # ═══════════════════════════════════════════
-        # 无数据库 → 直接分析回答
-        # ═══════════════════════════════════════════
+        yield _step_event(1, "分析问题意图", "completed",
+                          detail=f"意图: {intent} | 查询模式: {query_type}",
+                          thinking=(
+                              f"【意图识别】\n问题类型: {intent}\n查询模式: {query_type}\n"
+                              f"分析维度: {', '.join(state.entities.get('dimensions', [])) or '未指定'}\n"
+                              f"【分析计划】\n{analysis_plan[:300]}"
+                          ))
+        await asyncio.sleep(_YIELD_DELAY)
+
+        # 无数据库 → 直接分析
         if not state.database_id:
-            yield _step_event(2, "直接分析", "in_progress",
-                              detail="无数据源连接，直接生成回答...")
-            await asyncio.sleep(_YIELD_DELAY)
             state = await run_simple_analysis(state, llm_call_fn)
-            yield _step_event(2, "直接分析", "completed",
-                              detail="分析完成",
-                              thinking=state.final_answer[:800] if state.final_answer else "")
             yield _make_result(state, session_id)
             return
 
-        # ═══════════════════════════════════════════
         # 领域智能体路由
-        # ═══════════════════════════════════════════
         if query_type == "combat_effectiveness":
-            yield _step_event(1.4, "智能体选择", "completed",
-                              detail="已选择「作战效能分析」智能体",
-                              thinking="编排器根据用户问题中的军事领域关键词，选择作战效能分析智能体（combat_effectiveness_agent）")
+            yield _step_event(1.3, "智能体选择", "completed",
+                              detail="已选择「作战效能分析」智能体")
             await asyncio.sleep(_YIELD_DELAY)
-
             from .combat_effectiveness_agent import run_stream as combat_stream
             async for event in combat_stream(state.question, state.database_id, llm_call_fn):
                 if isinstance(event, dict):
@@ -234,11 +151,9 @@ async def run_evaluation_workflow(
             return
 
         if query_type == "air_superiority":
-            yield _step_event(1.4, "智能体选择", "completed",
-                              detail="已选择「制空权分析」智能体",
-                              thinking="编排器根据用户问题中的制空权相关关键词，选择制空权分析智能体（air_superiority_agent）")
+            yield _step_event(1.3, "智能体选择", "completed",
+                              detail="已选择「制空权分析」智能体")
             await asyncio.sleep(_YIELD_DELAY)
-
             from .air_superiority_agent import run_stream as air_stream
             async for event in air_stream(state.question, state.database_id, llm_call_fn):
                 if isinstance(event, dict):
@@ -247,68 +162,188 @@ async def run_evaluation_workflow(
             return
 
         # ═══════════════════════════════════════════
-        # 步骤 2: 数据源探查 — 发现表 → 筛选相关表
+        # 步骤 2: 数据源探查 — 获取数据库所有表
         # ═══════════════════════════════════════════
+        from .tools import (fetch_database_tables, fetch_table_structure,
+                           _fetch_dataset_structure_inner,
+                           fetch_datasets_for_database, fetch_indicators_for_datasets)
+
         yield _step_event(2, "数据源探查", "in_progress",
-                          detail=f"正在连接数据源 [{state.database_name or state.database_id}] 查询数据表...")
+                          detail=f"正在连接数据源查询数据表...")
         await asyncio.sleep(_YIELD_DELAY)
 
-        from .tools import fetch_database_tables, fetch_table_structure
-        all_tables = fetch_database_tables(state.database_id)
-        state.database_tables = all_tables
+        all_tables = []
+        db_connected = False
+        try:
+            loop = asyncio.get_event_loop()
+            all_tables = await asyncio.wait_for(
+                loop.run_in_executor(None, fetch_database_tables, state.database_id),
+                timeout=_DB_TIMEOUT
+            )
+            db_connected = bool(all_tables)
+        except asyncio.TimeoutError:
+            logger.warning(f"获取表列表超时 ({_DB_TIMEOUT}s)")
+        except Exception as e:
+            logger.warning(f"获取表列表失败: {e}")
 
         table_list_str = "\n".join(f"  - {t}" for t in all_tables[:30])
         if len(all_tables) > 30:
             table_list_str += f"\n  ... 共 {len(all_tables)} 张表"
+
         yield _step_event(2, "数据源探查", "completed",
                           detail=f"发现 {len(all_tables)} 张数据表",
-                          thinking=f"【数据库中的表列表】\n{table_list_str}")
+                          thinking=f"【数据库表列表】\n{table_list_str}")
         await asyncio.sleep(_YIELD_DELAY)
 
-        # 筛选相关表
+        # ═══════════════════════════════════════════
+        # 步骤 3: 检查数据集和指标 — 用于辅助选表
+        # ═══════════════════════════════════════════
+        yield _step_event(3, "检查数据集和指标", "in_progress",
+                          detail="正在从数据集管理和指标管理中查找相关信息...")
+        await asyncio.sleep(_YIELD_DELAY)
+
+        datasets_found = []
+        indicators_found = []
+        try:
+            datasets_found = fetch_datasets_for_database(state.database_id)
+        except Exception as e:
+            logger.warning(f"获取数据集失败: {e}")
+
+        if datasets_found:
+            ds_names = ", ".join(ds.get("name", "") for ds in datasets_found[:5])
+            ds_desc_lines = [f"  - {ds.get('name', '')} → 表 {ds.get('tableName', '')}"
+                            + (f": {ds.get('description', '')[:80]}" if ds.get('description') else "")
+                            for ds in datasets_found[:5]]
+            yield _step_event(3.1, "查询数据集", "completed",
+                              detail=f"发现 {len(datasets_found)} 个数据集: {ds_names}",
+                              thinking="【数据集管理】\n" + "\n".join(ds_desc_lines))
+        else:
+            yield _step_event(3.1, "查询数据集", "completed",
+                              detail="未找到关联数据集",
+                              thinking="数据集管理中无与此数据源关联的数据集。将直接使用数据库表结构。")
+        await asyncio.sleep(_YIELD_DELAY)
+
+        try:
+            ds_ids = [ds.get("id") for ds in datasets_found]
+            indicators_found = fetch_indicators_for_datasets(ds_ids)
+        except Exception as e:
+            logger.warning(f"获取指标失败: {e}")
+
+        if indicators_found:
+            ind_names = ", ".join(ind.get("name", "") for ind in indicators_found[:5])
+            ind_desc_lines = [f"  - {ind.get('name', '')}"
+                            + (f" (公式: {ind.get('formula', '')})" if ind.get('formula') else "")
+                            + (f" [说明: {ind.get('description', '')}]" if ind.get('description') else "")
+                            for ind in indicators_found[:5]]
+            yield _step_event(3.2, "查询指标", "completed",
+                              detail=f"发现 {len(indicators_found)} 个指标: {ind_names}",
+                              thinking="【指标管理】\n" + "\n".join(ind_desc_lines))
+        else:
+            yield _step_event(3.2, "查询指标", "completed",
+                              detail="未找到关联指标",
+                              thinking="指标管理中无关联指标。后续分析将不依赖预定义指标。")
+        await asyncio.sleep(_YIELD_DELAY)
+
+        # 构建数据集映射：表名 → 数据集（含字段标注）
+        dataset_table_map = {}
+        for ds in datasets_found:
+            tn = ds.get("tableName", "")
+            if tn:
+                dataset_table_map[tn] = ds
+        state.dataset_defs = datasets_found
+        state.indicator_defs = indicators_found
+
+        # 降级：数据库没连上但有数据集，用数据集的表名
+        if not db_connected:
+            ds_tables = list(dataset_table_map.keys())
+            if ds_tables:
+                all_tables = ds_tables
+                yield _step_event(3, "检查数据集和指标", "completed",
+                                  detail=f"数据库未连接，数据集提供 {len(all_tables)} 张表",
+                                  thinking="【降级】数据库连接失败，使用数据集管理的表定义")
+            else:
+                yield _step_event(3, "检查数据集和指标", "error",
+                                  detail="数据库未连接且无可用数据集",
+                                  thinking="无法继续：需配置正确的数据库连接或创建数据集")
+                yield _make_result(state, session_id)
+                return
+        else:
+            yield _step_event(3, "检查数据集和指标", "completed",
+                              detail=f"数据集 {len(datasets_found)} 个 | 指标 {len(indicators_found)} 个",
+                              thinking="数据集和指标检查完毕，将用于辅助表选择和SQL生成")
+        await asyncio.sleep(_YIELD_DELAY)
+
+        state.database_tables = all_tables
+
+        # ═══════════════════════════════════════════
+        # 步骤 4: 结合数据集/指标选表 → 读取表结构
+        # ═══════════════════════════════════════════
+        yield _step_event(4, "选择数据表", "in_progress",
+                          detail="正在根据分析计划和数据集信息筛选相关数据表...")
+        await asyncio.sleep(_YIELD_DELAY)
+
+        # 选表时考虑数据集关联
         relevant = _pick_relevant_tables(all_tables, state.analysis_plan, state.question)
+        # 数据集关联的表优先保留
+        for t in list(all_tables):
+            if t in dataset_table_map and t not in relevant:
+                if len(relevant) < 6:
+                    relevant.append(t)
         skipped = [t for t in all_tables if t not in relevant]
 
-        yield _step_event(2.1, "表筛选", "completed",
-                          detail=f"选定 {len(relevant)} 张相关表: {', '.join(relevant)}",
+        yield _step_event(4, "选择数据表", "completed",
+                          detail=f"选定 {len(relevant)} 张表: {', '.join(relevant)}",
                           thinking=(
                               f"从 {len(all_tables)} 张表中筛选出 {len(relevant)} 张。\n"
-                              f"✓ 选中:\n" + "\n".join(f"    - {t}" for t in relevant) +
-                              f"\n✗ 跳过:\n" + "\n".join(f"    - {t}" for t in skipped[:20]) +
-                              (f"\n    ... 共 {len(skipped)} 张跳过" if len(skipped) > 20 else "")
+                              f"✓ 选中:\n" + "\n".join(
+                                  f"    - {t}" + (" ← 数据集「" + dataset_table_map[t].get('name', '') + "」" if t in dataset_table_map else "")
+                                  for t in relevant
+                              ) +
+                              f"\n✗ 跳过: {', '.join(skipped)}"
                           ))
         await asyncio.sleep(_YIELD_DELAY)
 
-        # ═══════════════════════════════════════════
-        # 步骤 3: 读取表结构 — 每张表独立展示
-        # ═══════════════════════════════════════════
-        yield _step_event(3, "读取表结构", "in_progress",
-                          detail=f"正在读取 {len(relevant)} 张相关表的结构定义...")
+        # 读取表结构
+        yield _step_event(4.1, "读取表结构", "in_progress",
+                          detail=f"正在读取 {len(relevant)} 张表的结构定义...")
         await asyncio.sleep(_YIELD_DELAY)
 
         schemas = []
         for i, table_name in enumerate(relevant):
-            yield _step_event(3.1, f"读取表结构 ({i+1}/{len(relevant)})", "in_progress",
-                              detail=f"正在读取表 [{table_name}] 的字段信息...")
+            ds = dataset_table_map.get(table_name)
+            source_tag = "数据集标注" if ds else ("实时读取" if db_connected else "跳过")
+            yield _step_event(4.1, f"读取表结构 ({i+1}/{len(relevant)})", "in_progress",
+                              detail=f"[{table_name}] 来源: {source_tag}...")
             await asyncio.sleep(_YIELD_DELAY)
             try:
-                s_ = fetch_table_structure(state.database_id, table_name)
+                if ds:
+                    s_ = _fetch_dataset_structure_inner(ds.get("id"))
+                    s_["datasetName"] = ds.get("name", "")
+                    s_["datasetId"] = ds.get("id", "")
+                    s_["description"] = ds.get("description", "")
+                elif db_connected:
+                    s_ = fetch_table_structure(state.database_id, table_name)
+                else:
+                    continue
                 schemas.append(s_)
                 cols = s_.get("columns", [])
-                col_desc = "\n".join(
-                    f"    {c['columnName']:20s} {c['dataType']:12s}"
-                    + (" [主键]" if c.get('isPrimaryKey') else "")
-                    + (f" -- {c.get('comment', '')}" if c.get('comment') else "")
-                    for c in cols
-                )
-                yield _step_event(3.1, f"读取表结构 ({i+1}/{len(relevant)})", "completed",
-                                  detail=f"[{table_name}] 读取完成: {len(cols)} 列",
-                                  thinking=f"【表结构: {table_name}】\n{col_desc}")
+                col_lines = []
+                for c in cols:
+                    line = f"    {c['columnName']:20s} {c['dataType']:12s}"
+                    if c.get('isPrimaryKey'):
+                        line += " [PK]"
+                    bm = c.get('businessMeaning', '')
+                    if bm:
+                        line += f"  → {bm}"
+                    elif c.get('comment'):
+                        line += f"  -- {c.get('comment', '')}"
+                    col_lines.append(line)
+                yield _step_event(4.1, f"读取表结构 ({i+1}/{len(relevant)})", "completed",
+                                  detail=f"[{table_name}] {len(cols)} 列 ({source_tag})",
+                                  thinking=f"【{table_name} | {source_tag}】\n" + "\n".join(col_lines))
             except Exception as e:
-                logger.warning(f"读取表 {table_name} 结构失败: {e}")
-                yield _step_event(3.1, f"读取表结构 ({i+1}/{len(relevant)})", "error",
-                                  detail=f"[{table_name}] 读取失败: {str(e)[:100]}")
-            await asyncio.sleep(_YIELD_DELAY)
+                yield _step_event(4.1, f"读取表结构 ({i+1}/{len(relevant)})", "error",
+                                  detail=f"[{table_name}] 失败: {str(e)[:80]}")
 
         state.table_schemas = schemas
 
@@ -317,18 +352,16 @@ async def run_evaluation_workflow(
             tn = s_.get("tableName", "?")
             cc = s_.get("count", 0)
             cols = ", ".join(c["columnName"] for c in s_.get("columns", [])[:8])
-            if cc > 8:
-                cols += f" ...共{cc}列"
             col_summary.append(f"{tn}({cc}列): {cols}")
-        yield _step_event(3, "读取表结构", "completed",
-                          detail=f"已读取 {len(schemas)}/{len(relevant)} 张表结构",
+        yield _step_event(4.1, "读取表结构", "completed",
+                          detail=f"已读取 {len(schemas)}/{len(relevant)} 张表",
                           thinking="\n".join(f"  - {p}" for p in col_summary))
         await asyncio.sleep(_YIELD_DELAY)
 
         # ═══════════════════════════════════════════
-        # 步骤 4: 生成SQL（LLM）
+        # 步骤 5: 生成SQL（LLM）
         # ═══════════════════════════════════════════
-        yield _step_event(4, "生成SQL", "in_progress",
+        yield _step_event(5, "生成SQL", "in_progress",
                           detail=f"正在基于 {len(schemas)} 张表结构生成SQL查询...")
         await asyncio.sleep(_YIELD_DELAY)
 
@@ -339,58 +372,63 @@ async def run_evaluation_workflow(
         for s in state.steps:
             sd = s if isinstance(s, dict) else s.__dict__
             sn = sd.get('step', 0)
-            if sn in (4.1, 4.2):
+            if sn in (5.1, 5.2):
                 yield _step_event(sn, sd.get("description", ""), sd.get("status", ""),
                                   sd.get("detail", ""), sd.get("thinking", ""),
                                   sd.get("progress"))
                 await asyncio.sleep(_YIELD_DELAY)
 
         # ═══════════════════════════════════════════
-        # 步骤 5: 执行SQL → 获取查询结果
+        # 步骤 6: 执行SQL → 获取查询结果
         # ═══════════════════════════════════════════
         if state.sql_valid and state.generated_sql:
-            yield _step_event(5, "执行SQL查询", "in_progress",
-                              detail="正在连接数据库执行SQL查询...",
-                              thinking=f"【执行的SQL】\n{state.generated_sql[:600]}")
-            await asyncio.sleep(_YIELD_DELAY)
-
-            if state.database_id:
-                result = execute_sql_on_database(state.database_id, state.generated_sql)
-                if result.get("success"):
-                    rows = result.get("rows", result.get("data", result.get("results", [])))
-                    state.raw_results = rows
-                    state.execution_error = None
-
-                    preview_parts = []
-                    if rows:
-                        sample = rows[0]
-                        if isinstance(sample, dict):
-                            col_names = list(sample.keys())
-                            preview_parts.append(f"字段: {', '.join(col_names[:15])}")
-                        for i, row in enumerate(rows[:5]):
-                            preview_parts.append(f"第{i+1}行: {json.dumps(row, ensure_ascii=False, default=str)[:200]}")
-                        if len(rows) > 5:
-                            preview_parts.append(f"... 共 {len(rows)} 行数据")
-
-                    yield _step_event(5, "执行SQL查询", "completed",
-                                      detail=f"查询成功，返回 {len(rows)} 行数据",
-                                      thinking=f"【SQL执行结果】\n" + "\n".join(preview_parts) +
-                                               f"\n\n【执行的SQL】\n{state.generated_sql[:500]}")
-                else:
-                    state.execution_error = result.get("message", "SQL执行失败")
-                    yield _step_event(5, "执行SQL查询", "error",
-                                      detail=f"SQL执行失败: {state.execution_error[:200]}",
-                                      thinking=f"错误详情: {state.execution_error}")
+            if not db_connected and not any(dataset_table_map.get(t) for t in relevant):
+                yield _step_event(6, "执行SQL查询", "skipped",
+                                  detail="数据库未连接，跳过SQL执行（可在数据集管理中配置关联数据库后重试）",
+                                  thinking="当前处于数据集降级模式，缺少数据库连接无法执行SQL。生成的SQL代码仅供参考。")
             else:
-                yield _step_event(5, "执行SQL查询", "skipped",
-                                  detail="未选择数据源，跳过SQL执行")
+                yield _step_event(6, "执行SQL查询", "in_progress",
+                                  detail="正在连接数据库执行SQL查询...",
+                                  thinking=f"【执行的SQL】\n{state.generated_sql[:600]}")
+                await asyncio.sleep(_YIELD_DELAY)
+
+                if state.database_id:
+                    result = execute_sql_on_database(state.database_id, state.generated_sql)
+                    if result.get("success"):
+                        rows = result.get("rows", result.get("data", result.get("results", [])))
+                        state.raw_results = rows
+                        state.execution_error = None
+
+                        preview_parts = []
+                        if rows:
+                            sample = rows[0]
+                            if isinstance(sample, dict):
+                                col_names = list(sample.keys())
+                                preview_parts.append(f"字段: {', '.join(col_names[:15])}")
+                            for i, row in enumerate(rows[:5]):
+                                preview_parts.append(f"第{i+1}行: {json.dumps(row, ensure_ascii=False, default=str)[:200]}")
+                            if len(rows) > 5:
+                                preview_parts.append(f"... 共 {len(rows)} 行数据")
+
+                        yield _step_event(6, "执行SQL查询", "completed",
+                                          detail=f"查询成功，返回 {len(rows)} 行数据",
+                                          thinking=f"【SQL执行结果】\n" + "\n".join(preview_parts) +
+                                                   f"\n\n【执行的SQL】\n{state.generated_sql[:500]}")
+                    else:
+                        state.execution_error = result.get("message", "SQL执行失败")
+                        yield _step_event(6, "执行SQL查询", "error",
+                                          detail=f"SQL执行失败（数据库可能不可达）",
+                                          thinking=f"错误详情: {state.execution_error}\n\n【生成的SQL供参考】\n{state.generated_sql[:500]}")
+                else:
+                    yield _step_event(6, "执行SQL查询", "skipped",
+                                      detail="未选择数据源，跳过SQL执行")
         else:
-            yield _step_event(5, "执行SQL查询", "skipped",
+            yield _step_event(6, "执行SQL查询", "skipped",
                               detail="无需执行SQL（SQL生成失败或非查询模式）")
         await asyncio.sleep(_YIELD_DELAY)
 
         # ═══════════════════════════════════════════
-        # 步骤 6: 生成分析建议 (LLM)
+        # 步骤 7: 生成分析建议 (LLM)
         # ═══════════════════════════════════════════
         state = await run_analyst(state, llm_call_fn)
         await asyncio.sleep(_YIELD_DELAY)

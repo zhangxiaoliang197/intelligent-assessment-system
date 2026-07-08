@@ -103,13 +103,13 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
 
     while attempts <= max_retries:
         attempt_label = "" if attempts == 0 else f" (第{attempts+1}次)"
-        step_id = 4 if attempts == 0 else 4.2
+        step_id = 5 if attempts == 0 else 5.2
 
         if attempts > 0 and last_error:
             state.add_step(step_id, f"SQL重试{attempt_label}", "in_progress",
                           detail=f"上次错误: {last_error[:120]}")
 
-        state.add_step(4.1, f"生成SQL{attempt_label}", "in_progress",
+        state.add_step(5.1, f"生成SQL{attempt_label}", "in_progress",
                       detail=f"正在调用大模型生成SQL...（{table_count} 张表）")
 
         system_prompt = TEXT_TO_SQL_SYSTEM_PROMPT.format(
@@ -130,7 +130,7 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
                 if is_valid:
                     state.generated_sql = _clean_sql(sql)
                     state.sql_valid = True
-                    state.add_step(4.1, f"生成SQL{attempt_label}", "completed",
+                    state.add_step(5.1, f"生成SQL{attempt_label}", "completed",
                                    detail=f"SQL生成成功 ({len(sql)} 字符)",
                                    thinking=(
                                        f"【模型输出】\n{response[:500]}\n\n"
@@ -141,26 +141,26 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
                     return state
                 else:
                     last_error = error_msg
-                    state.add_step(4.1, f"生成SQL{attempt_label}", "in_progress",
+                    state.add_step(5.1, f"生成SQL{attempt_label}", "in_progress",
                                    detail=f"SQL校验失败: {error_msg[:120]}")
                     logger.warning(f"SQL validation failed: {error_msg}")
             else:
                 no_sql = _extract_no_sql(response)
                 if no_sql:
-                    state.add_step(4.1, "生成SQL", "skipped",
+                    state.add_step(5.1, "生成SQL", "skipped",
                                    detail=f"模型判断无需SQL: {no_sql.get('reason', '')[:120]}")
                     state.generated_sql = ""
                     state.sql_valid = False
                     return state
                 last_error = "模型未返回有效SQL"
-                state.add_step(4.1, "生成SQL", "in_progress",
+                state.add_step(5.1, "生成SQL", "in_progress",
                                detail="未提取到SQL，准备重试",
                                thinking=f"模型原始响应:\n{response[:500]}")
 
         except Exception as e:
             last_error = str(e)[:300]
             logger.error(f"Text-to-SQL attempt {attempts + 1} failed: {e}")
-            state.add_step(4.1, "生成SQL", "error",
+            state.add_step(5.1, "生成SQL", "error",
                           detail=f"调用失败: {last_error[:120]}")
             if "timeout" in last_error.lower() or "timed out" in last_error.lower():
                 # 超时不重试
