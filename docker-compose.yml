@@ -62,17 +62,6 @@ services:
     networks:
       - assessment-net
 
-  solution-evaluation-service:
-    image: assessment-solution-evaluation:latest
-    container_name: assessment-solution-evaluation
-    ports:
-      - "10259:10259"
-    volumes:
-      - ./python/solution-evaluation-service/config:/app/config
-    restart: always
-    networks:
-      - assessment-net
-
 networks:
   assessment-net:
     driver: bridge

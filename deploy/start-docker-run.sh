@@ -83,7 +83,7 @@ echo "  (admin 服务启动后将自动建库建表)"
 # ─── 1-6. Python 服务 ───
 echo ""
 echo "========================================"
-echo "[1/9] 启动 Python 服务..."
+echo "[1/8] 启动 Python 服务..."
 echo "========================================"
 
 echo "[启动] 知识库服务 (10252)..."
@@ -129,22 +129,10 @@ docker run -d --name assessment-ontology \
     --restart always \
     assessment-ontology:latest
 
-echo "[启动] 评估分析服务(多Agent) (10259)..."
-docker run -d --name assessment-solution-evaluation \
-    --network "$NET_NAME" \
-    -p 10259:10259 \
-    -e QA_SERVICE_URL="http://assessment-qa:10253" \
-    -e INDICATOR_SERVICE_URL="http://assessment-indicator:10254" \
-    -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
-    -v "$DATA_DIR/solution-eval:/app/data" \
-    -v "$DATA_DIR/config:/app/config" \
-    --restart always \
-    assessment-solution-evaluation:latest
-
-# ─── 7-8. Java 服务 (需要 MySQL 环境变量) ───
+# ─── 7. Java 服务 (需要 MySQL 环境变量) ───
 echo ""
 echo "========================================"
-echo "[2/9] 启动 Java 服务..."
+echo "[2/8] 启动 Java 服务..."
 echo "========================================"
 
 echo "[启动] 基础管理服务 (10258)..."
@@ -164,7 +152,7 @@ docker run -d --name assessment-admin \
 # ─── 9. 等待管理服务就绪后启动前端 ───
 echo ""
 echo "========================================"
-echo "[3/9] 等待管理服务就绪..."
+echo "[3/8] 等待管理服务就绪..."
 echo "========================================"
 for i in $(seq 1 90); do
     if curl -s http://127.0.0.1:10258/actuator/health >/dev/null 2>&1; then
@@ -195,5 +183,5 @@ IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [ -z "$IP" ] && IP="<服务器IP>"
 echo "  访问地址: http://${IP}:10086"
 echo "  MySQL:    ${MYSQL_USER}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}"
-echo "  共启动 8 个服务"
+echo "  共启动 7 个服务"
 echo "========================================"

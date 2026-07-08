@@ -24,8 +24,7 @@ $pyServices = @(
     @{Dir="python\qa-service";                  Port=10253; Name="QA"},
     @{Dir="python\indicator-service";           Port=10254; Name="Indicator"},
     @{Dir="python\evaluation-service";          Port=10255; Name="Evaluation"},
-    @{Dir="python\ontology-service";            Port=10256; Name="Ontology"},
-    @{Dir="python\solution-evaluation-service"; Port=10259; Name="SolutionEval"}
+    @{Dir="python\ontology-service";            Port=10256; Name="Ontology"}
 )
 foreach ($svc in $pyServices) {
     Start-Process -FilePath python -ArgumentList "-u main.py" -WorkingDirectory "$root\$($svc.Dir)" -WindowStyle Hidden
@@ -59,8 +58,8 @@ Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host "Service Status" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
-$allPorts = @(10086, 10252, 10253, 10254, 10255, 10256, 10258, 10259)
-$allNames = @("Frontend","Knowledge","QA","Indicator","Evaluation","Ontology","Admin","SolutionEval")
+$allPorts = @(10086, 10252, 10253, 10254, 10255, 10256, 10258)
+$allNames = @("Frontend","Knowledge","QA","Indicator","Evaluation","Ontology","Admin")
 for ($i = 0; $i -lt $allPorts.Count; $i++) {
     $p = $allPorts[$i]
     $n = $allNames[$i]

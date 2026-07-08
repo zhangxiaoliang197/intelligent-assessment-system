@@ -9,7 +9,7 @@ from .tools import fetch_database_tables, fetch_datasets_for_database, fetch_ind
 
 logger = logging.getLogger("evaluation.orchestrator")
 
-ORCHESTRATOR_SYSTEM_PROMPT = """你是智能评估编排专家。分析用户问题，制定数据查询和分析计划。
+ORCHESTRATOR_SYSTEM_PROMPT = """你是智能评估编排专家。分析用户问题，选择合适的智能体执行分析。
 
 ## 数据源
 {data_source_context}
@@ -17,21 +17,29 @@ ORCHESTRATOR_SYSTEM_PROMPT = """你是智能评估编排专家。分析用户问
 ## 用户问题
 {question}
 
-## 重要规则 — query_type 选择
-- **data_query**: 任何涉及"统计/对比/排名/指标/查询/评估/分析"数据的问题，只要数据源中有相关表，必须用 data_query。绝大多数问题都是 data_query。
-- **general_analysis**: 仅限纯理论问题（"什么是XX"、"如何理解XX"、"解释XX概念"），完全不涉及数据库查询。
+## 可选智能体（agent）及适用场景
+1. **data_query** — 通用数据查询智能体。适用：成绩分析、学生排名、及格率统计、各部门绩效对比等常规数据分析。
+2. **combat_effectiveness** — 作战效能分析智能体。适用：作战效能评估、火力打击效果、兵力部署分析、武器装备效能等军事作战场景。关键词：作战、效能、打击、兵力、火力、装备效能、战损。
+3. **air_superiority** — 制空权分析智能体。适用：制空权评估、空域控制、空中力量对比、红蓝空军对抗分析。关键词：制空权、空域、空军、红蓝对抗、空中力量、制空。
+4. **general_analysis** — 通用问答。仅限纯理论问题（"什么是XX"、"解释XX概念"），完全不涉及数据库查询。
+
+## 选择规则
+- 只要数据源中列出了表，**默认选 data_query**。
+- 如果问题明确涉及"作战效能/火力/兵力/装备效能"等军事术语，选 **combat_effectiveness**。
+- 如果问题明确涉及"制空权/空域/空中力量/红蓝空战"等术语，选 **air_superiority**。
+- 纯概念解释无数据源时选 **general_analysis**。
 
 ## 任务
 输出 JSON（不要 markdown 包裹）:
 {{
-    "intent": "问题类型: 指标计算/趋势分析/对比分析/数据查询/综合评估",
+    "intent": "问题类型: 指标计算/趋势分析/对比分析/数据查询/综合评估/作战效能分析/制空权分析",
     "filters": "时间范围、条件等过滤，如无可留空",
-    "dimensions": ["分析维度，如班级、部门、月份等"],
-    "analysis_plan": "具体步骤: 1.查哪些表/字段 2.如何计算 3.如何对比",
+    "dimensions": ["分析维度"],
+    "analysis_plan": "具体步骤",
     "query_type": "data_query"
 }}
 
-**注意: 只要数据源中列出了表，query_type 默认就是 data_query！**"""
+**注意: 根据问题领域选择最合适的 query_type！**"""
 
 
 def parse_orchestrator_response(response_text: str) -> dict:

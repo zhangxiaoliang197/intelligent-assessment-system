@@ -7,8 +7,8 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Stopping all services..." -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
-$ports = @(10086, 10252, 10253, 10254, 10255, 10256, 10258, 10259)
-$names = @("Frontend","Knowledge","QA","Indicator","Evaluation","Ontology","Admin","SolutionEval")
+$ports = @(10086, 10252, 10253, 10254, 10255, 10256, 10258)
+$names = @("Frontend","Knowledge","QA","Indicator","Evaluation","Ontology","Admin")
 
 $stopped = 0
 for ($i = 0; $i -lt $ports.Count; $i++) {

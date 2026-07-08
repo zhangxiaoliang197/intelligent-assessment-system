@@ -193,9 +193,9 @@ async def run_evaluation_workflow(
         await asyncio.sleep(_YIELD_DELAY)
 
         # ═══════════════════════════════════════════
-        # 兜底：只要选了数据源就强制走 data_query
+        # 路由兜底：只对 general_analysis 强转，保留军事领域 query_type
         # ═══════════════════════════════════════════
-        if state.database_id and query_type != "data_query":
+        if state.database_id and query_type == "general_analysis":
             query_type = "data_query"
             state.entities["query_type"] = "data_query"
             yield _step_event(1.3, "路由修正", "completed",
@@ -215,6 +215,35 @@ async def run_evaluation_workflow(
                               detail="分析完成",
                               thinking=state.final_answer[:800] if state.final_answer else "")
             yield _make_result(state, session_id)
+            return
+
+        # ═══════════════════════════════════════════
+        # 领域智能体路由
+        # ═══════════════════════════════════════════
+        if query_type == "combat_effectiveness":
+            yield _step_event(1.4, "智能体选择", "completed",
+                              detail="已选择「作战效能分析」智能体",
+                              thinking="编排器根据用户问题中的军事领域关键词，选择作战效能分析智能体（combat_effectiveness_agent）")
+            await asyncio.sleep(_YIELD_DELAY)
+
+            from .combat_effectiveness_agent import run_stream as combat_stream
+            async for event in combat_stream(state.question, state.database_id, llm_call_fn):
+                if isinstance(event, dict):
+                    yield event
+                    await asyncio.sleep(_YIELD_DELAY)
+            return
+
+        if query_type == "air_superiority":
+            yield _step_event(1.4, "智能体选择", "completed",
+                              detail="已选择「制空权分析」智能体",
+                              thinking="编排器根据用户问题中的制空权相关关键词，选择制空权分析智能体（air_superiority_agent）")
+            await asyncio.sleep(_YIELD_DELAY)
+
+            from .air_superiority_agent import run_stream as air_stream
+            async for event in air_stream(state.question, state.database_id, llm_call_fn):
+                if isinstance(event, dict):
+                    yield event
+                    await asyncio.sleep(_YIELD_DELAY)
             return
 
         # ═══════════════════════════════════════════

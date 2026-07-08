@@ -237,8 +237,8 @@ def _validate_sql(sql: str) -> tuple:
     for keyword in dangerous:
         if re.search(r'\b' + keyword + r'\b', sql_upper):
             return False, f"SQL包含禁止关键字: {keyword}"
-    if not sql_upper.startswith("SELECT"):
-        return False, f"SQL必须以SELECT开头（当前以 '{cleaned[:30]}...' 开头）"
+    if not (sql_upper.startswith("SELECT") or sql_upper.startswith("WITH")):
+        return False, f"SQL必须以SELECT或WITH开头（当前以 '{cleaned[:30]}...' 开头）"
     if cleaned.count("(") != cleaned.count(")"):
         return False, "括号不匹配"
     return True, ""
