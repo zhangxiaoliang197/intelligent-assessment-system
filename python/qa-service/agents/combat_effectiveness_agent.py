@@ -123,8 +123,12 @@ async def _select_queries_by_llm(user_query, all_queries, llm_call_fn):
         return query_list
 
 
-async def run_stream(user_query: str, database_id: str, llm_call_fn):
-    """作战效能分析 — 异步流式生成器"""
+async def run_stream(user_query: str, database_id: str, llm_call_fn, need_conclusion: bool = True):
+    """作战效能分析 — 异步流式生成器
+
+    Args:
+        need_conclusion: True=执行SQL+LLM生成结论; False=仅执行SQL返回数据
+    """
     all_queries = load_queries()
     if not all_queries:
         yield _step_event(4, "执行分析计算", "completed",
@@ -148,8 +152,9 @@ async def run_stream(user_query: str, database_id: str, llm_call_fn):
     total = len(selected)
     executed = 0
 
+    mode_label = "查询+结论" if need_conclusion else "仅查询数据"
     yield _step_event(step_base, "作战效能分析", "in_progress",
-                     detail=f"已选定 {total} 条相关查询, 执行数据查询中...", progress=10,
+                     detail=f"已选定 {total} 条相关查询, 模式: {mode_label}", progress=10,
                      thinking=f"选中 {total} 条查询: " + ", ".join(q["label"] for q in selected))
 
     await asyncio.sleep(_YIELD_DELAY)
@@ -172,25 +177,33 @@ async def run_stream(user_query: str, database_id: str, llm_call_fn):
         exec_result = execute_sql_on_database(database_id, sql)
         executed += 1
 
+        insight = ""
         if exec_result.get("success") and exec_result.get("rowCount", 0) > 0:
             columns = exec_result.get("columns", [])
             rows = exec_result.get("rows", [])
 
-            yield _step_event(step_base, "作战效能分析", "in_progress",
-                             detail=f"正在分析: {label} ({exec_result.get('rowCount')}条)",
-                             progress=int(10 + 75 * executed / max(total, 1)),
-                             thinking=f"查询 [{label}] 返回 {len(rows)} 行, 正在调用LLM分析...")
+            if need_conclusion:
+                yield _step_event(step_base, "作战效能分析", "in_progress",
+                                 detail=f"正在分析: {label} ({exec_result.get('rowCount')}条)",
+                                 progress=int(10 + 75 * executed / max(total, 1)),
+                                 thinking=f"查询 [{label}] 返回 {len(rows)} 行, 正在调用LLM分析...")
 
-            await asyncio.sleep(_YIELD_DELAY)
+                await asyncio.sleep(_YIELD_DELAY)
 
-            insight_prompt = f"""请基于以下数据做简要分析(200字以内):
+                insight_prompt = f"""请基于以下数据做简要分析(100字以内):
 查询类型: {group_name} - {label}
 列: {columns}
 数据(前10行): {str(rows[:10])}
 总行数: {len(rows)}
 
 请给出1-2句关键发现。"""
-            insight = await _adapted_llm_call(insight_prompt, llm_call_fn)
+                insight = await _adapted_llm_call(insight_prompt, llm_call_fn)
+            else:
+                yield _step_event(step_base, "作战效能分析", "in_progress",
+                                 detail=f"已查询: {label} ({exec_result.get('rowCount')}条)",
+                                 progress=int(10 + 75 * executed / max(total, 1)),
+                                 thinking=f"查询 [{label}] 返回 {len(rows)} 行 (仅数据模式，跳过LLM分析)")
+                await asyncio.sleep(_YIELD_DELAY)
         else:
             insight = exec_result.get("message", "查询无数据")
 
@@ -203,33 +216,42 @@ async def run_stream(user_query: str, database_id: str, llm_call_fn):
             "rowCount": exec_result.get("rowCount", 0),
             "insight": insight
         })
-        all_summaries.append(f"[{group_name}-{label}]: {insight}")
+        if insight:
+            all_summaries.append(f"[{group_name}-{label}]: {insight}")
 
         await asyncio.sleep(_YIELD_DELAY)
 
-    yield _step_event(step_base, "作战效能分析", "in_progress",
-                     detail="正在生成综合评估总结...", progress=90,
-                     thinking="所有查询执行完毕，正在汇总LLM分析...")
+    # 综合评估（仅 need_conclusion=True 时生成）
+    summary = ""
+    if need_conclusion:
+        yield _step_event(step_base, "作战效能分析", "in_progress",
+                         detail="正在生成综合评估总结...", progress=90,
+                         thinking="所有查询执行完毕，正在汇总LLM分析...")
 
-    await asyncio.sleep(_YIELD_DELAY)
+        await asyncio.sleep(_YIELD_DELAY)
 
-    if all_summaries:
-        summary_prompt = "请基于以下各维度的分析，给出100字以内的评估总结:\n用户提问: " + user_query + "\n" + "\n".join(all_summaries)
-        summary = await _adapted_llm_call(summary_prompt, llm_call_fn)
+        if all_summaries:
+            summary_prompt = "请基于以下各维度的分析，给出100字以内的评估总结:\n用户提问: " + user_query + "\n" + "\n".join(all_summaries)
+            summary = await _adapted_llm_call(summary_prompt, llm_call_fn)
+        else:
+            summary = "暂无有效数据可供评估"
+
+        yield _step_event(step_base, "作战效能分析", "completed",
+                         detail="作战效能分析完成", progress=100,
+                         thinking=f"【综合评估总结】\n{summary[:800]}")
     else:
-        summary = "暂无有效数据可供评估"
+        yield _step_event(step_base, "作战效能分析", "completed",
+                         detail=f"作战效能查询完成（仅数据模式），共 {len(all_results)} 条查询结果", progress=100,
+                         thinking="用户未要求结论，仅返回查询数据")
 
-    yield _step_event(step_base, "作战效能分析", "completed",
-                     detail="作战效能分析完成", progress=100,
-                     thinking=f"【综合评估总结】\n{summary[:800]}")
-
-    # 最终结果
+    # 最终结果 — 统一 results 字段名
     final = {
         "type": "result",
         "result": {
             "type": "combat_effectiveness",
             "final_answer": summary,
-            "combatResults": all_results,
+            "results": all_results,
+            "need_conclusion": need_conclusion,
             "generatedSql": None,
             "rawResults": [],
             "totalRows": sum(r.get("rowCount", 0) for r in all_results),

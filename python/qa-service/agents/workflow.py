@@ -113,9 +113,10 @@ async def run_evaluation_workflow(
         state = apply_orchestrator_result(state, response)
         intent = state.intent or "综合评估"
         query_type = state.entities.get("query_type", "")
+        need_conclusion = state.entities.get("need_conclusion", True)
         analysis_plan = state.analysis_plan or ""
 
-        # 路由兜底
+        # 路由兜底：general_analysis 有数据源时降级为 data_query
         if state.database_id and query_type == "general_analysis":
             query_type = "data_query"
             state.entities["query_type"] = "data_query"
@@ -123,10 +124,23 @@ async def run_evaluation_workflow(
                               detail="已选择数据源，自动切换为数据库查询模式")
             await asyncio.sleep(_YIELD_DELAY)
 
+        # 二次校验：combat_effectiveness 需用户明确表达"整体评估整个推演/作战过程"
+        if query_type == "combat_effectiveness":
+            q = state.question
+            overall_keywords = ["整个推演", "整个作战", "整体评估", "综合评估",
+                                "全过程", "整体战", "整体作", "对整体", "整个方案"]
+            if not any(kw in q for kw in overall_keywords):
+                query_type = "data_query"
+                state.entities["query_type"] = "data_query"
+                yield _step_event(1.2, "路由修正", "completed",
+                                  detail="未检测到整体评估表述，降级为基础查询")
+                await asyncio.sleep(_YIELD_DELAY)
+
         yield _step_event(1, "分析问题意图", "completed",
                           detail=f"意图: {intent} | 查询模式: {query_type}",
                           thinking=(
                               f"【意图识别】\n问题类型: {intent}\n查询模式: {query_type}\n"
+                              f"需要结论: {'是' if need_conclusion else '否'}\n"
                               f"分析维度: {', '.join(state.entities.get('dimensions', [])) or '未指定'}\n"
                               f"【分析计划】\n{analysis_plan[:300]}"
                           ))
@@ -144,7 +158,7 @@ async def run_evaluation_workflow(
                               detail="已选择「作战效能分析」智能体")
             await asyncio.sleep(_YIELD_DELAY)
             from .combat_effectiveness_agent import run_stream as combat_stream
-            async for event in combat_stream(state.question, state.database_id, llm_call_fn):
+            async for event in combat_stream(state.question, state.database_id, llm_call_fn, need_conclusion):
                 if isinstance(event, dict):
                     yield event
                     await asyncio.sleep(_YIELD_DELAY)
@@ -155,7 +169,7 @@ async def run_evaluation_workflow(
                               detail="已选择「制空权分析」智能体")
             await asyncio.sleep(_YIELD_DELAY)
             from .air_superiority_agent import run_stream as air_stream
-            async for event in air_stream(state.question, state.database_id, llm_call_fn):
+            async for event in air_stream(state.question, state.database_id, llm_call_fn, need_conclusion):
                 if isinstance(event, dict):
                     yield event
                     await asyncio.sleep(_YIELD_DELAY)
@@ -456,6 +470,7 @@ async def run_evaluation_workflow(
 def _make_result(state: EvaluationState, session_id: str) -> dict:
     """构造符合前端期望的结果对象"""
     query_type = state.entities.get("query_type", "general_analysis")
+    need_conclusion = state.entities.get("need_conclusion", True)
     raw_results = state.raw_results[:20] if state.raw_results else []
 
     # 前端模板通过 msg.result.type 判断展示类型
@@ -472,6 +487,7 @@ def _make_result(state: EvaluationState, session_id: str) -> dict:
             "totalRows": len(state.raw_results),
             "intent": state.intent,
             "query_type": query_type,
+            "need_conclusion": need_conclusion,
             "database_used": state.database_id,
         }
     }

@@ -17,17 +17,23 @@ ORCHESTRATOR_SYSTEM_PROMPT = """你是智能评估编排专家。分析用户问
 ## 用户问题
 {question}
 
-## 可选智能体（agent）及适用场景
-1. **data_query** — 通用数据查询智能体。适用：成绩分析、学生排名、及格率统计、各部门绩效对比等常规数据分析。
-2. **combat_effectiveness** — 作战效能分析智能体。适用：作战效能评估、火力打击效果、兵力部署分析、武器装备效能等军事作战场景。关键词：作战、效能、打击、兵力、火力、装备效能、战损。
-3. **air_superiority** — 制空权分析智能体。适用：制空权评估、空域控制、空中力量对比、红蓝空军对抗分析。关键词：制空权、空域、空军、红蓝对抗、空中力量、制空。
+## 可选智能体及适用场景
+1. **data_query** — 基础查询智能体（默认）。适用：用户直接询问具体数据，如"查询XX"、"列出XX"、"XX有哪些"、"帮我查看XX"。
+2. **combat_effectiveness** — 作战效能评估智能体。仅当用户明确要求"评估整个推演过程"中的某方面时使用，如"评估本次推演的战损"、"分析整个作战过程的战果"、"对整体消耗进行评估"。
+3. **air_superiority** — 制空权分析智能体。仅当用户明确提及"制空权/空域控制/空中力量对比"时使用。
 4. **general_analysis** — 通用问答。仅限纯理论问题（"什么是XX"、"解释XX概念"），完全不涉及数据库查询。
 
-## 选择规则
-- 只要数据源中列出了表，**默认选 data_query**。
-- 如果问题明确涉及"作战效能/火力/兵力/装备效能"等军事术语，选 **combat_effectiveness**。
-- 如果问题明确涉及"制空权/空域/空中力量/红蓝空战"等术语，选 **air_superiority**。
-- 纯概念解释无数据源时选 **general_analysis**。
+## 选择规则（重要）
+- **默认选 data_query**
+- 只有用户问题中明确出现"评估整个推演/分析整个作战过程/对整体XX进行评估"等整体性评估表述时，才选 **combat_effectiveness**
+- 只有用户明确提及"制空权/空域控制/空中力量对比"时，才选 **air_superiority**
+- 单纯的"查询/列出/查看/帮我"等动词，一律选 **data_query**
+- 纯概念解释无数据源时选 **general_analysis**
+
+## 是否需要结论（need_conclusion）
+- 用户明确说"只看数据/仅列出/不要结论/只要数据"→ false
+- 用户明确说"评估/分析/总结/给出结论/给建议"→ true
+- 意图不明确（无法判断）→ true（兜底：返回数据 + 简短结论）
 
 ## 任务
 输出 JSON（不要 markdown 包裹）:
@@ -36,10 +42,11 @@ ORCHESTRATOR_SYSTEM_PROMPT = """你是智能评估编排专家。分析用户问
     "filters": "时间范围、条件等过滤，如无可留空",
     "dimensions": ["分析维度"],
     "analysis_plan": "具体步骤",
-    "query_type": "data_query"
+    "query_type": "data_query",
+    "need_conclusion": true
 }}
 
-**注意: 根据问题领域选择最合适的 query_type！**"""
+**注意: 根据问题领域选择最合适的 query_type！need_conclusion 必须为布尔值 true 或 false。**"""
 
 
 def parse_orchestrator_response(response_text: str) -> dict:
@@ -134,18 +141,21 @@ def apply_orchestrator_result(state: EvaluationState, response_text: str) -> Eva
     state.entities = {
         "filters": plan.get("filters", ""),
         "dimensions": plan.get("dimensions", []),
-        "query_type": plan.get("query_type", "general_analysis")
+        "query_type": plan.get("query_type", "general_analysis"),
+        "need_conclusion": plan.get("need_conclusion", True)  # 默认 True 兜底
     }
     state.analysis_plan = plan.get("analysis_plan", "")
 
     dims = ', '.join(state.entities.get('dimensions', [])) or '未识别'
     filters = state.entities.get('filters', '') or '无'
+    need_conclusion = state.entities.get('need_conclusion', True)
     state.add_step(1.2, "意图识别结果", "completed",
-                   detail=f"意图: {state.intent} | 模式: {state.entities.get('query_type', '')}",
+                   detail=f"意图: {state.intent} | 模式: {state.entities.get('query_type', '')} | 结论: {'需要' if need_conclusion else '不需要'}",
                    thinking=(
                        f"【意图识别结果】\n"
                        f"问题类型: {state.intent}\n"
                        f"查询模式: {state.entities.get('query_type', '')}\n"
+                       f"需要结论: {'是' if need_conclusion else '否'}\n"
                        f"过滤条件: {filters}\n"
                        f"分析维度: {dims}\n\n"
                        f"【分析计划】\n{state.analysis_plan}"

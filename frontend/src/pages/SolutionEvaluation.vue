@@ -113,37 +113,37 @@
                         <div class="result-header">
                           <h5>制空权分析结果<span v-if="msg.result.region"> - {{ msg.result.region }}</span></h5>
                         </div>
-                        <div v-for="(qr, idx) in msg.result.queryResults" :key="idx" class="query-result-item">
+                        <div v-for="(qr, idx) in msg.result.results" :key="idx" class="query-result-item">
                           <div class="query-result-title">{{ qr.group }} - {{ qr.label }}</div>
-                          <div class="query-result-insight">{{ qr.insight }}</div>
                           <v-chart v-if="qr.vizType !== 'table' && getChartOption(qr.vizType, qr.columns, qr.rows)" :option="getChartOption(qr.vizType, qr.columns, qr.rows)" autoresize style="height: 280px" />
                           <el-table v-else-if="qr.rows && qr.rows.length > 0" :data="toTableData(qr.columns, qr.rows)" size="small" border stripe style="width: 100%">
                             <el-table-column v-for="col in qr.columns" :key="col" :prop="col" :label="col" min-width="100" show-overflow-tooltip />
                           </el-table>
                           <div v-else class="no-data">暂无数据</div>
+                          <div v-if="qr.insight" class="query-result-insight">{{ qr.insight }}</div>
                         </div>
-                        <div class="summary-section">
+                        <div v-if="msg.result.need_conclusion && msg.result.final_answer" class="summary-section">
                           <h6>综合评估</h6>
-                          <p>{{ msg.result.summary }}</p>
+                          <p>{{ msg.result.final_answer }}</p>
                         </div>
                       </div>
-                      
+
                       <div v-if="msg.result.type === 'combat_effectiveness'" class="combat-result">
                         <div class="result-header">
                           <h5>作战效能评估结果</h5>
                         </div>
                         <div v-for="(r, idx) in msg.result.results" :key="idx" class="query-result-item">
                           <div class="query-result-title">{{ r.group }} - {{ r.label }}</div>
-                          <div class="query-result-insight">{{ r.insight }}</div>
                           <v-chart v-if="r.vizType !== 'table' && getChartOption(r.vizType, r.columns, r.rows)" :option="getChartOption(r.vizType, r.columns, r.rows)" autoresize style="height: 280px" />
                           <el-table v-else-if="r.rows && r.rows.length > 0" :data="toTableData(r.columns, r.rows)" size="small" border stripe style="width: 100%">
                             <el-table-column v-for="col in r.columns" :key="col" :prop="col" :label="col" min-width="100" show-overflow-tooltip />
                           </el-table>
                           <div v-else class="no-data">暂无数据</div>
+                          <div v-if="r.insight" class="query-result-insight">{{ r.insight }}</div>
                         </div>
-                        <div class="summary-section">
+                        <div v-if="msg.result.need_conclusion && msg.result.final_answer" class="summary-section">
                           <h6>综合评估</h6>
-                          <p>{{ msg.result.summary }}</p>
+                          <p>{{ msg.result.final_answer }}</p>
                         </div>
                       </div>
                       
@@ -208,6 +208,11 @@
                         <!-- 数据为空提示 -->
                         <div v-if="msg.result.rawResults && msg.result.rawResults.length === 0" class="data-empty">
                           查询执行成功，但未返回数据
+                        </div>
+                        <!-- 结论（仅 need_conclusion=true 时显示） -->
+                        <div v-if="msg.result.need_conclusion && msg.result.final_answer" class="summary-section">
+                          <h6>评估结论</h6>
+                          <p>{{ msg.result.final_answer }}</p>
                         </div>
                       </div>
                       
@@ -696,7 +701,8 @@ const sendMessage = async () => {
               // 收到最终结果
               const result = data.result || {}
               const answerText = result.final_answer || result.summary || result.answer || '分析完成'
-              aiMessage.content = answerText
+              // need_conclusion=false 时清空正文结论，避免重复显示
+              aiMessage.content = result.need_conclusion === false ? '' : answerText
               aiMessage.result = result
               
               // 保存会话
