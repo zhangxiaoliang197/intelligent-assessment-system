@@ -33,7 +33,7 @@ TEXT_TO_SQL_SYSTEM_PROMPT = """你是SQL生成专家。根据表结构生成SELE
 3. WHERE条件注意字段类型：时间用函数、数字直接比较、字符串加引号
 4. 多表用JOIN
 5. 聚合用GROUP BY
-6. 默认LIMIT 500
+6. 不要添加LIMIT，返回全部数据
 
 ## 输出
 ```sql

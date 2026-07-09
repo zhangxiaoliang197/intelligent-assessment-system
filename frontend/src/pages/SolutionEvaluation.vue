@@ -335,7 +335,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -742,8 +742,17 @@ const scrollToBottom = () => {
     if (chatArea) {
       chatArea.scrollTop = chatArea.scrollHeight
     }
+    // 同时滚动执行过程面板
+    const execContent = document.querySelector('.execution-content') as HTMLElement
+    if (execContent) {
+      execContent.scrollTop = execContent.scrollHeight
+    }
   })
 }
+
+// 监听消息和步骤变化，自动滚动
+watch(() => messages.value.length, () => scrollToBottom())
+watch(() => executionSteps.value.length, () => scrollToBottom())
 
 // 加载历史记录
 const loadHistory = (item: any) => {

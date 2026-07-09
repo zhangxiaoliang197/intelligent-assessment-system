@@ -25,7 +25,10 @@ def load_air_queries():
         logger.warning(f"air_queries.json not found at {path}")
         return {"regionRules": {"patterns": [], "placeholder": "{region}", "defaultValue": "全部区域"}, "groups": []}
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        raw = f.read()
+        # 移除 JSON 不允许的控制字符（保留 \t \n \r）
+        cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', raw)
+        return json.loads(cleaned)
 
 
 def _step_event(step_num, description, status, detail="", thinking="", progress=None, sub_step=None):

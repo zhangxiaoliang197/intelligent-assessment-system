@@ -189,7 +189,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, nextTick } from 'vue'
+import { ref, onMounted, computed, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete, ArrowRight } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -580,10 +580,15 @@ const initTreeChart = (container: HTMLElement, data: any) => {
 }
 
 const scrollToBottom = () => {
-  if (chatArea.value) {
-    chatArea.value.scrollTop = chatArea.value.scrollHeight
-  }
+  nextTick(() => {
+    if (chatArea.value) {
+      chatArea.value.scrollTop = chatArea.value.scrollHeight
+    }
+  })
 }
+
+// 监听消息变化，自动滚动
+watch(() => messages.value.length, () => scrollToBottom())
 
 const filteredHistoryList = computed(() => {
   if (!searchQuery.value.trim()) return historyList.value
