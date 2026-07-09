@@ -175,12 +175,11 @@ async def run_stream(user_query: str, database_id: str, llm_call_fn, need_conclu
 
     for q in selected:
         label = q["label"]
-        viz_type = q.get("vizType", "table")
-        sql_template = q.get("sql", "")
+        sql = q.get("sql", "")
         group_name = q.get("group", "")
 
         # 注入区域参数
-        sql = inject_region(sql_template, region, placeholder)
+        sql = inject_region(sql, region, placeholder)
 
         yield _step_event(step_base, "制空权分析", "in_progress",
                          detail=f"正在查询: {label} (区域: {region})",
@@ -226,7 +225,7 @@ async def run_stream(user_query: str, database_id: str, llm_call_fn, need_conclu
         all_results.append({
             "group": group_name,
             "label": label,
-            "vizType": viz_type,
+            "sql": sql,
             "columns": exec_result.get("columns", []),
             "rows": exec_result.get("rows", []),
             "rowCount": exec_result.get("rowCount", 0),

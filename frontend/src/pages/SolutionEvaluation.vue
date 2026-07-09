@@ -115,8 +115,11 @@
                         </div>
                         <div v-for="(qr, idx) in msg.result.results" :key="idx" class="query-result-item">
                           <div class="query-result-title">{{ qr.group }} - {{ qr.label }}</div>
-                          <v-chart v-if="qr.vizType !== 'table' && getChartOption(qr.vizType, qr.columns, qr.rows)" :option="getChartOption(qr.vizType, qr.columns, qr.rows)" autoresize style="height: 280px" />
-                          <el-table v-else-if="qr.rows && qr.rows.length > 0" :data="toTableData(qr.columns, qr.rows)" size="small" border stripe style="width: 100%">
+                          <div v-if="qr.sql" class="sql-section">
+                            <h6>执行的SQL</h6>
+                            <pre class="sql-code">{{ qr.sql }}</pre>
+                          </div>
+                          <el-table v-if="qr.rows && qr.rows.length > 0" :data="toTableData(qr.columns, qr.rows)" size="small" border stripe style="width: 100%">
                             <el-table-column v-for="col in qr.columns" :key="col" :prop="col" :label="col" min-width="100" show-overflow-tooltip />
                           </el-table>
                           <div v-else class="no-data">暂无数据</div>
@@ -134,8 +137,11 @@
                         </div>
                         <div v-for="(r, idx) in msg.result.results" :key="idx" class="query-result-item">
                           <div class="query-result-title">{{ r.group }} - {{ r.label }}</div>
-                          <v-chart v-if="r.vizType !== 'table' && getChartOption(r.vizType, r.columns, r.rows)" :option="getChartOption(r.vizType, r.columns, r.rows)" autoresize style="height: 280px" />
-                          <el-table v-else-if="r.rows && r.rows.length > 0" :data="toTableData(r.columns, r.rows)" size="small" border stripe style="width: 100%">
+                          <div v-if="r.sql" class="sql-section">
+                            <h6>执行的SQL</h6>
+                            <pre class="sql-code">{{ r.sql }}</pre>
+                          </div>
+                          <el-table v-if="r.rows && r.rows.length > 0" :data="toTableData(r.columns, r.rows)" size="small" border stripe style="width: 100%">
                             <el-table-column v-for="col in r.columns" :key="col" :prop="col" :label="col" min-width="100" show-overflow-tooltip />
                           </el-table>
                           <div v-else class="no-data">暂无数据</div>

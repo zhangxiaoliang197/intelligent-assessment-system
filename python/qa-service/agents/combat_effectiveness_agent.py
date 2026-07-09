@@ -167,7 +167,6 @@ async def run_stream(user_query: str, database_id: str, llm_call_fn, need_conclu
 
     for q in selected:
         label = q["label"]
-        viz_type = q.get("vizType", "table")
         sql = q.get("sql", "")
         group_name = q.get("group", "")
 
@@ -213,7 +212,7 @@ async def run_stream(user_query: str, database_id: str, llm_call_fn, need_conclu
         all_results.append({
             "group": group_name,
             "label": label,
-            "vizType": viz_type,
+            "sql": sql,
             "columns": exec_result.get("columns", []),
             "rows": exec_result.get("rows", []),
             "rowCount": exec_result.get("rowCount", 0),

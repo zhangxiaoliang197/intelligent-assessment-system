@@ -6,7 +6,7 @@
       {
         "label": "单位战损统计",
         "keywords": ["战损", "损失", "伤亡", "损毁", "战损"],
-        "sql": "SELECT tss.class_name , tss.total_score, FROM test_student_scores tss",
+        "sql": "SELECT * FROM test_student_scores tss",
         "vizType": "bar"
       }
     ]
