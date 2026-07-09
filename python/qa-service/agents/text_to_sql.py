@@ -177,11 +177,12 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
 
 def _extract_sql(response_text: str) -> str:
     text = response_text.strip()
+    sql = ""
     if "```sql" in text:
         start = text.index("```sql") + 6
         end = text.index("```", start) if "```" in text[start:] else len(text)
-        return text[start:end].strip()
-    if "```" in text:
+        sql = text[start:end].strip()
+    elif "```" in text:
         lines = text.split("\n")
         in_block, sql_lines = False, []
         for line in lines:
@@ -193,11 +194,13 @@ def _extract_sql(response_text: str) -> str:
             if in_block:
                 sql_lines.append(line)
         if sql_lines:
-            return "\n".join(sql_lines).strip()
-    select_match = re.search(r'(SELECT\s+.+?(?:;|$))', text, re.IGNORECASE | re.DOTALL)
-    if select_match:
-        return select_match.group(1).strip().rstrip(";")
-    return ""
+            sql = "\n".join(sql_lines).strip()
+    else:
+        select_match = re.search(r'(SELECT\s+.+?(?:;|$))', text, re.IGNORECASE | re.DOTALL)
+        if select_match:
+            sql = select_match.group(1).strip()
+    # 统一去除末尾分号和特殊字符（Oracle 等数据库对分号敏感）
+    return _sanitize_sql_ending(sql)
 
 
 def _extract_no_sql(response_text: str) -> dict:
@@ -216,7 +219,7 @@ def _extract_no_sql(response_text: str) -> dict:
 
 
 def _clean_sql(sql: str) -> str:
-    """去除 SQL 前的注释行和空白，返回以 SELECT 开头的纯净 SQL"""
+    """去除 SQL 前的注释行和空白，去除末尾分号和特殊字符"""
     lines = sql.strip().split("\n")
     result = []
     started = False
@@ -227,7 +230,23 @@ def _clean_sql(sql: str) -> str:
             continue
         started = True
         result.append(line)
-    return "\n".join(result).strip()
+    sql = "\n".join(result).strip()
+    return _sanitize_sql_ending(sql)
+
+
+def _sanitize_sql_ending(sql: str) -> str:
+    """去除 SQL 末尾的分号和特殊空白字符（Oracle 等数据库敏感）"""
+    if not sql:
+        return ""
+    # 去除末尾分号（可能多个）
+    sql = sql.rstrip().rstrip(";").rstrip()
+    # 去除末尾不可见控制字符（保留正常空格）
+    sql = sql.rstrip("\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0b\x0c\x0e\x0f"
+                     "\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x7f")
+    # 去掉末尾多余空行
+    while sql.endswith("\n") or sql.endswith("\r"):
+        sql = sql[:-1]
+    return sql
 
 
 def _validate_sql(sql: str) -> tuple:

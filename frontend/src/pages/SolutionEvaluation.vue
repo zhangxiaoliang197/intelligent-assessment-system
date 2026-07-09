@@ -566,16 +566,27 @@ const getStepStatusClass = (status: string) => {
   return statusMap[status] || 'pending'
 }
 
+// 将 rows 统一转为二维数组格式（兼容对象/{col:val} 和数组/[val] 两种后端返回）
+const normalizeRows = (columns: any[], rows: any[]): any[][] => {
+  if (!rows || rows.length === 0) return []
+  const first = rows[0]
+  // 首行是数组 → 已经是二维数组格式
+  if (Array.isArray(first)) return rows
+  // 首行是对象 → 按 columns 顺序提取值转为数组
+  return rows.map((r: any) => columns.map((col: string) => r[col]))
+}
+
 // ECharts图表配置生成
 const getChartOption = (vizType: string, columns: any[], rows: any[]): any => {
   if (!columns || !rows || rows.length === 0) return null
+  const arr = normalizeRows(columns, rows)
 
   if (vizType === 'bar' || vizType === 'line') {
-    const categories = rows.map((r: any) => String(r[0]))
+    const categories = arr.map((r: any) => String(r[0]))
     const series = columns.slice(1).map((col: any, i: number) => ({
       name: col,
       type: vizType,
-      data: rows.map((r: any) => Number(r[i + 1]) || 0),
+      data: arr.map((r: any) => Number(r[i + 1]) || 0),
       barMaxWidth: 40
     }))
     return {
@@ -594,7 +605,7 @@ const getChartOption = (vizType: string, columns: any[], rows: any[]): any => {
         type: 'pie',
         radius: ['40%', '65%'],
         center: ['55%', '50%'],
-        data: rows.map((r: any) => ({ name: String(r[0]), value: Number(r[1]) || 0 })),
+        data: arr.map((r: any) => ({ name: String(r[0]), value: Number(r[1]) || 0 })),
         itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 }
       }]
     }
@@ -605,7 +616,8 @@ const getChartOption = (vizType: string, columns: any[], rows: any[]): any => {
 // 行列数据转表格数据
 const toTableData = (columns: any[], rows: any[]) => {
   if (!columns || !rows) return []
-  return rows.map((row: any) => {
+  const arr = normalizeRows(columns, rows)
+  return arr.map((row: any) => {
     const obj: Record<string, any> = {}
     columns.forEach((col: any, i: number) => { obj[col] = row[i] })
     return obj
@@ -649,7 +661,7 @@ const sendMessage = async () => {
       body: JSON.stringify({
         query: query,
         session_id: sessionId.value || undefined,
-        dataSourceId: selectedDataSourceId.value || null,
+        dataSourceId: selectedDataSourceId.value || '',
         skillId: null
       })
     })
