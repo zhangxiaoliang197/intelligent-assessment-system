@@ -40,6 +40,10 @@ class EvaluationState:
     final_answer: str = ""
     report_sections: Dict[str, str] = field(default_factory=dict)
 
+    # 图表阶段（Chart Agent）
+    need_chart: bool = False
+    chart_config: Dict[str, Any] = field(default_factory=dict)
+
     # 执行步骤（用于前端流式展示）
     steps: List[Dict[str, Any]] = field(default_factory=list)
 

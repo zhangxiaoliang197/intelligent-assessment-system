@@ -442,6 +442,46 @@ async def run_evaluation_workflow(
         await asyncio.sleep(_YIELD_DELAY)
 
         # ═══════════════════════════════════════════
+        # 步骤 6.5: 图表规划（Chart Agent）— 仅在需要图表且有数据时执行
+        # ═══════════════════════════════════════════
+        if state.need_chart and state.raw_results and db_connected:
+            yield _step_event(6.5, "图表规划", "in_progress",
+                              detail="正在根据查询结果规划图表...")
+            await asyncio.sleep(_YIELD_DELAY)
+
+            try:
+                from .chart_agent import run_chart_agent
+
+                # 提取列名：从 raw_results 第一行推断
+                raw = state.raw_results
+                if raw and isinstance(raw[0], dict):
+                    columns = list(raw[0].keys())
+                    chart_config = await run_chart_agent(
+                        columns=columns,
+                        sample_rows=raw[:5],
+                        total_rows=len(raw),
+                        question=state.question,
+                        llm_call_fn=llm_call_fn,
+                    )
+                    state.chart_config = chart_config
+
+                    viz = chart_config.get("vizType", "table")
+                    if viz != "table":
+                        yield _step_event(6.5, "图表规划", "completed",
+                                          detail=f"已规划 {viz} 图表: {chart_config.get('chartTitle', '')}",
+                                          thinking=f"【图表配置】\n{json.dumps(chart_config, ensure_ascii=False)}")
+                    else:
+                        yield _step_event(6.5, "图表规划", "skipped",
+                                          detail="数据不适合图表展示，使用表格")
+                else:
+                    yield _step_event(6.5, "图表规划", "skipped",
+                                      detail="数据格式不支持图表")
+            except Exception as e:
+                logger.warning(f"Chart agent failed: {e}")
+                yield _step_event(6.5, "图表规划", "error",
+                                  detail=f"图表规划失败，降级为表格: {str(e)[:80]}")
+
+        # ═══════════════════════════════════════════
         # 步骤 7: 生成分析建议 (LLM)
         # ═══════════════════════════════════════════
         state = await run_analyst(state, llm_call_fn)
@@ -489,5 +529,7 @@ def _make_result(state: EvaluationState, session_id: str) -> dict:
             "query_type": query_type,
             "need_conclusion": need_conclusion,
             "database_used": state.database_id,
+            "need_chart": state.need_chart,
+            "chartConfig": state.chart_config if state.chart_config else None,
         }
     }

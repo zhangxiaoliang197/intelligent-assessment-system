@@ -35,6 +35,10 @@ ORCHESTRATOR_SYSTEM_PROMPT = """你是智能评估编排专家。分析用户问
 - 用户明确说"评估/分析/总结/给出结论/给建议"→ true
 - 意图不明确（无法判断）→ true（兜底：返回数据 + 简短结论）
 
+## 是否需要图表（need_chart）
+- 用户明确提到"图表/柱状图/饼图/折线图/画图/可视化/图形展示"→ true
+- 其他情况 → false
+
 ## 任务
 输出 JSON（不要 markdown 包裹）:
 {{
@@ -43,7 +47,8 @@ ORCHESTRATOR_SYSTEM_PROMPT = """你是智能评估编排专家。分析用户问
     "dimensions": ["分析维度"],
     "analysis_plan": "具体步骤",
     "query_type": "data_query",
-    "need_conclusion": true
+    "need_conclusion": true,
+    "need_chart": false
 }}
 
 **注意: 根据问题领域选择最合适的 query_type！need_conclusion 必须为布尔值 true 或 false。**"""
@@ -142,8 +147,10 @@ def apply_orchestrator_result(state: EvaluationState, response_text: str) -> Eva
         "filters": plan.get("filters", ""),
         "dimensions": plan.get("dimensions", []),
         "query_type": plan.get("query_type", "general_analysis"),
-        "need_conclusion": plan.get("need_conclusion", True)  # 默认 True 兜底
+        "need_conclusion": plan.get("need_conclusion", True),  # 默认 True 兜底
+        "need_chart": plan.get("need_chart", False),
     }
+    state.need_chart = plan.get("need_chart", False)
     state.analysis_plan = plan.get("analysis_plan", "")
 
     dims = ', '.join(state.entities.get('dimensions', [])) or '未识别'

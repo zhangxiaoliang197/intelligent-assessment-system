@@ -114,16 +114,20 @@
                           <h5>制空权分析结果<span v-if="msg.result.region"> - {{ msg.result.region }}</span></h5>
                         </div>
                         <div v-for="(qr, idx) in msg.result.results" :key="idx" class="query-result-item">
-                          <div class="query-result-title">{{ qr.group }} - {{ qr.label }}</div>
-                          <div v-if="qr.sql" class="sql-section">
-                            <h6>执行的SQL</h6>
-                            <pre class="sql-code">{{ qr.sql }}</pre>
+                          <p class="query-result-title">{{ qr.group }} - {{ qr.label }}</p>
+                          <div v-if="qr.sql" class="result-block">
+                            <p class="block-label">SQL语句</p>
+                            <p style="white-space: pre-wrap;">{{ qr.sql }}</p>
                           </div>
-                          <el-table v-if="qr.rows && qr.rows.length > 0" :data="toTableData(qr.columns, qr.rows)" size="small" border stripe style="width: 100%">
-                            <el-table-column v-for="col in qr.columns" :key="col" :prop="col" :label="col" min-width="100" show-overflow-tooltip />
-                          </el-table>
-                          <div v-else class="no-data">暂无数据</div>
-                          <div v-if="qr.insight" class="query-result-insight">{{ qr.insight }}</div>
+                          <div v-if="qr.rows && qr.rows.length > 0" class="result-block">
+                            <p class="block-label">数据结果</p>
+                            <p style="white-space: pre-wrap;">{{ formatRowsAsText(qr.columns, qr.rows) }}</p>
+                          </div>
+                          <p v-if="!qr.sql && (!qr.rows || qr.rows.length === 0)" class="no-data">暂无数据</p>
+                          <div v-if="qr.insight" class="result-block">
+                            <p class="block-label">分析洞察</p>
+                            <p>{{ qr.insight }}</p>
+                          </div>
                         </div>
                         <div v-if="msg.result.need_conclusion && msg.result.final_answer" class="summary-section">
                           <h6>综合评估</h6>
@@ -136,16 +140,20 @@
                           <h5>作战效能评估结果</h5>
                         </div>
                         <div v-for="(r, idx) in msg.result.results" :key="idx" class="query-result-item">
-                          <div class="query-result-title">{{ r.group }} - {{ r.label }}</div>
-                          <div v-if="r.sql" class="sql-section">
-                            <h6>执行的SQL</h6>
-                            <pre class="sql-code">{{ r.sql }}</pre>
+                          <p class="query-result-title">{{ r.group }} - {{ r.label }}</p>
+                          <div v-if="r.sql" class="result-block">
+                            <p class="block-label">SQL语句</p>
+                            <p style="white-space: pre-wrap;">{{ r.sql }}</p>
                           </div>
-                          <el-table v-if="r.rows && r.rows.length > 0" :data="toTableData(r.columns, r.rows)" size="small" border stripe style="width: 100%">
-                            <el-table-column v-for="col in r.columns" :key="col" :prop="col" :label="col" min-width="100" show-overflow-tooltip />
-                          </el-table>
-                          <div v-else class="no-data">暂无数据</div>
-                          <div v-if="r.insight" class="query-result-insight">{{ r.insight }}</div>
+                          <div v-if="r.rows && r.rows.length > 0" class="result-block">
+                            <p class="block-label">数据结果</p>
+                            <p style="white-space: pre-wrap;">{{ formatRowsAsText(r.columns, r.rows) }}</p>
+                          </div>
+                          <p v-if="!r.sql && (!r.rows || r.rows.length === 0)" class="no-data">暂无数据</p>
+                          <div v-if="r.insight" class="result-block">
+                            <p class="block-label">分析洞察</p>
+                            <p>{{ r.insight }}</p>
+                          </div>
                         </div>
                         <div v-if="msg.result.need_conclusion && msg.result.final_answer" class="summary-section">
                           <h6>综合评估</h6>
@@ -197,8 +205,33 @@
                           <h6>生成的SQL</h6>
                           <pre class="sql-code">{{ msg.result.generatedSql }}</pre>
                         </div>
-                        <!-- 数据表格 -->
-                        <div v-if="msg.result.rawResults && msg.result.rawResults.length > 0" class="data-section">
+                        <!-- 图表可视化（仅当 chartConfig 有效时显示） -->
+                        <div v-if="msg.result.chartConfig && msg.result.chartConfig.vizType !== 'table' && msg.result.rawResults && msg.result.rawResults.length > 0" class="chart-section">
+                          <div class="chart-header">
+                            <h6>{{ msg.result.chartConfig.chartTitle || '数据可视化' }}</h6>
+                            <el-radio-group v-model="chartViewMode" size="small">
+                              <el-radio-button value="chart">图表</el-radio-button>
+                              <el-radio-button value="table">表格</el-radio-button>
+                            </el-radio-group>
+                          </div>
+                          <div v-show="chartViewMode === 'chart'" class="chart-container">
+                            <v-chart :option="buildChartOption(msg.result.chartConfig, msg.result.rawResults)" style="height: 360px" autoresize />
+                          </div>
+                          <div v-show="chartViewMode === 'table'" class="data-section">
+                            <el-table :data="msg.result.rawResults" style="width: 100%" size="small" max-height="400" border stripe>
+                              <el-table-column
+                                v-for="col in Object.keys(msg.result.rawResults[0] || {})"
+                                :key="col"
+                                :prop="col"
+                                :label="col"
+                                min-width="100"
+                                show-overflow-tooltip
+                              />
+                            </el-table>
+                          </div>
+                        </div>
+                        <!-- 数据表格（无图表时） -->
+                        <div v-else-if="msg.result.rawResults && msg.result.rawResults.length > 0" class="data-section">
                           <h6>查询结果（共 {{ msg.result.totalRows || msg.result.rawResults.length }} 行）</h6>
                           <el-table :data="msg.result.rawResults" style="width: 100%" size="small" max-height="400" border stripe>
                             <el-table-column
@@ -365,11 +398,11 @@ import Layout from '@/components/Layout.vue'
 import api from '@/services/api'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { BarChart, PieChart as EChartsPieChart, LineChart } from 'echarts/charts'
+import { BarChart, PieChart, LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent, TitleComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 
-use([CanvasRenderer, BarChart, EChartsPieChart, LineChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent] as any)
+use([CanvasRenderer, BarChart, PieChart, LineChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent] as any)
 
 const router = useRouter()
 
@@ -439,6 +472,7 @@ const selectedDataSourceId = ref<string | null>(null)
 const selectedDataSourceName = ref<string>('')
 const dataSourceDialogVisible = ref(false)
 const showExecutionPanel = ref(true)
+const chartViewMode = ref('chart')
 const executionPanelWidth = ref(460)
 const isResizing = ref(false)
 const executionSteps = ref<Array<any>>([])
@@ -582,52 +616,64 @@ const normalizeRows = (columns: any[], rows: any[]): any[][] => {
   return rows.map((r: any) => columns.map((col: string) => r[col]))
 }
 
-// ECharts图表配置生成
-const getChartOption = (vizType: string, columns: any[], rows: any[]): any => {
-  if (!columns || !rows || rows.length === 0) return null
+// 行列数据转可读文本
+const formatRowsAsText = (columns: any[], rows: any[]) => {
+  if (!columns || !rows || rows.length === 0) return ''
   const arr = normalizeRows(columns, rows)
+  const lines = arr.map((row: any) => columns.map((col, i) => `${col}=${row[i]}`).join('，'))
+  return lines.map((line, i) => `${i + 1}. ${line}`).join('\n')
+}
 
-  if (vizType === 'bar' || vizType === 'line') {
-    const categories = arr.map((r: any) => String(r[0]))
-    const series = columns.slice(1).map((col: any, i: number) => ({
-      name: col,
-      type: vizType,
-      data: arr.map((r: any) => Number(r[i + 1]) || 0),
-      barMaxWidth: 40
-    }))
+// 根据 chartConfig + 全量 rawResults 构建 ECharts option
+const buildChartOption = (chartConfig: any, rawResults: any[]): any => {
+  if (!chartConfig || !rawResults || rawResults.length === 0) return undefined
+  const vizType = chartConfig.vizType || 'bar'
+  const xAxisField = chartConfig.xAxis || Object.keys(rawResults[0])[0]
+  const yAxisFields = chartConfig.yAxis && chartConfig.yAxis.length > 0
+    ? chartConfig.yAxis
+    : Object.keys(rawResults[0]).slice(1)
+
+  if (vizType === 'table') return undefined
+
+  const categories = rawResults.map((r: any) => String(r[xAxisField] ?? ''))
+
+  if (vizType === 'pie') {
+    const firstY = yAxisFields[0]
     return {
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-      legend: { data: columns.slice(1), top: 0 },
-      grid: { left: '3%', right: '4%', bottom: '3%', top: 40, containLabel: true },
-      xAxis: { type: 'category', data: categories },
-      yAxis: { type: 'value' },
-      series
-    }
-  } else if (vizType === 'pie') {
-    return {
+      title: { text: chartConfig.chartTitle || '', left: 'center', textStyle: { fontSize: 14 } },
       tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
-      legend: { orient: 'vertical', left: 'left' },
+      legend: { orient: 'vertical', left: 'left', top: 30 },
       series: [{
         type: 'pie',
         radius: ['40%', '65%'],
-        center: ['55%', '50%'],
-        data: arr.map((r: any) => ({ name: String(r[0]), value: Number(r[1]) || 0 })),
+        center: ['55%', '55%'],
+        data: rawResults.map((r: any) => ({
+          name: String(r[xAxisField] ?? ''),
+          value: Number(r[firstY]) || 0
+        })),
         itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 }
       }]
     }
   }
-  return null
-}
 
-// 行列数据转表格数据
-const toTableData = (columns: any[], rows: any[]) => {
-  if (!columns || !rows) return []
-  const arr = normalizeRows(columns, rows)
-  return arr.map((row: any) => {
-    const obj: Record<string, any> = {}
-    columns.forEach((col: any, i: number) => { obj[col] = row[i] })
-    return obj
-  })
+  // bar / line
+  const series = yAxisFields.map((field: string) => ({
+    name: field,
+    type: vizType,
+    data: rawResults.map((r: any) => Number(r[field]) || 0),
+    barMaxWidth: 40,
+    smooth: vizType === 'line'
+  }))
+
+  return {
+    title: { text: chartConfig.chartTitle || '', left: 'center', textStyle: { fontSize: 14 } },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    legend: { data: yAxisFields, top: 30 },
+    grid: { left: '3%', right: '4%', bottom: '3%', top: 60, containLabel: true },
+    xAxis: { type: 'category', data: categories, axisLabel: { rotate: categories.length > 6 ? 30 : 0 } },
+    yAxis: { type: 'value' },
+    series
+  }
 }
 
 // 发送消息 - 使用 fetch API 实现流式读取
@@ -1792,5 +1838,29 @@ onMounted(() => {
 @keyframes rotating {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* 图表可视化区域 */
+.chart-section {
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 1px solid #e5e7eb;
+}
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.chart-header h6 {
+  margin: 0;
+  font-size: 14px;
+  color: #374151;
+}
+.chart-container {
+  width: 100%;
+  min-height: 360px;
 }
 </style>
