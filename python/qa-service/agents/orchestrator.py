@@ -1,21 +1,51 @@
 """
 编排智能体 (Orchestrator)
-负责：分析用户意图 → 提取实体/条件/维度 → 制定分析计划
+================================================================
+系统架构位置：qa-service / agents 层
+上游调用方：workflow 模块（评估流程的主控循环）
+下游依赖：tools 模块（fetch_database_tables / fetch_datasets_for_database /
+           fetch_indicators_for_datasets）、crewdefs 模块（ORCHESTRATOR_AGENT 配置）
+状态管理：读写 EvaluationState（共享工作流状态）
+
+核心职责：
+  1. 分析用户自然语言问题的意图（数据查询 / 作战效能 / 制空权 / 通用问答）
+  2. 从问题中提取过滤条件、分析维度等关键实体
+  3. 制定分步分析计划（analysis_plan）
+  4. 决定是否需要 AI 结论、是否需要图表输出
+
+数据流：
+  用户问题 → build_orchestrator_prompt() 构建 LLM prompt
+          → LLM 调用（由 workflow 发起）
+          → parse_orchestrator_response() 解析 JSON
+          → apply_orchestrator_result() 写入 state
 """
 import json
 import logging
 from .state import EvaluationState
 from .tools import fetch_database_tables, fetch_datasets_for_database, fetch_indicators_for_datasets
+from .crewdefs import ORCHESTRATOR_AGENT
 
 logger = logging.getLogger("evaluation.orchestrator")
 
-ORCHESTRATOR_SYSTEM_PROMPT = """你是智能评估编排专家。分析用户问题，选择合适的智能体执行分析。
+# ============================================================================
+# System Prompt：发送给 LLM 的编排指令模板
+# 使用 Python f-string 语法，双花括号 {{ 表示一个字面花括号
+# 运行时通过 .format() 填充 data_source_context 和 question
+# ============================================================================
+ORCHESTRATOR_SYSTEM_PROMPT = f"""# 角色: {ORCHESTRATOR_AGENT['role']}
+# 目标: {ORCHESTRATOR_AGENT['goal']}
+
+{ORCHESTRATOR_AGENT['backstory']}
+
+---
+
+你是智能评估编排专家。分析用户问题，选择合适的智能体执行分析。
 
 ## 数据源
-{data_source_context}
+{{data_source_context}}
 
 ## 用户问题
-{question}
+{{question}}
 
 ## 可选智能体及适用场景
 1. **data_query** — 基础查询智能体（默认）。适用：用户直接询问具体数据，如"查询XX"、"列出XX"、"XX有哪些"、"帮我查看XX"。
@@ -41,7 +71,7 @@ ORCHESTRATOR_SYSTEM_PROMPT = """你是智能评估编排专家。分析用户问
 
 ## 任务
 输出 JSON（不要 markdown 包裹）:
-{{
+{{{{
     "intent": "问题类型: 指标计算/趋势分析/对比分析/数据查询/综合评估/作战效能分析/制空权分析",
     "filters": "时间范围、条件等过滤，如无可留空",
     "dimensions": ["分析维度"],
@@ -49,18 +79,37 @@ ORCHESTRATOR_SYSTEM_PROMPT = """你是智能评估编排专家。分析用户问
     "query_type": "data_query",
     "need_conclusion": true,
     "need_chart": false
-}}
+}}}}
 
 **注意: 根据问题领域选择最合适的 query_type！need_conclusion 必须为布尔值 true 或 false。**"""
 
 
 def parse_orchestrator_response(response_text: str) -> dict:
+    """
+    解析编排智能体 LLM 的原始响应文本，提取 JSON 结果。
+
+    支持的响应格式：
+    1. ```json ... ``` 代码块包裹的 JSON
+    2. ``` ... ``` 代码块包裹的 JSON（无语言标记）
+    3. 裸 JSON 文本
+    4. 如果均解析失败，用正则兜底提取花括号内的 JSON
+    5. 最终兜底：返回 general_analysis 模式
+
+    Args:
+        response_text: LLM 返回的原始文本
+
+    Returns:
+        dict: 包含 intent / filters / dimensions / analysis_plan / query_type 等字段
+    """
     text = response_text.strip()
+
+    # 尝试从 markdown json 代码块中提取
     if "```json" in text:
         start = text.index("```json") + 7
         end = text.index("```", start) if "```" in text[start:] else len(text)
         text = text[start:end].strip()
     elif "```" in text:
+        # 无语言标记的代码块
         start = text.index("```") + 3
         end = text.index("```", start) if "```" in text[start:] else len(text)
         text = text[start:end].strip()
@@ -68,6 +117,7 @@ def parse_orchestrator_response(response_text: str) -> dict:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
+        # 标准解析失败，用正则兜底匹配第一个 JSON 对象
         import re
         match = re.search(r'\{[^{}]*\}', text, re.DOTALL)
         if match:
@@ -75,6 +125,7 @@ def parse_orchestrator_response(response_text: str) -> dict:
                 return json.loads(match.group())
             except json.JSONDecodeError:
                 pass
+        # 最终兜底：无法解析时默认走通用分析模式
         logger.warning(f"Failed to parse orchestrator response: {text[:500]}")
         return {
             "intent": "general_analysis",
@@ -86,11 +137,29 @@ def parse_orchestrator_response(response_text: str) -> dict:
 
 
 def build_data_source_context(state: EvaluationState) -> str:
-    """构建数据源上下文信息（表列表 + 数据集描述 + 指标定义）"""
+    """
+    构建数据源上下文信息，供 LLM 在编排 prompt 中参考。
+
+    从当前 state 的 database_id 出发，依次获取：
+    1. 数据库下的所有表名列表（最多展示 30 张）
+    2. 关联的数据集及其预定义描述（最多 5 个）
+    3. 数据集关联的指标定义及其公式（最多 5 个）
+
+    这些信息帮助 LLM 判断：
+    - 用户问题是否可在此数据源上回答
+    - 应该选择哪个查询智能体
+
+    Args:
+        state: 当前工作流状态
+
+    Returns:
+        str: 格式化的数据源上下文字符串，包含表/数据集/指标信息
+    """
     if not state.database_id:
         return "未选择数据源（只能进行理论分析）"
 
     try:
+        # 第一步：获取所有表名
         tables = fetch_database_tables(state.database_id)
         if not tables:
             return f"数据源已选择（ID: {state.database_id}），但未发现数据表"
@@ -102,7 +171,7 @@ def build_data_source_context(state: EvaluationState) -> str:
         if len(tables) > 30:
             parts.append(f"  ... 还有 {len(tables) - 30} 张表")
 
-        # 关联数据集（含预定义描述）
+        # 第二步：关联数据集（含预定义描述），帮助 LLM 理解表的作用
         datasets = fetch_datasets_for_database(state.database_id)
         if datasets:
             parts.append(f"\n数据集描述 ({len(datasets)} 个):")
@@ -110,7 +179,7 @@ def build_data_source_context(state: EvaluationState) -> str:
                 desc = ds.get('description', '')[:80]
                 parts.append(f"  - {ds.get('name', '')}" + (f": {desc}" if desc else ""))
 
-        # 关联指标（含预定义公式）
+        # 第三步：关联指标（含预定义公式），帮助 LLM 理解可计算的指标
         linked_ds_ids = [ds.get("id") for ds in datasets]
         indicators = fetch_indicators_for_datasets(linked_ds_ids)
         if indicators:
@@ -129,7 +198,17 @@ def build_data_source_context(state: EvaluationState) -> str:
 
 
 def build_orchestrator_prompt(state: EvaluationState) -> tuple:
-    """构建 orchestrator 的 system prompt 和 user message"""
+    """
+    构建发送给 LLM 的 system prompt 和 user message。
+
+    将数据源上下文和用户问题填入 ORCHESTRATOR_SYSTEM_PROMPT 模板的占位符。
+
+    Args:
+        state: 当前工作流状态
+
+    Returns:
+        tuple[str, str]: (system_prompt, user_message)
+    """
     data_source_context = build_data_source_context(state)
     system_prompt = ORCHESTRATOR_SYSTEM_PROMPT.format(
         question=state.question,
@@ -140,8 +219,24 @@ def build_orchestrator_prompt(state: EvaluationState) -> tuple:
 
 
 def apply_orchestrator_result(state: EvaluationState, response_text: str) -> EvaluationState:
-    """解析 LLM 响应并更新 state"""
+    """
+    解析 LLM 的编排结果并更新到工作流状态。
+
+    职责：
+    1. 调用 parse_orchestrator_response() 解析 JSON
+    2. 将意图、过滤条件、维度、查询模式、结论/图表标记写入 state
+    3. 记录分步执行状态（step 1.2 意图识别结果）
+
+    Args:
+        state: 当前工作流状态
+        response_text: LLM 返回的编排结果原始文本
+
+    Returns:
+        EvaluationState: 更新后的工作流状态
+    """
     plan = parse_orchestrator_response(response_text)
+
+    # 将解析结果写入 state 的核心字段
     state.intent = plan.get("intent", "general_analysis")
     state.entities = {
         "filters": plan.get("filters", ""),
@@ -153,9 +248,12 @@ def apply_orchestrator_result(state: EvaluationState, response_text: str) -> Eva
     state.need_chart = plan.get("need_chart", False)
     state.analysis_plan = plan.get("analysis_plan", "")
 
+    # 构建可读的维度/过滤摘要，用于 UI 展示
     dims = ', '.join(state.entities.get('dimensions', [])) or '未识别'
     filters = state.entities.get('filters', '') or '无'
     need_conclusion = state.entities.get('need_conclusion', True)
+
+    # 记录步骤 1.2：意图识别结果（含详细 thinking 信息）
     state.add_step(1.2, "意图识别结果", "completed",
                    detail=f"意图: {state.intent} | 模式: {state.entities.get('query_type', '')} | 结论: {'需要' if need_conclusion else '不需要'}",
                    thinking=(
@@ -167,6 +265,7 @@ def apply_orchestrator_result(state: EvaluationState, response_text: str) -> Eva
                        f"分析维度: {dims}\n\n"
                        f"【分析计划】\n{state.analysis_plan}"
                    ))
+    # 更新顶层步骤 1 的整体状态
     state.update_step(1, status="completed",
                      detail=f"意图识别完成: {state.intent}")
     return state

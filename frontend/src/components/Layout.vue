@@ -10,9 +10,9 @@
         <div class="header-left">
           <div class="logo-wrap" @click="goToPortal">
             <div class="logo-icon">
-              <el-icon :size="18"><Cpu /></el-icon>
+              <img src="/logo.jfif" alt="天智" class="logo-img" />
             </div>
-            <span class="logo-text">智能评估系统</span>
+            <span class="logo-text">天智智能评估系统</span>
           </div>
           <div class="header-divider"></div>
           <h1 class="page-title">{{ pageTitle }}</h1>
@@ -37,7 +37,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Setting, Cpu } from '@element-plus/icons-vue'
+import { Setting } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
@@ -171,11 +171,16 @@ const goToAdmin = () => {
   width: 32px;
   height: 32px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--primary-500), var(--primary-600));
-  color: white;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+}
+
+.logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .logo-text {

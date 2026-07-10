@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from agents.workflow import run_evaluation_workflow
+from agents.langgraph_workflow import run_langgraph_workflow
 from agents.tools import fetch_all_databases
 
 logger = logging.getLogger("evaluation.api")
@@ -157,7 +157,7 @@ async def analyze_stream(request: EvaluationRequest):
     async def generate():
         final_answer = ""
         try:
-            async for event in run_evaluation_workflow(
+            async for event in run_langgraph_workflow(
                 question=request.query,
                 llm_call_fn=async_llm_call,
                 session_id=session_id,

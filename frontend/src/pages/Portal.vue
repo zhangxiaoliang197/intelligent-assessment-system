@@ -11,9 +11,9 @@
         <div class="header-left">
           <div class="logo-wrap">
             <div class="logo-icon">
-              <el-icon :size="22"><Cpu /></el-icon>
+              <img src="/logo.jfif" alt="天智" class="logo-img" />
             </div>
-            <span class="logo-text">智能评估系统</span>
+            <span class="logo-text">天智智能评估系统</span>
           </div>
         </div>
         <div class="header-right">
@@ -25,7 +25,7 @@
       <main class="portal-main">
         <section class="hero-section">
           <div class="hero-icon">
-            <el-icon :size="44"><MagicStick /></el-icon>
+            <img src="/logo.jfif" alt="天智" class="hero-logo-img" />
           </div>
           <h1 class="hero-title">
             有什么可以帮您评估？
@@ -101,7 +101,7 @@
       </main>
 
       <footer class="portal-footer">
-        <span>Intelligent Assessment System · 智能评估平台</span>
+        <span>天智智能评估系统 · Tianzhi Intelligent Assessment</span>
       </footer>
     </div>
 
@@ -128,7 +128,6 @@ import {
   Document,
   Setting,
   ArrowRight,
-  MagicStick,
   Guide,
   DataAnalysis,
   Aim,
@@ -336,12 +335,16 @@ const goToAdmin = () => {
   width: 36px;
   height: 36px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--primary-500), var(--primary-600));
-  color: white;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  overflow: hidden;
+}
+
+.logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .logo-text {
@@ -371,16 +374,21 @@ const goToAdmin = () => {
 }
 
 .hero-icon {
-  width: 64px;
-  height: 64px;
+  width: 88px;
+  height: 88px;
   margin: 0 auto 20px;
   border-radius: var(--radius-xl);
-  background: linear-gradient(135deg, var(--primary-500), var(--primary-600));
-  color: white;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.35);
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.25);
+}
+
+.hero-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .hero-title {
