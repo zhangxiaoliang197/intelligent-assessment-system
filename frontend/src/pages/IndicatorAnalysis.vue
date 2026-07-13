@@ -160,6 +160,14 @@
               @keyup.enter="analyzeIndicator"
             />
             <div class="input-actions">
+              <el-tooltip :content="isListening ? '停止录音' : '语音输入'" placement="top">
+                <el-button
+                  circle
+                  :type="isListening ? 'danger' : 'default'"
+                  :icon="Microphone"
+                  @click="toggleSpeech"
+                />
+              </el-tooltip>
               <el-button type="primary" @click="analyzeIndicator" :loading="analyzing">
                 {{ analyzing ? '分析中...' : '分析指标' }}
               </el-button>
@@ -190,13 +198,30 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed, nextTick, watch } from 'vue'
+import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useRouter } from 'vue-router'
-import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete, ArrowRight } from '@element-plus/icons-vue'
+import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete, ArrowRight, Microphone } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
 
 const router = useRouter()
+
+// ── 语音识别 ──
+const { isListening, isSupported: speechSupported, start: startSpeech, stop: stopSpeech } = useSpeechRecognition()
+
+const toggleSpeech = () => {
+  if (isListening.value) {
+    const text = stopSpeech()
+    if (text.trim()) inputMessage.value = (inputMessage.value + ' ' + text).trim()
+  } else {
+    if (!speechSupported.value) {
+      ElMessage.warning('当前浏览器不支持语音识别，请使用 Chrome 或 Edge')
+      return
+    }
+    startSpeech()
+  }
+}
 
 // 工具配置
 const tools = [
@@ -1225,7 +1250,18 @@ onMounted(() => {
   bottom: 14px;
   right: 16px;
   display: flex;
+  gap: 8px;
   justify-content: flex-end;
+  align-items: center;
+}
+
+.attachment-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 16px 0;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
 .input-actions .el-button {

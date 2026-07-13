@@ -52,6 +52,21 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')
       },
+      '/api/attachment': {
+        target: 'http://localhost:10253',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      },
+      '/api/image': {
+        target: 'http://localhost:10253',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      },
+      '/api/model': {
+        target: 'http://localhost:10253',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      },
       '/api/ontology': {
         target: 'http://localhost:10256',
         changeOrigin: true,

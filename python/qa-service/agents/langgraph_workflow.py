@@ -1,4 +1,4 @@
-﻿"""
+"""
 LangGraph 工作流引擎
 
 ═══════════════════════════════════════════════════════════════════════════
@@ -91,6 +91,7 @@ class WorkflowState(TypedDict, total=False):
     session_id: str         # 会话标识（用于 SSE session 匹配）
     database_id: str        # 用户选择的数据源 ID（可为空串 = 无数据源）
     database_name: str      # 用户选择的数据源名称（仅用于展示）
+    attachment_text: str    # 用户上传的文档解析后的纯文本（空串 = 未上传）
 
     # ── orchestrator 阶段产出（意图识别后写入）────────────────────────
     intent: str             # 大模型识别出的用户意图，如 "综合评估"
@@ -142,6 +143,7 @@ def _empty_state() -> dict:
     """
     return {
         "intent": "",
+        "attachment_text": "",               # 默认无附件
         "analysis_plan": "",
         "entities": {},
         "query_type": "data_query",          # 默认按数据库查询处理
@@ -353,6 +355,15 @@ async def orchestrator_execute_node(state: WorkflowState, config: RunnableConfig
     steps = list(state.get("steps", []))
     sys_prompt = state.get("_sys_prompt", "")
     usr_prompt = state.get("_usr_prompt", "")
+
+    # ── 注入附件文本到用户 prompt ──
+    attachment_text = (state.get("attachment_text") or "").strip()
+    if attachment_text:
+        usr_prompt = (
+            f"用户上传了一份参考文档，以下为其内容：\n\n"
+            f"---\n{attachment_text}\n---\n\n"
+            f"用户问题：{usr_prompt}"
+        )
 
     # ── 调用 LLM ──
     try:
@@ -1223,6 +1234,7 @@ async def run_langgraph_workflow(
     session_id: str = "",
     database_id: str = "",
     database_name: str = "",
+    attachment_text: str = "",
 ):
     """
     对外暴露的 LangGraph 工作流入口 — 使用 SSE 流式输出评估全流程。
@@ -1262,6 +1274,7 @@ async def run_langgraph_workflow(
         "session_id": session_id,
         "database_id": database_id,
         "database_name": database_name,
+        "attachment_text": attachment_text,
         **_empty_state(),  # 展开默认值 —— 保证所有字段有初始值
     }
 

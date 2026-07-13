@@ -98,7 +98,8 @@
                   <ul>
                     <li v-for="(ref, idx) in msg.references" :key="idx">
                       {{ ref }}
-                      <el-tag v-if="ref.includes('知识库')" size="small" type="primary" effect="plain">知识库</el-tag>
+                      <el-tag v-if="ref.includes('用户上传')" size="small" type="warning" effect="plain">上传文档</el-tag>
+                      <el-tag v-else-if="ref.includes('(')" size="small" type="primary" effect="plain">知识库</el-tag>
                       <el-tag v-else size="small" type="info" effect="plain">AI生成</el-tag>
                     </li>
                   </ul>
@@ -117,9 +118,78 @@
               @keyup.enter.ctrl="sendMessage"
             />
             <div class="input-actions">
+              <input
+                ref="fileInputRef"
+                type="file"
+                accept=".pdf,.doc,.docx,.txt"
+                style="display: none"
+                @change="onFileChange"
+              />
+              <input
+                ref="imageInputRef"
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
+                style="display: none"
+                @change="onImageChange"
+              />
+              <el-tooltip content="上传图片" placement="top">
+                <el-button
+                  circle
+                  :icon="Picture"
+                  :disabled="imageUploading"
+                  @click="triggerImageUpload"
+                />
+              </el-tooltip>
+              <el-tooltip content="上传文档 (PDF/Word)" placement="top">
+                <el-button
+                  circle
+                  :icon="Upload"
+                  :disabled="uploading"
+                  @click="triggerFileUpload"
+                />
+              </el-tooltip>
+              <el-tooltip :content="isListening ? '停止录音' : '语音输入'" placement="top">
+                <el-button
+                  circle
+                  :type="isListening ? 'danger' : 'default'"
+                  :icon="Microphone"
+                  @click="toggleSpeech"
+                />
+              </el-tooltip>
               <el-button type="primary" :icon="Promotion" @click="sendMessage">
                 发送
               </el-button>
+            </div>
+          </div>
+          
+          <!-- 附件标签 -->
+          <div v-if="attachments.length > 0" class="attachment-chips">
+            <el-tag
+              v-for="(att, idx) in attachments"
+              :key="idx"
+              :type="att.status === 'success' ? 'success' : att.status === 'uploading' ? 'warning' : 'danger'"
+              closable
+              size="small"
+              @close="removeAttachment(idx)"
+            >
+              <el-icon v-if="att.status === 'uploading'"><Loading /></el-icon>
+              {{ att.filename }}
+              <template v-if="att.status === 'error'">
+                ({{ att.error?.slice(0, 20) }})
+              </template>
+            </el-tag>
+          </div>
+          
+          <!-- 图片预览 -->
+          <div v-if="images.length > 0" class="image-chips">
+            <div
+              v-for="(img, idx) in images"
+              :key="idx"
+              class="image-chip"
+            >
+              <img :src="img.preview_url" :alt="img.filename" class="image-thumb" />
+              <span class="image-name">{{ img.filename }}</span>
+              <el-icon class="image-close" @click="removeImage(idx)"><Delete /></el-icon>
             </div>
           </div>
           
@@ -148,11 +218,57 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, Collection, Box, ChatLineRound, ChatDotRound, Promotion, PieChart, Document, Plus, Delete, ArrowRight } from '@element-plus/icons-vue'
+import { Search, Collection, Box, ChatLineRound, ChatDotRound, Promotion, PieChart, Document, Plus, Delete, ArrowRight, Microphone, Upload, Loading, Picture } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import Layout from '@/components/Layout.vue'
+import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
+import { useAttachmentUpload } from '@/composables/useAttachmentUpload'
+import { useImageUpload } from '@/composables/useImageUpload'
 
 const router = useRouter()
+
+// ── 语音识别 ──
+const { isListening, isSupported: speechSupported, start: startSpeech, stop: stopSpeech } = useSpeechRecognition()
+
+const toggleSpeech = () => {
+  if (isListening.value) {
+    const text = stopSpeech()
+    if (text.trim()) inputMessage.value = (inputMessage.value + ' ' + text).trim()
+  } else {
+    if (!speechSupported.value) {
+      ElMessage.warning('当前浏览器不支持语音识别，请使用 Chrome 或 Edge')
+      return
+    }
+    startSpeech()
+  }
+}
+
+// ── 文件上传 ──
+const fileInputRef = ref<HTMLInputElement | null>(null)
+const { attachments, uploading, upload: uploadFile, remove: removeAttachment, getAttachmentId } = useAttachmentUpload()
+const { images, uploading: imageUploading, upload: uploadImage, remove: removeImage, getImageId } = useImageUpload()
+const imageInputRef = ref<HTMLInputElement | null>(null)
+
+const triggerFileUpload = () => { fileInputRef.value?.click() }
+
+const onFileChange = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  if (!input.files?.length) return
+  const file = input.files[0]
+  await uploadFile(file)
+  input.value = '' // 重置以允许重新选择同一文件
+}
+
+// ── 图片上传 ──
+const triggerImageUpload = () => { imageInputRef.value?.click() }
+
+const onImageChange = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  if (!input.files?.length) return
+  const file = input.files[0]
+  await uploadImage(file)
+  input.value = ''
+}
 
 // 工具配置
 const tools = [
@@ -344,11 +460,20 @@ const sendMessage = async () => {
       body: JSON.stringify({
         query: userQuestion,
         session_id: sessionId.value || undefined,
-        top_k: 5
+        top_k: 5,
+        attachment_id: getAttachmentId() || undefined,
+        image_id: getImageId() || undefined
       })
     })
 
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    if (!response.ok) {
+      let errMsg = `HTTP ${response.status}`
+      try {
+        const errBody = await response.json()
+        errMsg = errBody.detail || errMsg
+      } catch (_) {}
+      throw new Error(errMsg)
+    }
 
     const reader = response.body?.getReader()
     if (!reader) throw new Error('无法获取流式响应')
@@ -439,6 +564,30 @@ onMounted(() => {
   if (sessionId.value && sessionMessages.value[sessionId.value]) {
     messages.value = [...sessionMessages.value[sessionId.value]]
   }
+
+  // 读取 URL 参数 q，预填输入框
+  const routeQuery = router.currentRoute.value.query?.q as string
+  if (routeQuery) {
+    inputMessage.value = routeQuery
+    // 自动发送
+    nextTick(() => sendMessage())
+  }
+
+  // 从门户页面传来的附件（已上传完成）
+  const portalAttId = sessionStorage.getItem('portal_attachment_id')
+  if (portalAttId) {
+    const portalFilename = sessionStorage.getItem('portal_attachment_filename') || '文档'
+    attachments.value.push({
+      attachment_id: portalAttId,
+      filename: portalFilename,
+      text_length: 0,
+      preview: '',
+      status: 'success',
+    })
+    sessionStorage.removeItem('portal_attachment_id')
+    sessionStorage.removeItem('portal_attachment_filename')
+  }
+
   ElMessage.info('智能问答系统加载完成')
 })
 </script>
@@ -972,7 +1121,63 @@ onMounted(() => {
   bottom: 14px;
   right: 16px;
   display: flex;
+  gap: 8px;
   justify-content: flex-end;
+  align-items: center;
+}
+
+.attachment-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 16px 0;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.image-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 16px 0;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.image-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #f0f5ff;
+  border: 1px solid #d0e0ff;
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.image-thumb {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+}
+
+.image-name {
+  font-size: 12px;
+  color: #555;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-close {
+  cursor: pointer;
+  color: #999;
+  font-size: 14px;
+}
+.image-close:hover {
+  color: #f56c6c;
 }
 
 .input-actions .el-button {

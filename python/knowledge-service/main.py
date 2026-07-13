@@ -443,18 +443,29 @@ async def search_knowledge(request: KnowledgeSearchRequest):
     top_indices = sorted(range(len(similarities)), key=lambda i: similarities[i], reverse=True)
     top_k = min(request.top_k, len(top_indices))
 
+    # 构建 doc_id → document 映射，用于获取文档原始文件名
+    doc_map = {d["id"]: d for d in knowledge_db}
+
     results = []
     seen_docs = set()
     for idx in top_indices:
         if similarities[idx] < 0.05:
             break
         chunk = filtered_chunks[idx]
-        if chunk.doc_id not in seen_docs:
-            seen_docs.add(chunk.doc_id)
+        if chunk.doc_id in seen_docs:
+            continue  # 同一文档只保留最高分的一个片段
+        seen_docs.add(chunk.doc_id)
+
+        # 优先用文档的 filename 作为 title（比 chunk.title 更有意义）
+        doc = doc_map.get(chunk.doc_id, {})
+        doc_filename = doc.get("filename", "") or chunk.source_file or ""
+        display_title = doc_filename.rsplit(".", 1)[0] if doc_filename else chunk.title
+
         results.append({
             "id": chunk.doc_id,
             "chunk_id": chunk.chunk_id,
-            "title": chunk.title,
+            "title": display_title or chunk.title,
+            "filename": doc_filename,
             "content": chunk.text,
             "score": float(similarities[idx]),
             "category": chunk.category,

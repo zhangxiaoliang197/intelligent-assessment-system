@@ -58,6 +58,21 @@
             </el-input>
           </div>
 
+          <!-- 附件标签 -->
+          <div v-if="attachments.length > 0" class="attachment-chips">
+            <el-tag
+              v-for="(att, idx) in attachments"
+              :key="idx"
+              :type="att.status === 'success' ? 'success' : att.status === 'uploading' ? 'warning' : 'danger'"
+              closable
+              size="small"
+              @close="removeAttachment(idx)"
+            >
+              <el-icon v-if="att.status === 'uploading'"><Loading /></el-icon>
+              {{ att.filename }}
+            </el-tag>
+          </div>
+
           <div class="tools-row">
             <div
               v-for="tool in tools"
@@ -110,6 +125,7 @@
     <input
       ref="fileInputRef"
       type="file"
+      accept=".pdf,.doc,.docx,.txt"
       style="display: none"
       @change="handleFileChange"
     />
@@ -131,16 +147,19 @@ import {
   Guide,
   DataAnalysis,
   Aim,
-  Box
+  Box,
+  Loading
 } from '@element-plus/icons-vue'
 import FloatingSidebar from '@/components/FloatingSidebar.vue'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
+import { useAttachmentUpload } from '@/composables/useAttachmentUpload'
 
 const router = useRouter()
 const userStore = useUserStore()
 const searchQuery = ref('')
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const { attachments, uploading, upload: uploadFile, remove: removeAttachment, getAttachmentId } = useAttachmentUpload()
 
 const username = userStore.username || '评估员'
 
@@ -214,13 +233,19 @@ const suggestList = [
 ]
 
 const handleSearch = () => {
-  if (!searchQuery.value.trim()) {
-    ElMessage.warning('请输入问题')
+  if (!searchQuery.value.trim() && getAttachmentId().length === 0) {
+    ElMessage.warning('请输入问题或上传文件')
     return
+  }
+  // 将 attachment_id 通过 sessionStorage 传递给目标页面
+  const attId = getAttachmentId()
+  if (attId) {
+    sessionStorage.setItem('portal_attachment_id', attId)
+    sessionStorage.setItem('portal_attachment_filename', attachments.value.find(a => a.status === 'success')?.filename || '')
   }
   router.push({
     path: '/qa',
-    query: { q: searchQuery.value }
+    query: { q: searchQuery.value || undefined }
   })
 }
 
@@ -228,11 +253,17 @@ const handleFileUpload = () => {
   fileInputRef.value?.click()
 }
 
-const handleFileChange = (event: Event) => {
+const handleFileChange = async (event: Event) => {
   const target = event.target as HTMLInputElement
   const files = target.files
-  if (files && files.length > 0) {
-    ElMessage.success(`已选择文件: ${files[0].name}`)
+  if (!files || files.length === 0) return
+  const file = files[0]
+  const result = await uploadFile(file)
+  target.value = '' // 重置以允许重复选择
+  if (result && result.status === 'success') {
+    ElMessage.success(`${file.name} 解析完成（${result.text_length} 字符）`)
+  } else {
+    ElMessage.error(`${file.name} 上传失败`)
   }
 }
 
@@ -569,6 +600,14 @@ const goToAdmin = () => {
   padding: 24px 0;
   font-size: var(--text-sm);
   color: var(--text-muted);
+}
+
+.attachment-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 2px;
 }
 
 @media (max-width: 768px) {

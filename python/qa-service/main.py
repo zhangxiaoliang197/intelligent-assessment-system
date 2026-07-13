@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -7,6 +7,7 @@ from datetime import datetime
 import uuid
 import json
 import os
+import base64
 import tempfile
 import urllib.request
 import urllib.error
@@ -37,7 +38,9 @@ ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 SESSIONS_FILE = os.path.join(DATA_DIR, 'sessions.json')
 HISTORY_FILE = os.path.join(DATA_DIR, 'history.json')
+IMAGES_DIR = os.path.join(DATA_DIR, 'images')
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(IMAGES_DIR, exist_ok=True)
 
 # 滑动窗口大小：保留最近N轮对话作为上下文
 MAX_CONTEXT = int(os.getenv("QA_CONTEXT_ROUNDS", "5"))
@@ -134,12 +137,113 @@ def search_knowledge(query, top_k=5):
         req.add_header("Content-Type", "application/json")
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            return data.get("results", [])
+            results = data.get("results", [])
+            # 调试：打印知识库返回的第一个结果的字段名
+            if results:
+                logger.debug(f"KB result sample keys: {list(results[0].keys())}")
+
+            # 按文档去重 + title 规范化（知识库服务已做 doc_id 去重，此处兜底）
+            deduped = []
+            seen_titles = set()
+            for i, r in enumerate(results):
+                raw_title = r.get("title", "")
+                # title 为空/纯数字 → 尝试 filename 字段
+                is_bare_number = isinstance(raw_title, str) and raw_title.strip().isdigit()
+                if not isinstance(raw_title, str) or not raw_title.strip() or is_bare_number:
+                    alt = r.get("filename") or r.get("name") or r.get("source") or r.get("file") or ""
+                    if alt and str(alt).strip() and not str(alt).strip().isdigit():
+                        raw_title = str(alt).strip()
+                    else:
+                        raw_title = "知识库文档"
+                else:
+                    raw_title = raw_title.strip()
+
+                r["title"] = raw_title
+
+                if raw_title in seen_titles:
+                    continue
+                seen_titles.add(raw_title)
+                deduped.append(r)
+
+            return deduped
     except Exception:
         return []
 
-def call_llm_api(query, context=""):
-    api_url, api_key, model, temperature, max_tokens, messages, err = get_llm_messages(query, context)
+
+# ── 图片支持检测 ──
+# 仅列出已验证支持 OpenAI image_url 格式的模型。
+# deepseek-chat 实际不支持 image_url → 不列入。
+_IMAGE_CAPABLE_PATTERNS = [
+    "gpt-4o", "gpt-4-turbo", "gpt-4-vision", "gpt-4-turbo-preview",
+    "claude-3", "claude-3.5", "claude-3-5",
+    "gemini-2", "gemini-2.5", "gemini-1.5",
+    "qwen-vl", "qwen2-vl", "qwen2.5-vl",
+    "glm-4v", "cogvlm", "cogvlm2",
+    "yi-vl", "yi-vision",
+    "internvl", "internvl2",
+    "llava", "llava-next", "llava-v1",
+    "vision", "vl", "multimodal", "omni",
+]
+
+
+def _model_supports_images(config: dict = None) -> bool:
+    """检测当前配置的大模型是否支持图片多模态输入"""
+    if config is None:
+        config = load_llm_config()
+    if not config:
+        return False
+    model = (config.get("model") or "").lower()
+    return any(pattern in model for pattern in _IMAGE_CAPABLE_PATTERNS)
+
+
+def _load_image_base64(image_id: str) -> tuple:
+    """
+    从 data/images/{image_id} 读取图片并转为 base64 data URL。
+
+    Returns:
+        tuple[str, str]: (data_url, mime_type)，失败时返回 ("", "")
+    """
+    import imghdr
+    image_path = os.path.join(IMAGES_DIR, image_id)
+    if not os.path.exists(image_path):
+        return "", ""
+
+    mime_map = {"jpeg": "image/jpeg", "jpg": "image/jpeg", "png": "image/png",
+                "gif": "image/gif", "webp": "image/webp", "bmp": "image/bmp"}
+    img_type = imghdr.what(image_path) or "png"
+    mime = mime_map.get(img_type, "image/png")
+
+    with open(image_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
+    return f"data:{mime};base64,{b64}", mime
+
+
+def _get_attachment_text(attachment_id: Optional[str]) -> str:
+    """根据 attachment_id 获取缓存的文档文本"""
+    if not attachment_id:
+        return ""
+    try:
+        from attachment_handler import get_attachment_text
+        return get_attachment_text(attachment_id) or ""
+    except Exception as e:
+        logger.warning(f"Failed to get attachment text for {attachment_id}: {e}")
+        return ""
+
+def _get_attachment_info(attachment_id: Optional[str]) -> tuple:
+    """获取附件信息，返回 (text, filename)"""
+    if not attachment_id:
+        return "", ""
+    try:
+        from attachment_handler import get_attachment_text, get_attachment_filename
+        text = get_attachment_text(attachment_id) or ""
+        filename = get_attachment_filename(attachment_id) or ""
+        return text, filename
+    except Exception as e:
+        logger.warning(f"Failed to get attachment info for {attachment_id}: {e}")
+        return "", ""
+
+def call_llm_api(query, context="", attachment_text="", attachment_filename="", image_data_url=""):
+    api_url, api_key, model, temperature, max_tokens, messages, err = get_llm_messages(query, context, attachment_text, attachment_filename, image_data_url)
     if api_url is None:
         return err, [], []
 
@@ -174,12 +278,15 @@ def call_llm_api(query, context=""):
             msg = err.get("error", {}).get("message", err_body)
         except Exception:
             msg = err_body
+        # 智能翻译：图片格式不支持
+        if "image_url" in msg.lower() and "unknown variant" in msg.lower():
+            msg = "当前模型不支持图片识别，请切换至 gpt-4o、qwen-vl 等支持多模态的模型"
         return f"大模型调用失败 (HTTP {e.code}): {msg[:500]}", [], []
     except Exception as e:
         return f"大模型调用失败: {str(e)[:500]}", [], []
 
-def get_llm_messages(query, context=""):
-    """构建 LLM 请求消息（复用逻辑）"""
+def get_llm_messages(query, context="", attachment_text="", attachment_filename="", image_data_url=""):
+    """构建 LLM 请求消息（复用逻辑）。当 image_data_url 非空时使用多模态格式。"""
     config = load_llm_config()
     llm_type = config.get("type", "deepseek")
     api_key = config.get("apiKey", "")
@@ -192,40 +299,78 @@ def get_llm_messages(query, context=""):
     if not api_key and llm_type != "vllm":
         return None, None, None, None, None, None, "大模型 API Key 未配置，请在「基础管理 → 大模型配置」中设置。"
 
+    # ── 知识库检索 ──
     knowledge_chunks = search_knowledge(query, top_k=5)
     knowledge_context = ""
     references = []
     sources = []
 
+    has_attachment = bool(attachment_text.strip())
+    doc_filename = attachment_filename or "上传文档"
+
+    # ── 构建 references / sources ──
+    # 上传文档始终排在参考来源第一位
+    if has_attachment:
+        references.append(f"{doc_filename}（用户上传）")
+        sources.append({
+            "title": doc_filename,
+            "category": "用户上传文档",
+            "score": 1.0
+        })
+
+    # 知识库结果
     if knowledge_chunks:
         for i, ch in enumerate(knowledge_chunks):
-            knowledge_context += f"\n\n[参考资料{i + 1} - {ch.get('title', '未知')}]\n{ch.get('content', '')}"
+            knowledge_context += f"\n\n[知识库参考{i + 1} - {ch.get('title', '未知')}]\n{ch.get('content', '')}"
             references.append(f"{ch.get('title', '未知')} (相关度: {ch.get('score', 0):.0%})")
             sources.append({
                 "title": ch.get("title", "未知"),
-                "category": ch.get("category", "未分类"),
+                "category": ch.get("category", "知识库"),
                 "score": ch.get("score", 0)
             })
 
+    # ── 构建 system prompt ──
     system_prompt = "你是一个专业的智能评估系统助手，擅长作战效能评估、指标体系分析、评估分析等领域。请用中文回答，回答要专业、准确、有条理。"
 
-    if knowledge_context:
+    if has_attachment:
+        # 文档优先：文档是主要来源，知识库仅作补充
+        system_prompt += f"\n\n用户上传了一份参考文档「{doc_filename}」，以下是文档全文：\n\n---\n{attachment_text}\n---"
+        if knowledge_context:
+            system_prompt += (
+                f"\n\n此外，系统从知识库中检索到以下资料。"
+                f"如果这些资料与用户的文档或问题**明确相关**，可以作为补充参考；"
+                f"如果不相关，请忽略知识库资料，**仅基于用户上传的文档内容**回答问题："
+                f"{knowledge_context}"
+            )
+        system_prompt += "\n\n请优先基于用户上传的文档内容进行回答。如果问题超出文档范围，请如实告知。"
+    elif knowledge_context:
+        # 仅知识库
         system_prompt += f"\n\n以下是知识库中检索到的相关参考资料，请优先基于这些资料回答问题：{knowledge_context}"
 
     ctx = ""
     if context:
         ctx = f"\n\n历史对话上下文（最近{MAX_CONTEXT}轮）:\n{context}"
 
+    user_text = query + ctx
+    if image_data_url:
+        # 多模态格式：content 是数组，包含图片 + 文本
+        user_content = [
+            {"type": "image_url", "image_url": {"url": image_data_url}},
+            {"type": "text", "text": user_text},
+        ]
+    else:
+        user_content = user_text
+
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": query + ctx}
+        {"role": "user", "content": user_content}
     ]
 
     return api_url, api_key, model, temperature, max_tokens, messages, (references, sources)
 
-def stream_llm_api(query, context="") -> Generator[str, None, tuple]:
+def stream_llm_api(query, context="", attachment_text="", attachment_filename="", image_data_url="") -> Generator[str, None, tuple]:
     """流式调用 LLM API，逐块 yield 文本，最后 return (完整文本, references, sources)"""
-    api_url, api_key, model, temperature, max_tokens, messages, refs_src = get_llm_messages(query, context)
+    api_url, api_key, model, temperature, max_tokens, messages, refs_src = get_llm_messages(query, context, attachment_text, attachment_filename, image_data_url)
     if api_url is None:
         yield refs_src  # 这是错误信息字符串
         return refs_src, [], []
@@ -277,6 +422,9 @@ def stream_llm_api(query, context="") -> Generator[str, None, tuple]:
             msg = err.get("error", {}).get("message", err_body)
         except Exception:
             msg = err_body
+        # 智能翻译：图片格式不支持
+        if "image_url" in msg.lower() and "unknown variant" in msg.lower():
+            msg = "当前模型不支持图片识别，请切换至 gpt-4o、qwen-vl 等支持多模态的模型"
         error_msg = f"大模型调用失败 (HTTP {e.code}): {msg[:500]}"
         yield error_msg
         return error_msg
@@ -294,6 +442,8 @@ class ChatRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
     top_k: int = 5
+    attachment_id: Optional[str] = None
+    image_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
     answer: str
@@ -421,6 +571,92 @@ async def delete_session(session_id: str):
 
 # ========== 对话 API ==========
 
+@app.post("/attachment/upload")
+async def upload_attachment(file: UploadFile = File(...)):
+    """
+    上传文档文件（PDF/Word/TXT），返回解析结果和 attachment_id。
+    """
+    from attachment_handler import parse_and_store
+
+    import tempfile, os as _os
+    suffix = _os.path.splitext(file.filename or "")[1] or ".tmp"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=DATA_DIR) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        result = parse_and_store(tmp_path, file.filename or "unknown")
+        return {"success": True, **result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Attachment upload failed: {e}")
+        raise HTTPException(status_code=500, detail=f"文档解析失败: {str(e)[:200]}")
+    finally:
+        try:
+            import os as _os2
+            _os2.remove(tmp_path)
+        except Exception:
+            pass
+
+@app.get("/attachment/{attachment_id}/download")
+async def download_attachment(attachment_id: str):
+    """
+    下载上传的原始文档文件。
+    """
+    from attachment_handler import get_attachment_original_path, get_attachment_filename
+    from fastapi.responses import FileResponse
+    import os as _os3
+
+    path = get_attachment_original_path(attachment_id)
+    if not path or not _os3.path.exists(path):
+        raise HTTPException(status_code=404, detail="附件不存在或已过期")
+
+    filename = get_attachment_filename(attachment_id) or "download"
+    return FileResponse(path, filename=filename, media_type="application/octet-stream")
+
+
+@app.post("/image/upload")
+async def upload_image(file: UploadFile = File(...)):
+    """
+    上传图片文件（PNG/JPG/GIF/WebP/BMP），保存到 data/images/，返回 image_id。
+
+    请求：multipart/form-data，字段名 "file"
+    返回：{"success": true, "image_id": "uuid.png", "filename": "xxx.png"}
+    """
+    import shutil as _shutil
+    from attachment_handler import validate_file
+
+    filename = file.filename or "image.png"
+    ext = os.path.splitext(filename)[1].lower()
+    allowed = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+    if ext not in allowed:
+        raise HTTPException(status_code=400, detail=f"不支持的图片格式: {ext}，仅支持 {', '.join(sorted(allowed))}")
+
+    image_id = f"{uuid.uuid4()}{ext}"
+    dest_path = os.path.join(IMAGES_DIR, image_id)
+
+    content = await file.read()
+    max_size = 10 * 1024 * 1024  # 10MB
+    if len(content) > max_size:
+        raise HTTPException(status_code=400, detail="图片大小不能超过 10MB")
+
+    with open(dest_path, "wb") as f:
+        f.write(content)
+
+    return {"success": True, "image_id": image_id, "filename": filename}
+
+
+@app.get("/model/supports-image")
+async def check_model_image_support():
+    """检查当前配置的大模型是否支持图片识别"""
+    supported = _model_supports_images()
+    config = load_llm_config()
+    model = config.get("model", "unknown") if config else "unknown"
+    return {"supports_image": supported, "model": model}
+
+
 @app.post("/qa/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     session_id = request.session_id or str(uuid.uuid4())
@@ -437,7 +673,18 @@ async def chat(request: ChatRequest):
         elif msg.get("role") == "assistant":
             context += f"助手: {msg.get('content', '')}\n"
 
-    answer, references, sources = call_llm_api(request.query, context)
+    attachment_text, attachment_filename = _get_attachment_info(request.attachment_id)
+
+    # ── 图片处理 ──
+    image_data_url = ""
+    if request.image_id:
+        if not _model_supports_images():
+            raise HTTPException(status_code=400, detail="当前模型不支持图片识别，请切换至支持多模态的大模型（如 deepseek-chat、gpt-4o 等）")
+        image_data_url, _ = _load_image_base64(request.image_id)
+        if not image_data_url:
+            raise HTTPException(status_code=400, detail="图片不存在或已过期")
+
+    answer, references, sources = call_llm_api(request.query, context, attachment_text, attachment_filename, image_data_url)
 
     now_str = datetime.now().isoformat()
     sessions[session_id].append({"role": "user", "content": request.query, "timestamp": now_str})
@@ -481,19 +728,30 @@ async def chat_stream(request: ChatRequest):
             context += f"助手: {msg.get('content', '')}\n"
 
     # 先发送 sources + session_id
-    _, __, ___, ____, _____, ______, refs_src = get_llm_messages(request.query, context)
+    attachment_text, attachment_filename = _get_attachment_info(request.attachment_id)
+
+    # ── 图片处理 ──
+    image_data_url = ""
+    if request.image_id:
+        if not _model_supports_images():
+            raise HTTPException(status_code=400, detail="当前模型不支持图片识别，请切换至支持多模态的大模型（如 deepseek-chat、gpt-4o 等）")
+        image_data_url, _ = _load_image_base64(request.image_id)
+        if not image_data_url:
+            raise HTTPException(status_code=400, detail="图片不存在或已过期")
+
+    _, __, ___, ____, _____, ______, refs_src = get_llm_messages(request.query, context, attachment_text, attachment_filename, image_data_url)
     if refs_src is None:
         refs_src = ([], [])
 
     def generate():
         full_answer = ""
-        gen = stream_llm_api(request.query, context)
+        gen = stream_llm_api(request.query, context, attachment_text, attachment_filename, image_data_url)
         try:
             for chunk in gen:
                 full_answer += chunk
                 yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
             # 获取 references 和 sources
-            api_url, api_key, model, temp, mt, msgs, rs = get_llm_messages(request.query, context)
+            api_url, api_key, model, temp, mt, msgs, rs = get_llm_messages(request.query, context, attachment_text, attachment_filename, image_data_url)
             references, sources = (rs if isinstance(rs, tuple) else ([], []))
             knowledge_used = len(sources) > 0 if isinstance(sources, list) else False
             yield json.dumps({

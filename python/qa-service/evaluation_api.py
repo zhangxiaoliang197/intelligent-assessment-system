@@ -84,6 +84,7 @@ class EvaluationRequest(BaseModel):
     session_id: Optional[str] = None
     database_id: str = Field(default="", alias="dataSourceId")
     database_name: str = ""
+    attachment_id: Optional[str] = None
 
 
 def _get_llm_config():
@@ -154,6 +155,15 @@ async def analyze_stream(request: EvaluationRequest):
 
     session_id = request.session_id or str(uuid.uuid4())
 
+    # 获取附件文本
+    attachment_text = ""
+    if request.attachment_id:
+        try:
+            from attachment_handler import get_attachment_text
+            attachment_text = get_attachment_text(request.attachment_id) or ""
+        except Exception:
+            pass
+
     async def generate():
         final_answer = ""
         try:
@@ -163,6 +173,7 @@ async def analyze_stream(request: EvaluationRequest):
                 session_id=session_id,
                 database_id=request.database_id,
                 database_name=request.database_name,
+                attachment_text=attachment_text,
             ):
                 if event.get("type") == "result":
                     event["session_id"] = session_id

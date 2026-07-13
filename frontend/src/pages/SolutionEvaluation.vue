@@ -320,6 +320,14 @@
               @keyup.enter.ctrl="sendMessage"
             />
             <div class="input-actions">
+              <el-tooltip :content="isListening ? '停止录音' : '语音输入'" placement="top">
+                <el-button
+                  circle
+                  :type="isListening ? 'danger' : 'default'"
+                  :icon="Microphone"
+                  @click="toggleSpeech"
+                />
+              </el-tooltip>
               <el-button type="primary" @click="sendMessage" :disabled="analyzing">
                 <el-icon><Promotion /></el-icon>
                 {{ analyzing ? '分析中...' : '发送' }}
@@ -375,6 +383,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, nextTick, watch } from 'vue'
+import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -392,7 +401,8 @@ import {
   Plus,
   Delete,
   ArrowRight,
-  PieChart as ElPieChart
+  PieChart as ElPieChart,
+  Microphone
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
 import api from '@/services/api'
@@ -405,6 +415,22 @@ import VChart from 'vue-echarts'
 use([CanvasRenderer, BarChart, PieChart, LineChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent] as any)
 
 const router = useRouter()
+
+// ── 语音识别 ──
+const { isListening, isSupported: speechSupported, start: startSpeech, stop: stopSpeech } = useSpeechRecognition()
+
+const toggleSpeech = () => {
+  if (isListening.value) {
+    const text = stopSpeech()
+    if (text.trim()) inputMessage.value = (inputMessage.value + ' ' + text).trim()
+  } else {
+    if (!speechSupported.value) {
+      ElMessage.warning('当前浏览器不支持语音识别，请使用 Chrome 或 Edge')
+      return
+    }
+    startSpeech()
+  }
+}
 
 // localStorage 持久化 key
 const LS_SESSION_ID = 'solution_session_id'
@@ -1785,7 +1811,18 @@ onMounted(() => {
   bottom: 14px;
   right: 16px;
   display: flex;
+  gap: 8px;
   justify-content: flex-end;
+  align-items: center;
+}
+
+.attachment-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 16px 0;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
 .input-actions .el-button {
