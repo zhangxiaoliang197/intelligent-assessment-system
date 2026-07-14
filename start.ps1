@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 $root = "$PSScriptRoot"
 
 # Must set PATH first so Start-Process inherits it
-$nodeBin = "C:\Program Files\nodejs"
+$nodeBin = Split-Path -Parent (Get-Command node -ErrorAction Stop).Source
 $javaHome = "$env:USERPROFILE\jdk17\jdk-17.0.14+7"
 $javaBin = "$javaHome\bin"
 $gitBin = "$env:USERPROFILE\git\cmd"
