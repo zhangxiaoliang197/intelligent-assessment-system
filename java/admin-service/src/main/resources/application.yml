@@ -1,0 +1,74 @@
+server:
+  port: ${SERVER_PORT:10258}
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+spring:
+  application:
+    name: admin-service
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+  http:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        connection:
+          characterEncoding: UTF-8
+          useUnicode: true
+          charSet: UTF-8
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  charset:
+    console: UTF-8
+    file: UTF-8
+  # 避免宿主机通用 DEBUG 环境变量开启 Spring Web 响应体日志；内部接口含模型密钥。
+  level:
+    org.springframework.web: INFO
+    org.hibernate.SQL: INFO
+    org.hibernate.orm.jdbc.bind: INFO
+
+# 后端服务读取完整 LLM API Key 时使用。不得提交真实令牌；start.ps1 会自动生成并注入。
+security:
+  internal-token: ${ADMIN_INTERNAL_TOKEN:}
+
+# ─── 数据库类型配置（docker/环境变量覆盖）───
+# DB_TYPE=h2   → H2 内存数据库（仅用于临时测试）
+# DB_TYPE=mysql   → MySQL 8.x（本地开发默认，数据持久保存）
+# DB_TYPE=postgresql → PostgreSQL 16+
+db:
+  type: ${DB_TYPE:mysql}
+  mysql:
+    host: ${MYSQL_HOST:localhost}
+    port: ${MYSQL_PORT:3306}
+    database: ${MYSQL_DATABASE:assessment}
+    user: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:root}
+  postgresql:
+    host: ${PG_HOST:localhost}
+    port: ${PG_PORT:5432}
+    database: ${PG_DATABASE:assessment}
+    user: ${PG_USER:postgres}
+    password: ${PG_PASSWORD:postgres}
+
+# ─── 驱动文件存储路径 ───
+driver:
+  storage-path: ${user.dir}/drivers

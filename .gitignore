@@ -1,0 +1,73 @@
+# Dependencies
+node_modules/
+package-lock.json
+.runtime/
+
+# Build outputs
+dist/
+build/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv/
+
+# Java
+target/
+*.class
+*.jar
+!drivers/*.jar
+*.war
+*.ear
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Uploads
+uploads/
+vector_db/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+docker/images/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# System files
+Thumbs.db
+Desktop.ini
+llm_config.json
+docker-images/
+offline-deps/
+_build_docker.ps1

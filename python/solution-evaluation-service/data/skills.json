@@ -1,0 +1,39 @@
+[
+  {
+    "name": "系统数据完整性检查",
+    "description": "依次检查数据库、数据集和指标的配置完整性",
+    "databaseId": "db_cb47461d",
+    "steps": [
+      {
+        "datasetId": "ds_3b383c2c",
+        "datasetName": "assessment - ass_database_config",
+        "instruction": "查询所有数据库配置，输出数据库ID、名称、类型、地址、数据库名和连接状态；本系统连接成功的状态值是中文“已连接”，只查询 status = '已连接' 的记录。",
+        "dependsOnPrevious": false,
+        "onDependencyFailure": "stop",
+        "requireNonEmpty": true,
+        "onEmpty": "stop"
+      },
+      {
+        "datasetId": "ds_b35a94f1",
+        "datasetName": "assessment - ass_dataset",
+        "instruction": "必须使用上一步返回的数据库ID作为 database_id 过滤条件，查询每个已连接数据库关联的数据集；返回每个数据集的 id、name、database_id，并用窗口统计或附加汇总给出数据集数量。不得忽略上一步结果查询全部数据库。",
+        "dependsOnPrevious": true,
+        "onDependencyFailure": "stop",
+        "requireNonEmpty": true,
+        "onEmpty": "stop"
+      },
+      {
+        "datasetId": "ds_3cea8417",
+        "datasetName": "assessment - ass_indicator",
+        "instruction": "必须使用上一步返回的全部数据集ID构造常量派生表，并 LEFT JOIN 当前 ass_indicator 表，按数据集ID统计指标数量；即使某个数据集没有指标也必须返回该数据集且数量为0。不得只对 ass_indicator 直接 GROUP BY，因为那会漏掉零指标的数据集。",
+        "dependsOnPrevious": true,
+        "onDependencyFailure": "stop",
+        "requireNonEmpty": true,
+        "onEmpty": "stop"
+      }
+    ],
+    "id": "skill-6684d000",
+    "createdAt": "2026-07-13 16:52:24",
+    "updatedAt": "2026-07-13 16:52:24"
+  }
+]

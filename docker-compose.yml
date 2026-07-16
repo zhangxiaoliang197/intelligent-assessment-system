@@ -1,0 +1,76 @@
+services:
+  frontend:
+    image: assessment-frontend:latest
+    container_name: assessment-frontend
+    ports:
+      - "10086:80"
+    restart: always
+    networks:
+      - assessment-net
+
+  knowledge-service:
+    image: assessment-knowledge:latest
+    container_name: assessment-knowledge
+    ports:
+      - "10252:10252"
+    restart: always
+    networks:
+      - assessment-net
+
+  qa-service:
+    image: assessment-qa:latest
+    container_name: assessment-qa
+    ports:
+      - "10253:10253"
+    environment:
+      - ADMIN_SERVICE_URL=http://assessment-admin:10258
+      - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
+      - EVALUATION_DATA_DIR=/app/data/evaluation
+      - ADMIN_INTERNAL_TOKEN=${ADMIN_INTERNAL_TOKEN:-}
+    volumes:
+      - "./data/qa:/app/data"
+    restart: always
+    networks:
+      - assessment-net
+
+  indicator-service:
+    image: assessment-indicator:latest
+    container_name: assessment-indicator
+    ports:
+      - "10254:10254"
+    restart: always
+    networks:
+      - assessment-net
+
+  evaluation-service:
+    image: assessment-evaluation:latest
+    container_name: assessment-evaluation
+    ports:
+      - "10255:10255"
+    restart: always
+    networks:
+      - assessment-net
+
+  ontology-service:
+    image: assessment-ontology:latest
+    container_name: assessment-ontology
+    ports:
+      - "10256:10256"
+    restart: always
+    networks:
+      - assessment-net
+
+  admin-service:
+    image: assessment-admin:latest
+    container_name: assessment-admin
+    ports:
+      - "10258:10258"
+    environment:
+      - ADMIN_INTERNAL_TOKEN=${ADMIN_INTERNAL_TOKEN:-}
+    restart: always
+    networks:
+      - assessment-net
+
+networks:
+  assessment-net:
+    driver: bridge

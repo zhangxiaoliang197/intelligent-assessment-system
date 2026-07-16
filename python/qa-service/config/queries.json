@@ -1,0 +1,14 @@
+[
+  {
+    "group": "战损分析",
+    "description": "各单位/装备的战损统计",
+    "queries": [
+      {
+        "label": "单位战损统计",
+        "keywords": ["战损", "损失", "伤亡", "损毁", "战损"],
+        "sql": "SELECT * FROM test_student_scores tss",
+        "vizType": "bar"
+      }
+    ]
+  }
+]

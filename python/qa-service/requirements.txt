@@ -1,0 +1,6 @@
+fastapi>=0.115.0
+uvicorn>=0.27.0
+python-multipart>=0.0.6
+langgraph>=1.2.0
+langchain-core>=1.4.0
+crewai>=1.15.0
