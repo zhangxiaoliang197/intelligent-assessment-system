@@ -19,6 +19,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 
 # Python services
 Write-Host "`n[1/4] Starting Python services (6)..." -ForegroundColor Yellow
+$env:ADMIN_SERVICE_URL = "http://localhost:10258"
 $pyServices = @(
     @{Dir="python\knowledge-service";           Port=10252; Name="Knowledge"},
     @{Dir="python\qa-service";                  Port=10253; Name="QA"},

@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Generator
 import json
 import os
 import tempfile
@@ -33,12 +33,26 @@ app.add_middleware(
 
 QA_SERVICE_URL = os.getenv("QA_SERVICE_URL", "http://localhost:10253")
 ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
+EVALUATION_API_URL = os.getenv("EVALUATION_API_URL", "http://localhost:10253")  # evaluation-api 注册在 qa-service
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 SESSIONS_FILE = os.path.join(DATA_DIR, 'sessions.json')
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # 滑动窗口大小
 MAX_CONTEXT = int(os.getenv("INDICATOR_CONTEXT_ROUNDS", "5"))
+
+# ── 查询确认意图关键词 ──
+_QUERY_CONFIRM_KEYWORDS = [
+    "查询", "需要查询", "需要查", "查一下", "查一查", "帮我查",
+    "确认查询", "是的", "是", "好的", "好", "可以", "行", "要查",
+    "要查询", "查查", "查", "开始查询", "开始查", "执行查询",
+    "对", "嗯", "需要", "要", "确认",
+]
+_QUERY_DENY_KEYWORDS = [
+    "不查询", "不用查询", "不查", "不用查", "不", "不用了",
+    "不需要", "不需要了", "不用", "不查询了", "先不查",
+    "算了", "不要", "不要了", "不必", "免了", "不执行",
+]
 
 
 def atomic_json_write(filepath, data):
@@ -67,6 +81,8 @@ class AnalyzeRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
     depth: int = 3
+    database_id: Optional[str] = None
+    database_name: Optional[str] = None
 
 
 # ========== 会话管理 ==========
@@ -95,6 +111,192 @@ def save_sessions():
 
 sessions = load_sessions()
 logger.info(f"Indicator service started: {len(sessions)} sessions, context rounds={MAX_CONTEXT}")
+
+
+# ========== 会话 stage / 意图检测 ==========
+
+def _ensure_session(session_id: str) -> dict:
+    """确保 session 存在并升级到新版数据结构（含 stage / pending_indicators）。"""
+    if session_id not in sessions:
+        sessions[session_id] = {
+            "stage": "analyzing",
+            "messages": [],
+            "pending_indicators": None,
+        }
+        return sessions[session_id]
+
+    s = sessions[session_id]
+    # 兼容旧格式：纯 list → 新 dict 格式迁移
+    if isinstance(s, list):
+        sessions[session_id] = {
+            "stage": "analyzing",
+            "messages": s,
+            "pending_indicators": None,
+        }
+    else:
+        s.setdefault("stage", "analyzing")
+        s.setdefault("messages", [])
+        s.setdefault("pending_indicators", None)
+    return sessions[session_id]
+
+
+def _get_recent_messages(session_id: str) -> list:
+    """获取最近对话消息（用于上下文构建）。"""
+    s = _ensure_session(session_id)
+    return s["messages"]
+
+def _get_session_stage(session_id: str) -> str:
+    """获取当前 session stage。"""
+    s = _ensure_session(session_id)
+    return s.get("stage", "analyzing")
+
+def _set_session_stage(session_id: str, stage: str):
+    """设置 session stage。"""
+    s = _ensure_session(session_id)
+    s["stage"] = stage
+    save_sessions()
+
+def _set_pending_indicators(session_id: str, indicators_data: dict):
+    """保存待查询的指标体系数据。"""
+    s = _ensure_session(session_id)
+    s["pending_indicators"] = indicators_data
+    save_sessions()
+
+def _get_pending_indicators(session_id: str) -> dict:
+    """获取待查询的指标体系数据。"""
+    s = _ensure_session(session_id)
+    return s.get("pending_indicators") or {}
+
+def _clear_pending_indicators(session_id: str):
+    """清空待查询数据并回到 analyzing。"""
+    s = _ensure_session(session_id)
+    s["pending_indicators"] = None
+    s["stage"] = "analyzing"
+    save_sessions()
+
+
+def _is_query_confirm(text: str) -> bool:
+    """检测用户输入是否表达了"查询"确认意图。"""
+    t = text.strip().lower()
+    # 去掉标点
+    import re as _re
+    t_clean = _re.sub(r'[，。！？、；：""''（）\s]', '', t)
+    for kw in _QUERY_CONFIRM_KEYWORDS:
+        if kw in t_clean:
+            # 排除"不查询"类否定
+            if not any(dk in t_clean for dk in _QUERY_DENY_KEYWORDS):
+                return True
+    return False
+
+
+def _is_query_deny(text: str) -> bool:
+    """检测用户输入是否表达了"不查询"意图。"""
+    t = text.strip().lower()
+    import re as _re
+    t_clean = _re.sub(r'[，。！？、；：""''（）\s]', '', t)
+    for kw in _QUERY_DENY_KEYWORDS:
+        if kw in t_clean:
+            return True
+    return False
+
+
+def _fetch_available_databases() -> list:
+    """从 admin-service 获取可用数据源列表。"""
+    import re as _re
+    try:
+        req = urllib.request.Request(
+            f"{ADMIN_SERVICE_URL}/api/admin/database/list",
+            method="GET"
+        )
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("success"):
+                return data.get("databases", [])
+    except Exception as e:
+        logger.warning(f"Failed to fetch databases: {e}")
+    return []
+
+
+def _match_database(user_text: str, databases: list) -> dict:
+    """根据用户输入匹配数据源（按名称或ID）。"""
+    import re as _re
+    t = user_text.strip()
+    if not databases:
+        return {}
+
+    # 精确 ID 匹配
+    for db in databases:
+        if t == db.get("id", ""):
+            return db
+
+    # 精确名称匹配
+    for db in databases:
+        if t == db.get("name", ""):
+            return db
+
+    # 名称包含匹配
+    for db in databases:
+        name = db.get("name", "")
+        if name and name in t:
+            return db
+        if t in name:
+            return db
+
+    # 模糊：取最后一个可能是名称的词尝试匹配
+    words = _re.split(r'[，。！？、；：""''（）\s]+', t)
+    for word in reversed(words):
+        if len(word) >= 2:
+            for db in databases:
+                name = db.get("name", "")
+                if word in name or name in word:
+                    return db
+    return {}
+
+
+# ========== 查询管线（调用 evaluation-api） ==========
+
+def _stream_indicator_query(session_id: str, query: str, database_id: str, database_name: str,
+                            pending_indicators: dict) -> Generator[str, None, None]:
+    """
+    调用 qa-service 的 evaluation-api 执行指标查询管线。
+
+    将指标分析结果作为 indicator_defs 传入，复用评估分析的
+    Data Explore → Table Select → SQL Gen → SQL Exec → Analyst 管线。
+
+    Yields:
+        SSE JSON 行（每行以 \n 结尾）
+    """
+    body = json.dumps({
+        "question": query,
+        "database_id": database_id,
+        "database_name": database_name,
+        "indicator_defs": pending_indicators.get("indicators", []),
+        "analysis_plan": pending_indicators.get("summary", ""),
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{EVALUATION_API_URL}/evaluation/indicator-query/stream",
+        data=body,
+        method="POST"
+    )
+    req.add_header("Content-Type", "application/json")
+
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    try:
+        with urllib.request.urlopen(req, timeout=180, context=ssl_ctx) as resp:
+            for line in resp:
+                yield line.decode("utf-8")
+    except Exception as e:
+        logger.error(f"Indicator query stream failed: {e}")
+        yield json.dumps({
+            "type": "error",
+            "message": f"查询执行失败: {str(e)[:300]}",
+            "session_id": session_id,
+        }, ensure_ascii=False) + "\n"
 
 
 # ========== LLM 调用 ==========
@@ -180,15 +382,27 @@ def call_llm_for_indicator_analysis(query: str, context: str = "") -> dict:
 
 def parse_structured_response(answer: str) -> dict:
     try:
-        json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', answer)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            json_match = re.search(r'\{[\s\S]*\}', answer)
+        json_str = None
+
+        # 优先级1: 查找 ---JSON--- 分隔符（流式 prompt 格式），取分隔符之后的部分
+        sep_match = re.search(r'---\s*JSON\s*---', answer)
+        if sep_match:
+            after_sep = answer[sep_match.end():].strip()
+            if after_sep:
+                json_str = after_sep
+
+        # 优先级2: 如果已提取到分隔符后的内容，尝试直接解析；否则按原逻辑搜索
+        if json_str is None:
+            # 否则按原有逻辑搜索
+            json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', answer)
             if json_match:
-                json_str = json_match.group(0)
+                json_str = json_match.group(1)
             else:
-                json_str = answer
+                json_match = re.search(r'\{[\s\S]*\}', answer)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
+                    json_str = answer
 
         json_str = json_str.strip()
         data = json.loads(json_str)
@@ -205,6 +419,7 @@ def parse_structured_response(answer: str) -> dict:
 
     except json.JSONDecodeError as e:
         logger.warning(f"JSON parse failed: {e}")
+        logger.debug(f"Failed JSON (first 500 chars): {json_str[:500] if json_str else 'N/A'}")
         return {
             "answer": answer,
             "tree": None,
@@ -315,7 +530,8 @@ async def health_check():
 async def list_sessions():
     """返回所有会话列表"""
     session_list = []
-    for sid, msgs in sessions.items():
+    for sid, s_data in sessions.items():
+        msgs = s_data.get("messages", []) if isinstance(s_data, dict) else s_data
         if not msgs:
             continue
         latest_question = ""
@@ -338,7 +554,7 @@ async def list_sessions():
 @app.post("/indicator/session/new")
 async def new_session():
     new_id = str(uuid.uuid4())
-    sessions[new_id] = []
+    _ensure_session(new_id)
     save_sessions()
     return {"success": True, "session_id": new_id}
 
@@ -356,14 +572,13 @@ async def delete_session(session_id: str):
 
 @app.post("/indicator/analyze")
 async def analyze_indicator(request: AnalyzeRequest):
-    """分析指标请求"""
+    """分析指标请求（非流式，兼容旧版）"""
     session_id = request.session_id or str(uuid.uuid4())
-
-    if session_id not in sessions:
-        sessions[session_id] = []
+    _ensure_session(session_id)
 
     # 滑动窗口上下文
-    recent = sessions[session_id][-(MAX_CONTEXT * 2):]
+    msgs = _get_recent_messages(session_id)
+    recent = msgs[-(MAX_CONTEXT * 2):]
     context = ""
     for msg in recent:
         if msg.get("role") == "user":
@@ -374,16 +589,18 @@ async def analyze_indicator(request: AnalyzeRequest):
     result = call_llm_for_indicator_analysis(request.query, context)
 
     now_str = datetime.now().isoformat()
-    sessions[session_id].append({"role": "user", "content": request.query, "timestamp": now_str})
-    sessions[session_id].append({
+    s = _ensure_session(session_id)
+    s["messages"].append({"role": "user", "content": request.query, "timestamp": now_str})
+    s["messages"].append({
         "role": "assistant",
         "content": result.get("summary", result.get("answer", "")[:200]),
         "timestamp": now_str
     })
+    if len(s["messages"]) > MAX_CONTEXT * 4:
+        s["messages"] = s["messages"][-(MAX_CONTEXT * 4):]
 
-    if len(sessions[session_id]) > MAX_CONTEXT * 4:
-        sessions[session_id] = sessions[session_id][-(MAX_CONTEXT * 4):]
-
+    # 非流式接口不触发追问机制，直接返回
+    _set_session_stage(session_id, "done")
     save_sessions()
 
     return {
@@ -400,13 +617,253 @@ async def analyze_indicator(request: AnalyzeRequest):
 
 @app.post("/indicator/analyze/stream")
 async def analyze_indicator_stream(request: AnalyzeRequest):
-    """流式指标分析"""
+    """
+    流式指标分析（含"纯对话追问"状态机）。
+
+    stage 路由：
+      - "analyzing" / 无 stage → LLM 生成指标体系 → 追问 → stage=awaiting_confirmation
+      - "awaiting_confirmation" → 检测用户意图：
+          - 确认查询 + 有 database_id → 执行查询 → stage=done
+          - 确认查询 + 无 database_id → 列出数据源 → stage 不变
+          - 表示不查询 → 结束 → stage=done
+      - "done" → 新问题 → 重置为 analyzing
+    """
     session_id = request.session_id or str(uuid.uuid4())
+    _ensure_session(session_id)
+    stage = _get_session_stage(session_id)
+    msgs = _get_recent_messages(session_id)
 
-    if session_id not in sessions:
-        sessions[session_id] = []
+    logger.info(f"Indicator analyze/stream: session={session_id}, stage={stage}, query={request.query[:80]}")
 
-    recent = sessions[session_id][-(MAX_CONTEXT * 2):]
+    # =====================================================================
+    # 分支 A：用户正处于"待确认"阶段 → 解析意图
+    # =====================================================================
+    if stage == "awaiting_confirmation":
+        user_text = request.query.strip()
+
+        # ── 子分支 A1：用户表示"不查询" ──
+        if _is_query_deny(user_text):
+            def generate_deny():
+                now_str = datetime.now().isoformat()
+                resp_text = "好的，已了解。如果后续需要查询这些指标，随时告诉我。"
+                yield json.dumps({"type": "text", "content": resp_text}, ensure_ascii=False) + "\n"
+                yield json.dumps({
+                    "type": "result",
+                    "session_id": session_id,
+                    "tree": None,
+                    "indicators": [],
+                    "summary": resp_text
+                }, ensure_ascii=False) + "\n"
+
+                s = _ensure_session(session_id)
+                s["messages"].append({"role": "user", "content": user_text, "timestamp": now_str})
+                s["messages"].append({"role": "assistant", "content": resp_text, "timestamp": now_str})
+                _set_session_stage(session_id, "done")
+                _clear_pending_indicators(session_id)
+
+            return StreamingResponse(
+                generate_deny(),
+                media_type="application/x-ndjson",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no"
+                }
+            )
+
+        # ── 子分支 A2：用户表示"查询" ──
+        if _is_query_confirm(user_text):
+            # 先看用户是否在输入中直接带了数据源
+            database_id = request.database_id
+            database_name = request.database_name or ""
+
+            # 如果前端没传，尝试从用户文本中匹配
+            if not database_id:
+                dbs = _fetch_available_databases()
+                matched = _match_database(user_text, dbs)
+                if matched:
+                    database_id = matched.get("id", "")
+                    database_name = matched.get("name", "")
+
+            # 只有一个数据源 → 自动选中，不追问
+            if not database_id and len(dbs) == 1:
+                database_id = dbs[0].get("id", "")
+                database_name = dbs[0].get("name", "")
+                logger.info(f"Auto-selected sole datasource: {database_name} ({database_id})")
+
+            # 如果找到了数据源 → 执行查询
+            if database_id:
+                pending = _get_pending_indicators(session_id)
+                original_query = pending.get("original_query", request.query) if pending else request.query
+
+                def generate_query():
+                    now_str = datetime.now().isoformat()
+                    _set_session_stage(session_id, "querying")
+
+                    # 先发一条"开始查询"的提示文本，同时创建助手消息
+                    start_text = f"好的，正在使用数据源「{database_name or database_id}」查询这些指标..."
+                    yield json.dumps({"type": "text", "content": start_text}, ensure_ascii=False) + "\n"
+
+                    s = _ensure_session(session_id)
+                    s["messages"].append({"role": "user", "content": user_text, "timestamp": now_str})
+
+                    # 创建助手消息，后续 result 事件会更新该消息的 summary/indicators 等字段
+                    yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
+
+                    # 调用 evaluation-api 执行查询管线
+                    final_answer = ""
+                    pending = _get_pending_indicators(session_id)
+                    try:
+                        for line in _stream_indicator_query(
+                            session_id, original_query,
+                            database_id, database_name, pending
+                        ):
+                            line_str = line if isinstance(line, str) else line
+                            yield line_str
+
+                            # 提取 final_answer
+                            try:
+                                ev = json.loads(line_str.strip())
+                                if ev.get("type") == "result":
+                                    final_answer = ev.get("final_answer", "") or ev.get("result", {}).get("final_answer", "")
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        yield json.dumps({
+                            "type": "error", "message": f"查询失败: {str(e)[:200]}",
+                            "session_id": session_id
+                        }, ensure_ascii=False) + "\n"
+
+                    s["messages"].append({
+                        "role": "assistant",
+                        "content": final_answer or "查询完成",
+                        "timestamp": now_str
+                    })
+                    _set_session_stage(session_id, "done")
+                    _clear_pending_indicators(session_id)
+
+                return StreamingResponse(
+                    generate_query(),
+                    media_type="application/x-ndjson",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no"
+                    }
+                )
+
+            # 没有找到数据源 → 列出可用数据源，让用户选择
+            else:
+                dbs = _fetch_available_databases()
+                def generate_list_dbs():
+                    now_str = datetime.now().isoformat()
+                    if dbs:
+                        db_list = "\n".join(
+                            f"  · {db.get('name', '')} ({db.get('type', '')} - {db.get('host', '')}:{db.get('port', '')})"
+                            for db in dbs[:10]
+                        )
+                        resp_text = f"好的。请先选择一个数据源，当前可用的数据源有：\n{db_list}\n\n请直接回复数据源名称即可。"
+                    else:
+                        resp_text = "好的。但当前系统中没有可用的数据源，请先在管理后台配置数据源。"
+                    yield json.dumps({"type": "text", "content": resp_text}, ensure_ascii=False) + "\n"
+                    yield json.dumps({
+                        "type": "result",
+                        "session_id": session_id,
+                        "tree": None, "indicators": [],
+                        "summary": resp_text
+                    }, ensure_ascii=False) + "\n"
+
+                    s = _ensure_session(session_id)
+                    s["messages"].append({"role": "user", "content": user_text, "timestamp": now_str})
+                    s["messages"].append({"role": "assistant", "content": resp_text, "timestamp": now_str})
+                    # 仍然保持 awaiting_confirmation，等用户提供数据源
+                    save_sessions()
+
+                return StreamingResponse(
+                    generate_list_dbs(),
+                    media_type="application/x-ndjson",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no"
+                    }
+                )
+
+        # ── 子分支 A3：既不是确认也不是否认 → 当成"在 awaiting 阶段提供数据源名"处理 ──
+        dbs = _fetch_available_databases()
+        matched = _match_database(user_text, dbs)
+        if matched:
+            database_id = matched.get("id", "")
+            database_name = matched.get("name", "")
+            pending = _get_pending_indicators(session_id)
+            original_query = pending.get("original_query", "") if pending else ""
+
+            def generate_query_by_name():
+                now_str = datetime.now().isoformat()
+                _set_session_stage(session_id, "querying")
+
+                start_text = f"好的，使用数据源「{database_name or database_id}」开始查询指标..."
+                yield json.dumps({"type": "text", "content": start_text}, ensure_ascii=False) + "\n"
+
+                s = _ensure_session(session_id)
+                s["messages"].append({"role": "user", "content": user_text, "timestamp": now_str})
+
+                # 创建助手消息，后续 result 事件会更新该消息的 summary/indicators 等字段
+                yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
+
+                final_answer = ""
+                pending = _get_pending_indicators(session_id)
+                try:
+                    for line in _stream_indicator_query(
+                        session_id, original_query,
+                        database_id, database_name, pending
+                    ):
+                        line_str = line if isinstance(line, str) else line
+                        yield line_str
+                        try:
+                            ev = json.loads(line_str.strip())
+                            if ev.get("type") == "result":
+                                final_answer = ev.get("final_answer", "") or ev.get("result", {}).get("final_answer", "")
+                        except Exception:
+                            pass
+                except Exception as e:
+                    yield json.dumps({
+                        "type": "error", "message": f"查询失败: {str(e)[:200]}",
+                        "session_id": session_id
+                    }, ensure_ascii=False) + "\n"
+
+                s["messages"].append({
+                    "role": "assistant",
+                    "content": final_answer or "查询完成",
+                    "timestamp": now_str
+                })
+                _set_session_stage(session_id, "done")
+                _clear_pending_indicators(session_id)
+
+            return StreamingResponse(
+                generate_query_by_name(),
+                media_type="application/x-ndjson",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no"
+                }
+            )
+
+        # 完全不匹配 → 可能是新问题，重置为 analyzing 走正常流程
+        logger.info(f"User text in awaiting_confirmation not matched: {user_text[:50]}, resetting to analyzing")
+        _set_session_stage(session_id, "analyzing")
+        _clear_pending_indicators(session_id)
+        # fall through to normal flow below
+
+    # =====================================================================
+    # 分支 B：正常指标分析流程（analyzing / 或 done 状态的新问题）
+    # =====================================================================
+    # 如果是 done 重置为 analyzing
+    if stage == "done":
+        _set_session_stage(session_id, "analyzing")
+
+    recent = msgs[-(MAX_CONTEXT * 2):]
     context = ""
     for msg in recent:
         if msg.get("role") == "user":
@@ -446,7 +903,9 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
 需求：{request.query}{ctx_str}
 {db_indicators_text}
 
-请按照以下JSON格式返回分析结果（必须是可以被json.loads解析的JSON格式）：
+请先写一段简短的分析总结（1-2句话，描述你构建指标体系的核心思路），然后用一行---JSON---分隔，最后输出JSON数据。
+
+JSON格式要求（必须是可以被json.loads解析的JSON格式）：
 {{
     "tree": {{
         "name": "根节点名称",
@@ -474,6 +933,12 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
         full_text = ""
         now_str = datetime.now().isoformat()
 
+        # ── Phase 1 Step 1：正在解析指标体系 ──
+        yield json.dumps({
+            "type": "step",
+            "step": {"step": 1, "description": "解析指标体系", "status": "in_progress", "detail": "正在调用大模型分析指标需求"}
+        }, ensure_ascii=False) + "\n"
+
         try:
             body = json.dumps({"query": prompt, "top_k": 10}).encode("utf-8")
             req = urllib.request.Request(
@@ -487,15 +952,30 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
 
             with urllib.request.urlopen(req, timeout=180, context=ctx_ssl) as resp:
                 for line in resp:
-                    line = line.decode("utf-8").strip()
-                    if not line:
+                    line_str = line.decode("utf-8").strip()
+                    if not line_str:
                         continue
                     try:
-                        data = json.loads(line)
+                        data = json.loads(line_str)
                         if data.get("type") == "text":
                             chunk = data.get("content", "")
                             full_text += chunk
-                            yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
+                            # 流式输出文本部分，检测到 ---JSON--- 分隔符后停止转发 JSON 内容
+                            separator_idx = full_text.find("---JSON---")
+                            if separator_idx == -1:
+                                # 还没到分隔符，继续流式输出
+                                yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
+                            elif separator_idx + len("---JSON---") > len(full_text) - len(chunk):
+                                # 分隔符恰好在这段 chunk 中，只输出分隔符之前的文本部分
+                                visible = full_text[:separator_idx]
+                                if len(visible) > 0 and len(visible) >= len(chunk):
+                                    yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
+                                elif len(visible) > 0:
+                                    # chunk 跨越了分隔符，只输出分隔符之前的新增文本
+                                    pre_sep = chunk.split("---JSON---")[0]
+                                    if pre_sep.strip():
+                                        yield json.dumps({"type": "text", "content": pre_sep}, ensure_ascii=False) + "\n"
+                            # 分隔符之后：继续积累 full_text 但不再转发（JSON 部分）
                         elif data.get("type") == "error":
                             yield json.dumps({"type": "text", "content": data.get("content", "")}, ensure_ascii=False) + "\n"
                     except json.JSONDecodeError:
@@ -510,6 +990,51 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
         indicators = result.get("indicators", [])
         summary = result.get("summary", result.get("answer", full_text[:200]))
 
+        # ── 指标生成失败时不触发追问 ──
+        if not indicators:
+            yield json.dumps({
+                "type": "error",
+                "session_id": session_id,
+                "message": "指标体系生成失败：大模型未返回有效结果，请检查大模型配置后重试。",
+            }, ensure_ascii=False) + "\n"
+            return
+
+        # ── Phase 1 Step 1：解析完成 ──
+        indicator_count = len(indicators)
+        yield json.dumps({
+            "type": "step",
+            "step": {"step": 1, "description": "解析指标体系", "status": "completed",
+                     "detail": f"共识别 {indicator_count} 个指标，指标树和计算方式详见左侧对话区"}
+        }, ensure_ascii=False) + "\n"
+
+        # ── 保存待查询的指标体系 ──
+        indicator_names = [ind.get("name", "") for ind in indicators[:5]]
+        names_str = "、".join(indicator_names)
+        if indicator_count > 5:
+            names_str += f" 等共{indicator_count}个指标"
+
+        _set_pending_indicators(session_id, {
+            "tree": tree,
+            "indicators": indicators,
+            "summary": summary,
+            "original_query": request.query,
+            "generated_at": datetime.now().isoformat(),
+        })
+        _set_session_stage(session_id, "awaiting_confirmation")
+
+        # ── 追加追问文本 ──
+        follow_up = (
+            "\n\n---\n\n"
+            f"已为您生成了 {names_str}。\n\n"
+            "**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；"
+            "如果暂时不需要，请回复「不查询」。"
+        )
+
+        # ── 先发一条简短描述文本，填充左侧对话气泡（不输出长 JSON）──
+        intro_text = f"已为您生成了 {names_str} 的指标体系，包含指标树状结构和各指标的计算方式。"
+        yield json.dumps({"type": "text", "content": intro_text}, ensure_ascii=False) + "\n"
+
+        # 再发 result（带 tree/indicators/summary 供前端渲染卡片）
         yield json.dumps({
             "type": "result",
             "session_id": session_id,
@@ -518,11 +1043,19 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
             "summary": summary
         }, ensure_ascii=False, default=str) + "\n"
 
-        # 保存会话
-        sessions[session_id].append({"role": "user", "content": request.query, "timestamp": now_str})
-        sessions[session_id].append({"role": "assistant", "content": summary, "timestamp": now_str})
-        if len(sessions[session_id]) > MAX_CONTEXT * 4:
-            sessions[session_id] = sessions[session_id][-(MAX_CONTEXT * 4):]
+        # 再发追问文本为独立消息（前端将创建新的 assistant 消息）
+        yield json.dumps({
+            "type": "new_message",
+            "content": follow_up.strip()
+        }, ensure_ascii=False) + "\n"
+
+        # 保存会话：两条独立的 assistant 消息
+        s = _ensure_session(session_id)
+        s["messages"].append({"role": "user", "content": request.query, "timestamp": now_str})
+        s["messages"].append({"role": "assistant", "content": summary or full_text[:200], "timestamp": now_str})
+        s["messages"].append({"role": "assistant", "content": follow_up.strip(), "timestamp": now_str})
+        if len(s["messages"]) > MAX_CONTEXT * 4:
+            s["messages"] = s["messages"][-(MAX_CONTEXT * 4):]
         save_sessions()
 
     return StreamingResponse(
@@ -541,10 +1074,12 @@ async def get_history(session_id: str):
     """获取指定会话的消息"""
     if session_id not in sessions:
         return {"messages": []}
+    s = sessions[session_id]
+    msgs = s.get("messages", []) if isinstance(s, dict) else s
     return {
         "messages": [
             {"role": msg["role"], "content": msg["content"]}
-            for msg in sessions[session_id]
+            for msg in msgs
         ]
     }
 

@@ -174,8 +174,9 @@
                   <el-tag v-else type="info" size="small">未激活</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="200" align="center">
+              <el-table-column label="操作" width="270" align="center">
                 <template #default="{ row }">
+                  <el-button size="small" type="primary" plain :loading="row.testing" @click="testLlmConnection(row)">测试</el-button>
                   <el-button v-if="!row.isActive" type="success" size="small" @click="activateLlmConfig(row)">启用</el-button>
                   <el-button v-else size="small" disabled>当前</el-button>
                   <el-button size="small" @click="openLlmDialog(row)">编辑</el-button>
@@ -1155,6 +1156,22 @@ async function loadLlmConfigs() {
       llmConfigs.value = res.configs || []
     }
   } catch {}
+}
+
+async function testLlmConnection(row: any) {
+  row.testing = true
+  try {
+    const res = await api.post(`/admin/config/llm/${row.id}/test`)
+    if (res && res.success) {
+      ElMessage.success(`测试成功 (${res.latency}) — API 正常响应`)
+    } else {
+      ElMessage.error(`测试失败: ${res?.message || '未知错误'}`)
+    }
+  } catch (e: any) {
+    ElMessage.error('测试异常: ' + (e?.serverMessage || e?.message || '请求失败'))
+  } finally {
+    row.testing = false
+  }
 }
 
 // ==================== 初始化 ====================

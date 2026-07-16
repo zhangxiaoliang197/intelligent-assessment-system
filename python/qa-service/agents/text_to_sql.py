@@ -61,6 +61,9 @@ TEXT_TO_SQL_SYSTEM_PROMPT = f"""# 角色: {SQL_AGENT['role']}
 ## 过滤条件
 {{filters}}
 
+## 历史错误（仅重试时提供，用于修正上一次失败的SQL）
+{{previous_error}}
+
 ## 规则
 1. 只生成SELECT，禁止INSERT/UPDATE/DELETE/DROP/ALTER/CREATE
 2. 正确使用表名和字段名
@@ -68,8 +71,18 @@ TEXT_TO_SQL_SYSTEM_PROMPT = f"""# 角色: {SQL_AGENT['role']}
 4. 多表用JOIN
 5. 聚合用GROUP BY
 6. 不要添加LIMIT，返回全部数据
+7. **只能生成一条SELECT语句**，禁止生成多条SQL（不要用分号分隔多个查询）
+8. 如果指标定义中有公式，将公式中的每个计算项映射到具体的表字段：
+   - 先输出指标→字段对应关系（如"命中次数→表名.hit_count"）
+   - 再根据对应关系生成SQL
+9. 如果某个指标无法在现有表结构中找到对应字段，跳过该指标，只计算能找到字段的
 
-## 输出
+## 输出格式（先给字段映射，再给SQL）
+```
+指标字段映射:
+- "命中次数" → combat_result.hit_count
+- "射击次数" → combat_result.fire_count
+
 ```sql
 -- 说明
 SELECT ...
@@ -149,6 +162,8 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
     indicator_context_parts = []
     for ind in (state.indicator_defs or []):
         ic = f"\n### {ind.get('name', '')}"
+        if ind.get("_field_hints"):
+            ic += f"\n  字段映射提示: {ind['_field_hints']}"
         if ind.get("formula"):
             ic += f"\n  公式: {ind['formula']}"
         if ind.get("description"):
@@ -177,13 +192,24 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
         state.add_step(5.1, f"生成SQL{attempt_label}", "in_progress",
                       detail=f"正在调用大模型生成SQL...（{table_count} 张表）")
 
+        # 构建历史错误上下文（用于执行失败后的重试）
+        prev_error = getattr(state, "previous_error", "") or ""
+        error_context = ""
+        if prev_error:
+            error_context = (
+                f"上一次生成的SQL执行时数据库返回了以下错误，请修正：\n"
+                f"```\n{prev_error}\n```\n"
+                f"请分析错误原因并重新生成正确的SQL。"
+            )
+
         # 填充 prompt 模板，注入当前上下文
         system_prompt = TEXT_TO_SQL_SYSTEM_PROMPT.format(
             table_context=table_context,
             indicator_context=indicator_context,
             question=state.question,
             analysis_plan=state.analysis_plan,
-            filters=state.entities.get("filters", "无")
+            filters=state.entities.get("filters", "无"),
+            previous_error=error_context,
         )
 
         try:
@@ -394,6 +420,7 @@ def _validate_sql(sql: str) -> tuple:
        （使用单词边界正则匹配，避免误判字段名中含有关键字的情况）
     2. 必须以 SELECT 或 WITH（CTE）开头
     3. 括号必须成对匹配
+    4. 使用聚合函数时必须有 GROUP BY（兼容 MySQL only_full_group_by 模式）
 
     Args:
         sql: 待校验的 SQL 字符串
@@ -420,4 +447,168 @@ def _validate_sql(sql: str) -> tuple:
     if cleaned.count("(") != cleaned.count(")"):
         return False, "括号不匹配"
 
+    # 检查 4：聚合函数必须有 GROUP BY（MySQL only_full_group_by 兼容性）
+    agg_check_ok, agg_check_msg = _check_aggregate_group_by(cleaned, sql_upper)
+    if not agg_check_ok:
+        return False, agg_check_msg
+
     return True, ""
+
+
+# ── 聚合函数列表（按模式匹配优先级排列，长名优先避免误匹配） ──
+_AGGREGATE_FUNCTIONS = [
+    "GROUP_CONCAT", "STDDEV_POP", "STDDEV_SAMP",
+    "VAR_POP", "VAR_SAMP", "STDDEV", "VARIANCE",
+    "COUNT", "SUM", "AVG", "MAX", "MIN",
+]
+
+
+def _check_aggregate_group_by(sql: str, sql_upper: str) -> tuple:
+    """
+    校验 SQL 中使用了聚合函数时必须包含 GROUP BY 子句。
+
+    背景：MySQL 5.7.5+ 默认开启 only_full_group_by 模式，要求 SELECT 中的
+    非聚合列必须出现在 GROUP BY 中，否则直接报错。
+
+    校验逻辑：
+    1. 提取 SELECT ... FROM 之间的列列表
+    2. 检查列列表中是否包含聚合函数
+    3. 如果包含聚合函数但没有 GROUP BY，返回失败
+    4. 例外：如果 SELECT 中全部是聚合函数（如 SELECT COUNT(*) FROM t），
+       不需要 GROUP BY，也视为合法
+
+    Args:
+        sql: 清理后的 SQL 文本
+        sql_upper: 大写版本的 SQL（用于关键字匹配）
+
+    Returns:
+        tuple[bool, str]: (True, "") 通过；(False, 错误信息) 失败
+    """
+    # 1. 检查是否包含聚合函数
+    has_aggregate = False
+    for func in _AGGREGATE_FUNCTIONS:
+        if re.search(r'\b' + func + r'\s*\(', sql_upper):
+            has_aggregate = True
+            break
+
+    if not has_aggregate:
+        return True, ""
+
+    # 2. 检查是否有 GROUP BY
+    has_group_by = bool(re.search(r'\bGROUP\s+BY\b', sql_upper))
+
+    if has_group_by:
+        return True, ""
+
+    # 3. 提取 SELECT 子句中所有顶层字段（排除嵌套在子查询中的内容）
+    #    只考虑最外层 SELECT，忽略 INSERT...SELECT、子查询等
+    select_part = _extract_select_clause(sql_upper)
+    if not select_part:
+        # 无法解析 SELECT 子句，保守返回警告让 LLM 自行修正
+        return False, "缺少 GROUP BY 子句：SQL 使用了聚合函数但未包含 GROUP BY，与 MySQL only_full_group_by 模式不兼容"
+
+    # 4. 统计非聚合字段数量：按逗号拆分 SELECT 字段，排除纯聚合项
+    #    如果存在非聚合字段（如普通列名、CASE WHEN、子查询等），则必须要求 GROUP BY
+    fields = _split_select_fields(select_part)
+    non_agg_count = 0
+    for field in fields:
+        field_stripped = field.strip()
+        if not field_stripped:
+            continue
+        # 检查该字段是否包含聚合函数
+        is_aggregate = False
+        for func in _AGGREGATE_FUNCTIONS:
+            if re.search(r'\b' + func + r'\s*\(', field_stripped):
+                is_aggregate = True
+                break
+        if not is_aggregate:
+            # 额外排除：纯数字常量、字符串常量、NULL 关键字
+            if re.match(r'^[\d\'\"]', field_stripped) or field_stripped == "NULL":
+                continue
+            non_agg_count += 1
+
+    if non_agg_count > 0:
+        return False, (
+            f"缺少 GROUP BY 子句：SELECT 中包含 {non_agg_count} 个非聚合字段，"
+            "但缺少 GROUP BY，与 MySQL only_full_group_by 模式不兼容"
+        )
+
+    # 全部是聚合函数 (如 SELECT COUNT(*), MAX(score) FROM t)，不需要 GROUP BY
+    return True, ""
+
+
+def _extract_select_clause(sql_upper: str) -> str:
+    """
+    从 SQL 文本中提取最外层 SELECT 子句的字段列表（SELECT 到 FROM 之间）。
+
+    使用状态机跳过嵌套括号内的内容，避免误判子查询中的 FROM。
+
+    Args:
+        sql_upper: 大写化的 SQL 文本
+
+    Returns:
+        str: SELECT 子句中的字段列表部分；解析失败返回空字符串
+    """
+    # 定位最外层 SELECT
+    select_match = re.search(r'\bSELECT\b', sql_upper)
+    if not select_match:
+        return ""
+
+    pos = select_match.end()
+    depth = 0  # 括号嵌套深度
+    result_chars = []
+    i = pos
+    while i < len(sql_upper):
+        ch = sql_upper[i]
+        if ch == '(':
+            depth += 1
+            result_chars.append(ch)
+        elif ch == ')':
+            depth -= 1
+            result_chars.append(ch)
+        elif depth == 0:
+            # 在括号外检查是否遇到 FROM（单词边界匹配）
+            remaining = sql_upper[i:]
+            if re.match(r'\bFROM\b', remaining):
+                break
+            result_chars.append(ch)
+        else:
+            result_chars.append(ch)
+        i += 1
+
+    select_part = ''.join(result_chars).strip()
+    return select_part
+
+
+def _split_select_fields(select_part: str) -> list:
+    """
+    将 SELECT 子句按逗号拆分为独立字段，正确处理括号嵌套。
+
+    例如 SELECT a, SUM(b), CASE WHEN x THEN y END AS z
+    拆分为 ["a", "SUM(b)", "CASE WHEN x THEN y END AS z"]
+
+    Args:
+        select_part: SELECT 子句的字段列表部分（已去除 SELECT 关键字）
+
+    Returns:
+        list: 字段列表
+    """
+    fields = []
+    depth = 0
+    current = []
+    for ch in select_part:
+        if ch == '(':
+            depth += 1
+            current.append(ch)
+        elif ch == ')':
+            depth -= 1
+            current.append(ch)
+        elif ch == ',' and depth == 0:
+            fields.append(''.join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    remaining = ''.join(current).strip()
+    if remaining:
+        fields.append(remaining)
+    return fields

@@ -65,7 +65,7 @@ async def run_analyst(state: EvaluationState, llm_call_fn) -> EvaluationState:
     logger.info(f"Running analyst for: {state.question[:100]}")
 
     # 添加执行步骤记录，供前端展示进度
-    state.add_step(101, "生成分析建议", "in_progress", "正在基于数据调用大模型生成建议...")
+    state.add_step(7.1, "生成分析建议", "in_progress", "正在基于数据调用大模型生成建议...")
 
     # 初始化默认值
     result_summary = "未执行SQL"
@@ -108,13 +108,13 @@ async def run_analyst(state: EvaluationState, llm_call_fn) -> EvaluationState:
         # 调用 LLM 生成分析建议
         response = await llm_call_fn(system_prompt, "请基于数据给出2-3条建议。")
         state.final_answer = response
-        state.update_step(101, status="completed",
+        state.update_step(7.1, status="completed",
                          detail="分析建议已生成",
                          thinking=f"【模型建议】\n{response[:800]}")
     except Exception as e:
         logger.error(f"Analyst failed: {e}")
         state.final_answer = f"生成建议时出错：{str(e)[:200]}"
-        state.update_step(101, status="error",
+        state.update_step(7.1, status="error",
                          detail=f"生成失败: {str(e)[:100]}")
 
     return state

@@ -23,7 +23,7 @@ _thread_pool = ThreadPoolExecutor(max_workers=8)
 evaluation_router = APIRouter(prefix="/evaluation", tags=["评估分析"])
 
 # ─── 文件持久化 ───
-_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "solution-evaluation-service", "data")
+_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(_DATA_DIR, exist_ok=True)
 _SESSIONS_FILE = os.path.join(_DATA_DIR, "evaluation_sessions.json")
 _HISTORY_FILE = os.path.join(_DATA_DIR, "evaluation_history.json")
@@ -190,6 +190,58 @@ async def analyze_stream(request: EvaluationRequest):
                 "type": "error",
                 "message": f"系统异常: {str(e)[:500]}",
                 "session_id": session_id
+            }, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+# ========== 指标查询端点（由 indicator-service 确认查询后调用） ==========
+
+class IndicatorQueryRequest(BaseModel):
+    question: str
+    database_id: str
+    database_name: str = ""
+    indicator_defs: list = Field(default_factory=list)
+    analysis_plan: str = ""
+
+
+@evaluation_router.post("/indicator-query/stream")
+async def indicator_query_stream(request: IndicatorQueryRequest):
+    """
+    指标查询流式端点 — 由 indicator-service 在用户确认查询后调用。
+
+    复用评估分析的 Data Explore → Table Select → SQL Gen → SQL Exec → Analyst 管线，
+    但不经过 Orchestrator 意图识别。
+    """
+    from agents.indicator_query import run_indicator_query
+
+    logger.info(f"Indicator query stream: q={request.question[:80]}, db={request.database_id}, "
+                f"indicators={len(request.indicator_defs)}")
+
+    async def generate():
+        try:
+            async for event in run_indicator_query(
+                question=request.question,
+                database_id=request.database_id,
+                database_name=request.database_name,
+                indicator_defs=request.indicator_defs,
+                analysis_plan=request.analysis_plan,
+                llm_call_fn=async_llm_call,
+            ):
+                yield json.dumps(event, ensure_ascii=False, default=str) + "\n"
+        except Exception as e:
+            logger.error(f"Indicator query stream error: {e}", exc_info=True)
+            yield json.dumps({
+                "type": "error",
+                "message": f"查询异常: {str(e)[:500]}",
             }, ensure_ascii=False) + "\n"
 
     return StreamingResponse(

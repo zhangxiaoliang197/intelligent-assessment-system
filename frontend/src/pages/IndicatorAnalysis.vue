@@ -48,108 +48,280 @@
           </div>
         </div>
       </div>
+
       <div class="main-content">
-        <div class="chat-area custom-scroll" ref="chatArea">
-          <div v-if="messages.length === 0" class="empty-state">
-            <div class="tags-section">
-              <div class="suggest-cards">
-                  <div
-                    v-for="(item, index) in allIndicators"
-                    :key="index"
-                    class="suggest-card"
-                    :style="{ '--card-color': item.color }"
-                    @click="selectIndicator(item.text)"
-                  >
-                    <div class="suggest-icon">
-                      <el-icon :size="20">
-                        <component :is="item.icon" />
-                      </el-icon>
-                    </div>
-                    <div class="suggest-content">
-                      <div class="suggest-title">{{ item.text }}</div>
-                      <div class="suggest-desc">{{ item.desc }}</div>
-                    </div>
-                    <el-icon class="suggest-arrow"><ArrowRight /></el-icon>
-                  </div>
-                </div>
-            </div>
+        <!-- 顶部数据源选择 -->
+        <div class="top-bar">
+          <div class="data-source-selector">
+            <span class="label">数据源：</span>
+            <el-select v-model="selectedDataSourceId" placeholder="选择数据源" size="small" style="width: 200px" @change="onDataSourceChange">
+              <el-option
+                v-for="ds in dataSources"
+                :key="ds.id"
+                :label="ds.name"
+                :value="ds.id"
+              />
+            </el-select>
+            <el-button size="small" type="primary" @click="showDataSourceDialog">
+              <el-icon><Setting /></el-icon>
+              配置
+            </el-button>
           </div>
-          <div v-else class="message-list">
-            <div
-              v-for="(msg, index) in messages"
-              :key="index"
-              :class="['message', msg.role]"
-            >
-              <div class="message-avatar">
-                <el-avatar :size="40">
-                  {{ msg.role === 'user' ? '我' : 'AI' }}
-                </el-avatar>
-              </div>
-              <div class="message-content">
-                <!-- 用户消息 -->
-                <div v-if="msg.role === 'user'" class="message-text">
-                  {{ msg.content }}
+        </div>
+
+        <div class="content-area">
+          <!-- 左侧：对话区 -->
+          <div class="chat-panel">
+            <div class="chat-area custom-scroll" ref="chatArea">
+              <div v-if="messages.length === 0" class="empty-state">
+                <div class="tags-section">
+                  <div class="suggest-cards">
+                    <div
+                      v-for="(item, index) in allIndicators"
+                      :key="index"
+                      class="suggest-card"
+                      :style="{ '--card-color': item.color }"
+                      @click="selectIndicator(item.text)"
+                    >
+                      <div class="suggest-icon">
+                        <el-icon :size="20">
+                          <component :is="item.icon" />
+                        </el-icon>
+                      </div>
+                      <div class="suggest-content">
+                        <div class="suggest-title">{{ item.text }}</div>
+                        <div class="suggest-desc">{{ item.desc }}</div>
+                      </div>
+                      <el-icon class="suggest-arrow"><ArrowRight /></el-icon>
+                    </div>
+                  </div>
                 </div>
-                
-                <!-- AI消息：包含文本、结构化数据、树状图、指标卡片 -->
-                <div v-else class="ai-response">
-                  <!-- 文本回答 / 分析中 -->
-                  <div v-if="msg.content" class="message-text">{{ msg.content }}</div>
-                  <div v-else-if="!msg.summary && !msg.tree && (!msg.indicators || msg.indicators.length === 0)" class="message-loading">分析中...</div>
-                  
-                  <!-- 分析总结 -->
-                  <div v-if="msg.summary" class="summary-section">
-                    <h5>分析总结</h5>
-                    <p>{{ msg.summary }}</p>
+              </div>
+              <div v-else class="message-list">
+                <div
+                  v-for="(msg, index) in messages"
+                  :key="index"
+                  :class="['message', msg.role]"
+                >
+                  <div class="message-avatar">
+                    <el-avatar :size="40">
+                      {{ msg.role === 'user' ? '我' : 'AI' }}
+                    </el-avatar>
                   </div>
-                  
-                  <!-- 指标树状结构 -->
-                  <div v-if="msg.tree" class="tree-section">
-                    <h5>指标树状结构</h5>
-                    <div :ref="el => setTreeChartRef(el, index)" class="tree-chart"></div>
-                  </div>
-                  
-                  <!-- 指标卡片列表 -->
-                  <div v-if="msg.indicators && msg.indicators.length > 0" class="indicators-section">
-                    <h5>指标计算方式</h5>
-                    <div class="indicator-list">
-                      <div v-for="(ind, idx) in msg.indicators" :key="idx" class="indicator-card">
-                        <div class="indicator-header">
-                          <span class="indicator-name">{{ ind.name }}</span>
-                          <el-tag :type="ind.type === 'admin-db' ? 'success' : ind.type === 'knowledge' ? 'primary' : 'info'" size="small">
-                            {{ ind.type === 'admin-db' ? '已配置' : ind.type === 'knowledge' ? '知识库' : 'AI生成' }}
-                          </el-tag>
+                  <div class="message-content">
+                    <!-- 用户消息 -->
+                    <div v-if="msg.role === 'user'" class="message-text">
+                      {{ msg.content }}
+                    </div>
+
+                    <!-- AI消息 -->
+                    <div v-else class="ai-response">
+                      <!-- 文本回答 -->
+                      <div v-if="msg.content" class="message-text">{{ msg.content }}</div>
+                      <div v-else-if="!msg.summary && !msg.tree && (!msg.indicators || msg.indicators.length === 0) && !msg.rawResults" class="message-loading">分析中...</div>
+
+                      <!-- 指标树状结构 -->
+                      <div v-if="msg.tree" class="tree-section">
+                        <div class="section-collapse-header" @click="toggleMsgSection(msg, 'treeCollapsed')">
+                          <h5>指标树状结构</h5>
+                          <el-icon :class="{ rotated: !msg.treeCollapsed }"><ArrowDown /></el-icon>
                         </div>
-                        <div class="indicator-body">
-                          <div v-if="ind.definition" class="indicator-definition">
-                            <strong>定义：</strong>{{ ind.definition }}
+                        <div v-show="!msg.treeCollapsed" :ref="el => setTreeChartRef(el, index)" class="tree-chart"></div>
+                      </div>
+
+                      <!-- 指标卡片列表 -->
+                      <div v-if="msg.indicators && msg.indicators.length > 0" class="indicators-section">
+                        <div class="section-collapse-header" @click="toggleMsgSection(msg, 'indicatorsCollapsed')">
+                          <h5>指标计算方式（{{ msg.indicators.length }} 个）</h5>
+                          <el-icon :class="{ rotated: !msg.indicatorsCollapsed }"><ArrowDown /></el-icon>
+                        </div>
+                        <div v-show="!msg.indicatorsCollapsed" class="indicator-list">
+                          <div v-for="(ind, idx) in (msg.indicatorsExpanded ? msg.indicators : msg.indicators.slice(0, 5))" :key="idx" class="indicator-card">
+                            <div class="indicator-header">
+                              <span class="indicator-name">{{ ind.name }}</span>
+                              <el-tag :type="ind.type === 'admin-db' ? 'success' : ind.type === 'knowledge' ? 'primary' : 'info'" size="small">
+                                {{ ind.type === 'admin-db' ? '已配置' : ind.type === 'knowledge' ? '知识库' : 'AI生成' }}
+                              </el-tag>
+                            </div>
+                            <div class="indicator-body">
+                              <div v-if="ind.definition" class="indicator-definition">
+                                <strong>定义：</strong>{{ ind.definition }}
+                              </div>
+                              <div v-if="ind.formula" class="indicator-formula">
+                                <strong>公式：</strong>{{ ind.formula }}
+                              </div>
+                              <div v-if="ind.criteria" class="indicator-criteria">
+                                <strong>标准：</strong>{{ ind.criteria }}
+                              </div>
+                              <div v-if="ind.weight" class="indicator-weight">
+                                <strong>权重：</strong>{{ ind.weight }}
+                              </div>
+                            </div>
                           </div>
-                          <div v-if="ind.formula" class="indicator-formula">
-                            <strong>公式：</strong>{{ ind.formula }}
+                          <div v-if="msg.indicators.length > 5 && !msg.indicatorsExpanded" class="expand-tip" @click="msg.indicatorsExpanded = true">
+                            展开全部 {{ msg.indicators.length }} 个指标
                           </div>
-                          <div v-if="ind.criteria" class="indicator-criteria">
-                            <strong>标准：</strong>{{ ind.criteria }}
+                          <div v-if="msg.indicators.length > 5 && msg.indicatorsExpanded" class="expand-tip" @click="msg.indicatorsExpanded = false">
+                            收起
                           </div>
-                          <div v-if="ind.weight" class="indicator-weight">
-                            <strong>权重：</strong>{{ ind.weight }}
+                        </div>
+                      </div>
+
+                      <!-- 分析总结 -->
+                      <div v-if="msg.summary" class="summary-section">
+                        <h5>分析总结</h5>
+                        <p>{{ msg.summary }}</p>
+                      </div>
+
+                      <!-- 参考来源 -->
+                      <div v-if="msg.references && msg.references.length > 0" class="references-section">
+                        <h5>参考来源</h5>
+                        <ul>
+                          <li v-for="(ref, idx) in msg.references" :key="idx">{{ ref }}</li>
+                        </ul>
+                      </div>
+
+                      <!-- 查询结果数据表 -->
+                      <div v-if="msg.rawResults && msg.rawResults.length > 0" class="data-section">
+                        <div class="section-collapse-header" @click="toggleMsgSection(msg, 'dataCollapsed')">
+                          <h5>查询结果（共 {{ msg.rawResults.length }} 行）</h5>
+                          <el-icon :class="{ rotated: !msg.dataCollapsed }"><ArrowDown /></el-icon>
+                        </div>
+                        <div v-show="!msg.dataCollapsed" class="data-table-wrapper">
+                          <table class="data-table">
+                            <thead>
+                              <tr>
+                                <th v-for="(col, ci) in Object.keys(msg.rawResults[0])" :key="ci">{{ col }}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr v-for="(row, ri) in (msg.dataExpanded ? msg.rawResults : msg.rawResults.slice(0, 5))" :key="ri">
+                                <td v-for="(col, ci) in Object.keys(row)" :key="ci">{{ row[col] }}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                          <div v-if="msg.rawResults.length > 5 && !msg.dataExpanded" class="expand-tip" @click="msg.dataExpanded = true">
+                            展开全部 {{ msg.rawResults.length }} 行
+                          </div>
+                          <div v-if="msg.rawResults.length > 5 && msg.dataExpanded" class="expand-tip" @click="msg.dataExpanded = false">
+                            收起至前 5 行
                           </div>
                         </div>
                       </div>
                     </div>
                   </div>
-                  
-                  <!-- 参考来源 -->
-                  <div v-if="msg.references && msg.references.length > 0" class="references-section">
-                    <h5>参考来源</h5>
-                    <ul>
-                      <li v-for="(ref, idx) in msg.references" :key="idx">{{ ref }}</li>
-                    </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右侧：系统执行过程面板 -->
+          <div v-if="showExecutionPanel" class="execution-panel" :style="{ width: executionPanelWidth + 'px' }">
+            <div class="resize-handle" @mousedown="startResize"></div>
+            <div class="panel-header">
+              <span>系统执行过程</span>
+              <el-icon class="panel-close" @click="showExecutionPanel = false"><Close /></el-icon>
+            </div>
+            <div class="execution-content custom-scroll">
+              <div v-if="executionSteps.length === 0" class="panel-empty">
+                <el-icon :size="32" color="#c0c4cc"><Cpu /></el-icon>
+                <p>暂无执行步骤</p>
+              </div>
+
+              <!-- 执行步骤列表（平铺，仿评估分析风格） -->
+              <div v-if="executionSteps.length > 0" class="steps-list">
+                <div
+                  v-for="step in executionSteps"
+                  :key="step.step + '_' + step.description + '_' + step.status"
+                  :class="['inline-step', getStepStatusClass(step.status)]"
+                >
+                  <div class="inline-step-header">
+                    <span class="inline-step-icon">
+                      <el-icon v-if="step.status === 'completed'" color="#67c23a"><CircleCheck /></el-icon>
+                      <el-icon v-else-if="step.status === 'in_progress'" color="#409eff" class="is-loading"><Loading /></el-icon>
+                      <el-icon v-else-if="step.status === 'error'" color="#f56c6c"><CircleClose /></el-icon>
+                      <el-icon v-else color="#c0c4cc"><Clock /></el-icon>
+                    </span>
+                    <span class="inline-step-title">步骤 {{ step.step }}: {{ step.description }}</span>
+                  </div>
+                  <div v-if="step.detail" class="inline-step-detail">{{ step.detail }}</div>
+                  <div v-if="step.thinking" class="inline-step-thinking">{{ step.thinking }}</div>
+                </div>
+              </div>
+
+              <!-- 指标体系（Phase 1 生成，默认折叠） -->
+              <div v-if="panelState.indicators && panelState.indicators.length > 0" class="panel-section">
+                <div class="section-header" @click="togglePanel('indicators')">
+                  <h5>指标体系（{{ panelState.indicators.length }} 个）</h5>
+                  <el-icon :class="{ rotated: !panelState.sections.indicators }"><ArrowDown /></el-icon>
+                </div>
+                <div v-show="!panelState.sections.indicators">
+                  <div class="panel-data-wrapper">
+                    <table class="data-table panel-indicator-table">
+                      <thead>
+                        <tr>
+                          <th style="width:22%">名称</th>
+                          <th style="width:12%">类型</th>
+                          <th style="width:30%">定义</th>
+                          <th style="width:36%">公式</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(ind, idx) in panelState.indicators" :key="idx">
+                          <td>{{ ind.name }}</td>
+                          <td><el-tag :type="ind.type === 'admin-db' ? 'success' : ind.type === 'knowledge' ? 'primary' : 'info'" size="small">{{ ind.type || 'llm' }}</el-tag></td>
+                          <td>{{ ind.definition || '-' }}</td>
+                          <td><code v-if="ind.formula" class="panel-formula">{{ ind.formula }}</code><span v-else>-</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <!-- SQL 代码（默认折叠，已存在于步骤 thinking 中，作为冗余保留） -->
+              <div v-if="panelState.generatedSql" class="panel-section">
+                <div class="section-header" @click="togglePanel('sql')">
+                  <h5>生成的 SQL</h5>
+                  <el-icon :class="{ rotated: !panelState.sections.sql }"><ArrowDown /></el-icon>
+                </div>
+                <div v-show="!panelState.sections.sql">
+                  <pre class="sql-block">{{ panelState.generatedSql }}</pre>
+                </div>
+              </div>
+
+              <!-- 原始数据（默认折叠） -->
+              <div v-if="panelState.rawResults && panelState.rawResults.length > 0" class="panel-section">
+                <div class="section-header" @click="togglePanel('data')">
+                  <h5>原始查询结果（{{ panelState.rawResults.length }} 行）</h5>
+                  <el-icon :class="{ rotated: !panelState.sections.data }"><ArrowDown /></el-icon>
+                </div>
+                <div v-show="!panelState.sections.data">
+                  <div class="panel-data-wrapper">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th v-for="(col, ci) in Object.keys(panelState.rawResults[0])" :key="ci">{{ col }}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(row, ri) in panelState.rawResults.slice(0, 20)" :key="ri">
+                          <td v-for="(col, ci) in Object.keys(row)" :key="ci">{{ row[col] }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </div>
             </div>
           </div>
+          <div v-else-if="hasExecutionData" class="execution-panel-toggle" @click="showExecutionPanel = true" title="展开执行过程">
+            <el-icon><DArrowLeft /></el-icon>
+            <span class="toggle-text">执行</span>
+          </div>
         </div>
+
+        <!-- 底部输入区 -->
         <div class="input-area">
           <div class="input-wrapper">
             <el-input
@@ -173,8 +345,7 @@
               </el-button>
             </div>
           </div>
-          
-          <!-- 工具按钮 -->
+
           <div class="tools-bar">
             <div
               v-for="tool in tools"
@@ -193,6 +364,30 @@
         </div>
       </div>
     </div>
+
+    <!-- 数据源配置对话框 -->
+    <el-dialog v-model="dataSourceDialogVisible" title="数据源配置" width="600px">
+      <div class="data-source-list">
+        <div
+          v-for="ds in dataSources"
+          :key="ds.id"
+          :class="['ds-item', { active: ds.id === selectedDataSourceId }]"
+          @click="selectDataSource(ds)"
+        >
+          <div class="ds-name">{{ ds.name }}</div>
+          <div class="ds-meta">
+            <el-tag size="small">{{ ds.type }}</el-tag>
+            <el-tag :type="ds.status === 'available' ? 'success' : 'info'" size="small">
+              {{ ds.status === 'available' ? '可用' : '不可用' }}
+            </el-tag>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="dataSourceDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmDataSource">确定</el-button>
+      </template>
+    </el-dialog>
   </Layout>
 </template>
 
@@ -200,14 +395,36 @@
 import { ref, onMounted, computed, nextTick, watch } from 'vue'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useRouter } from 'vue-router'
-import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete, ArrowRight, Microphone } from '@element-plus/icons-vue'
+import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete, ArrowRight, ArrowDown, Microphone, CircleCheck, CircleClose, Loading, Clock, Close, Cpu, DArrowLeft, Setting } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
+import api from '@/services/api'
 
 const router = useRouter()
 
-// ── 语音识别 ──
+// ── 数据源 ──
+const dataSources = ref<Array<any>>([])
+const selectedDataSourceId = ref<string | null>(null)
+const selectedDataSourceName = ref<string>('')
+const dataSourceDialogVisible = ref(false)
+
+const selectDataSource = (ds: any) => {
+  selectedDataSourceId.value = ds.id
+  selectedDataSourceName.value = ds.name || ''
+}
+const onDataSourceChange = (val: string) => {
+  const found = dataSources.value.find((ds: any) => ds.id === val)
+  selectedDataSourceName.value = found?.name || ''
+}
+const confirmDataSource = () => {
+  dataSourceDialogVisible.value = false
+  ElMessage.success('数据源已更新')
+}
+const showDataSourceDialog = () => {
+  dataSourceDialogVisible.value = true
+}
+
 const { isListening, isSupported: speechSupported, start: startSpeech, stop: stopSpeech } = useSpeechRecognition()
 
 const toggleSpeech = () => {
@@ -223,43 +440,19 @@ const toggleSpeech = () => {
   }
 }
 
-// 工具配置
 const tools = [
-  {
-    id: 1,
-    name: '智能问答',
-    icon: ChatDotRound,
-    color: '#409eff',
-    path: '/qa',
-    current: false
-  },
-  {
-    id: 2,
-    name: '指标分析',
-    icon: PieChart,
-    color: '#67c23a',
-    path: '/indicator',
-    current: true
-  },
-  {
-    id: 3,
-    name: '评估分析',
-    icon: Document,
-    color: '#e6a23c',
-    path: '/evaluation',
-    current: false
-  }
+  { id: 1, name: '智能问答', icon: ChatDotRound, color: '#409eff', path: '/qa', current: false },
+  { id: 2, name: '指标分析', icon: PieChart, color: '#67c23a', path: '/indicator', current: true },
+  { id: 3, name: '评估分析', icon: Document, color: '#e6a23c', path: '/evaluation', current: false }
 ]
 
-// 跳转工具
-const navigateToTool = (path: string) => {
-  router.push(path)
-}
+const navigateToTool = (path: string) => { router.push(path) }
 
-// localStorage 持久化 key
+// ── localStorage 持久化 ──
 const LS_SESSION_ID = 'indicator_session_id'
 const LS_HISTORY_LIST = 'indicator_history_list'
 const LS_SESSION_MSGS = 'indicator_session_msgs'
+const LS_SESSION_EXEC = 'indicator_session_exec'
 
 const inputMessage = ref('')
 const analyzing = ref(false)
@@ -271,65 +464,101 @@ const searchQuery = ref('')
 const chatArea = ref<HTMLElement | null>(null)
 const treeChartRefs = ref<HTMLElement[]>([])
 
-// 持久化辅助函数
+// ── 右侧执行面板状态 ──
+const showExecutionPanel = ref(false)
+const executionPanelWidth = ref(460)
+const executionSteps = ref<Array<any>>([])
+const panelState = ref({
+  generatedSql: '',
+  rawResults: null as any[] | null,
+  indicators: null as any[] | null,
+  sections: {
+    steps: false,  // collapsed=false meaning open
+    indicators: true,  // collapsed=true meaning closed
+    sql: true,
+    data: true
+  }
+})
+
+const hasExecutionData = computed(() => {
+  return executionSteps.value.length > 0 ||
+    !!panelState.value.generatedSql ||
+    (panelState.value.rawResults && panelState.value.rawResults.length > 0) ||
+    (panelState.value.indicators && panelState.value.indicators.length > 0)
+})
+
+const togglePanel = (section: 'steps' | 'indicators' | 'sql' | 'data') => {
+  panelState.value.sections[section] = !panelState.value.sections[section]
+}
+
+const toggleMsgSection = (msg: any, field: string) => {
+  msg[field] = !msg[field]
+}
+
+const getStepStatusClass = (status: string) => {
+  if (status === 'completed') return 'step-completed'
+  if (status === 'in_progress') return 'step-in-progress'
+  if (status === 'error') return 'step-error'
+  return 'step-pending'
+}
+
+// ── 面板拖拽缩放 ──
+let resizing = false
+const startResize = (e: MouseEvent) => {
+  resizing = true
+  document.addEventListener('mousemove', onResize)
+  document.addEventListener('mouseup', stopResize)
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'col-resize'
+}
+
+const onResize = (e: MouseEvent) => {
+  if (!resizing) return
+  const container = document.querySelector('.indicator-container') as HTMLElement
+  if (!container) return
+  const rect = container.getBoundingClientRect()
+  const newWidth = rect.right - e.clientX
+  executionPanelWidth.value = Math.max(300, Math.min(700, newWidth))
+}
+
+const stopResize = () => {
+  resizing = false
+  document.removeEventListener('mousemove', onResize)
+  document.removeEventListener('mouseup', stopResize)
+  document.body.style.userSelect = ''
+  document.body.style.cursor = ''
+}
+
 const persistState = () => {
   localStorage.setItem(LS_SESSION_ID, sessionId.value)
   localStorage.setItem(LS_HISTORY_LIST, JSON.stringify(historyList.value))
   localStorage.setItem(LS_SESSION_MSGS, JSON.stringify(sessionMessages.value))
+  // 持久化右侧执行面板状态
+  if (sessionId.value && hasExecutionData.value) {
+    const execMap = JSON.parse(localStorage.getItem(LS_SESSION_EXEC) || '{}')
+    execMap[sessionId.value] = {
+      steps: executionSteps.value,
+      generatedSql: panelState.value.generatedSql,
+      rawResults: panelState.value.rawResults,
+      indicators: panelState.value.indicators,
+      sections: panelState.value.sections
+    }
+    localStorage.setItem(LS_SESSION_EXEC, JSON.stringify(execMap))
+  }
 }
 
 const recommendedIndicators = [
-  {
-    text: '作战效能',
-    desc: '综合作战效能指标体系分析',
-    icon: 'Aim',
-    color: '#3b82f6'
-  },
-  {
-    text: '打击能力',
-    desc: '装备打击能力评估指标',
-    icon: 'Guide',
-    color: '#ef4444'
-  },
-  {
-    text: '生存能力',
-    desc: '战场生存能力评估维度',
-    icon: 'Shield',
-    color: '#8b5cf6'
-  },
-  {
-    text: '保障能力',
-    desc: '后勤保障能力评估体系',
-    icon: 'Box',
-    color: '#06b6d4'
-  }
+  { text: '作战效能', desc: '综合作战效能指标体系分析', icon: 'Aim', color: '#3b82f6' },
+  { text: '打击能力', desc: '装备打击能力评估指标', icon: 'Guide', color: '#ef4444' },
+  { text: '生存能力', desc: '战场生存能力评估维度', icon: 'Shield', color: '#8b5cf6' },
+  { text: '保障能力', desc: '后勤保障能力评估体系', icon: 'Box', color: '#06b6d4' }
 ]
 
 const hotIndicators = [
-  {
-    text: '任务完成度',
-    desc: '作战任务完成情况分析',
-    icon: 'CircleCheck',
-    color: '#10b981'
-  },
-  {
-    text: '响应时间',
-    desc: '系统响应速度指标分析',
-    icon: 'Timer',
-    color: '#f59e0b'
-  },
-  {
-    text: '准确率',
-    desc: '命中精度与准确性评估',
-    icon: 'Bullseye',
-    color: '#ec4899'
-  },
-  {
-    text: '覆盖率',
-    desc: '探测与打击覆盖范围',
-    icon: 'Histogram',
-    color: '#14b8a6'
-  }
+  { text: '任务完成度', desc: '作战任务完成情况分析', icon: 'CircleCheck', color: '#10b981' },
+  { text: '响应时间', desc: '系统响应速度指标分析', icon: 'Timer', color: '#f59e0b' },
+  { text: '准确率', desc: '命中精度与准确性评估', icon: 'Bullseye', color: '#ec4899' },
+  { text: '覆盖率', desc: '探测与打击覆盖范围', icon: 'Histogram', color: '#14b8a6' }
 ]
 
 const allIndicators = computed(() => [
@@ -337,19 +566,31 @@ const allIndicators = computed(() => [
   ...hotIndicators.map(q => ({ ...q, isHot: true }))
 ])
 
-const goTo = (path: string) => {
-  router.push(path)
+const goTo = (path: string) => { router.push(path) }
+
+const restoreExecutionState = (sid: string) => {
+  const execMap = JSON.parse(localStorage.getItem(LS_SESSION_EXEC) || '{}')
+  const state = execMap[sid]
+  if (state) {
+    executionSteps.value = state.steps || []
+    panelState.value.generatedSql = state.generatedSql || ''
+    panelState.value.rawResults = state.rawResults || null
+    panelState.value.indicators = state.indicators || null
+    if (state.sections) {
+      panelState.value.sections = state.sections
+    }
+    if (hasExecutionData.value) showExecutionPanel.value = true
+  }
 }
 
 const loadHistory = (item: any) => {
   if (sessionMessages.value[item.id]) {
     messages.value = [...sessionMessages.value[item.id]]
     sessionId.value = item.id
+    restoreExecutionState(item.id)
     persistState()
     ElMessage.success('已加载历史记录')
-    nextTick(() => {
-      renderTreesForMessages()
-    })
+    nextTick(() => { renderTreesForMessages() })
   } else {
     ElMessage.warning('暂无该历史记录内容')
   }
@@ -358,6 +599,9 @@ const loadHistory = (item: any) => {
 const newSession = () => {
   sessionId.value = ''
   messages.value = []
+  executionSteps.value = []
+  panelState.value = { generatedSql: '', rawResults: null, indicators: null, sections: { steps: false, indicators: true, sql: true, data: true } }
+  showExecutionPanel.value = false
   persistState()
   ElMessage.success('已创建新会话')
 }
@@ -368,6 +612,9 @@ const deleteHistory = (id: string) => {
   if (sessionId.value === id) {
     sessionId.value = ''
     messages.value = []
+    executionSteps.value = []
+    panelState.value = { generatedSql: '', rawResults: null, indicators: null, sections: { steps: false, indicators: true, sql: true, data: true } }
+    showExecutionPanel.value = false
   }
   persistState()
   ElMessage.success('已删除会话')
@@ -388,10 +635,7 @@ const analyzeIndicator = async () => {
   inputMessage.value = ''
   analyzing.value = true
 
-  messages.value.push({
-    role: 'user',
-    content: userQuestion
-  })
+  messages.value.push({ role: 'user', content: userQuestion })
 
   const msgIndex = messages.value.length
   messages.value.push({
@@ -400,18 +644,31 @@ const analyzeIndicator = async () => {
     summary: '',
     tree: null,
     indicators: [],
-    references: []
+    references: [],
+    steps: [],
+    rawResults: null,
+    generatedSql: '',
+    treeCollapsed: false,
+    indicatorsCollapsed: false,
+    dataCollapsed: false,
+    indicatorsExpanded: false,
+    dataExpanded: false
   })
   nextTick(() => scrollToBottom())
 
+  // 自动展开右侧面板
+  showExecutionPanel.value = true
+
   try {
+    const reqBody: any = { query: userQuestion, session_id: sessionId.value || undefined }
+    if (selectedDataSourceId.value) {
+      reqBody.data_source_id = selectedDataSourceId.value
+      reqBody.data_source_name = selectedDataSourceName.value
+    }
     const response = await fetch('/api/indicator/analyze/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: userQuestion,
-        session_id: sessionId.value || undefined
-      })
+      body: JSON.stringify(reqBody)
     })
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
@@ -439,14 +696,45 @@ const analyzeIndicator = async () => {
             fullText += data.content
             messages.value[msgIndex] = { ...messages.value[msgIndex], content: fullText }
             nextTick(() => scrollToBottom())
+          } else if (data.type === 'step') {
+            const step = data.step || data
+            // 更新左侧消息的步骤（upsert by step+description）
+            const existingSteps = messages.value[msgIndex].steps || []
+            const dupIdx = existingSteps.findIndex(
+              (s: any) => s.step === step.step && s.description === step.description
+            )
+            if (dupIdx >= 0) {
+              existingSteps.splice(dupIdx, 1, step)
+            } else {
+              existingSteps.push(step)
+            }
+            messages.value[msgIndex] = { ...messages.value[msgIndex], steps: [...existingSteps] }
+            // 同步更新右侧面板的步骤（upsert by step+description）
+            const panelDupIdx = executionSteps.value.findIndex(
+              (s: any) => s.step === step.step && s.description === step.description
+            )
+            if (panelDupIdx >= 0) {
+              executionSteps.value.splice(panelDupIdx, 1, { ...step })
+            } else {
+              executionSteps.value.push({ ...step })
+            }
+            // 展开右侧面板
+            if (!showExecutionPanel.value) showExecutionPanel.value = true
+            nextTick(() => scrollToBottom())
           } else if (data.type === 'result') {
             messages.value[msgIndex] = {
               ...messages.value[msgIndex],
-              content: fullText || data.summary || '',
+              content: fullText || data.summary || data.final_answer || '',
               tree: data.tree || null,
               indicators: data.indicators || [],
-              summary: data.summary || ''
+              summary: data.summary || data.final_answer || '',
+              rawResults: data.rawResults || null,
+              generatedSql: data.generatedSql || ''
             }
+            // 更新右侧面板
+            if (data.generatedSql) panelState.value.generatedSql = data.generatedSql
+            if (data.rawResults) panelState.value.rawResults = data.rawResults
+            if (data.indicators) panelState.value.indicators = data.indicators
 
             if (data.session_id) {
               if (!sessionId.value) {
@@ -454,18 +742,37 @@ const analyzeIndicator = async () => {
                 saveHistory(data.session_id, userQuestion)
               }
             }
+          } else if (data.type === 'error') {
+            fullText += '\n\n' + (data.message || data.content || '未知错误')
+            messages.value[msgIndex] = { ...messages.value[msgIndex], content: fullText }
+            nextTick(() => scrollToBottom())
+          } else if (data.type === 'new_message') {
+            messages.value.push({
+              role: 'assistant',
+              content: data.content || '',
+              summary: '',
+              tree: null,
+              indicators: [],
+              references: [],
+              steps: [],
+              rawResults: null,
+              generatedSql: '',
+              treeCollapsed: false,
+              indicatorsCollapsed: false,
+              dataCollapsed: false,
+              indicatorsExpanded: false,
+              dataExpanded: false
+            })
+            nextTick(() => scrollToBottom())
           }
-        } catch (e) {
-          // 忽略解析错误
-        }
+        } catch (e) { /* ignore */ }
       }
     }
 
-    if (!fullText && !messages.value[msgIndex].summary) {
+    if (!fullText && !messages.value[msgIndex].summary && !messages.value[msgIndex].rawResults) {
       messages.value[msgIndex] = { ...messages.value[msgIndex], content: '分析失败，请检查网络连接或大模型配置。' }
     }
 
-    // 保存会话
     if (!sessionId.value) {
       const newSessionId = 'session_' + Date.now()
       sessionId.value = newSessionId
@@ -474,16 +781,11 @@ const analyzeIndicator = async () => {
     sessionMessages.value[sessionId.value] = [...messages.value]
     persistState()
 
-    // 延迟渲染树状图
     nextTick(() => {
-      setTimeout(() => {
-        renderTreesForMessages()
-        scrollToBottom()
-      }, 300)
+      setTimeout(() => { renderTreesForMessages(); scrollToBottom() }, 300)
     })
-
   } catch (e: any) {
-    messages.value[msgIndex] = { ...messages.value[msgIndex], content: `分析失败，请检查网络连接或大模型配置。` }
+    messages.value[msgIndex] = { ...messages.value[msgIndex], content: '分析失败，请检查网络连接或大模型配置。' }
   } finally {
     analyzing.value = false
   }
@@ -492,37 +794,24 @@ const analyzeIndicator = async () => {
 const saveHistory = (id: string, question: string) => {
   const exists = historyList.value.find(item => item.id === id)
   if (!exists) {
-    historyList.value.unshift({
-      id: id,
-      title: question.length > 20 ? question.substring(0, 20) + '...' : question,
-      time: new Date().toLocaleString()
-    })
+    historyList.value.unshift({ id, title: question.length > 20 ? question.substring(0, 20) + '...' : question, time: new Date().toLocaleString() })
   } else {
     exists.title = question.length > 20 ? question.substring(0, 20) + '...' : question
     exists.time = new Date().toLocaleString()
     const index = historyList.value.indexOf(exists)
-    if (index > 0) {
-      historyList.value.splice(index, 1)
-      historyList.value.unshift(exists)
-    }
+    if (index > 0) { historyList.value.splice(index, 1); historyList.value.unshift(exists) }
   }
   persistState()
 }
 
-const setTreeChartRef = (el: any, index: number) => {
-  if (el) {
-    treeChartRefs.value[index] = el
-  }
-}
+const setTreeChartRef = (el: any, index: number) => { if (el) treeChartRefs.value[index] = el }
 
 const renderTreesForMessages = () => {
   messages.value.forEach((msg, index) => {
     if (msg.tree && treeChartRefs.value[index]) {
       nextTick(() => {
         const container = treeChartRefs.value[index]
-        if (container) {
-          initTreeChart(container, msg.tree)
-        }
+        if (container) initTreeChart(container, msg.tree)
       })
     }
   })
@@ -530,105 +819,64 @@ const renderTreesForMessages = () => {
 
 const initTreeChart = (container: HTMLElement, data: any) => {
   if (!container || !data) return
-  
   const chart = echarts.getInstanceByDom(container)
-  if (chart) {
-    chart.dispose()
-  }
-  
+  if (chart) chart.dispose()
   const newChart = echarts.init(container)
 
   const processTreeData = (node: any): any => {
-    const processed: any = {
-      name: node.name || '未知指标',
-      children: []
-    }
-    
+    const processed: any = { name: node.name || '未知指标', children: [] }
     if (node.children && Array.isArray(node.children)) {
       processed.children = node.children.map((child: any) => processTreeData(child))
     }
-    
-    processed.itemStyle = {
-      color: node.source === 'knowledge' ? '#409eff' : '#909399'
-    }
-    
+    processed.itemStyle = { color: node.source === 'knowledge' ? '#409eff' : '#909399' }
     return processed
   }
 
-  const option = {
-    tooltip: {
-      trigger: 'item',
-      triggerOn: 'mousemove',
-      formatter: (params: any) => {
-        return `${params.name}<br/>来源: ${params.data.source || '未知'}`
-      }
-    },
-    series: [
-      {
-        type: 'tree',
-        data: [processTreeData(data)],
-        symbolSize: 14,
-        label: {
-          position: 'left',
-          verticalAlign: 'middle',
-          align: 'right',
-          fontSize: 12,
-          formatter: '{b}'
-        },
-        leaves: {
-          label: {
-            position: 'right',
-            verticalAlign: 'middle',
-            align: 'left'
-          }
-        },
-        expandAndCollapse: true,
-        initialTreeDepth: 3,
-        animationDuration: 550,
-        animationDurationUpdate: 750,
-        lineStyle: {
-          width: 2,
-          curveness: 0.5
-        },
-        emphasis: {
-          focus: 'ancestor'
-        }
-      }
-    ]
-  }
-
-  newChart.setOption(option)
-
-  window.addEventListener('resize', () => {
-    newChart.resize()
+  newChart.setOption({
+    tooltip: { trigger: 'item', triggerOn: 'mousemove', formatter: (params: any) => `${params.name}<br/>来源: ${params.data.source || '未知'}` },
+    series: [{
+      type: 'tree', data: [processTreeData(data)], symbolSize: 14,
+      label: { position: 'left', verticalAlign: 'middle', align: 'right', fontSize: 12, formatter: '{b}' },
+      leaves: { label: { position: 'right', verticalAlign: 'middle', align: 'left' } },
+      expandAndCollapse: true, initialTreeDepth: 3, animationDuration: 550, animationDurationUpdate: 750,
+      lineStyle: { width: 2, curveness: 0.5 },
+      emphasis: { focus: 'ancestor' }
+    }]
   })
+
+  window.addEventListener('resize', () => newChart.resize())
 }
 
 const scrollToBottom = () => {
-  nextTick(() => {
-    if (chatArea.value) {
-      chatArea.value.scrollTop = chatArea.value.scrollHeight
-    }
-  })
+  nextTick(() => { if (chatArea.value) chatArea.value.scrollTop = chatArea.value.scrollHeight })
 }
 
-// 监听消息变化，自动滚动
 watch(() => messages.value.length, () => scrollToBottom())
 
 const filteredHistoryList = computed(() => {
   if (!searchQuery.value.trim()) return historyList.value
-  return historyList.value.filter(item => 
-    item.title.toLowerCase().includes(searchQuery.value.toLowerCase())
-  )
+  return historyList.value.filter(item => item.title.toLowerCase().includes(searchQuery.value.toLowerCase()))
 })
 
-onMounted(() => {
-  // 恢复上次会话的消息
+onMounted(async () => {
+  // 加载数据源
+  try {
+    const dsResp = await api.get('/evaluation/data-sources')
+    if (dsResp.dataSources) {
+      dataSources.value = dsResp.dataSources
+      if (dataSources.value.length > 0 && !selectedDataSourceId.value) {
+        selectedDataSourceId.value = dataSources.value[0].id
+        selectedDataSourceName.value = dataSources.value[0].name || ''
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load data sources:', e)
+  }
+
   if (sessionId.value && sessionMessages.value[sessionId.value]) {
     messages.value = [...sessionMessages.value[sessionId.value]]
-    nextTick(() => {
-      setTimeout(() => renderTreesForMessages(), 300)
-    })
+    restoreExecutionState(sessionId.value)
+    nextTick(() => { setTimeout(() => renderTreesForMessages(), 300) })
   }
   ElMessage.info('指标分析系统加载完成')
 })
@@ -641,6 +889,7 @@ onMounted(() => {
   background: transparent;
 }
 
+/* ── Sidebar ── */
 .sidebar {
   width: 260px;
   flex-shrink: 0;
@@ -651,163 +900,128 @@ onMounted(() => {
   gap: 16px;
 }
 
-.sidebar-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 0;
-}
+.sidebar-section { display: flex; flex-direction: column; gap: 8px; margin-bottom: 0; }
 
-.sidebar-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0;
-  padding: 0 8px;
-}
+.sidebar-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0; padding: 0 8px; }
 
-.sidebar-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-  letter-spacing: 0.5px;
-  margin-bottom: 0;
-}
+.sidebar-title { font-size: 12px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 0; }
 
-.new-session-btn {
-  height: 32px !important;
-  font-size: 13px !important;
-  font-weight: 500 !important;
-  padding: 0 12px !important;
-  border-radius: 8px !important;
-}
+.new-session-btn { height: 32px !important; font-size: 13px !important; font-weight: 500 !important; padding: 0 12px !important; border-radius: 8px !important; }
 
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s;
-  color: var(--text-secondary);
-  font-size: 14px;
-  font-weight: 500;
-}
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: all 0.2s; color: var(--text-secondary); font-size: 14px; font-weight: 500; }
+.nav-item:hover { background: rgba(0, 0, 0, 0.04); color: var(--text-primary); }
 
-.nav-item:hover {
-  background: rgba(0, 0, 0, 0.04);
-  color: var(--text-primary);
-}
+.history-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; max-height: none; }
 
-.history-list {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: none;
-}
+.history-item { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: all 0.2s; color: var(--text-secondary); }
+.history-item:hover { background: rgba(0, 0, 0, 0.04); color: var(--text-primary); }
+.history-item.active { background: rgba(59, 130, 246, 0.08); color: var(--primary-600); border: none; }
 
-.history-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s;
-  color: var(--text-secondary);
-}
+.history-item-main { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.history-item .el-icon { font-size: 16px; flex-shrink: 0; color: var(--text-muted); }
+.history-item.active .el-icon { color: var(--primary-500); }
 
-.history-item:hover {
-  background: rgba(0, 0, 0, 0.04);
-  color: var(--text-primary);
-}
+.history-delete-btn { opacity: 0; transition: opacity 0.2s; flex-shrink: 0; }
+.history-item:hover .history-delete-btn { opacity: 1; }
 
-.history-item.active {
-  background: rgba(59, 130, 246, 0.08);
-  color: var(--primary-600);
-  border: none;
-}
+.history-item-content { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.history-item-title { font-size: 13px; font-weight: 500; color: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.history-item-time { font-size: 11px; color: var(--text-muted); }
 
-.history-item-main {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
-  min-width: 0;
-}
+.history-search { margin-top: 4px; }
+.history-search :deep(.el-input__wrapper) { border-radius: 8px; box-shadow: 0 0 0 1px var(--border-normal) inset; background: var(--bg-card); }
 
-.history-item .el-icon {
-  font-size: 16px;
-  flex-shrink: 0;
-  color: var(--text-muted);
-}
-
-.history-item.active .el-icon {
-  color: var(--primary-500);
-}
-
-.history-delete-btn {
-  opacity: 0;
-  transition: opacity 0.2s;
-  flex-shrink: 0;
-}
-
-.history-item:hover .history-delete-btn {
-  opacity: 1;
-}
-
-.history-item-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.history-item-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: inherit;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.history-item-time {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.history-search {
-  margin-top: 4px;
-}
-
-.history-search :deep(.el-input__wrapper) {
-  border-radius: 8px;
-  box-shadow: 0 0 0 1px var(--border-normal) inset;
-  background: var(--bg-card);
-}
-
+/* ── Main Content ── */
 .main-content {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: 0;
-  gap: 0;
   overflow: hidden;
   background: var(--bg-card);
   border-left: 1px solid var(--border-light);
-  border-right: 1px solid var(--border-light);
+}
+
+/* ── Top Bar / Data Source ── */
+.top-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 14px 24px;
+  border-bottom: none;
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.data-source-selector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+/* ── Data Source Dialog ── */
+.data-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.ds-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ds-item:hover {
+  border-color: #409eff;
+}
+
+.ds-item.active {
+  border-color: #409eff;
+  background: #ecf5ff;
+}
+
+.ds-name {
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.ds-meta {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* ── Content Area (left chat + right panel) ── */
+.content-area {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── Chat Panel ── */
+.chat-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .chat-area {
   flex: 1;
   overflow-y: auto;
-  margin-bottom: 0;
   padding: 40px 0 20px;
   background: transparent;
   border: none;
@@ -826,449 +1040,240 @@ onMounted(() => {
   gap: 0;
 }
 
-.empty-state > .el-icon {
-  color: var(--gray-200) !important;
-}
+.empty-state p { margin: 0; font-size: 18px; font-weight: 600; color: var(--text-primary); }
 
-.empty-state p {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
+.tags-section { margin-top: 0; width: 100%; max-width: 800px; padding: 0 40px; }
 
-.tags-section {
-  margin-top: 0;
-  width: 100%;
-  max-width: 800px;
-  padding: 0 40px;
-}
-
-.tag-group {
-  margin-bottom: 24px;
-}
-
-.tag-group h4 {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin-bottom: 12px;
-  text-align: center;
-}
-
-.suggest-cards {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-}
+.suggest-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 
 .suggest-card {
+  display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+  background: var(--gray-50); border: 1px solid var(--border-light); border-radius: 12px;
+  cursor: pointer; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); position: relative; overflow: hidden;
+}
+.suggest-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--card-color); opacity: 0; transition: opacity 0.2s; }
+.suggest-card:hover { background: white; border-color: color-mix(in srgb, var(--card-color) 30%, white); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06); }
+.suggest-card:hover::before { opacity: 1; }
+
+.suggest-icon { flex-shrink: 0; width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--card-color) 12%, white); color: var(--card-color); transition: all 0.2s; }
+.suggest-card:hover .suggest-icon { background: var(--card-color); color: white; transform: scale(1.05); }
+
+.suggest-content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.suggest-title { font-size: 14px; font-weight: 600; color: var(--text-primary); line-height: 1.4; transition: color 0.2s; }
+.suggest-card:hover .suggest-title { color: var(--card-color); }
+.suggest-desc { font-size: 12px; color: var(--text-muted); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.suggest-arrow { flex-shrink: 0; font-size: 14px; color: var(--text-muted); opacity: 0; transform: translateX(-4px); transition: all 0.2s; }
+.suggest-card:hover .suggest-arrow { opacity: 1; transform: translateX(0); color: var(--card-color); }
+
+/* ── Message List ── */
+.message-list { display: flex; flex-direction: column; gap: 28px; max-width: 900px; margin: 0 auto; padding: 0 40px; }
+
+.message { display: flex; gap: 16px; }
+.message.user { flex-direction: row-reverse; }
+
+.message-content { max-width: 85%; display: flex; flex-direction: column; gap: 8px; }
+.message.user .message-content { align-items: flex-end; }
+
+.message-avatar { flex-shrink: 0; padding-top: 2px; }
+
+.message-text { padding: 14px 18px; border-radius: 16px; line-height: 1.75; font-size: 15px; white-space: pre-wrap; word-wrap: break-word; }
+.message.user .message-text { background: linear-gradient(135deg, #4f8cff 0%, #3b82f6 100%); color: white; border-bottom-right-radius: 4px; }
+.message.assistant .message-text { background: transparent; color: var(--text-primary); padding: 0; border-radius: 0; border: none; }
+
+.message-loading { color: var(--text-muted); font-size: 14px; padding: 8px 0; }
+
+/* ── AI Response ── */
+.ai-response { display: flex; flex-direction: column; gap: 1rem; }
+
+.summary-section { padding: 1rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 0.75rem; color: white; }
+.summary-section h5 { margin: 0 0 0.5rem 0; font-size: 1rem; font-weight: 600; }
+.summary-section p { margin: 0; line-height: 1.6; font-size: 1rem; }
+
+.tree-section, .indicators-section, .references-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
+.data-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
+
+/* ── Collapsible Section Header ── */
+.section-collapse-header {
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; user-select: none;
+}
+.section-collapse-header h5 { margin: 0; color: #374151; font-size: 1rem; font-weight: 600; padding-bottom: 0; border-bottom: none; }
+.section-collapse-header .el-icon { transition: transform 0.25s; color: #909399; font-size: 16px; flex-shrink: 0; }
+.section-collapse-header .el-icon.rotated { transform: rotate(180deg); }
+
+.tree-chart { width: 100%; height: 350px; margin-top: 0.75rem; }
+
+.indicator-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.75rem; margin-top: 0.75rem; }
+
+.indicator-card { background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%); border-radius: 0.75rem; border-left: 4px solid #409eff; overflow: hidden; transition: transform 0.2s, box-shadow 0.2s; }
+.indicator-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); }
+
+.indicator-header { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: white; border-bottom: 1px solid #e2e8f0; }
+.indicator-name { font-weight: 600; color: #374151; font-size: 0.95rem; }
+
+.indicator-body { padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.indicator-definition, .indicator-formula, .indicator-criteria, .indicator-weight { font-size: 0.9rem; color: #606266; line-height: 1.6; }
+.indicator-formula { background: white; padding: 0.5rem; border-radius: 0.25rem; font-family: 'Courier New', monospace; color: #409eff; }
+
+.expand-tip { text-align: center; padding: 8px; color: #409eff; cursor: pointer; font-size: 0.85rem; border-top: 1px dashed #e2e8f0; margin-top: 4px; }
+.expand-tip:hover { background: #f0f7ff; border-radius: 0 0 0.75rem 0.75rem; }
+
+.references-section ul { list-style: disc; padding-left: 1.5rem; margin: 0; color: #606266; }
+.references-section li { padding: 0.25rem 0; font-size: 0.95rem; }
+
+/* ── Data Table ── */
+.data-table-wrapper { overflow-x: auto; max-height: 350px; overflow-y: auto; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.data-table th { background: #f1f5f9; padding: 0.5rem 0.75rem; text-align: left; font-weight: 600; color: #475569; border-bottom: 2px solid #cbd5e1; position: sticky; top: 0; z-index: 1; }
+.data-table td { padding: 0.4rem 0.75rem; border-bottom: 1px solid #e2e8f0; color: #334155; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.data-table tr:hover td { background: #f8fafc; }
+
+.data-section .section-collapse-header { margin-bottom: 0; }
+
+/* ── Execution Panel (Right) ── */
+.execution-panel {
+  flex-shrink: 0;
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  background: var(--gray-50);
-  border: 1px solid var(--border-light);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-direction: column;
+  border-left: 1px solid #e2e8f0;
+  background: #fafbfc;
   position: relative;
   overflow: hidden;
 }
 
-.suggest-card::before {
-  content: '';
+.resize-handle {
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
-  width: 3px;
-  background: var(--card-color);
-  opacity: 0;
-  transition: opacity 0.2s;
+  width: 4px;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background 0.15s;
+}
+.resize-handle:hover, .resize-handle:active { background: #409eff; }
+
+.panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid #e2e8f0; background: white;
+  font-size: 14px; font-weight: 600; color: #374151; flex-shrink: 0;
+}
+.panel-close { cursor: pointer; color: #909399; font-size: 16px; }
+.panel-close:hover { color: #409eff; }
+
+.execution-content { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+
+.panel-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; color: #c0c4cc; gap: 8px; }
+.panel-empty p { margin: 0; font-size: 13px; }
+
+/* Panel Section */
+.panel-section {
+  background: white; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;
 }
 
-.suggest-card:hover {
-  background: white;
-  border-color: color-mix(in srgb, var(--card-color) 30%, white);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; cursor: pointer; user-select: none;
+  background: #f8fafc; transition: background 0.15s;
+}
+.section-header:hover { background: #f1f5f9; }
+.section-header h5 { margin: 0; font-size: 13px; font-weight: 600; color: #475569; }
+.section-header .el-icon { transition: transform 0.25s; color: #909399; font-size: 14px; }
+.section-header .el-icon.rotated { transform: rotate(180deg); }
+
+/* Steps in panel */
+.steps-list { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; }
+
+.inline-step { padding: 8px 10px; border-radius: 6px; transition: background 0.15s; }
+.inline-step:hover { background: #f8fafc; }
+
+.inline-step-header { display: flex; align-items: center; gap: 8px; }
+.inline-step-icon { flex-shrink: 0; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; }
+.inline-step-icon .is-loading { animation: rotating 2s linear infinite; }
+
+@keyframes rotating { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.inline-step-title { font-size: 13px; color: #374151; font-weight: 500; }
+.inline-step-detail { font-size: 12px; color: #909399; margin-top: 2px; padding-left: 28px; }
+.inline-step-thinking { font-size: 12px; color: #909399; margin-top: 2px; padding-left: 28px; white-space: pre-wrap; word-break: break-word; }
+
+/* SQL block in panel */
+.sql-block {
+  margin: 8px 12px 12px;
+  padding: 10px;
+  background: #0f172a;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-family: 'Courier New', monospace;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
-.suggest-card:hover::before {
-  opacity: 1;
+/* Data in panel */
+.panel-data-wrapper {
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 0 12px 12px;
 }
+.panel-data-wrapper .data-table { font-size: 0.78rem; }
+.panel-data-wrapper .data-table th { padding: 0.35rem 0.5rem; }
+.panel-data-wrapper .data-table td { padding: 0.3rem 0.5rem; max-width: 120px; }
 
-.suggest-icon {
+/* Panel indicator table */
+.panel-indicator-table td { max-width: none !important; overflow: visible !important; white-space: normal !important; word-break: break-word; font-size: 0.78rem; vertical-align: top; }
+.panel-formula { font-family: 'Courier New', monospace; font-size: 0.75rem; color: #409eff; background: #f0f7ff; padding: 1px 4px; border-radius: 3px; }
+
+/* ── Collapsed toggle ── */
+.execution-panel-toggle {
   flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 32px;
+  background: #f8fafc;
+  border-left: 1px solid #e2e8f0;
+  cursor: pointer;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--card-color) 12%, white);
-  color: var(--card-color);
-  transition: all 0.2s;
+  gap: 4px;
+  transition: background 0.15s;
+  color: #909399;
 }
+.execution-panel-toggle:hover { background: #e8edf3; color: #409eff; }
+.toggle-text { writing-mode: vertical-rl; font-size: 12px; font-weight: 500; letter-spacing: 2px; }
 
-.suggest-card:hover .suggest-icon {
-  background: var(--card-color);
-  color: white;
-  transform: scale(1.05);
-}
-
-.suggest-content {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.suggest-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.4;
-  transition: color 0.2s;
-}
-
-.suggest-card:hover .suggest-title {
-  color: var(--card-color);
-}
-
-.suggest-desc {
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.4;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.suggest-arrow {
-  flex-shrink: 0;
-  font-size: 14px;
-  color: var(--text-muted);
-  opacity: 0;
-  transform: translateX(-4px);
-  transition: all 0.2s;
-}
-
-.suggest-card:hover .suggest-arrow {
-  opacity: 1;
-  transform: translateX(0);
-  color: var(--card-color);
-}
-
-.message-list {
-  display: flex;
-  flex-direction: column;
-  gap: 28px;
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 0 40px;
-}
-
-.message {
-  display: flex;
-  gap: 16px;
-}
-
-.message.user {
-  flex-direction: row-reverse;
-}
-
-.message-content {
-  max-width: 85%;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.message.user .message-content {
-  align-items: flex-end;
-}
-
-.message-avatar {
-  flex-shrink: 0;
-  padding-top: 2px;
-}
-
-.message-text {
-  padding: 14px 18px;
-  border-radius: 16px;
-  line-height: 1.75;
-  font-size: 15px;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-}
-
-.message.user .message-text {
-  background: linear-gradient(135deg, #4f8cff 0%, #3b82f6 100%);
-  color: white;
-  border-bottom-right-radius: 4px;
-}
-
-.message.assistant .message-text {
-  background: transparent;
-  color: var(--text-primary);
-  padding: 0;
-  border-radius: 0;
-  border: none;
-}
-
-/* AI响应区域样式 */
-.ai-response {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-.summary-section {
-  padding: 1rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 0.75rem;
-  color: white;
-}
-
-.summary-section h5 {
-  margin: 0 0 0.5rem 0;
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.summary-section p {
-  margin: 0;
-  line-height: 1.6;
-  font-size: 1rem;
-}
-
-.tree-section,
-.indicators-section,
-.references-section {
-  padding: 1.5rem;
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.75rem;
-}
-
-.tree-section h5,
-.indicators-section h5,
-.references-section h5 {
-  margin: 0 0 1rem 0;
-  color: #374151;
-  font-size: 1rem;
-  font-weight: 600;
-  padding-bottom: 0.5rem;
-  border-bottom: 2px solid #409eff;
-}
-
-.tree-chart {
-  width: 100%;
-  height: 400px;
-}
-
-.indicator-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 1rem;
-}
-
-.indicator-card {
-  background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%);
-  border-radius: 0.75rem;
-  border-left: 4px solid #409eff;
-  overflow: hidden;
-  transition: transform 0.2s, box-shadow 0.2s;
-}
-
-.indicator-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.indicator-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem;
-  background: white;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.indicator-name {
-  font-weight: 600;
-  color: #374151;
-  font-size: 1rem;
-}
-
-.indicator-body {
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.indicator-definition,
-.indicator-formula,
-.indicator-criteria,
-.indicator-weight {
-  font-size: 0.95rem;
-  color: #606266;
-  line-height: 1.6;
-}
-
-.indicator-formula {
-  background: white;
-  padding: 0.5rem;
-  border-radius: 0.25rem;
-  font-family: 'Courier New', monospace;
-  color: #409eff;
-}
-
-.references-section ul {
-  list-style: disc;
-  padding-left: 1.5rem;
-  margin: 0;
-  color: #606266;
-}
-
-.references-section li {
-  padding: 0.25rem 0;
-  font-size: 0.95rem;
-}
-
+/* ── Input Area ── */
 .input-area {
   flex-shrink: 0;
   padding: 16px 40px 24px;
   background: linear-gradient(to top, var(--bg-card) 60%, transparent);
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
+  border: none; border-radius: 0; box-shadow: none;
+  display: flex; flex-direction: column; gap: 0;
 }
 
-.tools-bar {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
-}
+.tools-bar { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 14px; }
+.tools-bar .tool-item { display: flex; align-items: center; gap: 6px; padding: 6px 14px; background: var(--gray-50); border-radius: 20px; cursor: pointer; transition: all 0.2s; border: 1px solid var(--border-light); }
+.tools-bar .tool-item:hover { background: white; border-color: var(--primary-300); box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1); }
+.tools-bar .tool-item.current { background: var(--primary-500); border-color: var(--primary-500); cursor: default; }
+.tools-bar .tool-icon { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: inherit; }
+.tools-bar .tool-item.current .tool-icon { background: transparent; }
+.tools-bar .tool-name { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+.tools-bar .tool-item.current .tool-name { color: white; }
+.tools-bar .tool-item:hover .tool-name { color: var(--primary-600); }
+.tools-bar .tool-item.current:hover .tool-name { color: white; }
 
-.tools-bar .tool-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  background: var(--gray-50);
-  border-radius: 20px;
-  cursor: pointer;
-  transition: all 0.2s;
-  border: 1px solid var(--border-light);
-}
+.input-wrapper { position: relative; max-width: 1000px; margin: 0 auto; width: 100%; }
+.input-wrapper :deep(.el-textarea__inner) { border-radius: 16px !important; border-color: var(--border-normal) !important; padding: 16px 100px 16px 20px !important; font-size: 15px !important; line-height: 1.6 !important; transition: all 0.2s !important; background: var(--gray-50) !important; resize: none; }
+.input-wrapper :deep(.el-textarea__inner:hover) { border-color: var(--primary-400) !important; background: white !important; }
+.input-wrapper :deep(.el-textarea__inner:focus) { border-color: var(--primary-500) !important; background: white !important; box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1) !important; }
 
-.tools-bar .tool-item:hover {
-  background: white;
-  border-color: var(--primary-300);
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
-}
-
-.tools-bar .tool-item.current {
-  background: var(--primary-500);
-  border-color: var(--primary-500);
-  cursor: default;
-}
-
-.tools-bar .tool-icon {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: inherit;
-}
-
-.tools-bar .tool-item.current .tool-icon {
-  background: transparent;
-}
-
-.tools-bar .tool-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.tools-bar .tool-item.current .tool-name {
-  color: white;
-}
-
-.tools-bar .tool-item:hover .tool-name {
-  color: var(--primary-600);
-}
-
-.tools-bar .tool-item.current:hover .tool-name {
-  color: white;
-}
-
-.input-wrapper {
-  position: relative;
-  max-width: 1000px;
-  margin: 0 auto;
-  width: 100%;
-}
-
-.input-wrapper :deep(.el-textarea__inner) {
-  border-radius: 16px !important;
-  border-color: var(--border-normal) !important;
-  padding: 16px 100px 16px 20px !important;
-  font-size: 15px !important;
-  line-height: 1.6 !important;
-  transition: all 0.2s !important;
-  background: var(--gray-50) !important;
-  resize: none;
-}
-
-.input-wrapper :deep(.el-textarea__inner:hover) {
-  border-color: var(--primary-400) !important;
-  background: white !important;
-}
-
-.input-wrapper :deep(.el-textarea__inner:focus) {
-  border-color: var(--primary-500) !important;
-  background: white !important;
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1) !important;
-}
-
-.input-actions {
-  position: absolute;
-  bottom: 14px;
-  right: 16px;
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  align-items: center;
-}
-
-.attachment-chips {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  padding: 4px 16px 0;
-  max-width: 1000px;
-  margin: 0 auto;
-}
-
-.input-actions .el-button {
-  height: 38px;
-  padding: 0 22px;
-  border-radius: 10px;
-  font-weight: 500;
-  font-size: 14px;
-}
+.input-actions { position: absolute; bottom: 14px; right: 16px; display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.input-actions .el-button { height: 38px; padding: 0 22px; border-radius: 10px; font-weight: 500; font-size: 14px; }
 </style>

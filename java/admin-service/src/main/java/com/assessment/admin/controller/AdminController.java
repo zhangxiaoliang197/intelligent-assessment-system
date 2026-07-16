@@ -640,6 +640,97 @@ public class AdminController {
                 )));
     }
 
+    /** 测试大模型 API 连接 */
+    @PostMapping("/config/llm/{id}/test")
+    public ResponseEntity<Map<String, Object>> testLlmConnection(@PathVariable String id) {
+        Optional<LlmConfig> opt = llmConfigRepo.findById(id);
+        if (opt.isEmpty()) {
+            return ResponseEntity.badRequest().body(errorMap("配置不存在"));
+        }
+
+        LlmConfig config = opt.get();
+        String baseUrl = config.getApiUrl();
+        if (baseUrl == null || baseUrl.isBlank()) {
+            return ResponseEntity.ok(Map.of("success", false, "message", "API 地址为空"));
+        }
+
+        // 标准化 API URL：去掉尾部斜杠，确保以 /chat/completions 结尾
+        String url = baseUrl.replaceAll("/+$", "");
+        if (!url.endsWith("/chat/completions")) {
+            if (!url.endsWith("/v1")) {
+                url += "/v1";
+            }
+            url += "/chat/completions";
+        }
+
+        long start = System.currentTimeMillis();
+        try {
+            // 构建最小测试请求体
+            String requestBody = String.format(
+                "{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}",
+                config.getModel() != null ? config.getModel().replace("\"", "\\\"") : "gpt-3.5-turbo"
+            );
+
+            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(url))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer " + (config.getApiKey() != null ? config.getApiKey() : ""))
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(requestBody))
+                .timeout(java.time.Duration.ofSeconds(15))
+                .build();
+
+            java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(10))
+                .build();
+
+            java.net.http.HttpResponse<String> response = client.send(request,
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+
+            long elapsed = System.currentTimeMillis() - start;
+            int statusCode = response.statusCode();
+
+            if (statusCode >= 200 && statusCode < 300) {
+                return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "连接成功，API 正常响应 (" + elapsed + "ms)",
+                    "latency", elapsed + "ms",
+                    "statusCode", statusCode
+                ));
+            } else {
+                // 截断错误响应体，避免过长
+                String respBody = response.body();
+                if (respBody != null && respBody.length() > 300) {
+                    respBody = respBody.substring(0, 300) + "...";
+                }
+                return ResponseEntity.ok(Map.of(
+                    "success", false,
+                    "message", "API 返回错误 (" + statusCode + ") — " + (respBody != null ? respBody : ""),
+                    "statusCode", statusCode,
+                    "latency", elapsed + "ms"
+                ));
+            }
+
+        } catch (Exception e) {
+            long elapsed = System.currentTimeMillis() - start;
+            String errorMsg = e.getMessage();
+            String errorType = e.getClass().getSimpleName();
+
+            if (errorMsg != null && (errorMsg.toLowerCase().contains("timeout") || errorMsg.contains("timed out"))) {
+                return ResponseEntity.ok(Map.of(
+                    "success", false,
+                    "message", "连接超时 (" + elapsed + "ms)，请检查 API 地址是否正确",
+                    "error", errorType + ": " + errorMsg
+                ));
+            }
+
+            return ResponseEntity.ok(Map.of(
+                "success", false,
+                "message", "测试失败: " + (errorMsg != null ? errorMsg : errorType),
+                "error", errorType + ": " + (errorMsg != null ? errorMsg : "")
+            ));
+        }
+    }
+
     private double parseDouble(Object val, double defaultVal) {
         if (val == null) return defaultVal;
         return val instanceof Double ? (Double) val : Double.parseDouble(String.valueOf(val));
