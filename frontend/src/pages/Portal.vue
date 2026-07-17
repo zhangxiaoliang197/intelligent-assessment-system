@@ -159,7 +159,7 @@ const router = useRouter()
 const userStore = useUserStore()
 const searchQuery = ref('')
 const fileInputRef = ref<HTMLInputElement | null>(null)
-const { attachments, uploading, upload: uploadFile, remove: removeAttachment, getAttachmentId } = useAttachmentUpload()
+const { attachments, uploading: _uploading, upload: uploadFile, remove: removeAttachment, getAttachmentId } = useAttachmentUpload()
 
 const username = userStore.username || '评估员'
 

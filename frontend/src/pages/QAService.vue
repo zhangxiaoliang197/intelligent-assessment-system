@@ -93,6 +93,10 @@
                   </div>
                   {{ msg.content }}
                 </div>
+                <GeoMap
+                  v-if="msg.role === 'assistant' && msg.geoPoints && msg.geoPoints.length > 0"
+                  :points="msg.geoPoints"
+                />
                 <div v-if="msg.references && msg.references.length > 0" class="references">
                   <h5>参考来源：</h5>
                   <ul>
@@ -221,6 +225,8 @@ import { useRouter } from 'vue-router'
 import { Search, Collection, Box, ChatLineRound, ChatDotRound, Promotion, PieChart, Document, Plus, Delete, ArrowRight, Microphone, Upload, Loading, Picture } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import Layout from '@/components/Layout.vue'
+import GeoMap from '@/components/GeoMap.vue'
+import { extractCoordinates } from '@/utils/geoParser'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useAttachmentUpload } from '@/composables/useAttachmentUpload'
 import { useImageUpload } from '@/composables/useImageUpload'
@@ -499,11 +505,19 @@ const sendMessage = async () => {
             messages.value[msgIndex] = { ...messages.value[msgIndex], content: fullText }
             nextTick(() => scrollToBottom())
           } else if (data.type === 'done') {
+            const geoPoints = extractCoordinates(fullText)
+            console.log('[QAService] 坐标提取结果:', {
+              textPreview: fullText.slice(0, 200),
+              textChars: [...fullText.slice(0, 100)].map(c => `${c}(U+${c.codePointAt(0)!.toString(16).toUpperCase()})`).join(' '),
+              geoPointsCount: geoPoints.length,
+              geoPoints,
+            })
             messages.value[msgIndex] = {
               ...messages.value[msgIndex],
               content: fullText,
               references: data.references || [],
-              knowledgeUsed: data.knowledge_used || false
+              knowledgeUsed: data.knowledge_used || false,
+              geoPoints: geoPoints.length > 0 ? geoPoints : undefined,
             }
             if (data.session_id) {
               sessionId.value = data.session_id

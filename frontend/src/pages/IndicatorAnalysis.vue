@@ -504,7 +504,7 @@ const getStepStatusClass = (status: string) => {
 
 // ── 面板拖拽缩放 ──
 let resizing = false
-const startResize = (e: MouseEvent) => {
+const startResize = (_e: MouseEvent) => {
   resizing = true
   document.addEventListener('mousemove', onResize)
   document.addEventListener('mouseup', stopResize)

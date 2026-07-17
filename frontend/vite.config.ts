@@ -75,6 +75,14 @@ export default defineConfig({
       '/api/admin': {
         target: 'http://localhost:10258',
         changeOrigin: true
+      },
+      '/tiles': {
+        target: 'http://localhost:9090',
+        changeOrigin: true
+      },
+      '/geowebcache': {
+        target: 'http://localhost:9090',
+        changeOrigin: true
       }
     }
   },
