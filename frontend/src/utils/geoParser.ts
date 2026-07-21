@@ -101,31 +101,56 @@ function normalizeText(text: string): string {
     .replace(/["\u201C\u201D\u2036\u02BA]/g, '\u2033')
 }
 
+function findPlaceName(normalized: string, matchIndex: number, matchLength: number): string {
+  const ctxStart = Math.max(0, matchIndex - 30)
+  const ctxEnd = Math.min(normalized.length, matchIndex + matchLength + 30)
+  const ctx = normalized.slice(ctxStart, ctxEnd)
+  const nameMatch = ctx.match(/([\u4e00-\u9fa5]{2,8})(?:的|位于|[经伟]度|[坐]标|地理)/)
+  return nameMatch ? nameMatch[1] : ''
+}
+
 export function extractCoordinates(text: string): GeoPoint[] {
   const points: GeoPoint[] = []
   const normalized = normalizeText(text)
 
-  // --- 模式1: 中文 DMS 格式 "北纬XX°XX′，东经XX°XX′" ---
-  // 宽松匹配: 北纬/南纬 + 非分隔符文本, 分隔符, 东经/西经 + 非分隔符文本
-  const cnDmsRegex = /([北南]纬[^，,、。\n]*)[，,、\s]+([东西]经[^，,、。\n]*)/g
+  // --- 模式0: 中文 DMS 范围格式 "北纬39°26′至41°03′、东经115°25′至117°30′" ---
+  const cnRangeRegex = /([北南]纬[^\u81f3至到～\n]+)[\u81f3至到～]([^\u81f3至到～，,、。\n]+)[，,、\s]+([东西]经[^\u81f3至到～\n]+)[\u81f3至到～]([^\u81f3至到～，,、。\n]*)/g
   let match: RegExpExecArray | null
+  while ((match = cnRangeRegex.exec(normalized)) !== null) {
+    const lat1 = parseDMS(match[1])
+    const lat2 = lat1 ? parseDMS(match[2]) : null
+    const lng1 = lat2 ? parseDMS(match[3]) : null
+    const lng2 = lng1 ? parseDMS(match[4]) : null
+    if (lat1 && lat2 && lng1 && lng2) {
+      const name = findPlaceName(normalized, match.index, match[0].length) || `区域${points.length + 1}`
+      const centerLat = (lat1.value + lat2.value) / 2
+      const centerLng = (lng1.value + lng2.value) / 2
+      points.push({
+        name,
+        lat: parseFloat(centerLat.toFixed(6)),
+        lng: parseFloat(centerLng.toFixed(6)),
+        raw: match[0],
+      })
+    }
+  }
+
+  // --- 模式1: 中文 DMS 格式 "北纬XX°XX′，东经XX°XX′" ---
+  const cnDmsRegex = /([北南]纬[^，,、。\n]*)[，,、\s]+([东西]经[^，,、。\n]*)/g
   while ((match = cnDmsRegex.exec(normalized)) !== null) {
     const latResult = parseDMS(match[1])
     const lngResult = latResult ? parseDMS(match[2]) : null
     if (latResult && lngResult) {
-      // 匹配名称（括号中的地名）
-      const ctxStart = Math.max(0, match.index - 20)
-      const ctxEnd = Math.min(normalized.length, match.index + match[0].length + 20)
-      const ctx = normalized.slice(ctxStart, ctxEnd)
-      const nameMatch = ctx.match(/([\u4e00-\u9fa5]{2,8})(?:的|位于|[经伟]度|[坐]标)/)
-      const name = nameMatch ? nameMatch[1] : `坐标点${points.length + 1}`
+      const name = findPlaceName(normalized, match.index, match[0].length) || `坐标点${points.length + 1}`
 
-      points.push({
-        name,
-        lat: latResult.value,
-        lng: lngResult.value,
-        raw: match[0],
-      })
+      const isDup = points.some(p => Math.abs(p.lat - latResult.value) < 0.5 && Math.abs(p.lng - lngResult.value) < 0.5)
+      if (!isDup) {
+        points.push({
+          name,
+          lat: latResult.value,
+          lng: lngResult.value,
+          raw: match[0],
+        })
+      }
     }
   }
 
@@ -135,12 +160,15 @@ export function extractCoordinates(text: string): GeoPoint[] {
     const latResult = parseDMS(match[1])
     const lngResult = latResult ? parseDMS(match[2]) : null
     if (latResult && lngResult) {
-      points.push({
-        name: `坐标点${points.length + 1}`,
-        lat: latResult.value,
-        lng: lngResult.value,
-        raw: match[0],
-      })
+      const isDup = points.some(p => Math.abs(p.lat - latResult.value) < 0.5 && Math.abs(p.lng - lngResult.value) < 0.5)
+      if (!isDup) {
+        points.push({
+          name: `坐标点${points.length + 1}`,
+          lat: latResult.value,
+          lng: lngResult.value,
+          raw: match[0],
+        })
+      }
     }
   }
 
@@ -150,24 +178,24 @@ export function extractCoordinates(text: string): GeoPoint[] {
     const latResult = parseDecimal(match[1])
     const lngResult = latResult ? parseDecimal(match[2]) : null
     if (latResult && lngResult) {
-      points.push({
-        name: `坐标点${points.length + 1}`,
-        lat: latResult.value,
-        lng: lngResult.value,
-        raw: match[0],
-      })
+      const isDup = points.some(p => Math.abs(p.lat - latResult.value) < 0.5 && Math.abs(p.lng - lngResult.value) < 0.5)
+      if (!isDup) {
+        points.push({
+          name: `坐标点${points.length + 1}`,
+          lat: latResult.value,
+          lng: lngResult.value,
+          raw: match[0],
+        })
+      }
     }
   }
 
   // --- 模式4: 纯小数对 "(39.9042, 116.4074)" 或 "39.9042, 116.4074" ---
-  // 经度范围 -180~180，纬度范围 -90~90
   const pureDecRegex = /\(?\s*(-?\d{1,3}\.\d+)\s*[，,、\s]\s*(-?\d{1,3}\.\d+)\s*\)?/g
-  // 重置 lastIndex
   pureDecRegex.lastIndex = 0
   while ((match = pureDecRegex.exec(normalized)) !== null) {
     const a = parseFloat(match[1])
     const b = parseFloat(match[2])
-    // 中国范围粗略过滤：纬度 15~55，经度 70~140
     let lat: number, lng: number
     if (a >= 15 && a <= 55 && b >= 70 && b <= 140) {
       lat = a; lng = b
@@ -178,11 +206,9 @@ export function extractCoordinates(text: string): GeoPoint[] {
     } else {
       continue
     }
-    // 避免与已匹配的 DMS 格式重复
     const raw = match[0]
     if (raw.includes('°') || raw.includes('′')) continue
-    // 避免与已有点重复
-    const isDup = points.some(p => Math.abs(p.lat - lat) < 0.001 && Math.abs(p.lng - lng) < 0.001)
+    const isDup = points.some(p => Math.abs(p.lat - lat) < 0.5 && Math.abs(p.lng - lng) < 0.5)
     if (!isDup) {
       points.push({ name: `坐标点${points.length + 1}`, lat, lng, raw })
     }
@@ -193,7 +219,7 @@ export function extractCoordinates(text: string): GeoPoint[] {
   while ((match = cnDecRegex.exec(normalized)) !== null) {
     const lat = parseFloat(match[1])
     const lng = parseFloat(match[2])
-    const isDup = points.some(p => Math.abs(p.lat - lat) < 0.001 && Math.abs(p.lng - lng) < 0.001)
+    const isDup = points.some(p => Math.abs(p.lat - lat) < 0.5 && Math.abs(p.lng - lng) < 0.5)
     if (!isDup) {
       points.push({ name: `坐标点${points.length + 1}`, lat, lng, raw: match[0] })
     }

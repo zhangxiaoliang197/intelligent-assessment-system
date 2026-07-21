@@ -49,6 +49,12 @@ const mapContainer = ref<HTMLElement | null>(null)
 let map: L.Map | null = null
 let markers: L.Marker[] = []
 let circleMarkers: L.CircleMarker[] = []
+let provincesLayer: L.TileLayer | null = null
+let citiesLayer: L.TileLayer | null = null
+let waterAreasLayer: L.TileLayer | null = null
+let waterwaysLayer: L.TileLayer | null = null
+let roadsLayer: L.TileLayer | null = null
+let railwaysLayer: L.TileLayer | null = null
 
 const colors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#2980b9']
 
@@ -89,28 +95,81 @@ function initMap() {
     zoom: fitViewport.value.zoom,
     zoomControl: true,
     attributionControl: false,
+    minZoom: 3,
+    maxZoom: 18,
   })
 
-  const wmtsUrl = '/geowebcache/gwc/service/wmts?' +
-    'layer=ne:world' +
-    '&style=' +
-    '&tilematrixset=EPSG:900913' +
-    '&Service=WMTS' +
-    '&Request=GetTile' +
-    '&Version=1.0.0' +
-    '&Format=image/png' +
-    '&TileMatrix=EPSG:900913:{z}' +
-    '&TileCol={x}' +
-    '&TileRow={y}'
+  const GWC = '/geowebcache/gwc/service/tms/1.0.0'
+  const tmsOpts = { tms: true, maxZoom: 18, minZoom: 3, attribution: 'GeoWebCache' }
 
-  L.tileLayer(wmtsUrl, {
-    maxZoom: 18,
-    minZoom: 1,
-    attribution: 'GeoWebCache',
-    crossOrigin: '',
-  }).addTo(map)
+  provincesLayer = L.tileLayer(
+    GWC + '/china:china_provinces_3857@EPSG:900913@png/{z}/{x}/{y}.png',
+    Object.assign({}, tmsOpts, { opacity: 0.9 })
+  ).addTo(map)
+
+  citiesLayer = L.tileLayer(
+    GWC + '/china:china_cities_3857@EPSG:900913@png/{z}/{x}/{y}.png',
+    Object.assign({}, tmsOpts, { opacity: 0.5 })
+  ).addTo(map)
+
+  waterAreasLayer = L.tileLayer(
+    GWC + '/china:china_osm_waterareas_3857@EPSG:900913@png/{z}/{x}/{y}.png',
+    Object.assign({}, tmsOpts, { opacity: 0.8 })
+  ).addTo(map)
+
+  waterwaysLayer = L.tileLayer(
+    GWC + '/china:china_osm_waterways_3857@EPSG:900913@png/{z}/{x}/{y}.png',
+    Object.assign({}, tmsOpts, { opacity: 0.7 })
+  ).addTo(map)
+
+  roadsLayer = L.tileLayer(
+    GWC + '/china:china_osm_roads_3857@EPSG:900913@png/{z}/{x}/{y}.png',
+    Object.assign({}, tmsOpts, { opacity: 0.9 })
+  ).addTo(map)
+
+  railwaysLayer = L.tileLayer(
+    GWC + '/china:china_osm_railways_3857@EPSG:900913@png/{z}/{x}/{y}.png',
+    Object.assign({}, tmsOpts, { opacity: 0.7 })
+  ).addTo(map)
+
+  map.on('zoomend', updateLayerOpacity)
+  updateLayerOpacity()
 
   addMarkers()
+}
+
+function updateLayerOpacity() {
+  if (!map) return
+  const z = map.getZoom()
+  if (z >= 13) {
+    provincesLayer?.setOpacity(0.1)
+    citiesLayer?.setOpacity(0.4)
+    waterAreasLayer?.setOpacity(0.9)
+    waterwaysLayer?.setOpacity(0.8)
+    roadsLayer?.setOpacity(0.9)
+    railwaysLayer?.setOpacity(0.7)
+  } else if (z >= 10) {
+    provincesLayer?.setOpacity(0.15)
+    citiesLayer?.setOpacity(0.5)
+    waterAreasLayer?.setOpacity(0.8)
+    waterwaysLayer?.setOpacity(0.7)
+    roadsLayer?.setOpacity(0.8)
+    railwaysLayer?.setOpacity(0.6)
+  } else if (z >= 7) {
+    provincesLayer?.setOpacity(0.3)
+    citiesLayer?.setOpacity(0.5)
+    waterAreasLayer?.setOpacity(0.6)
+    waterwaysLayer?.setOpacity(0.5)
+    roadsLayer?.setOpacity(0.5)
+    railwaysLayer?.setOpacity(0.4)
+  } else {
+    provincesLayer?.setOpacity(0.9)
+    citiesLayer?.setOpacity(0.3)
+    waterAreasLayer?.setOpacity(0.4)
+    waterwaysLayer?.setOpacity(0.3)
+    roadsLayer?.setOpacity(0.2)
+    railwaysLayer?.setOpacity(0.1)
+  }
 }
 
 function addMarkers() {
@@ -171,6 +230,21 @@ function clearMarkers() {
   circleMarkers = []
 }
 
+function clearLayers() {
+  if (provincesLayer && map) map.removeLayer(provincesLayer)
+  if (citiesLayer && map) map.removeLayer(citiesLayer)
+  if (waterAreasLayer && map) map.removeLayer(waterAreasLayer)
+  if (waterwaysLayer && map) map.removeLayer(waterwaysLayer)
+  if (roadsLayer && map) map.removeLayer(roadsLayer)
+  if (railwaysLayer && map) map.removeLayer(railwaysLayer)
+  provincesLayer = null
+  citiesLayer = null
+  waterAreasLayer = null
+  waterwaysLayer = null
+  roadsLayer = null
+  railwaysLayer = null
+}
+
 watch(() => props.points, () => {
   if (map) {
     addMarkers()
@@ -183,6 +257,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (map) {
+    map.off('zoomend', updateLayerOpacity)
+    clearLayers()
     map.remove()
     map = null
   }

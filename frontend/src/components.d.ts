@@ -7,22 +7,13 @@ export {}
 
 declare module 'vue' {
   export interface GlobalComponents {
-    ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAvatar: typeof import('element-plus/es')['ElAvatar']
     ElButton: typeof import('element-plus/es')['ElButton']
     ElCard: typeof import('element-plus/es')['ElCard']
-    ElCheckbox: typeof import('element-plus/es')['ElCheckbox']
-    ElCollapse: typeof import('element-plus/es')['ElCollapse']
-    ElCollapseItem: typeof import('element-plus/es')['ElCollapseItem']
-    ElCollapseTransition: typeof import('element-plus/es')['ElCollapseTransition']
     ElDescriptions: typeof import('element-plus/es')['ElDescriptions']
     ElDescriptionsItem: typeof import('element-plus/es')['ElDescriptionsItem']
     ElDialog: typeof import('element-plus/es')['ElDialog']
     ElDivider: typeof import('element-plus/es')['ElDivider']
-    ElDrawer: typeof import('element-plus/es')['ElDrawer']
-    ElDropdown: typeof import('element-plus/es')['ElDropdown']
-    ElDropdownItem: typeof import('element-plus/es')['ElDropdownItem']
-    ElDropdownMenu: typeof import('element-plus/es')['ElDropdownMenu']
     ElEmpty: typeof import('element-plus/es')['ElEmpty']
     ElForm: typeof import('element-plus/es')['ElForm']
     ElFormItem: typeof import('element-plus/es')['ElFormItem']
@@ -31,16 +22,10 @@ declare module 'vue' {
     ElInputNumber: typeof import('element-plus/es')['ElInputNumber']
     ElOption: typeof import('element-plus/es')['ElOption']
     ElOptionGroup: typeof import('element-plus/es')['ElOptionGroup']
-    ElProgress: typeof import('element-plus/es')['ElProgress']
     ElRadioButton: typeof import('element-plus/es')['ElRadioButton']
     ElRadioGroup: typeof import('element-plus/es')['ElRadioGroup']
     ElSelect: typeof import('element-plus/es')['ElSelect']
-    ElSkeleton: typeof import('element-plus/es')['ElSkeleton']
-    ElSkeletonItem: typeof import('element-plus/es')['ElSkeletonItem']
     ElSlider: typeof import('element-plus/es')['ElSlider']
-    ElStep: typeof import('element-plus/es')['ElStep']
-    ElSteps: typeof import('element-plus/es')['ElSteps']
-    ElSwitch: typeof import('element-plus/es')['ElSwitch']
     ElTable: typeof import('element-plus/es')['ElTable']
     ElTableColumn: typeof import('element-plus/es')['ElTableColumn']
     ElTabPane: typeof import('element-plus/es')['ElTabPane']
@@ -55,8 +40,5 @@ declare module 'vue' {
     RouterView: typeof import('vue-router')['RouterView']
     SkillEditorDialog: typeof import('./components/evaluation/SkillEditorDialog.vue')['default']
     SkillOperationsDrawer: typeof import('./components/evaluation/SkillOperationsDrawer.vue')['default']
-  }
-  export interface ComponentCustomProperties {
-    vLoading: typeof import('element-plus/es')['ElLoadingDirective']
   }
 }
