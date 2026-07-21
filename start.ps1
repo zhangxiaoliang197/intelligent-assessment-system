@@ -28,7 +28,7 @@ $pyServices = @(
     @{Dir="python\ontology-service";            Port=10256; Name="Ontology"}
 )
 foreach ($svc in $pyServices) {
-    Start-Process -FilePath python -ArgumentList "-u main.py" -WorkingDirectory "$root\$($svc.Dir)" -WindowStyle Hidden
+    Start-Process -FilePath python -ArgumentList "-m uvicorn main:app --reload --host 0.0.0.0 --port $($svc.Port)" -WorkingDirectory "$root\$($svc.Dir)" -WindowStyle Hidden
     Write-Host "  Started $($svc.Name) (:$($svc.Port))" -ForegroundColor Green
 }
 

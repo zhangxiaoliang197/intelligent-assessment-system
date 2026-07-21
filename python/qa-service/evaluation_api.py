@@ -284,9 +284,162 @@ def _sync_llm_call(system_prompt: str, user_message: str) -> str:
         raise RuntimeError(f"LLM调用失败: {str(e)[:500]}")
 
 
-async def async_llm_call(system_prompt: str, user_message: str) -> str:
+async def async_llm_call(system_prompt: str, user_message: str,
+                         on_token=None) -> str:
+    """Call LLM, optionally streaming tokens one-by-one via *on_token* callback.
+
+    When *on_token* is provided the function uses SSE streaming internally,
+    invoking ``on_token(chunk)`` for each received token.  Without *on_token*
+    the standard blocking call is dispatched to the thread pool.
+
+    Returns the full response text in both modes.
+    """
+    if on_token:
+        return await _async_stream_llm_internal(
+            system_prompt, user_message, on_token)
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_thread_pool, _sync_llm_call, system_prompt, user_message)
+    return await loop.run_in_executor(
+        _thread_pool, _sync_llm_call, system_prompt, user_message)
+
+
+async def _async_stream_llm_internal(
+    system_prompt: str, user_message: str,
+    on_token,
+) -> str:
+    """Stream LLM tokens via SSE, invoking *on_token* for each.
+
+    Uses an ``asyncio.Queue`` bridged to a thread-pool worker that reads
+    the SSE stream (urllib is synchronous).  The async caller consumes the
+    queue and calls ``on_token``.
+    """
+    import urllib.request
+    import urllib.error
+    import ssl
+
+    config = _get_llm_config()
+    api_key = config.get("apiKey", "")
+    api_url = config.get("apiUrl", "https://api.deepseek.com/v1").rstrip("/")
+    model = config.get("model", "deepseek-chat")
+    temperature = config.get("temperature", 0.7)
+    max_tokens = config.get("maxTokens", 4096)
+
+    if not api_key and config.get("type") != "vllm":
+        raise RuntimeError(
+            "大模型 API Key 未配置，请在「基础管理 → 大模型配置」中设置。"
+        )
+
+    body = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": True,
+    }).encode("utf-8")
+
+    url = f"{api_url}/chat/completions"
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {api_key}")
+
+    ca_cert_file = os.getenv("LLM_CA_CERT_FILE") or config.get("caCertPath") or None
+    try:
+        ssl_ctx = ssl.create_default_context(cafile=ca_cert_file)
+    except (OSError, ssl.SSLError) as exc:
+        raise RuntimeError(f"大模型 CA 证书配置无效: {exc}") from exc
+
+    tls_setting = (
+        os.getenv("LLM_TLS_VERIFY",
+                   str(config.get("tlsVerify", True))).strip().lower()
+    )
+    verify_tls = tls_setting not in {"0", "false", "no", "off"}
+    if not verify_tls:
+        if config.get("type") != "vllm":
+            raise RuntimeError(
+                "仅内网自签名 vLLM 允许关闭 TLS 校验；公网模型必须校验证书"
+            )
+        logger.warning("TLS verification disabled for vLLM endpoint")
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    token_queue: asyncio.Queue = asyncio.Queue()
+    full_text = ""
+    error_ref = []
+
+    def _read_sse():
+        """Thread-pool worker that reads SSE lines and feeds token_queue."""
+        nonlocal full_text
+        try:
+            with urllib.request.urlopen(req, timeout=300,
+                                        context=ssl_ctx) as resp:
+                for raw in resp:
+                    line = raw.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:]
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        ev = json.loads(payload)
+                        delta = (
+                            ev.get("choices", [{}])[0]
+                              .get("delta", {})
+                              .get("content", "")
+                        )
+                        if delta:
+                            full_text += delta
+                            # Schedule push to the queue on the event-loop
+                            asyncio.run_coroutine_threadsafe(
+                                token_queue.put(delta), loop
+                            )
+                    except json.JSONDecodeError:
+                        pass
+        except Exception as exc:
+            error_ref.append(str(exc))
+        finally:
+            asyncio.run_coroutine_threadsafe(
+                token_queue.put(None), loop
+            )
+
+    loop = asyncio.get_event_loop()
+    # Start the SSE reader in the thread pool
+    fut = loop.run_in_executor(_thread_pool, _read_sse)
+
+    # Consume tokens from the queue
+    while True:
+        chunk = await token_queue.get()
+        if chunk is None:
+            break
+        if on_token:
+            on_token(chunk)
+
+    # Check for errors
+    if error_ref:
+        raise RuntimeError(f"Streaming LLM error: {error_ref[0]}")
+
+    await fut  # re-raise any exception from the worker
+    return full_text
+
+
+async def async_gen_llm_stream(
+    system_prompt: str, user_message: str,
+):
+    """Async generator that yields LLM response tokens one-by-one via SSE.
+
+    Yields:
+        str: Each text token as it arrives from the streaming API.
+    """
+    collected = []
+
+    def _collect(chunk: str):
+        collected.append(chunk)
+
+    await _async_stream_llm_internal(system_prompt, user_message, _collect)
+
+    for token in collected:
+        yield token
 
 
 @evaluation_router.post("/analyze/stream")
@@ -639,6 +792,7 @@ async def indicator_query_stream(request: IndicatorQueryRequest):
                 indicator_defs=request.indicator_defs,
                 analysis_plan=request.analysis_plan,
                 llm_call_fn=async_llm_call,
+                stream_llm_gen=async_gen_llm_stream,
             ):
                 yield json.dumps(event, ensure_ascii=False, default=str) + "\n"
         except Exception as e:

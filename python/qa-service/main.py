@@ -925,6 +925,81 @@ try:
 except Exception as e:
     logger.warning(f"Failed to register evaluation router: {e}")
 
+@app.post("/qa/classify-query")
+async def classify_query(request: ChatRequest):
+    """
+    对用户提问做三分类：concept_qa / indicator_analysis / general_chat。
+
+    策略：关键词快速匹配 → LLM 分类 → 关键词兜底
+    """
+    query = request.query
+
+    # ── 第一层：关键词快速判断 ──
+    concept_keywords = ["什么是", "什么叫", "解释", "定义", "含义", "概念", "什么意思", "如何理解", "怎么算", "是什么"]
+    analysis_keywords = ["分析", "评估", "查询", "构建", "帮我查", "指标体系", "数据", "指标"]
+    general_keywords = ["你好", "谢谢", "在吗", "再见", "帮个忙"]
+
+    kw_concept = any(kw in query for kw in concept_keywords)
+    kw_analysis = any(kw in query for kw in analysis_keywords)
+    kw_general = any(kw in query for kw in general_keywords)
+
+    # 关键词明确且无冲突 → 直接返回
+    if kw_general and not kw_concept and not kw_analysis:
+        return {"classification": "general_chat"}
+    if kw_concept and not kw_analysis:
+        return {"classification": "concept_qa"}
+    if kw_analysis and not kw_concept:
+        return {"classification": "indicator_analysis"}
+
+    # ── 第二层：关键词冲突或不确定 → 调用 LLM ──
+    config = load_llm_config()
+    api_key = config.get("apiKey", "")
+    api_url = config.get("apiUrl", "https://api.deepseek.com/v1").rstrip("/")
+    model = config.get("model", "deepseek-chat")
+
+    user_prompt = f"""分类以下问题：general_chat / concept_qa / indicator_analysis
+
+{query}"""
+
+    body = json.dumps({
+        "model": model,
+        "messages": [{"role": "user", "content": user_prompt}],
+        "temperature": 0.1,
+        "max_tokens": 20,
+        "stream": False
+    }).encode("utf-8")
+
+    url = f"{api_url}/chat/completions"
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    if api_key:
+        req.add_header("Authorization", f"Bearer {api_key}")
+
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    try:
+        with urllib.request.urlopen(req, timeout=30, context=ssl_ctx) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            raw = data["choices"][0]["message"]["content"].strip().lower()
+            if "concept" in raw:
+                return {"classification": "concept_qa"}
+            if "indicator_analysis" in raw or "analysis" in raw:
+                return {"classification": "indicator_analysis"}
+            if "general" in raw:
+                return {"classification": "general_chat"}
+    except Exception as e:
+        logger.warning(f"Classify query LLM failed: {e}")
+
+    # ── 第三层：LLM 失败 → 关键词兜底 ──
+    if kw_concept:
+        return {"classification": "concept_qa"}
+    if kw_analysis:
+        return {"classification": "indicator_analysis"}
+    return {"classification": "indicator_analysis"}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=10253)

@@ -47,8 +47,46 @@ ANALYST_SYSTEM_PROMPT = f"""# 角色: {ANALYST_AGENT['role']}
 3. **建议标题**: 具体说明和数据依据（如有必要）
 """
 
+ANALYST_NO_DATA_PROMPT = f"""# 角色: {ANALYST_AGENT['role']}
+# 目标: {ANALYST_AGENT['goal']}
 
-async def run_analyst(state: EvaluationState, llm_call_fn) -> EvaluationState:
+{ANALYST_AGENT['backstory']}
+
+---
+
+由于数据库查询未能成功执行，你无法获取实际数据。请基于可用的表结构和指标定义，给出定性分析建议。
+
+## 用户问题
+{{question}}
+
+## 原始SQL（生成失败/执行失败）
+{{sql}}
+
+## 失败原因
+{{error_summary}}
+
+## 可用的表结构
+{{table_context}}
+
+## 指标定义
+{{indicator_context}}
+
+## 要求
+- 基于表结构和指标定义，给出 2-3 条定性分析建议
+- 说明当前可用的数据结构能支持哪些分析方向
+- 解释数据查询失败的可能原因，并给出替代分析思路
+- 不要编造数据，只基于表结构和指标定义做定性分析，不要给出任何具体的数据数值
+
+## 格式（每条之间用空行分隔）
+1. **建议标题**: 具体说明
+
+2. **建议标题**: 具体说明
+
+3. **建议标题**: 具体说明（如有必要）
+"""
+
+
+async def run_analyst(state: EvaluationState, llm_call_fn, stream_llm_gen=None) -> EvaluationState:
     """
     基于已有的查询结果生成2-3条分析建议。
 
@@ -58,6 +96,8 @@ async def run_analyst(state: EvaluationState, llm_call_fn) -> EvaluationState:
     Args:
         state: 当前评估状态，包含 question、raw_results、generated_sql 等
         llm_call_fn: LLM 调用函数 async fn(system_prompt, user_prompt) -> str
+        stream_llm_gen: 可选的流式生成器 async gen(system_prompt, user_prompt) -> AsyncGenerator[str]
+                        提供时 run_analyst 逐 token 消费；否则使用 llm_call_fn（向后兼容）
 
     Returns:
         EvaluationState: 更新后的状态（final_answer 已填充）
@@ -71,6 +111,7 @@ async def run_analyst(state: EvaluationState, llm_call_fn) -> EvaluationState:
     result_summary = "未执行SQL"
     raw_data = "无"
     indicator_context = "无"
+    table_context = "无"
 
     # 根据查询结果构建数据摘要和预览
     if state.raw_results:
@@ -95,18 +136,47 @@ async def run_analyst(state: EvaluationState, llm_call_fn) -> EvaluationState:
             parts.append(f"- {ind.get('name', '')}: {ind.get('formula', '')} {ind.get('description', '')}")
         indicator_context = "\n".join(parts)
 
-    # 将上下文变量注入系统提示模板
-    system_prompt = ANALYST_SYSTEM_PROMPT.format(
-        question=state.question,
-        sql=state.generated_sql or "无需SQL",
-        result_summary=result_summary,
-        raw_data=raw_data,
-        indicator_context=indicator_context
+    # 构建表结构上下文（无数据模式使用）
+    if hasattr(state, 'table_schemas') and state.table_schemas:
+        table_parts = []
+        for schema in state.table_schemas:
+            table_name = schema.get("tableName", "")
+            desc = schema.get("description", "")
+            cols = schema.get("columns", [])
+            col_list = "、".join(c.get("columnName", "") for c in cols[:10])
+            table_parts.append(f"- {table_name}: {len(cols)} 列 ({col_list})" + (f" — {desc}" if desc else ""))
+        table_context = "\n".join(table_parts)
+
+    # 判断是否走无数据模式
+    no_data_mode = (not state.raw_results) and (
+        state.execution_error or not state.generated_sql
     )
 
+    if no_data_mode:
+        system_prompt = ANALYST_NO_DATA_PROMPT.format(
+            question=state.question,
+            sql=state.generated_sql or "未生成有效SQL",
+            error_summary=state.execution_error or "SQL 生成/校验失败",
+            table_context=table_context,
+            indicator_context=indicator_context,
+        )
+    else:
+        # 有数据模式：走原有 prompt
+        system_prompt = ANALYST_SYSTEM_PROMPT.format(
+            question=state.question,
+            sql=state.generated_sql or "无需SQL",
+            result_summary=result_summary,
+            raw_data=raw_data,
+            indicator_context=indicator_context
+        )
+
     try:
-        # 调用 LLM 生成分析建议
-        response = await llm_call_fn(system_prompt, "请基于数据给出2-3条建议。")
+        if stream_llm_gen:
+            response = ""
+            async for chunk in stream_llm_gen(system_prompt, "请基于数据给出2-3条建议。"):
+                response += chunk
+        else:
+            response = await llm_call_fn(system_prompt, "请基于数据给出2-3条建议。")
         state.final_answer = response
         state.update_step(7.1, status="completed",
                          detail="分析建议已生成",

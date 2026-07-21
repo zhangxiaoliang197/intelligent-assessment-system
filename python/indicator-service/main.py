@@ -33,6 +33,7 @@ app.add_middleware(
 
 QA_SERVICE_URL = os.getenv("QA_SERVICE_URL", "http://localhost:10253")
 ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
+KNOWLEDGE_SERVICE_URL = os.getenv("KNOWLEDGE_SERVICE_URL", "http://localhost:10252")
 EVALUATION_API_URL = os.getenv("EVALUATION_API_URL", "http://localhost:10253")  # evaluation-api 注册在 qa-service
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 SESSIONS_FILE = os.path.join(DATA_DIR, 'sessions.json')
@@ -43,16 +44,209 @@ MAX_CONTEXT = int(os.getenv("INDICATOR_CONTEXT_ROUNDS", "5"))
 
 # ── 查询确认意图关键词 ──
 _QUERY_CONFIRM_KEYWORDS = [
-    "查询", "需要查询", "需要查", "查一下", "查一查", "帮我查",
-    "确认查询", "是的", "是", "好的", "好", "可以", "行", "要查",
-    "要查询", "查查", "查", "开始查询", "开始查", "执行查询",
-    "对", "嗯", "需要", "要", "确认",
+    "查询", "查一下", "查数据", "查查看", "查看指标", "查指标", "查结果",
+    "确认查询", "我查", "想查",
 ]
 _QUERY_DENY_KEYWORDS = [
     "不查询", "不用查询", "不查", "不用查", "不", "不用了",
     "不需要", "不需要了", "不用", "不查询了", "先不查",
     "算了", "不要", "不要了", "不必", "免了", "不执行",
 ]
+
+# 新问题检测关键词
+_NEW_QUESTION_KEYWORDS = [
+    "什么是", "什么叫", "解释", "定义", "含义", "概念",
+    "帮我分析", "帮我查", "如何", "怎样", "怎么",
+]
+
+# 概念问答分类关键词（第一层快速判断，与 LLM 分类互补）
+_CONCEPT_KEYWORDS = [
+    "什么是", "什么叫", "定义", "解释", "含义", "概念",
+    "什么意思", "如何理解",
+]
+
+
+def _is_concept_query(question: str) -> bool:
+    """用 _CONCEPT_KEYWORDS 匹配判断是否为概念问答。"""
+    t = question.strip().lower()
+    for kw in _CONCEPT_KEYWORDS:
+        if kw in t:
+            return True
+    return False
+
+
+def _is_new_question(question: str) -> bool:
+    """用 _NEW_QUESTION_KEYWORDS 匹配或长度超过 8 个字判断为新问题。"""
+    t = question.strip().lower()
+    # 超过 8 个字也认为是新问题
+    if len(t) > 8:
+        return True
+    for kw in _NEW_QUESTION_KEYWORDS:
+        if kw in t:
+            return True
+    return False
+
+
+def _classify_query(query: str) -> str:
+    """先调用 qa-service 的 LLM 分类接口，失败则用关键词兜底。
+
+    Returns:
+        "concept_qa" / "indicator_analysis" / "general_chat"
+    """
+    try:
+        body = json.dumps({"query": query}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{QA_SERVICE_URL}/qa/classify-query",
+            data=body,
+            method="POST"
+        )
+        req.add_header("Content-Type", "application/json")
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, timeout=10, context=ssl_ctx) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            classification = data.get("classification", "")
+            if classification in ("concept_qa", "indicator_analysis", "general_chat"):
+                return classification
+    except Exception as e:
+        logger.warning(f"Classify query via qa-service failed: {e}")
+
+    # 兜底：关键词匹配
+    if _is_concept_query(query):
+        return "concept_qa"
+    return "indicator_analysis"
+
+
+def _handle_concept_qa_stream(session_id: str, query: str) -> Generator[str, None, None]:
+    """概念问答核心处理逻辑。
+
+    1. 不发送任何 step 事件
+    2. 调用 knowledge-service 检索知识库
+    3. 调用 admin-service 获取已配置指标定义
+    4. 构建概念问答 prompt
+    5. 调用 qa-service 的 /qa/chat/stream 流式接口
+    6. 累积完整 LLM 回答，最后一次性输出 text + result 事件
+    """
+    # ── 检索知识库 ──
+    kb_results = []
+    try:
+        body = json.dumps({"query": query, "top_k": 3}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{KNOWLEDGE_SERVICE_URL}/knowledge/search",
+            data=body,
+            method="POST"
+        )
+        req.add_header("Content-Type", "application/json")
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, timeout=30, context=ssl_ctx) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            kb_results = data.get("results", [])
+    except Exception as e:
+        logger.warning(f"Knowledge search failed: {e}")
+
+    # ── 获取已配置指标定义 ──
+    indicator_defs = []
+    try:
+        req = urllib.request.Request(
+            f"{ADMIN_SERVICE_URL}/api/admin/indicator/list",
+            method="GET"
+        )
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("success") and data.get("indicators"):
+                indicator_defs = data["indicators"]
+    except Exception as e:
+        logger.warning(f"Failed to fetch indicators from admin: {e}")
+
+    # ── 构建概念问答 prompt ──
+    kb_text = ""
+    if kb_results:
+        kb_text = "\n\n## 知识库参考信息：\n"
+        for i, r in enumerate(kb_results):
+            kb_text += f"\n[{i + 1}] {r.get('title', '未知')}\n{r.get('content', '')}\n"
+
+    ind_text = ""
+    if indicator_defs:
+        ind_text = "\n\n## 系统中已配置的指标定义：\n"
+        for ind in indicator_defs:
+            name = ind.get("name", "")
+            desc = ind.get("description", "")
+            formula = ind.get("formula", "")
+            category = ind.get("category", "")
+            parts = [f"- **{name}**"]
+            if category:
+                parts.append(f"分类: {category}")
+            if desc:
+                parts.append(f"定义: {desc}")
+            if formula:
+                parts.append(f"公式: {formula}")
+            ind_text += "  " + ", ".join(parts) + "\n"
+
+    system_prompt = "你是一个专业的智能评估系统助手，擅长解释评估指标的概念、定义和计算方法。请用中文回答，回答要准确、清晰、有条理。"
+    if kb_text:
+        system_prompt += kb_text
+    if ind_text:
+        system_prompt += ind_text
+    system_prompt += "\n\n请基于以上参考信息回答用户的问题。如果参考信息不足以回答，请结合你的知识进行补充说明。"
+
+    # ── 调用 qa-service 流式接口 ──
+    body = json.dumps({
+        "query": query,
+        "top_k": 3,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{QA_SERVICE_URL}/qa/chat/stream",
+        data=body,
+        method="POST"
+    )
+    req.add_header("Content-Type", "application/json")
+
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    full_answer = ""
+    try:
+        with urllib.request.urlopen(req, timeout=180, context=ssl_ctx) as resp:
+            for line in resp:
+                line_str = line.decode("utf-8").strip()
+                if not line_str:
+                    continue
+                try:
+                    ev = json.loads(line_str)
+                    if ev.get("type") == "text":
+                        full_answer += ev.get("content", "")
+                    elif ev.get("type") == "error":
+                        yield json.dumps({"type": "text", "content": ev.get("content", "")}, ensure_ascii=False) + "\n"
+                        yield json.dumps({"type": "result", "session_id": session_id, "summary": "", "tree": None, "indicators": []}, ensure_ascii=False, default=str) + "\n"
+                        return
+                except json.JSONDecodeError:
+                    continue
+    except Exception as e:
+        logger.error(f"Concept QA stream failed: {e}")
+        yield json.dumps({"type": "text", "content": f"概念问答处理失败: {str(e)[:300]}"}, ensure_ascii=False) + "\n"
+        yield json.dumps({"type": "result", "session_id": session_id, "summary": "", "tree": None, "indicators": []}, ensure_ascii=False, default=str) + "\n"
+        return
+
+    # 累积完成后一次性输出
+    if full_answer:
+        yield json.dumps({"type": "text", "content": full_answer}, ensure_ascii=False) + "\n"
+    else:
+        full_answer = "抱歉，未能找到相关概念的解释信息。"
+        yield json.dumps({"type": "text", "content": full_answer}, ensure_ascii=False) + "\n"
+
+    yield json.dumps({
+        "type": "result",
+        "session_id": session_id,
+        "summary": full_answer,
+        "tree": None,
+        "indicators": [],
+    }, ensure_ascii=False, default=str) + "\n"
 
 
 def atomic_json_write(filepath, data):
@@ -384,8 +578,8 @@ def parse_structured_response(answer: str) -> dict:
     try:
         json_str = None
 
-        # 优先级1: 查找 ---JSON--- 分隔符（流式 prompt 格式），取分隔符之后的部分
-        sep_match = re.search(r'---\s*JSON\s*---', answer)
+        # 优先级1: 查找 ---JSON--- 或 ---正在生成指标体系--- 分隔符，取分隔符之后的部分
+        sep_match = re.search(r'---\s*(?:JSON|正在生成指标体系)\s*---', answer)
         if sep_match:
             after_sep = answer[sep_match.end():].strip()
             if after_sep:
@@ -641,8 +835,15 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
     if stage == "awaiting_confirmation":
         user_text = request.query.strip()
 
+        # ── 子分支 A0：用户输入了新问题（不是确认也不是拒绝） ──
+        if _is_new_question(user_text):
+            logger.info(f"[{session_id}] Detected new question in awaiting_confirmation stage, resetting to analyzing")
+            stage = "analyzing"
+            _set_session_stage(session_id, "analyzing")
+            # 不需要 yield 任何事件，继续走下面的逻辑
+
         # ── 子分支 A1：用户表示"不查询" ──
-        if _is_query_deny(user_text):
+        elif _is_query_deny(user_text):
             def generate_deny():
                 now_str = datetime.now().isoformat()
                 resp_text = "好的，已了解。如果后续需要查询这些指标，随时告诉我。"
@@ -652,7 +853,6 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                     "session_id": session_id,
                     "tree": None,
                     "indicators": [],
-                    "summary": resp_text
                 }, ensure_ascii=False) + "\n"
 
                 s = _ensure_session(session_id)
@@ -672,7 +872,7 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
             )
 
         # ── 子分支 A2：用户表示"查询" ──
-        if _is_query_confirm(user_text):
+        elif _is_query_confirm(user_text):
             # 先看用户是否在输入中直接带了数据源
             database_id = request.database_id
             database_name = request.database_name or ""
@@ -700,15 +900,14 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                     now_str = datetime.now().isoformat()
                     _set_session_stage(session_id, "querying")
 
-                    # 先发一条"开始查询"的提示文本，同时创建助手消息
-                    start_text = f"好的，正在使用数据源「{database_name or database_id}」查询这些指标..."
-                    yield json.dumps({"type": "text", "content": start_text}, ensure_ascii=False) + "\n"
-
                     s = _ensure_session(session_id)
                     s["messages"].append({"role": "user", "content": user_text, "timestamp": now_str})
 
-                    # 创建助手消息，后续 result 事件会更新该消息的 summary/indicators 等字段
+                    # 先创建助手消息，后续所有 text 事件都流入同一个 bubble
                     yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
+
+                    start_text = f"好的，正在使用数据源「{database_name or database_id}」查询这些指标..."
+                    yield json.dumps({"type": "text", "content": start_text}, ensure_ascii=False) + "\n"
 
                     # 调用 evaluation-api 执行查询管线
                     final_answer = ""
@@ -770,7 +969,6 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                         "type": "result",
                         "session_id": session_id,
                         "tree": None, "indicators": [],
-                        "summary": resp_text
                     }, ensure_ascii=False) + "\n"
 
                     s = _ensure_session(session_id)
@@ -802,14 +1000,14 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                 now_str = datetime.now().isoformat()
                 _set_session_stage(session_id, "querying")
 
-                start_text = f"好的，使用数据源「{database_name or database_id}」开始查询指标..."
-                yield json.dumps({"type": "text", "content": start_text}, ensure_ascii=False) + "\n"
-
                 s = _ensure_session(session_id)
                 s["messages"].append({"role": "user", "content": user_text, "timestamp": now_str})
 
-                # 创建助手消息，后续 result 事件会更新该消息的 summary/indicators 等字段
+                # 先创建助手消息，后续所有 text 事件都流入同一个 bubble
                 yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
+
+                start_text = f"好的，使用数据源「{database_name or database_id}」开始查询指标..."
+                yield json.dumps({"type": "text", "content": start_text}, ensure_ascii=False) + "\n"
 
                 final_answer = ""
                 pending = _get_pending_indicators(session_id)
@@ -859,6 +1057,36 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
     # =====================================================================
     # 分支 B：正常指标分析流程（analyzing / 或 done 状态的新问题）
     # =====================================================================
+    if stage == "analyzing" or stage == "done":
+        query_type = _classify_query(request.query)
+
+        if query_type == "general_chat":
+            # 一般对话 → 直接友好回复
+            def generate_greeting():
+                # 新消息
+                yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
+                resp_text = "你好！我是智能评估指标体系分析助手，可以帮你：\n\n1. **指标分析** — 分析评估侦察、打击、防护等领域的指标体系\n2. **概念问答** — 解释各种评估指标的定义和计算方法\n3. **数据查询** — 从数据库中查询指标的具体数值\n\n请问有什么可以帮你的？"
+                yield json.dumps({"type": "text", "content": resp_text}, ensure_ascii=False) + "\n"
+                yield json.dumps({"type": "result", "session_id": session_id, "summary": resp_text, "tree": None, "indicators": []}, ensure_ascii=False, default=str) + "\n"
+            return StreamingResponse(generate_greeting(), media_type="application/x-ndjson")
+
+        if query_type == "concept_qa":
+            # 概念问答 → 直接走知识库检索 + LLM 总结
+            def generate_concept_qa():
+                now_str = datetime.now().isoformat()
+                s = _ensure_session(session_id)
+                s["messages"].append({"role": "user", "content": request.query, "timestamp": now_str})
+
+                yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
+
+                for ev in _handle_concept_qa_stream(session_id, request.query):
+                    yield ev
+
+                _set_session_stage(session_id, "done")
+            return StreamingResponse(generate_concept_qa(), media_type="application/x-ndjson")
+
+        # 否则走原有的 Phase 1 指标体系生成流程（已有代码，不需要动）
+
     # 如果是 done 重置为 analyzing
     if stage == "done":
         _set_session_stage(session_id, "analyzing")
@@ -903,9 +1131,14 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
 需求：{request.query}{ctx_str}
 {db_indicators_text}
 
-请先写一段简短的分析总结（1-2句话，描述你构建指标体系的核心思路），然后用一行---JSON---分隔，最后输出JSON数据。
+请严格按照以下步骤输出：
 
-JSON格式要求（必须是可以被json.loads解析的JSON格式）：
+第一步：先输出一行 ---JSON--- 作为分隔符。
+第二步：紧跟一个可以被 json.loads 解析的 JSON 对象，包含 tree、indicators、summary 三个字段。
+第三步：输出一行 ---分析结束--- 作为分隔符。
+第四步：最后输出一段简短的分析总结（1-2句话，描述你构建指标体系的核心思路）。
+
+JSON格式要求：
 {{
     "tree": {{
         "name": "根节点名称",
@@ -931,7 +1164,12 @@ JSON格式要求（必须是可以被json.loads解析的JSON格式）：
 
     def generate():
         full_text = ""
+        json_buf = ""
+        lead_buf = ""       # lead 阶段缓冲：发现 --- 后暂存的文本
+        saw_sep = False     # 是否已发现 ---（可能正在接收 ---JSON---）
         now_str = datetime.now().isoformat()
+        phase = "lead"  # lead → json → analysis → done
+        result_sent = False
 
         # ── Phase 1 Step 1：正在解析指标体系 ──
         yield json.dumps({
@@ -960,22 +1198,103 @@ JSON格式要求（必须是可以被json.loads解析的JSON格式）：
                         if data.get("type") == "text":
                             chunk = data.get("content", "")
                             full_text += chunk
-                            # 流式输出文本部分，检测到 ---JSON--- 分隔符后停止转发 JSON 内容
-                            separator_idx = full_text.find("---JSON---")
-                            if separator_idx == -1:
-                                # 还没到分隔符，继续流式输出
+
+                            if phase == "lead":
+                                # 查找 ---JSON--- 分隔符
+                                sep_idx = full_text.find("---JSON---")
+                                if sep_idx >= 0:
+                                    # ---JSON--- 已找到，不重复转发 pre 文本
+                                    # （pre 内容已通过逐片 chunk 转发到前端）
+                                    # 直接进入 JSON 解析阶段
+                                    json_start = sep_idx + len("---JSON---")
+                                    json_buf = full_text[json_start:]
+                                    saw_sep = False
+                                    phase = "json"
+                                else:
+                                    # 还没到分隔符，逐片转发（同时过滤 --- 标记符残余）
+                                    if "---" in chunk or saw_sep:
+                                        # 发现 --- 标记 → 进入缓冲模式
+                                        # 后续所有不含 --- 的 token（如 "JSON"）都不会泄漏
+                                        if "---" in chunk:
+                                            clean_end = chunk.find("---")
+                                            if clean_end > 0:
+                                                clean_chunk = chunk[:clean_end].strip()
+                                                # 有中文才转发，过滤标记符碎片（如 "JSON"、"J" 等）
+                                                if clean_chunk and any('\u4e00' <= c <= '\u9fff' for c in clean_chunk):
+                                                    yield json.dumps({"type": "text", "content": clean_chunk}, ensure_ascii=False) + "\n"
+                                        # 不管是否在 chunk 中找到 ---，都设置缓冲标记
+                                        # 这样下一段 token（如 "JSON"、"已为您生成了"）不会泄漏
+                                        saw_sep = True
+                                    elif chunk.strip():
+                                        yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
+
+                            elif phase == "json":
+                                json_buf += chunk
+                                # 查找 ---分析结束--- 分隔符
+                                end_idx = json_buf.find("---分析结束---")
+                                if end_idx >= 0:
+                                    json_str = json_buf[:end_idx]
+                                    # 解析 JSON
+                                    result = parse_structured_response(json_str)
+                                    tree = result.get("tree")
+                                    indicators = result.get("indicators", [])
+                                    summary = result.get("summary", "")
+
+                                    # 指标生成失败
+                                    if not indicators:
+                                        yield json.dumps({
+                                            "type": "error",
+                                            "session_id": session_id,
+                                            "message": "指标体系生成失败：大模型未返回有效结果，请检查大模型配置后重试。",
+                                        }, ensure_ascii=False) + "\n"
+                                        return
+
+                                    # ── Step 1 完成 ──
+                                    indicator_count = len(indicators)
+                                    yield json.dumps({
+                                        "type": "step",
+                                        "step": {"step": 1, "description": "解析指标体系", "status": "completed",
+                                                 "detail": f"共识别 {indicator_count} 个指标"}
+                                    }, ensure_ascii=False) + "\n"
+
+                                    # 保存待查询的指标体系
+                                    indicator_names = [ind.get("name", "") for ind in indicators[:5]]
+                                    names_str = "、".join(indicator_names)
+                                    if indicator_count > 5:
+                                        names_str += f" 等共{indicator_count}个指标"
+                                    _set_pending_indicators(session_id, {
+                                        "tree": tree,
+                                        "indicators": indicators,
+                                        "summary": summary,
+                                        "original_query": request.query,
+                                        "generated_at": datetime.now().isoformat(),
+                                    })
+                                    _set_session_stage(session_id, "awaiting_confirmation")
+
+                                    # ── 发送 result，前端渲染指标卡片 ──
+                                    yield json.dumps({
+                                        "type": "result",
+                                        "session_id": session_id,
+                                        "tree": tree,
+                                        "indicators": indicators,
+                                    }, ensure_ascii=False, default=str) + "\n"
+
+                                    result_sent = True
+                                    phase = "analysis"
+
+                                    # 发送结构化摘要（代替冗余的 raw remaining 文本）
+                                    yield json.dumps({
+                                        "type": "text",
+                                        "content": f"已为您生成 {indicator_count} 个指标的指标体系，包含指标树状结构和各指标的计算方式。主要指标：{names_str}。"
+                                    }, ensure_ascii=False) + "\n"
+
+                            elif phase == "analysis":
+                                # 分析文本自然流式输出
+                                # 过滤与已有内容高度重复的文本
+                                if not chunk.strip():
+                                    continue
                                 yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
-                            elif separator_idx + len("---JSON---") > len(full_text) - len(chunk):
-                                # 分隔符恰好在这段 chunk 中，只输出分隔符之前的文本部分
-                                visible = full_text[:separator_idx]
-                                if len(visible) > 0 and len(visible) >= len(chunk):
-                                    yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
-                                elif len(visible) > 0:
-                                    # chunk 跨越了分隔符，只输出分隔符之前的新增文本
-                                    pre_sep = chunk.split("---JSON---")[0]
-                                    if pre_sep.strip():
-                                        yield json.dumps({"type": "text", "content": pre_sep}, ensure_ascii=False) + "\n"
-                            # 分隔符之后：继续积累 full_text 但不再转发（JSON 部分）
+
                         elif data.get("type") == "error":
                             yield json.dumps({"type": "text", "content": data.get("content", "")}, ensure_ascii=False) + "\n"
                     except json.JSONDecodeError:
@@ -984,72 +1303,62 @@ JSON格式要求（必须是可以被json.loads解析的JSON格式）：
         except Exception as e:
             yield json.dumps({"type": "text", "content": f"分析失败: {str(e)[:200]}"}, ensure_ascii=False) + "\n"
 
-        # 解析结构化结果
-        result = parse_structured_response(full_text)
-        tree = result.get("tree")
-        indicators = result.get("indicators", [])
-        summary = result.get("summary", result.get("answer", full_text[:200]))
-
-        # ── 指标生成失败时不触发追问 ──
-        if not indicators:
+        # ── 容错：如果 LLM 没按新格式输出，走旧逻辑 ──
+        if not result_sent:
+            result = parse_structured_response(full_text)
+            tree = result.get("tree")
+            indicators = result.get("indicators", [])
+            # 清理 full_text 中的标记符，避免 ---JSON--- 等泄漏给前端
+            clean_fallback = re.sub(r'---.*?(?:JSON|正在生成指标体系|分析结束).*?---', '', full_text).strip()
+            summary = result.get("summary", result.get("answer", clean_fallback[:200]))
+            if not indicators:
+                yield json.dumps({
+                    "type": "error",
+                    "session_id": session_id,
+                    "message": "指标体系生成失败：大模型未返回有效结果，请检查大模型配置后重试。",
+                }, ensure_ascii=False) + "\n"
+                return
+            indicator_count = len(indicators)
             yield json.dumps({
-                "type": "error",
-                "session_id": session_id,
-                "message": "指标体系生成失败：大模型未返回有效结果，请检查大模型配置后重试。",
+                "type": "step",
+                "step": {"step": 1, "description": "解析指标体系", "status": "completed",
+                         "detail": f"共识别 {indicator_count} 个指标"}
             }, ensure_ascii=False) + "\n"
-            return
+            indicator_names = [ind.get("name", "") for ind in indicators[:5]]
+            names_str = "、".join(indicator_names)
+            if indicator_count > 5:
+                names_str += f" 等共{indicator_count}个指标"
+            _set_pending_indicators(session_id, {
+                "tree": tree,
+                "indicators": indicators,
+                "summary": summary,
+                "original_query": request.query,
+                "generated_at": datetime.now().isoformat(),
+            })
+            _set_session_stage(session_id, "awaiting_confirmation")
+            yield json.dumps({
+                "type": "result",
+                "session_id": session_id,
+                "tree": tree,
+                "indicators": indicators,
+            }, ensure_ascii=False, default=str) + "\n"
 
-        # ── Phase 1 Step 1：解析完成 ──
-        indicator_count = len(indicators)
-        yield json.dumps({
-            "type": "step",
-            "step": {"step": 1, "description": "解析指标体系", "status": "completed",
-                     "detail": f"共识别 {indicator_count} 个指标，指标树和计算方式详见左侧对话区"}
-        }, ensure_ascii=False) + "\n"
-
-        # ── 保存待查询的指标体系 ──
+        # ── 追加追问文本（独立消息）──
         indicator_names = [ind.get("name", "") for ind in indicators[:5]]
         names_str = "、".join(indicator_names)
         if indicator_count > 5:
             names_str += f" 等共{indicator_count}个指标"
-
-        _set_pending_indicators(session_id, {
-            "tree": tree,
-            "indicators": indicators,
-            "summary": summary,
-            "original_query": request.query,
-            "generated_at": datetime.now().isoformat(),
-        })
-        _set_session_stage(session_id, "awaiting_confirmation")
-
-        # ── 追加追问文本 ──
         follow_up = (
-            "\n\n---\n\n"
-            f"已为您生成了 {names_str}。\n\n"
+            f"已为您生成指标体系：{names_str}。\n\n"
             "**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；"
             "如果暂时不需要，请回复「不查询」。"
         )
-
-        # ── 先发一条简短描述文本，填充左侧对话气泡（不输出长 JSON）──
-        intro_text = f"已为您生成了 {names_str} 的指标体系，包含指标树状结构和各指标的计算方式。"
-        yield json.dumps({"type": "text", "content": intro_text}, ensure_ascii=False) + "\n"
-
-        # 再发 result（带 tree/indicators/summary 供前端渲染卡片）
-        yield json.dumps({
-            "type": "result",
-            "session_id": session_id,
-            "tree": tree,
-            "indicators": indicators,
-            "summary": summary
-        }, ensure_ascii=False, default=str) + "\n"
-
-        # 再发追问文本为独立消息（前端将创建新的 assistant 消息）
         yield json.dumps({
             "type": "new_message",
             "content": follow_up.strip()
         }, ensure_ascii=False) + "\n"
 
-        # 保存会话：两条独立的 assistant 消息
+        # 保存会话
         s = _ensure_session(session_id)
         s["messages"].append({"role": "user", "content": request.query, "timestamp": now_str})
         s["messages"].append({"role": "assistant", "content": summary or full_text[:200], "timestamp": now_str})

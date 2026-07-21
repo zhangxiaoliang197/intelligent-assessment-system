@@ -34,5 +34,2603 @@
       "content": "本次分析基于系统中已配置的指标数据库（admin-db）提供的三项指标（科目平均总评成绩、优秀学生占比、考试及格率），这些指标虽然来源于教育训练场景，但其统计逻辑（如平均值、达标率、优秀率）可映射至作战效能评估中的综合效能指标（如任务完成率、毁伤效率比等）。知识库参考资料（TE-BTBA-001-2021）明确了装备试验鉴定程序和要求，强调了分类施策、系统管理、文件管理等要求，但未提供具体作战效能指标定义。因此，为补全作战效能评估体系，结合大模型自身领域知识，补充了任务完成率、毁伤效率比等典型作战效能指标，并构建了三级指标树：顶层为作战效能评估，下分作战能力指标、作战适用性指标和综合效能指标三个二级节点，每个二级节点下再细分具体指标。建议后续根据实际作战试验数据对指标权重和标准进行动态调整。",
       "timestamp": "2026-07-08T08:44:50.125260"
     }
-  ]
+  ],
+  "82113582-26cd-41de-b8af-f27f78a84eb2": {
+    "stage": "analyzing",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析打击能力指标",
+        "timestamp": "2026-07-21T15:53:53.482523"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系从火力强度、打击精度和毁伤效果三个子维度评估打击能力，共包含6个指标。其中火力密度、弹药投射量、命中概率和目标毁伤率来自系统已配置的指标数据库，圆概率误差基于知识库中精度评估标准，效能比由大模型根据领域知识补充。权重分配突出命中概率和毁伤率的核心地位，兼顾效率和精度。",
+        "timestamp": "2026-07-21T15:53:53.482523"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 火力密度、弹药投射量、命中概率、圆概率误差、目标毁伤率 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T15:53:53.482523"
+      },
+      {
+        "role": "user",
+        "content": "不查询",
+        "timestamp": "2026-07-21T15:54:19.177186"
+      },
+      {
+        "role": "assistant",
+        "content": "好的，已了解。如果后续需要查询这些指标，随时告诉我。",
+        "timestamp": "2026-07-21T15:54:19.177186"
+      }
+    ],
+    "pending_indicators": null
+  },
+  "b057c61f-28b4-4539-8eb7-04ef59b17a24": {
+    "stage": "analyzing",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析打击能力指标",
+        "timestamp": "2026-07-21T15:54:28.579318"
+      },
+      {
+        "role": "assistant",
+        "content": "指标体系以火力打击效能的四个核心维度构建：打击范围（最大射程和有效覆盖角）体现覆盖能力，打击精度（命中概率和圆概率误差）衡量准确性，毁伤效果（目标毁伤概率和杀伤半径）评估实际破坏力，响应速度（反应时间和火力密度）反映时效性。其中最大射程、命中概率和反应时间来自系统数据库，圆概率误差和目标毁伤概率参考知识库中的军事评估标准，杀伤半径和火力密度由大模型根据现代作战需求推断补充，权重分配突出精度和射程的优先地位。",
+        "timestamp": "2026-07-21T15:54:28.579318"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 最大射程、命中概率、圆概率误差、目标毁伤概率、反应时间。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T15:54:28.579318"
+      },
+      {
+        "role": "user",
+        "content": "查询",
+        "timestamp": "2026-07-21T15:54:54.468300"
+      },
+      {
+        "role": "assistant",
+        "content": "1. **提升红方2营反应速度**: 红方2营在遭遇战和火力任务中反应时间分别达18分钟和20分钟，远高于蓝方A旅防御战的8分钟和蓝方B旅阻击战的10分钟，建议通过缩短决策与发射环节来降低反应时间。\n\n2. **优化红方1营任务时长管理**: 红方1营突击和歼灭任务的实际耗时分别超计划30%（5.2 vs 4.0小时）和18.8%（9.5 vs 8.0小时），而蓝方B旅阻击战实际耗时低于计划，建议分析红方1营超时原因并制定更精确的时长规划。\n\n3. **完善数据完整性，提升分析精度**: 蓝方C旅侦察任务和红方2营火力任务缺少打击结果（命中数、摧毁数等），导致无法评估其打击效能，建议强制记录所有任务的战斗结果数据。",
+        "timestamp": "2026-07-21T15:54:54.468300"
+      }
+    ],
+    "pending_indicators": null
+  },
+  "4f728115-2050-4441-a9ea-f56b623571b3": {
+    "stage": "analyzing",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析作战效能指标",
+        "timestamp": "2026-07-21T16:09:31.078754"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系以作战效能为核心，通过火力打击、机动能力、生存能力和指挥控制四个维度构建三层结构，优先采用系统数据库中的命中概率、平均机动速度、信息处理延迟等指标，并补充知识库和LLM推导的防护等级系数、毁伤半径等指标，确保评估全面且可量化。",
+        "timestamp": "2026-07-21T16:09:31.078754"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 命中概率、平均机动速度、防护等级系数、信息处理延迟、毁伤半径。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T16:09:31.078754"
+      },
+      {
+        "role": "user",
+        "content": "查询",
+        "timestamp": "2026-07-21T16:30:47.929439"
+      },
+      {
+        "role": "assistant",
+        "content": "1. **提升红方2营的命中概率**: 红方2营命中概率仅28.57%，为红方最低（低于红方1营的34.85%和红方3营的36%），建议重点加强该营的射击训练或武器校准，缩小与红方3营7.43个百分点的差距。\n\n2. **优化蓝方C旅的生存能力**: 蓝方C旅生存率仅68.18%，为所有单位最低，且其命中概率数据缺失，建议优先排查其防护装备或战术部署问题，同时补齐作战数据以支撑后续改进。\n\n3. **强化蓝方A旅的命中优势并平衡生存能力**: 蓝方A旅命中概率高达40%，为全场最高，但其生存率71.43%低于红方2营（73.5%）和红方3营（78.13%），建议在保持火力优势的同时，通过增加掩护或提升装甲防护来弥补生存短板。",
+        "timestamp": "2026-07-21T16:30:47.929439"
+      }
+    ],
+    "pending_indicators": null
+  },
+  "783a10d5-66a1-4dc3-8dea-08291c6305de": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "??",
+        "timestamp": "2026-07-21T16:21:20.238434"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系从火力打击、机动生存和指挥控制三个一级维度展开，共6个指标。其中毁伤概率和命中偏差来自系统已有指标数据库（admin-db），最大机动速度和装甲等效厚度基于知识库资料（knowledge），信息融合延迟和决策响应时间由模型补充（llm）。权重分配突出火力打击核心能力（毁伤概率0.35、命中偏差0.25），兼顾机动与指挥因素，适用于综合评估作战平台的整体效能。",
+        "timestamp": "2026-07-21T16:21:20.238434"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 毁伤概率、命中偏差、最大机动速度、装甲等效厚度、信息融合延迟 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T16:21:20.238434"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "作战效能评估",
+        "source": "admin-db",
+        "children": [
+          {
+            "name": "火力打击能力",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "毁伤效能",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "射击精度",
+                "source": "admin-db",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "机动生存能力",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "机动速度",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "防护能力",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "指挥控制能力",
+            "source": "llm",
+            "children": [
+              {
+                "name": "信息处理效率",
+                "source": "llm",
+                "children": []
+              },
+              {
+                "name": "决策响应时间",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "毁伤概率",
+          "type": "admin-db",
+          "definition": "单次打击中目标被完全摧毁的概率",
+          "formula": "P_d = 1 - (1 - P_k)^n",
+          "criteria": "≥0.8为优秀，0.6-0.8为良好，<0.6为一般",
+          "weight": "0.35"
+        },
+        {
+          "name": "命中偏差",
+          "type": "admin-db",
+          "definition": "弹着点与目标中心的平均距离偏差",
+          "formula": "CEP = sqrt(σ_x^2 + σ_y^2)",
+          "criteria": "≤5m为优秀，5-10m为良好，>10m为一般",
+          "weight": "0.25"
+        },
+        {
+          "name": "最大机动速度",
+          "type": "knowledge",
+          "definition": "作战单位在标准地形条件下可实现的最大行驶速度",
+          "formula": "V_max = (D_max / T_min) * 3.6",
+          "criteria": "≥60km/h为优秀，40-60km/h为良好，<40km/h为一般",
+          "weight": "0.15"
+        },
+        {
+          "name": "装甲等效厚度",
+          "type": "knowledge",
+          "definition": "综合装甲材料与结构后的等效防护厚度，反映抗穿透能力",
+          "formula": "T_eq = T_base * K_material * K_angle",
+          "criteria": "≥500mm为优秀，300-500mm为良好，<300mm为一般",
+          "weight": "0.10"
+        },
+        {
+          "name": "信息融合延迟",
+          "type": "llm",
+          "definition": "从传感器采集数据到形成综合态势图的时间延迟",
+          "formula": "D_info = T_collect + T_process + T_transmit",
+          "criteria": "≤5s为优秀，5-10s为良好，>10s为一般",
+          "weight": "0.10"
+        },
+        {
+          "name": "决策响应时间",
+          "type": "llm",
+          "definition": "从接收到作战指令到完成决策输出的总耗时",
+          "formula": "T_resp = T_analyze + T_plan + T_approve",
+          "criteria": "≤30s为优秀，30-60s为良好，>60s为一般",
+          "weight": "0.05"
+        }
+      ],
+      "summary": "本指标体系从火力打击、机动生存和指挥控制三个一级维度展开，共6个指标。其中毁伤概率和命中偏差来自系统已有指标数据库（admin-db），最大机动速度和装甲等效厚度基于知识库资料（knowledge），信息融合延迟和决策响应时间由模型补充（llm）。权重分配突出火力打击核心能力（毁伤概率0.35、命中偏差0.25），兼顾机动与指挥因素，适用于综合评估作战平台的整体效能。",
+      "original_query": "??",
+      "generated_at": "2026-07-21T16:21:35.833543"
+    }
+  },
+  "2ff66866-4fd5-4196-9403-5c3204f87dfb": {
+    "stage": "analyzing",
+    "messages": [],
+    "pending_indicators": null
+  },
+  "6df7f930-6441-4c7a-bf09-6d7fc02c747f": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hello",
+        "timestamp": "2026-07-21T16:37:38.967352"
+      },
+      {
+        "role": "assistant",
+        "content": "由于用户输入'hello'为无具体军事含义的问候语，无法匹配现有指标数据库或知识库内容，因此基于大模型自身知识构建了一个通用的指挥控制效能评估指标体系作为示例。该体系包含6个指标，权重分配侧重通信成功率和决策时间，适用于评估指挥通信系统的可靠性和响应速度。建议用户提供更具体的评估需求（如特定作战场景或系统类型）以获得更精确的分析。",
+        "timestamp": "2026-07-21T16:37:38.967352"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 通信成功率、决策时间、系统可用度、通信时延、指令传达时间 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T16:37:38.967352"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "指挥控制效能评估",
+        "source": "llm",
+        "children": [
+          {
+            "name": "通信可靠性",
+            "source": "llm",
+            "children": [
+              {
+                "name": "通信成功率",
+                "source": "llm",
+                "children": []
+              },
+              {
+                "name": "通信时延",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "指挥响应速度",
+            "source": "llm",
+            "children": [
+              {
+                "name": "决策时间",
+                "source": "llm",
+                "children": []
+              },
+              {
+                "name": "指令传达时间",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "系统稳定性",
+            "source": "llm",
+            "children": [
+              {
+                "name": "系统可用度",
+                "source": "llm",
+                "children": []
+              },
+              {
+                "name": "故障恢复时间",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "通信成功率",
+          "type": "llm",
+          "definition": "在规定时间内成功完成通信任务的次数占总通信尝试次数的百分比",
+          "formula": "通信成功率 = (成功通信次数 / 总通信尝试次数) × 100%",
+          "criteria": "≥95%为优秀，≥85%为良好，≥70%为合格",
+          "weight": "0.3"
+        },
+        {
+          "name": "决策时间",
+          "type": "llm",
+          "definition": "从接收到作战信息到做出指挥决策所花费的平均时间",
+          "formula": "决策时间 = Σ(每次决策时间) / 决策次数",
+          "criteria": "≤30秒为优秀，≤60秒为良好，≤120秒为合格",
+          "weight": "0.25"
+        },
+        {
+          "name": "系统可用度",
+          "type": "llm",
+          "definition": "系统在任意时刻能够正常执行功能的能力，通常以运行时间占比衡量",
+          "formula": "系统可用度 = (总运行时间 - 总故障时间) / 总运行时间 × 100%",
+          "criteria": "≥99.9%为优秀，≥99%为良好，≥95%为合格",
+          "weight": "0.25"
+        },
+        {
+          "name": "通信时延",
+          "type": "llm",
+          "definition": "信息从发送端到接收端传输所经历的平均时间",
+          "formula": "通信时延 = Σ(每次传输时间) / 传输次数",
+          "criteria": "≤10ms为优秀，≤50ms为良好，≤100ms为合格",
+          "weight": "0.1"
+        },
+        {
+          "name": "指令传达时间",
+          "type": "llm",
+          "definition": "从指挥员下达指令到执行单位接收指令的平均时间",
+          "formula": "指令传达时间 = Σ(每次传达时间) / 指令次数",
+          "criteria": "≤20秒为优秀，≤40秒为良好，≤60秒为合格",
+          "weight": "0.05"
+        },
+        {
+          "name": "故障恢复时间",
+          "type": "llm",
+          "definition": "系统发生故障后恢复正常功能所需的平均时间",
+          "formula": "故障恢复时间 = Σ(每次恢复时间) / 故障次数",
+          "criteria": "≤5分钟为优秀，≤15分钟为良好，≤30分钟为合格",
+          "weight": "0.05"
+        }
+      ],
+      "summary": "由于用户输入'hello'为无具体军事含义的问候语，无法匹配现有指标数据库或知识库内容，因此基于大模型自身知识构建了一个通用的指挥控制效能评估指标体系作为示例。该体系包含6个指标，权重分配侧重通信成功率和决策时间，适用于评估指挥通信系统的可靠性和响应速度。建议用户提供更具体的评估需求（如特定作战场景或系统类型）以获得更精确的分析。",
+      "original_query": "hello",
+      "generated_at": "2026-07-21T16:37:54.155136"
+    }
+  },
+  "ee98ea3a-ac99-4072-a5ee-a04e084daedb": {
+    "stage": "done",
+    "messages": [
+      {
+        "role": "user",
+        "content": "什么是侦察覆盖率",
+        "timestamp": "2026-07-21T16:38:34.341396"
+      }
+    ],
+    "pending_indicators": null
+  },
+  "e7ee273b-a1a9-4d8b-a9ea-3f12e72dc923": {
+    "stage": "analyzing",
+    "messages": [],
+    "pending_indicators": null
+  },
+  "f48d8cf6-f8a6-4e20-87fe-64758aebe0b8": {
+    "stage": "done",
+    "messages": [
+      {
+        "role": "user",
+        "content": "什么是侦察覆盖率",
+        "timestamp": "2026-07-21T16:39:20.398554"
+      }
+    ],
+    "pending_indicators": null
+  },
+  "112a34ec-b827-491e-932f-08c6360c3881": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "帮我分析火力打击指标",
+        "timestamp": "2026-07-21T16:39:39.546226"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系以火力打击效能为核心，从火力强度、打击精度和毁伤效果三个维度展开，共包含6个具体指标。其中弹药投射量、命中概率和目标毁伤率来自系统数据库，火力密度和圆概率偏差基于军事运筹学知识，附带损伤系数由大模型推断补充。指标权重分配体现以命中概率和弹药投射量为主导的评估思路，兼顾毁伤效果和作战人道性要求。",
+        "timestamp": "2026-07-21T16:39:39.546226"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 弹药投射量、火力密度、命中概率、圆概率偏差、目标毁伤率 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T16:39:39.546226"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "火力打击效能",
+        "source": "admin-db",
+        "children": [
+          {
+            "name": "火力强度",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "弹药投射量",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "火力密度",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "打击精度",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "命中概率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "圆概率偏差",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "毁伤效果",
+            "source": "llm",
+            "children": [
+              {
+                "name": "目标毁伤率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "附带损伤系数",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "弹药投射量",
+          "type": "admin-db",
+          "definition": "单位时间内向目标区域投射的弹药总质量或数量，反映火力投送规模",
+          "formula": "W = Σ(wi × ni)，其中wi为单发弹药质量，ni为发射数量",
+          "criteria": "根据作战任务类型，常规压制任务≥10吨/小时，精确打击任务≥1吨/小时",
+          "weight": "0.25"
+        },
+        {
+          "name": "火力密度",
+          "type": "knowledge",
+          "definition": "单位时间单位面积内的弹药落点数量，反映火力覆盖的密集程度",
+          "formula": "D = N / (S × T)，其中N为落弹总数，S为目标区域面积，T为打击时间",
+          "criteria": "压制任务≥5发/公顷·分钟，歼灭任务≥15发/公顷·分钟",
+          "weight": "0.20"
+        },
+        {
+          "name": "命中概率",
+          "type": "admin-db",
+          "definition": "单发弹药命中预定目标的概率，反映武器系统的射击精度",
+          "formula": "P_h = 命中次数 / 总发射次数 × 100%",
+          "criteria": "精确制导弹药≥0.85，常规弹药≥0.50",
+          "weight": "0.25"
+        },
+        {
+          "name": "圆概率偏差",
+          "type": "knowledge",
+          "definition": "以目标为中心，包含50%弹着点的圆半径，衡量射击散布精度",
+          "formula": "CEP = 0.6745 × σ，其中σ为弹着点标准差",
+          "criteria": "精确制导武器CEP≤5米，常规火炮CEP≤50米",
+          "weight": "0.15"
+        },
+        {
+          "name": "目标毁伤率",
+          "type": "admin-db",
+          "definition": "被摧毁或丧失战斗力的目标数量占目标总数的比例，反映打击效果",
+          "formula": "K = D_target / N_target × 100%，其中D_target为毁伤目标数，N_target为目标总数",
+          "criteria": "歼灭任务≥70%，压制任务≥30%",
+          "weight": "0.10"
+        },
+        {
+          "name": "附带损伤系数",
+          "type": "llm",
+          "definition": "打击行动对非军事目标或平民造成的额外损伤程度，反映作战精确性和人道性",
+          "formula": "C = C_damage / P_damage，其中C_damage为附带损伤值，P_damage为预期毁伤值",
+          "criteria": "城市环境≤0.1，野外环境≤0.3",
+          "weight": "0.05"
+        }
+      ],
+      "summary": "本指标体系以火力打击效能为核心，从火力强度、打击精度和毁伤效果三个维度展开，共包含6个具体指标。其中弹药投射量、命中概率和目标毁伤率来自系统数据库，火力密度和圆概率偏差基于军事运筹学知识，附带损伤系数由大模型推断补充。指标权重分配体现以命中概率和弹药投射量为主导的评估思路，兼顾毁伤效果和作战人道性要求。",
+      "original_query": "帮我分析火力打击指标",
+      "generated_at": "2026-07-21T16:39:57.290669"
+    }
+  },
+  "8be2412d-5540-41b7-8278-89b35b6126a2": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析保障能力指标",
+        "timestamp": "2026-07-21T17:05:03.078246"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系以系统已配置的‘人员满编率’、‘装备完好率’、‘物资储备充足率’为核心骨架，结合知识库中‘人员技能达标率’和领域知识补充的‘维修响应时间’、‘补给时效性’，形成覆盖人员、装备、后勤三个维度的完整保障能力评估框架，权重分配突出装备完好与人员满编的核心地位。",
+        "timestamp": "2026-07-21T17:05:03.078246"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 人员满编率、装备完好率、物资储备充足率、人员技能达标率、维修响应时间 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T17:05:03.078246"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "保障能力",
+        "source": "admin-db",
+        "children": [
+          {
+            "name": "人员保障",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "人员满编率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "人员技能达标率",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "装备保障",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "装备完好率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "维修响应时间",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "后勤保障",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "物资储备充足率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "补给时效性",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "人员满编率",
+          "type": "admin-db",
+          "definition": "实际在编人数与编制人数的比率，反映人员配备的完整程度",
+          "formula": "人员满编率 = (实际在编人数 / 编制人数) × 100%",
+          "criteria": "≥90%为优秀，≥80%为良好，≥70%为合格",
+          "weight": "0.25"
+        },
+        {
+          "name": "装备完好率",
+          "type": "admin-db",
+          "definition": "处于良好技术状态、可随时投入使用的装备数量与装备总数量之比",
+          "formula": "装备完好率 = (完好装备数量 / 装备总数量) × 100%",
+          "criteria": "≥95%为优秀，≥85%为良好，≥75%为合格",
+          "weight": "0.30"
+        },
+        {
+          "name": "物资储备充足率",
+          "type": "admin-db",
+          "definition": "实际库存物资数量与标准储备定额的比率，反映物资保障的充裕程度",
+          "formula": "物资储备充足率 = (实际库存量 / 标准储备定额) × 100%",
+          "criteria": "≥100%为优秀，≥90%为良好，≥80%为合格",
+          "weight": "0.20"
+        },
+        {
+          "name": "人员技能达标率",
+          "type": "knowledge",
+          "definition": "通过考核或认证达到岗位技能标准的人员占全员的比例",
+          "formula": "人员技能达标率 = (技能达标人数 / 总人数) × 100%",
+          "criteria": "≥95%为优秀，≥85%为良好，≥70%为合格",
+          "weight": "0.10"
+        },
+        {
+          "name": "维修响应时间",
+          "type": "llm",
+          "definition": "从报修到维修人员到达现场的平均时间，反映维修保障的及时性",
+          "formula": "维修响应时间 = Σ(每次响应时间) / 维修次数",
+          "criteria": "≤30分钟为优秀，≤60分钟为良好，≤120分钟为合格",
+          "weight": "0.10"
+        },
+        {
+          "name": "补给时效性",
+          "type": "llm",
+          "definition": "从下达补给命令到物资送达指定地点的平均时间，反映后勤补给效率",
+          "formula": "补给时效性 = Σ(每次补给时间) / 补给次数",
+          "criteria": "≤4小时为优秀，≤8小时为良好，≤24小时为合格",
+          "weight": "0.05"
+        }
+      ],
+      "summary": "本指标体系以系统已配置的‘人员满编率’、‘装备完好率’、‘物资储备充足率’为核心骨架，结合知识库中‘人员技能达标率’和领域知识补充的‘维修响应时间’、‘补给时效性’，形成覆盖人员、装备、后勤三个维度的完整保障能力评估框架，权重分配突出装备完好与人员满编的核心地位。",
+      "original_query": "分析保障能力指标",
+      "generated_at": "2026-07-21T17:05:18.353436"
+    }
+  },
+  "ca3b7b2c-5340-40d8-8390-45c7ee55f3e8": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析保障能力指标",
+        "timestamp": "2026-07-21T17:26:05.527571"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系以'保障能力'为根节点，下设人员、装备、物资、后勤、信息五个二级维度，共细化12个末端指标。指标来源涵盖系统数据库（admin-db）、知识库（knowledge）及大模型推断（llm），权重分配突出装备完好率与物资储备充足率，兼顾人员素质与信息保障，形成全面且可操作的评估框架。",
+        "timestamp": "2026-07-21T17:26:05.527571"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 人员满编率、装备完好率、物资储备充足率、油料保障率、通信畅通率 等共11个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T17:26:05.527571"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "保障能力",
+        "source": "admin-db",
+        "children": [
+          {
+            "name": "人员保障",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "人员满编率",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "专业对口率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "训练达标率",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "装备保障",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "装备完好率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "装备配套率",
+                "source": "admin-db",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "物资保障",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "物资储备充足率",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "物资周转效率",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "后勤保障",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "油料保障率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "弹药保障率",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "信息保障",
+            "source": "llm",
+            "children": [
+              {
+                "name": "通信畅通率",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "情报准确率",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "人员满编率",
+          "type": "knowledge",
+          "definition": "实际在编人员数与编制人员数的比值，反映人员数量的充足程度",
+          "formula": "人员满编率 = 实际在编人数 / 编制人数 × 100%",
+          "criteria": "≥95%为优秀，85%-95%为良好，<85%为不合格",
+          "weight": "0.10"
+        },
+        {
+          "name": "装备完好率",
+          "type": "admin-db",
+          "definition": "处于完好状态、可随时投入使用的装备数量占装备总数的比例",
+          "formula": "装备完好率 = 完好装备数 / 装备总数 × 100%",
+          "criteria": "≥90%为优秀，80%-90%为良好，<80%为不合格",
+          "weight": "0.15"
+        },
+        {
+          "name": "物资储备充足率",
+          "type": "knowledge",
+          "definition": "实际储备物资数量与标准储备定额的比值，反映物资储备的充足程度",
+          "formula": "物资储备充足率 = 实际储备量 / 标准储备定额 × 100%",
+          "criteria": "≥100%为充足，80%-100%为基本充足，<80%为不足",
+          "weight": "0.12"
+        },
+        {
+          "name": "油料保障率",
+          "type": "admin-db",
+          "definition": "实际可供应油料数量与作战任务所需油料数量的比值",
+          "formula": "油料保障率 = 实际供应量 / 需求量 × 100%",
+          "criteria": "≥95%为优秀，85%-95%为良好，<85%为不合格",
+          "weight": "0.10"
+        },
+        {
+          "name": "通信畅通率",
+          "type": "knowledge",
+          "definition": "在规定时间内通信网络保持正常运行的时长比例",
+          "formula": "通信畅通率 = 通信畅通时长 / 总考核时长 × 100%",
+          "criteria": "≥99%为优秀，95%-99%为良好，<95%为不合格",
+          "weight": "0.08"
+        },
+        {
+          "name": "专业对口率",
+          "type": "admin-db",
+          "definition": "人员所学专业或技能与所从事保障岗位匹配的比例",
+          "formula": "专业对口率 = 对口人员数 / 总人员数 × 100%",
+          "criteria": "≥85%为优秀，70%-85%为良好，<70%为不合格",
+          "weight": "0.08"
+        },
+        {
+          "name": "训练达标率",
+          "type": "knowledge",
+          "definition": "人员完成规定训练科目且考核合格的比例",
+          "formula": "训练达标率 = 达标人员数 / 参训人员数 × 100%",
+          "criteria": "≥90%为优秀，80%-90%为良好，<80%为不合格",
+          "weight": "0.08"
+        },
+        {
+          "name": "装备配套率",
+          "type": "admin-db",
+          "definition": "装备系统内各子系统及附件齐全配套的比例",
+          "formula": "装备配套率 = 配套完备的装备数 / 装备总数 × 100%",
+          "criteria": "≥95%为优秀，85%-95%为良好，<85%为不合格",
+          "weight": "0.10"
+        },
+        {
+          "name": "物资周转效率",
+          "type": "llm",
+          "definition": "物资从入库到出库的平均周期，反映物资流动速度",
+          "formula": "周转效率 = 考核期内出库总量 / 平均库存量（次/月）",
+          "criteria": "≥3次/月为高效，1-3次/月为正常，<1次/月为低效",
+          "weight": "0.06"
+        },
+        {
+          "name": "弹药保障率",
+          "type": "knowledge",
+          "definition": "实际可供应弹药数量与任务所需弹药数量的比值",
+          "formula": "弹药保障率 = 实际供应量 / 需求量 × 100%",
+          "criteria": "≥95%为优秀，85%-95%为良好，<85%为不合格",
+          "weight": "0.08"
+        },
+        {
+          "name": "情报准确率",
+          "type": "llm",
+          "definition": "提供的情报信息中准确可靠的比例",
+          "formula": "情报准确率 = 准确情报数 / 总情报数 × 100%",
+          "criteria": "≥90%为优秀，80%-90%为良好，<80%为不合格",
+          "weight": "0.05"
+        }
+      ],
+      "summary": "本指标体系以'保障能力'为根节点，下设人员、装备、物资、后勤、信息五个二级维度，共细化12个末端指标。指标来源涵盖系统数据库（admin-db）、知识库（knowledge）及大模型推断（llm），权重分配突出装备完好率与物资储备充足率，兼顾人员素质与信息保障，形成全面且可操作的评估框架。",
+      "original_query": "分析保障能力指标",
+      "generated_at": "2026-07-21T17:26:24.769784"
+    }
+  },
+  "3cd1695f-283e-46f6-bd19-b4a7908e13e9": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析打击能力指标",
+        "timestamp": "2026-07-21T17:27:48.098599"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系从火力毁伤、机动打击和精确打击三个维度展开，共9项指标。其中命中概率、打击速度和火力密度权重最高，反映打击能力核心要素；指标来源结合admin-db已有配置（打击速度、命中概率）、知识库标准（火力密度、毁伤半径等）和大模型补充（弹药威力系数等），确保评估的全面性和专业性。",
+        "timestamp": "2026-07-21T17:27:48.098599"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 火力密度、毁伤半径、弹药威力系数、打击速度、机动距离 等共9个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T17:27:48.098599"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "打击能力",
+        "source": "admin-db",
+        "children": [
+          {
+            "name": "火力毁伤能力",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "火力密度",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "毁伤半径",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "弹药威力系数",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "机动打击能力",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "打击速度",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "机动距离",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "反应时间",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "精确打击能力",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "命中概率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "圆概率误差",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "制导精度",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "火力密度",
+          "type": "knowledge",
+          "definition": "单位时间内单位火力单元发射弹药的数量，反映火力输出的密集程度",
+          "formula": "火力密度 = 发射弹药总数 / (火力单元数 × 时间)",
+          "criteria": "≥ 5发/分钟/单元为优秀，3-5发为良好，<3发为一般",
+          "weight": 0.15
+        },
+        {
+          "name": "毁伤半径",
+          "type": "knowledge",
+          "definition": "弹药爆炸后对目标造成有效毁伤的最大距离，反映火力覆盖范围",
+          "formula": "毁伤半径 = 实测最大有效毁伤距离（米）",
+          "criteria": "≥ 50米为优秀，30-50米为良好，<30米为一般",
+          "weight": 0.12
+        },
+        {
+          "name": "弹药威力系数",
+          "type": "llm",
+          "definition": "弹药爆炸能量与标准TNT当量的比值，反映弹药毁伤威力",
+          "formula": "威力系数 = 弹药TNT当量 / 标准TNT当量 (无量纲)",
+          "criteria": "≥ 1.5为高威力，1.0-1.5为中威力，<1.0为低威力",
+          "weight": 0.08
+        },
+        {
+          "name": "打击速度",
+          "type": "admin-db",
+          "definition": "打击平台或弹药在攻击过程中的最大运动速度，影响突防和命中能力",
+          "formula": "打击速度 = 最大飞行速度（马赫数或米/秒）",
+          "criteria": "≥ 2马赫为优秀，1-2马赫为良好，<1马赫为一般",
+          "weight": 0.18
+        },
+        {
+          "name": "机动距离",
+          "type": "knowledge",
+          "definition": "打击平台在无补给条件下能够实施打击的最大航程或射程",
+          "formula": "机动距离 = 最大航程或射程（公里）",
+          "criteria": "≥ 1000公里为远程，500-1000公里为中程，<500公里为近程",
+          "weight": 0.1
+        },
+        {
+          "name": "反应时间",
+          "type": "llm",
+          "definition": "从接到打击指令到完成首次打击所需的时间，反映快速响应能力",
+          "formula": "反应时间 = 指令下达时刻至首次打击时刻（分钟）",
+          "criteria": "≤ 5分钟为优秀，5-15分钟为良好，>15分钟为一般",
+          "weight": 0.07
+        },
+        {
+          "name": "命中概率",
+          "type": "admin-db",
+          "definition": "打击弹药命中预定目标的概率，反映打击准确程度",
+          "formula": "命中概率 = 命中次数 / 总发射次数 × 100%",
+          "criteria": "≥ 90%为优秀，70%-90%为良好，<70%为一般",
+          "weight": 0.2
+        },
+        {
+          "name": "圆概率误差",
+          "type": "knowledge",
+          "definition": "以目标为中心，包含50%弹着点的圆半径，值越小精度越高",
+          "formula": "CEP = 弹着点分布的50%圆半径（米）",
+          "criteria": "≤ 10米为高精度，10-50米为中精度，>50米为低精度",
+          "weight": 0.06
+        },
+        {
+          "name": "制导精度",
+          "type": "llm",
+          "definition": "制导系统对飞行路径的控制偏差程度，影响最终命中效果",
+          "formula": "制导精度 = 实际弹道与理想弹道的均方根偏差（米）",
+          "criteria": "≤ 1米为优秀，1-5米为良好，>5米为一般",
+          "weight": 0.04
+        }
+      ],
+      "summary": "本指标体系从火力毁伤、机动打击和精确打击三个维度展开，共9项指标。其中命中概率、打击速度和火力密度权重最高，反映打击能力核心要素；指标来源结合admin-db已有配置（打击速度、命中概率）、知识库标准（火力密度、毁伤半径等）和大模型补充（弹药威力系数等），确保评估的全面性和专业性。",
+      "original_query": "分析打击能力指标",
+      "generated_at": "2026-07-21T17:28:06.694355"
+    }
+  },
+  "7bdce6bc-b378-4c17-af7b-596a2a1296d6": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析保障能力指标",
+        "timestamp": "2026-07-21T17:41:00.069384"
+      },
+      {
+        "role": "assistant",
+        "content": "构建的保障能力指标体系以人员、物资、装备、信息和后勤五个子能力为二级节点，并细化为具体指标。其中，物资充足率、人员到位率和装备完好率作为核心量化指标，权重较高，反映了保障能力评估中资源完整性和可用性的关键作用。",
+        "timestamp": "2026-07-21T17:41:00.069384"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 人员到位率、物资充足率、装备完好率、人员技能达标率、物资补给时效性。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T17:41:00.069384"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "保障能力",
+        "source": "admin-db",
+        "children": [
+          {
+            "name": "人员保障能力",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "人员到位率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "人员技能达标率",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "物资保障能力",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "物资充足率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "物资补给时效性",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "装备保障能力",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "装备完好率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "装备维修效率",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "信息保障能力",
+            "source": "llm",
+            "children": [
+              {
+                "name": "通信可靠性",
+                "source": "llm",
+                "children": []
+              },
+              {
+                "name": "数据处理时效性",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "后勤保障能力",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "运输保障能力",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "医疗保障能力",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "人员到位率",
+          "type": "admin-db",
+          "definition": "实际到位人员数量与计划应到位人员数量的比率，反映人员配置的完整性",
+          "formula": "人员到位率 = (实际到位人数 / 计划应到位人数) × 100%",
+          "criteria": "≥90%为优秀，≥80%为良好，≥70%为合格，<70%为不合格",
+          "weight": "0.25"
+        },
+        {
+          "name": "物资充足率",
+          "type": "admin-db",
+          "definition": "实际库存物资数量与任务所需物资数量的比率，反映物资储备的充分程度",
+          "formula": "物资充足率 = (实际库存量 / 任务需求量) × 100%",
+          "criteria": "≥95%为优秀，≥85%为良好，≥75%为合格，<75%为不合格",
+          "weight": "0.30"
+        },
+        {
+          "name": "装备完好率",
+          "type": "admin-db",
+          "definition": "处于完好状态且可随时投入使用的装备数量与装备总数量之比，反映装备的可用性和可靠性",
+          "formula": "装备完好率 = (完好装备数量 / 装备总数量) × 100%",
+          "criteria": "≥95%为优秀，≥85%为良好，≥75%为合格，<75%为不合格",
+          "weight": "0.25"
+        },
+        {
+          "name": "人员技能达标率",
+          "type": "knowledge",
+          "definition": "通过技能考核的人员数量与总人员数量之比，衡量人员专业技能水平",
+          "formula": "人员技能达标率 = (技能考核达标人数 / 总人数) × 100%",
+          "criteria": "≥90%为优秀，≥80%为良好，≥70%为合格，<70%为不合格",
+          "weight": "0.10"
+        },
+        {
+          "name": "物资补给时效性",
+          "type": "llm",
+          "definition": "从发出补给需求到物资送达指定地点所花费的平均时间，反映物资补给的响应速度",
+          "formula": "物资补给时效性 = 平均补给时间（小时）",
+          "criteria": "≤2小时为优秀，≤4小时为良好，≤6小时为合格，>6小时为不合格",
+          "weight": "0.10"
+        }
+      ],
+      "summary": "构建的保障能力指标体系以人员、物资、装备、信息和后勤五个子能力为二级节点，并细化为具体指标。其中，物资充足率、人员到位率和装备完好率作为核心量化指标，权重较高，反映了保障能力评估中资源完整性和可用性的关键作用。",
+      "original_query": "分析保障能力指标",
+      "generated_at": "2026-07-21T17:41:25.176785"
+    }
+  },
+  "c018bf93-f8c2-4a41-9fa8-381ecee88903": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析保障能力指标",
+        "timestamp": "2026-07-21T17:41:41.158065"
+      },
+      {
+        "role": "assistant",
+        "content": "分析总结：基于系统已配置指标数据库、知识库中的保障能力评估专业知识及领域模型，构建以“保障能力”为根节点的三层指标体系，覆盖人员、物资、装备、信息与后勤五个维度，并提取12个核心定量指标，优先复用admin-db中现有配置，缺失部分由knowledge和llm补充。",
+        "timestamp": "2026-07-21T17:41:41.158065"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 人员到位率、人员技能匹配度、物资储备充足率、物资供应及时率、装备完好率 等共10个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T17:41:41.158065"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "保障能力",
+        "source": "admin-db",
+        "children": [
+          {
+            "name": "人员保障",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "人员到位率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "人员技能匹配度",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "物资保障",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "物资储备充足率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "物资供应及时率",
+                "source": "admin-db",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "装备保障",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "装备完好率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "装备保障响应时间",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "信息保障",
+            "source": "llm",
+            "children": [
+              {
+                "name": "信息传输可靠性",
+                "source": "llm",
+                "children": []
+              },
+              {
+                "name": "数据更新时效性",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "后勤保障",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "后勤资源利用率",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "后勤保障覆盖率",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "人员到位率",
+          "type": "admin-db",
+          "definition": "实际到位人数与计划编制人数之比，反映人员配置的完整性",
+          "formula": "人员到位率 = (实际到位人数 / 计划编制人数) × 100%",
+          "criteria": "≥95%为优秀，80%-95%为良好，60%-80%为合格，<60%为不合格",
+          "weight": "0.15"
+        },
+        {
+          "name": "人员技能匹配度",
+          "type": "knowledge",
+          "definition": "在岗人员技能水平与岗位要求匹配程度的综合评价指标",
+          "formula": "人员技能匹配度 = (∑(各岗位技能评分匹配值) / 岗位总数) × 100%",
+          "criteria": "≥90%为优秀，75%-90%为良好，60%-75%为合格，<60%为不合格",
+          "weight": "0.10"
+        },
+        {
+          "name": "物资储备充足率",
+          "type": "admin-db",
+          "definition": "实际储备物资数量与标准储备定额之比，反映物资储备的充足程度",
+          "formula": "物资储备充足率 = (实际储备量 / 标准储备定额) × 100%",
+          "criteria": "≥100%为优秀，90%-100%为良好，80%-90%为合格，<80%为不合格",
+          "weight": "0.15"
+        },
+        {
+          "name": "物资供应及时率",
+          "type": "admin-db",
+          "definition": "在规定时间内完成物资供应的次数与总需求次数之比",
+          "formula": "物资供应及时率 = (按时供应次数 / 总需求次数) × 100%",
+          "criteria": "≥95%为优秀，85%-95%为良好，70%-85%为合格，<70%为不合格",
+          "weight": "0.12"
+        },
+        {
+          "name": "装备完好率",
+          "type": "admin-db",
+          "definition": "技术状态完好且可随时投入使用的装备数量占装备总编制数的比例",
+          "formula": "装备完好率 = (完好装备数量 / 装备总编制数) × 100%",
+          "criteria": "≥90%为优秀，80%-90%为良好，70%-80%为合格，<70%为不合格",
+          "weight": "0.15"
+        },
+        {
+          "name": "装备保障响应时间",
+          "type": "knowledge",
+          "definition": "从接收到装备保障请求到完成保障任务的平均时间间隔",
+          "formula": "装备保障响应时间 = ∑(各次保障响应时间) / 保障任务总次数",
+          "criteria": "≤30分钟为优秀，30-60分钟为良好，60-120分钟为合格，>120分钟为不合格",
+          "weight": "0.10"
+        },
+        {
+          "name": "信息传输可靠性",
+          "type": "llm",
+          "definition": "在保障过程中信息传输成功且无差错的概率，反映信息保障的稳定性",
+          "formula": "信息传输可靠性 = (成功传输信息包数 / 总传输信息包数) × 100%",
+          "criteria": "≥99%为优秀，95%-99%为良好，90%-95%为合格，<90%为不合格",
+          "weight": "0.08"
+        },
+        {
+          "name": "数据更新时效性",
+          "type": "llm",
+          "definition": "保障相关数据从产生到完成更新的平均延迟时间",
+          "formula": "数据更新时效性 = 平均更新延迟时间（分钟）",
+          "criteria": "≤5分钟为优秀，5-15分钟为良好，15-30分钟为合格，>30分钟为不合格",
+          "weight": "0.05"
+        },
+        {
+          "name": "后勤资源利用率",
+          "type": "knowledge",
+          "definition": "实际使用的后勤资源量占可用后勤资源总量的比例",
+          "formula": "后勤资源利用率 = (实际使用资源量 / 可用资源总量) × 100%",
+          "criteria": "70%-90%为优秀，50%-70%或90%-100%为良好，30%-50%为合格，<30%或>100%为不合格",
+          "weight": "0.05"
+        },
+        {
+          "name": "后勤保障覆盖率",
+          "type": "knowledge",
+          "definition": "后勤保障系统能够有效覆盖的保障对象比例",
+          "formula": "后勤保障覆盖率 = (已覆盖保障对象数 / 应保障对象总数) × 100%",
+          "criteria": "≥95%为优秀，85%-95%为良好，70%-85%为合格，<70%为不合格",
+          "weight": "0.05"
+        }
+      ],
+      "summary": "分析总结：基于系统已配置指标数据库、知识库中的保障能力评估专业知识及领域模型，构建以“保障能力”为根节点的三层指标体系，覆盖人员、物资、装备、信息与后勤五个维度，并提取12个核心定量指标，优先复用admin-db中现有配置，缺失部分由knowledge和llm补充。",
+      "original_query": "分析保障能力指标",
+      "generated_at": "2026-07-21T17:42:00.541528"
+    }
+  },
+  "edacdd3a-aeff-4d0c-b065-9c1ae1085bdd": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析保障能力指标",
+        "timestamp": "2026-07-21T17:43:51.915663"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系以保障能力为核心，基于系统指标数据库、知识库及大模型知识，构建人员、物资、装备、信息四维子体系，通过量化指标和权重分配，实现保障能力的综合评估。",
+        "timestamp": "2026-07-21T17:43:51.915663"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 人员到位率、物资储备充足率、装备完好率、信息传输成功率。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T17:43:51.915663"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "保障能力",
+        "source": "knowledge",
+        "children": [
+          {
+            "name": "人员保障",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "人员到位率",
+                "source": "admin-db",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "物资保障",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "物资储备充足率",
+                "source": "admin-db",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "装备保障",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "装备完好率",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "信息保障",
+            "source": "llm",
+            "children": [
+              {
+                "name": "信息传输成功率",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "人员到位率",
+          "type": "admin-db",
+          "definition": "实际到位人员数量与应到人员数量的比率，反映人员保障的及时性和完整性",
+          "formula": "人员到位率 = (实际到位人数 / 应到人数) × 100%",
+          "criteria": "≥95%为优秀，80%-95%为良好，<80%为不合格",
+          "weight": "0.3"
+        },
+        {
+          "name": "物资储备充足率",
+          "type": "admin-db",
+          "definition": "现有物资库存量与任务所需物资总量的比率，评估物资保障的充分程度",
+          "formula": "物资储备充足率 = (现有库存量 / 任务需求量) × 100%",
+          "criteria": "≥90%为优秀，70%-90%为良好，<70%为不合格",
+          "weight": "0.3"
+        },
+        {
+          "name": "装备完好率",
+          "type": "knowledge",
+          "definition": "处于完好状态、可随时投入使用的装备数量与装备总数量之比，衡量装备保障的可靠性",
+          "formula": "装备完好率 = (完好装备数量 / 装备总数量) × 100%",
+          "criteria": "≥85%为优秀，70%-85%为良好，<70%为不合格",
+          "weight": "0.25"
+        },
+        {
+          "name": "信息传输成功率",
+          "type": "llm",
+          "definition": "在保障任务中成功传输的信息次数与总传输尝试次数的比率，评估信息保障的稳定性和有效性",
+          "formula": "信息传输成功率 = (成功传输次数 / 总传输尝试次数) × 100%",
+          "criteria": "≥98%为优秀，90%-98%为良好，<90%为不合格",
+          "weight": "0.15"
+        }
+      ],
+      "summary": "本指标体系以保障能力为核心，基于系统指标数据库、知识库及大模型知识，构建人员、物资、装备、信息四维子体系，通过量化指标和权重分配，实现保障能力的综合评估。",
+      "original_query": "分析保障能力指标",
+      "generated_at": "2026-07-21T17:44:06.264127"
+    }
+  },
+  "9abfcb77-a7b2-4084-9a60-3de0ef068bf8": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析保障能力指标",
+        "timestamp": "2026-07-21T17:53:52.939185"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系以保障能力为核心，划分为人员、装备、物资三个二级子域，共6个三级指标。其中，装备完好率和人员到位率来源于系统数据库，权重最高；物资储备充足率和装备维修响应时间参考知识库理论；人员专业技能水平和物资配送准时率由大模型补充定义，确保指标体系全面覆盖保障效能的关键维度。",
+        "timestamp": "2026-07-21T17:53:52.939185"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 人员到位率、人员专业技能水平、装备完好率、装备维修响应时间、物资储备充足率 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T17:53:52.939185"
+      },
+      {
+        "role": "user",
+        "content": "不查询",
+        "timestamp": "2026-07-21T17:54:18.785656"
+      },
+      {
+        "role": "assistant",
+        "content": "好的，已了解。如果后续需要查询这些指标，随时告诉我。",
+        "timestamp": "2026-07-21T17:54:18.785656"
+      },
+      {
+        "role": "user",
+        "content": "查询",
+        "timestamp": "2026-07-21T17:54:27.852381"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系以保障能力为根节点，基于知识库理论将人员、装备、物资设为二级子域，进一步细化为6个三级指标；其中装备完好率和人员到位率来源于系统数据库，权重最高；装备维修响应时间和物资储备充足率参考知识库标准；人员专业技能水平和物资配送准时率由大模型补充定义，确保指标体系全面覆盖保障效能的关键维度。",
+        "timestamp": "2026-07-21T17:54:27.852381"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 人员到位率、人员专业技能水平、装备完好率、装备维修响应时间、物资储备充足率 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T17:54:27.852381"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "保障能力",
+        "source": "knowledge",
+        "children": [
+          {
+            "name": "人员保障",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "人员数量",
+                "source": "knowledge",
+                "children": [
+                  {
+                    "name": "人员到位率",
+                    "source": "admin-db",
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "name": "人员质量",
+                "source": "llm",
+                "children": [
+                  {
+                    "name": "人员专业技能水平",
+                    "source": "llm",
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "装备保障",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "装备状态",
+                "source": "admin-db",
+                "children": [
+                  {
+                    "name": "装备完好率",
+                    "source": "admin-db",
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "name": "维修能力",
+                "source": "knowledge",
+                "children": [
+                  {
+                    "name": "装备维修响应时间",
+                    "source": "knowledge",
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "物资保障",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "物资储备",
+                "source": "knowledge",
+                "children": [
+                  {
+                    "name": "物资储备充足率",
+                    "source": "knowledge",
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "name": "物资配送",
+                "source": "llm",
+                "children": [
+                  {
+                    "name": "物资配送准时率",
+                    "source": "llm",
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "人员到位率",
+          "type": "admin-db",
+          "definition": "实际到岗人员数与编制人员数的比值，反映人员配置的完整程度",
+          "formula": "人员到位率 = (实际到岗人数 / 编制人数) × 100%",
+          "criteria": "≥95%为优秀，85%-95%为良好，<85%为需改进",
+          "weight": "0.20"
+        },
+        {
+          "name": "人员专业技能水平",
+          "type": "llm",
+          "definition": "人员掌握专业知识和操作技能的熟练程度，通过考核或实操评估",
+          "formula": "专业技能水平 = (考核合格人数 / 总考核人数) × 100% 或 平均实操评分",
+          "criteria": "≥90分为优秀，75-89分为良好，<75分为需培训",
+          "weight": "0.15"
+        },
+        {
+          "name": "装备完好率",
+          "type": "admin-db",
+          "definition": "处于完好可用状态的装备数量与装备总数量之比，衡量装备的可靠性",
+          "formula": "装备完好率 = (完好装备数量 / 装备总数量) × 100%",
+          "criteria": "≥90%为优秀，80%-90%为良好，<80%为需改进",
+          "weight": "0.25"
+        },
+        {
+          "name": "装备维修响应时间",
+          "type": "knowledge",
+          "definition": "从装备故障报修到维修人员到达现场或开始维修的平均时间，反映维修效率",
+          "formula": "维修响应时间 = 平均(维修开始时间 - 报修时间)，单位：小时",
+          "criteria": "≤2小时为优秀，2-4小时为良好，>4小时为需改进",
+          "weight": "0.15"
+        },
+        {
+          "name": "物资储备充足率",
+          "type": "knowledge",
+          "definition": "实际储备物资数量与标准储备定额的比值，衡量物资储备的满足程度",
+          "formula": "物资储备充足率 = (实际储备量 / 标准储备定额) × 100%",
+          "criteria": "≥100%为优秀，80%-100%为良好，<80%为需补充",
+          "weight": "0.15"
+        },
+        {
+          "name": "物资配送准时率",
+          "type": "llm",
+          "definition": "在规定时间内完成配送的物资批次与总配送批次的比率，衡量物流效率",
+          "formula": "配送准时率 = (准时配送批次 / 总配送批次) × 100%",
+          "criteria": "≥98%为优秀，90%-98%为良好，<90%为需改进",
+          "weight": "0.10"
+        }
+      ],
+      "summary": "本指标体系以保障能力为根节点，基于知识库理论将人员、装备、物资设为二级子域，进一步细化为6个三级指标；其中装备完好率和人员到位率来源于系统数据库，权重最高；装备维修响应时间和物资储备充足率参考知识库标准；人员专业技能水平和物资配送准时率由大模型补充定义，确保指标体系全面覆盖保障效能的关键维度。",
+      "original_query": "查询",
+      "generated_at": "2026-07-21T17:54:44.676374"
+    }
+  },
+  "2f03fd48-09d1-47e4-b119-6c179030d2ed": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析作战效能指标",
+        "timestamp": "2026-07-21T18:01:28.241010"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系以作战效能为核心，分解为火力打击、机动生存和指挥控制三个子维度，共选取6个可量化指标，覆盖命中、毁伤、速度、生存、时延和决策等关键因素，权重分配基于各维度在典型作战场景中的重要性，来源标注兼顾系统数据库、知识库与大模型补充，确保了评估的全面性和可靠性。",
+        "timestamp": "2026-07-21T18:01:28.241010"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 命中概率、毁伤程度、机动速度、生存概率、信息传输时延 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T18:01:28.241010"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "作战效能",
+        "source": "admin-db",
+        "children": [
+          {
+            "name": "火力打击效能",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "命中概率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "毁伤程度",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "机动生存效能",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "机动速度",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "生存概率",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "指挥控制效能",
+            "source": "llm",
+            "children": [
+              {
+                "name": "信息传输时延",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "决策正确率",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "命中概率",
+          "type": "admin-db",
+          "definition": "武器系统在标准条件下命中目标的概率",
+          "formula": "命中次数 / 总发射次数 × 100%",
+          "criteria": "≥80%为优秀，60%-80%为良好，<60%为不合格",
+          "weight": "0.3"
+        },
+        {
+          "name": "毁伤程度",
+          "type": "knowledge",
+          "definition": "对目标造成有效毁伤的比例，反映火力打击的实际效果",
+          "formula": "目标毁伤面积 / 目标总面积 × 100%",
+          "criteria": "≥90%为完全毁伤，50%-90%为部分毁伤，<50%为轻微毁伤",
+          "weight": "0.25"
+        },
+        {
+          "name": "机动速度",
+          "type": "admin-db",
+          "definition": "作战单位在规定地形和条件下实现的最大移动速度",
+          "formula": "移动距离 / 移动时间（公里/小时）",
+          "criteria": "≥60 km/h为快速，30-60 km/h为中等，<30 km/h为缓慢",
+          "weight": "0.15"
+        },
+        {
+          "name": "生存概率",
+          "type": "llm",
+          "definition": "作战单位在敌方火力威胁下完成机动任务而不被摧毁的概率",
+          "formula": "1 - 被击中概率 × 被毁伤概率",
+          "criteria": "≥85%为高生存，60%-85%为中等，<60%为低生存",
+          "weight": "0.15"
+        },
+        {
+          "name": "信息传输时延",
+          "type": "admin-db",
+          "definition": "从信息采集到指挥节点接收的平均延迟时间",
+          "formula": "接收时间 - 发送时间（毫秒）",
+          "criteria": "≤50ms为优秀，50-200ms为良好，>200ms为不合格",
+          "weight": "0.1"
+        },
+        {
+          "name": "决策正确率",
+          "type": "knowledge",
+          "definition": "指挥控制过程中做出的正确决策占所有决策的比例",
+          "formula": "正确决策数 / 总决策数 × 100%",
+          "criteria": "≥90%为优秀，70%-90%为良好，<70%为不合格",
+          "weight": "0.05"
+        }
+      ],
+      "summary": "本指标体系以作战效能为核心，分解为火力打击、机动生存和指挥控制三个子维度，共选取6个可量化指标，覆盖命中、毁伤、速度、生存、时延和决策等关键因素，权重分配基于各维度在典型作战场景中的重要性，来源标注兼顾系统数据库、知识库与大模型补充，确保了评估的全面性和可靠性。",
+      "original_query": "分析作战效能指标",
+      "generated_at": "2026-07-21T18:01:45.020015"
+    }
+  },
+  "c8e03e78-f597-4b06-a87d-2e72cef6eceb": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析保障能力指标",
+        "timestamp": "2026-07-21T18:09:36.764412"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系从人员、物资和技术三个关键维度构建保障能力评估框架，重点突出了物资储备充足率（权重0.30）和人员到位率（权重0.25）等核心指标，同时引入技能匹配度和响应速度等动态指标，以全面反映保障体系的静态储备与动态响应能力。",
+        "timestamp": "2026-07-21T18:09:36.764412"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 人员到位率、物资储备充足率、设备完好率、人员技能匹配度、物资配送及时率 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T18:09:36.764412"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "保障能力",
+        "source": "admin-db",
+        "children": [
+          {
+            "name": "人员保障",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "人员到位率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "人员技能匹配度",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "物资保障",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "物资储备充足率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "物资配送及时率",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "技术保障",
+            "source": "llm",
+            "children": [
+              {
+                "name": "设备完好率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "技术响应速度",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "人员到位率",
+          "type": "admin-db",
+          "definition": "实际到位保障人员数量与计划应到位人员数量的比值，反映人员配置的完成程度",
+          "formula": "人员到位率 = (实际到位人数 / 计划应到位人数) × 100%",
+          "criteria": "≥95%为优秀，80%-95%为良好，60%-80%为合格，<60%为不合格",
+          "weight": "0.25"
+        },
+        {
+          "name": "物资储备充足率",
+          "type": "admin-db",
+          "definition": "现有物资储备总量与保障任务所需物资总量的比值，评估物资储备的充分性",
+          "formula": "物资储备充足率 = (实际储备量 / 需求储备量) × 100%",
+          "criteria": "≥100%为优秀，80%-100%为良好，60%-80%为合格，<60%为不合格",
+          "weight": "0.30"
+        },
+        {
+          "name": "设备完好率",
+          "type": "admin-db",
+          "definition": "处于完好状态且可随时投入使用的设备数量与设备总数量之比，反映技术装备的可用性",
+          "formula": "设备完好率 = (完好设备数 / 设备总数) × 100%",
+          "criteria": "≥95%为优秀，85%-95%为良好，70%-85%为合格，<70%为不合格",
+          "weight": "0.20"
+        },
+        {
+          "name": "人员技能匹配度",
+          "type": "knowledge",
+          "definition": "保障人员专业技能水平与任务需求之间的匹配程度，通过考核或认证评估",
+          "formula": "人员技能匹配度 = (技能达标人数 / 总保障人数) × 100%",
+          "criteria": "≥90%为优秀，75%-90%为良好，60%-75%为合格，<60%为不合格",
+          "weight": "0.10"
+        },
+        {
+          "name": "物资配送及时率",
+          "type": "knowledge",
+          "definition": "在规定时间内完成物资配送的任务次数与总配送任务次数的比例，衡量后勤保障效率",
+          "formula": "物资配送及时率 = (按时配送次数 / 总配送次数) × 100%",
+          "criteria": "≥95%为优秀，85%-95%为良好，70%-85%为合格，<70%为不合格",
+          "weight": "0.10"
+        },
+        {
+          "name": "技术响应速度",
+          "type": "llm",
+          "definition": "从接到技术保障请求到完成响应或解决问题所花费的平均时间，反映技术支援的敏捷性",
+          "formula": "技术响应速度 = 总响应时间 / 响应次数（单位：小时/次）",
+          "criteria": "≤2小时为优秀，2-6小时为良好，6-12小时为合格，>12小时为不合格",
+          "weight": "0.05"
+        }
+      ],
+      "summary": "本指标体系从人员、物资和技术三个关键维度构建保障能力评估框架，重点突出了物资储备充足率（权重0.30）和人员到位率（权重0.25）等核心指标，同时引入技能匹配度和响应速度等动态指标，以全面反映保障体系的静态储备与动态响应能力。",
+      "original_query": "分析保障能力指标",
+      "generated_at": "2026-07-21T18:09:54.375542"
+    }
+  },
+  "6710ae82-ac98-4307-9b8f-9b93d4d75359": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析打击能力指标",
+        "timestamp": "2026-07-21T18:12:46.786559"
+      },
+      {
+        "role": "assistant",
+        "content": "打击能力指标体系围绕火力强度、精确打击和毁伤效果三大维度展开，共选取6个核心指标，其中3个来自系统数据库（火力密度、命中精度、目标摧毁率），2个来自知识库（射程覆盖、制导成功率），1个来自大模型推理补充（弹药效能系数），权重分配以命中精度和目标摧毁率为重点，体现对打击效果的直接关注。",
+        "timestamp": "2026-07-21T18:12:46.786559"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 火力密度、射程覆盖、命中精度、制导成功率、目标摧毁率 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T18:12:46.786559"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "打击能力",
+        "source": "admin-db",
+        "children": [
+          {
+            "name": "火力强度",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "火力密度",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "射程覆盖",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "精确打击",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "命中精度",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "制导成功率",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "毁伤效果",
+            "source": "llm",
+            "children": [
+              {
+                "name": "目标摧毁率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "弹药效能系数",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "火力密度",
+          "type": "admin-db",
+          "definition": "单位时间内投射的弹药数量或火力覆盖面积",
+          "formula": "火力密度 = 弹药总投射量 / 时间（单位：发/分钟或吨/小时）",
+          "criteria": "≥ 80% 为优秀，60%-80% 为良好，< 60% 为需改进",
+          "weight": "0.20"
+        },
+        {
+          "name": "射程覆盖",
+          "type": "knowledge",
+          "definition": "打击武器系统能够有效打击目标的最大距离范围",
+          "formula": "射程覆盖率 = 有效射程 / 目标区域最大距离 × 100%",
+          "criteria": "≥ 90% 为优秀，70%-90% 为良好，< 70% 为不足",
+          "weight": "0.15"
+        },
+        {
+          "name": "命中精度",
+          "type": "admin-db",
+          "definition": "打击武器命中目标点与目标中心点的偏差程度，常用圆概率偏差（CEP）表示",
+          "formula": "CEP = 中位数半径（单位：米），值越小精度越高",
+          "criteria": "CEP ≤ 5米为优秀，5-10米为良好，> 10米为需改进",
+          "weight": "0.25"
+        },
+        {
+          "name": "制导成功率",
+          "type": "knowledge",
+          "definition": "打击武器在制导过程中成功锁定并引导至目标的概率",
+          "formula": "制导成功率 = 成功制导次数 / 总发射次数 × 100%",
+          "criteria": "≥ 95% 为优秀，85%-95% 为良好，< 85% 为需改进",
+          "weight": "0.15"
+        },
+        {
+          "name": "目标摧毁率",
+          "type": "admin-db",
+          "definition": "打击后目标被完全摧毁或丧失功能的比率",
+          "formula": "目标摧毁率 = 被摧毁目标数 / 总打击目标数 × 100%",
+          "criteria": "≥ 90% 为优秀，70%-90% 为良好，< 70% 为不足",
+          "weight": "0.20"
+        },
+        {
+          "name": "弹药效能系数",
+          "type": "llm",
+          "definition": "考虑弹药类型、装药量和爆炸威力的综合效能指标，反映单发弹药的毁伤能力",
+          "formula": "弹药效能系数 = 弹药等效TNT当量 / 标准弹药TNT当量 × 目标易损性因子",
+          "criteria": "系数 ≥ 1.5为高效，1.0-1.5为中等，< 1.0为低效",
+          "weight": "0.05"
+        }
+      ],
+      "summary": "打击能力指标体系围绕火力强度、精确打击和毁伤效果三大维度展开，共选取6个核心指标，其中3个来自系统数据库（火力密度、命中精度、目标摧毁率），2个来自知识库（射程覆盖、制导成功率），1个来自大模型推理补充（弹药效能系数），权重分配以命中精度和目标摧毁率为重点，体现对打击效果的直接关注。",
+      "original_query": "分析打击能力指标",
+      "generated_at": "2026-07-21T18:13:04.066857"
+    }
+  },
+  "5a851c6e-6197-4ca6-9096-5d2662f3dcfb": {
+    "stage": "analyzing",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析作战效能指标",
+        "timestamp": "2026-07-21T18:26:22.545142"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系围绕作战效能这一核心，从火力打击、机动生存、指挥控制三个一级子维度展开，共包含5个具体指标。其中，毁伤概率和战场生存率来自系统已配置的指标数据库，具有成熟定义和标准；火力覆盖范围与信息传输准确率依据知识库补充；决策响应时间由大模型基于领域知识推断。权重分配突出了火力打击与生存能力的主导作用，指挥控制指标作为辅助效能度量，整体结构简洁且覆盖关键作战环节。",
+        "timestamp": "2026-07-21T18:26:22.545142"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 毁伤概率、战场生存率、决策响应时间、火力覆盖范围、信息传输准确率。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T18:26:22.545142"
+      },
+      {
+        "role": "user",
+        "content": "不查询",
+        "timestamp": "2026-07-21T18:26:55.751879"
+      },
+      {
+        "role": "assistant",
+        "content": "好的，已了解。如果后续需要查询这些指标，随时告诉我。",
+        "timestamp": "2026-07-21T18:26:55.751879"
+      }
+    ],
+    "pending_indicators": null
+  },
+  "45c1ddb7-002a-412c-ac73-293dc89fa3f6": {
+    "stage": "analyzing",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析任务完成度指标",
+        "timestamp": "2026-07-21T18:28:32.282663"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系围绕任务完成度指标，从任务执行效率、质量达标和资源利用三个核心维度构建，综合系统数据库、知识库及领域知识，确保评估全面且可量化。",
+        "timestamp": "2026-07-21T18:28:32.282663"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 任务按时完成率、任务平均完成时间、任务合格率、任务返工率、资源利用率 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T18:28:32.282663"
+      },
+      {
+        "role": "user",
+        "content": "查询",
+        "timestamp": "2026-07-21T18:31:26.206235"
+      },
+      {
+        "role": "assistant",
+        "content": "1. **聚焦红方2营遭遇战成功率提升**: 红方2营在\"B区遭遇战\"中任务成功率仅60%，为所有任务中最低，且总任务量仅5次，建议复盘该任务流程，针对性补训战术协同，目标将该单位突击类任务成功率提升至70%以上。\n\n2. **优化红方1营大规模任务资源分配**: 红方1营在\"C区包抄\"任务中执行了10次任务，为最大规模，但成功率仅70%，低于其\" A区突破\"的75%，建议在10次以上批量任务中引入分段验收机制，减少返工，将大规模任务成功率提升至75%以上。",
+        "timestamp": "2026-07-21T18:31:26.206235"
+      }
+    ],
+    "pending_indicators": null
+  },
+  "ea646fa9-96f6-4df4-a9fb-851a7751e944": {
+    "stage": "analyzing",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析任务完成度指标",
+        "timestamp": "2026-07-21T18:47:37.518534"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系以任务完成度为核心，从任务进度、任务质量和任务时效三个维度进行分解。其中，任务完成率和成果合格率来自系统数据库，是基础评估指标；里程碑达成率依据知识库中的项目管理标准补充；返工率和平均延误天数由大模型推断，用于更精细地评估执行过程中的质量和时间偏差。权重分配上，任务完成率（0.35）和成果合格率（0.25）占比最高，体现完成度和质量并重的评估思路。",
+        "timestamp": "2026-07-21T18:47:37.518534"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 任务完成率、里程碑达成率、成果合格率、返工率、按时完成率。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T18:47:37.518534"
+      },
+      {
+        "role": "user",
+        "content": "查询",
+        "timestamp": "2026-07-21T18:48:21.995328"
+      },
+      {
+        "role": "assistant",
+        "content": "1. **重点帮扶红方2营和3营**: 这两个营的任务完成率均为66.67%，低于蓝方C旅的75%，且红方2营任务量(12次)高于红方3营(9次)，建议优先分析红方2营失败任务原因，并分享红方1营(完成率72.22%)的成功经验。\n\n2. **扩大蓝方C旅任务量以验证模式**: 蓝方C旅完成率最高(75%)但任务量仅4次，样本过小，建议在下一阶段为其增加2-3次任务以确认其高效模式是否可复制，同时保持其成功率不下降。",
+        "timestamp": "2026-07-21T18:48:21.995328"
+      },
+      {
+        "role": "user",
+        "content": "分析生存能力指标",
+        "timestamp": "2026-07-21T18:58:06.322788"
+      },
+      {
+        "role": "assistant",
+        "content": "生存能力指标以系统抗毁性为核心，从物理防护、功能冗余和快速恢复三个维度分解，优先使用系统数据库中的装备完好率和战损修复率，结合知识库中的防护标准补充关键节点冗余度，并通过大模型推断应急响应时效和平均修复时间，权重分配上重点突出防护能力（0.40）和修复能力（0.35）。",
+        "timestamp": "2026-07-21T18:58:06.322788"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 装备完好率、防护设施达标率、关键节点冗余度、通信链路备份数、战损修复率 等共7个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T18:58:06.322788"
+      },
+      {
+        "role": "user",
+        "content": "不查询",
+        "timestamp": "2026-07-21T18:58:29.100944"
+      },
+      {
+        "role": "assistant",
+        "content": "好的，已了解。如果后续需要查询这些指标，随时告诉我。",
+        "timestamp": "2026-07-21T18:58:29.100944"
+      }
+    ],
+    "pending_indicators": null
+  },
+  "87a19bf9-1588-4915-a2d7-392e396331fa": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析生存能力指标",
+        "timestamp": "2026-07-21T18:58:13.570355"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系从物理防护、系统冗余和战场生存三个维度构建生存能力评估框架，共包含6个量化指标，其中2个来自admin-db（等效装甲厚度、关键系统冗余度），2个来自knowledge（雷达散射截面、最大机动过载），2个来自llm（电子对抗成功率、损伤恢复时间），权重分配注重防护与冗余的优先性，兼顾隐身与机动等现代战场要素。",
+        "timestamp": "2026-07-21T18:58:13.570355"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 等效装甲厚度、雷达散射截面、关键系统冗余度、最大机动过载、电子对抗成功率 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T18:58:13.570355"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "生存能力",
+        "source": "admin-db",
+        "children": [
+          {
+            "name": "物理防护能力",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "装甲防护",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "隐身性能",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "抗毁结构",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "系统冗余能力",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "动力冗余",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "通信冗余",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "武器冗余",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "战场生存能力",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "机动规避",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "电子对抗",
+                "source": "llm",
+                "children": []
+              },
+              {
+                "name": "损伤控制",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "等效装甲厚度",
+          "type": "admin-db",
+          "definition": "衡量平台正面装甲对穿甲弹等效防护能力的厚度值，单位毫米",
+          "formula": "EAT = (D × K) / cos(θ)，其中D为实际厚度，K为材料系数，θ为倾角",
+          "criteria": "≥600mm为优秀，400-600mm为良好，<400mm为一般",
+          "weight": "0.25"
+        },
+        {
+          "name": "雷达散射截面",
+          "type": "knowledge",
+          "definition": "平台在雷达波照射下的有效反射面积，单位平方米，数值越小隐身性越好",
+          "formula": "RCS = (4πA²)/λ²，其中A为有效反射面积，λ为雷达波长",
+          "criteria": "≤0.1m²为优秀，0.1-1m²为良好，>1m²为一般",
+          "weight": "0.15"
+        },
+        {
+          "name": "关键系统冗余度",
+          "type": "admin-db",
+          "definition": "动力、通信、武器等关键系统的备份比例，反映系统抗打击能力",
+          "formula": "R = N_backup / N_primary，其中N_backup为备份数量，N_primary为主系统数量",
+          "criteria": "≥1.0为优秀，0.5-1.0为良好，<0.5为一般",
+          "weight": "0.20"
+        },
+        {
+          "name": "最大机动过载",
+          "type": "knowledge",
+          "definition": "平台在机动规避时能承受的最大加速度值，单位g，反映机动规避能力",
+          "formula": "G_max = F_thrust / m，其中F_thrust为推力，m为质量",
+          "criteria": "≥9g为优秀，6-9g为良好，<6g为一般",
+          "weight": "0.15"
+        },
+        {
+          "name": "电子对抗成功率",
+          "type": "llm",
+          "definition": "电子对抗系统成功干扰或规避敌方探测/攻击的概率",
+          "formula": "P_success = (N_success / N_total) × 100%，其中N_success为成功次数，N_total为总对抗次数",
+          "criteria": "≥80%为优秀，60-80%为良好，<60%为一般",
+          "weight": "0.15"
+        },
+        {
+          "name": "损伤恢复时间",
+          "type": "llm",
+          "definition": "平台遭受中等程度损伤后恢复基本作战能力所需的时间，单位分钟",
+          "formula": "T_recovery = (T_repair + T_reconfigure) / N_crew，其中T_repair为修复时间，T_reconfigure为重构时间，N_crew为操作人员数",
+          "criteria": "≤30分钟为优秀，30-60分钟为良好，>60分钟为一般",
+          "weight": "0.10"
+        }
+      ],
+      "summary": "本指标体系从物理防护、系统冗余和战场生存三个维度构建生存能力评估框架，共包含6个量化指标，其中2个来自admin-db（等效装甲厚度、关键系统冗余度），2个来自knowledge（雷达散射截面、最大机动过载），2个来自llm（电子对抗成功率、损伤恢复时间），权重分配注重防护与冗余的优先性，兼顾隐身与机动等现代战场要素。",
+      "original_query": "分析生存能力指标",
+      "generated_at": "2026-07-21T18:58:32.006619"
+    }
+  },
+  "0e4bbb25-cabf-476c-aa36-c08ebc92aa78": {
+    "stage": "analyzing",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析响应时间指标",
+        "timestamp": "2026-07-21T18:58:52.234149"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系从用户感知、系统处理和数据传输三个层面分解响应时间，共6个指标。完全加载时间和服务器处理时间权重最高（各0.25-0.30），反映核心性能；首次内容绘制时间作为用户体验关键指标权重0.25；数据库查询、网络延迟和数据传输时间作为细化支撑指标权重较低（0.05-0.10）。指标来源以admin-db为基础，knowledge补充标准，llm提供推断，实现了层次化、可量化评估。",
+        "timestamp": "2026-07-21T18:58:52.234149"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 首次内容绘制时间、完全加载时间、服务器处理时间、数据库查询时间、网络延迟 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T18:58:52.234149"
+      },
+      {
+        "role": "user",
+        "content": "查询",
+        "timestamp": "2026-07-21T18:59:42.109798"
+      },
+      {
+        "role": "assistant",
+        "content": "1. **优化数据库查询效率**: 当前数据库查询时间（T_db）是服务器处理时间（T_server）的主要组成部分，建议优先检查慢查询日志和索引使用情况，以降低查询延迟。\n\n2. **减少网络往返次数**: 网络延迟（RTT）对首次内容绘制时间（T_FCP）和完全加载时间（T_full_load）有显著影响，建议合并资源请求或使用CDN加速，减少客户端与服务器之间的往返次数。\n\n3. **监控服务器处理瓶颈**: 服务器处理时间（T_server）若占比过高，需排查应用逻辑或中间件配置，例如优化代码执行路径或升级硬件资源，以缩短响应时间。",
+        "timestamp": "2026-07-21T18:59:42.109798"
+      }
+    ],
+    "pending_indicators": null
+  },
+  "b50a7483-8e33-4322-b286-d913f8e97817": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析任务完成度指标",
+        "timestamp": "2026-07-21T19:22:29.332678"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系以任务完成度为核心，从效率、质量和资源三个维度分解，优先使用系统数据库中已有的任务完成时间比和按时完成率，结合知识库中的达标率标准，并补充模型推断的错误率、资源合理性及人员效率指标，以全面量化任务执行表现。",
+        "timestamp": "2026-07-21T19:22:29.332678"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 任务完成时间比、任务按时完成率、任务达标率、错误率、资源消耗合理性 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T19:22:29.332678"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "任务完成度",
+        "source": "knowledge",
+        "children": [
+          {
+            "name": "任务执行效率",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "任务完成时间比",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "任务按时完成率",
+                "source": "admin-db",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "任务执行质量",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "任务达标率",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "错误率",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "资源利用效率",
+            "source": "llm",
+            "children": [
+              {
+                "name": "资源消耗合理性",
+                "source": "llm",
+                "children": []
+              },
+              {
+                "name": "人员投入效率",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "任务完成时间比",
+          "type": "admin-db",
+          "definition": "实际完成任务所用时间与计划时间的比值",
+          "formula": "实际用时 / 计划用时 × 100%",
+          "criteria": "≤1.0为优秀，1.0-1.2为良好，>1.2为需改进",
+          "weight": "0.25"
+        },
+        {
+          "name": "任务按时完成率",
+          "type": "admin-db",
+          "definition": "在规定期限内完成的任务数量占总任务数量的比例",
+          "formula": "按时完成的任务数 / 总任务数 × 100%",
+          "criteria": "≥90%为优秀，80%-90%为良好，<80%为需改进",
+          "weight": "0.25"
+        },
+        {
+          "name": "任务达标率",
+          "type": "knowledge",
+          "definition": "达到预设质量标准的任务数量占总任务数量的比例",
+          "formula": "达标任务数 / 总任务数 × 100%",
+          "criteria": "≥95%为优秀，85%-95%为良好，<85%为需改进",
+          "weight": "0.20"
+        },
+        {
+          "name": "错误率",
+          "type": "llm",
+          "definition": "任务执行过程中出现错误或偏差的次数占总操作次数的比例",
+          "formula": "错误次数 / 总操作次数 × 100%",
+          "criteria": "≤5%为优秀，5%-10%为良好，>10%为需改进",
+          "weight": "0.15"
+        },
+        {
+          "name": "资源消耗合理性",
+          "type": "llm",
+          "definition": "实际资源消耗与计划或标准资源消耗的匹配程度",
+          "formula": "实际资源消耗 / 标准资源消耗 × 100%",
+          "criteria": "≤1.0为合理，1.0-1.1为可接受，>1.1为不合理",
+          "weight": "0.10"
+        },
+        {
+          "name": "人员投入效率",
+          "type": "llm",
+          "definition": "单位人员投入所完成的任务量或产出",
+          "formula": "完成任务数 / 参与人员总工时",
+          "criteria": "根据历史基线评估，高于基线20%为优秀，±10%为良好，低于20%为需改进",
+          "weight": "0.05"
+        }
+      ],
+      "summary": "本指标体系以任务完成度为核心，从效率、质量和资源三个维度分解，优先使用系统数据库中已有的任务完成时间比和按时完成率，结合知识库中的达标率标准，并补充模型推断的错误率、资源合理性及人员效率指标，以全面量化任务执行表现。",
+      "original_query": "分析任务完成度指标",
+      "generated_at": "2026-07-21T19:22:44.406201"
+    }
+  },
+  "01c66b21-93a7-49f4-9547-f5c0b4c9649d": {
+    "stage": "awaiting_confirmation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "分析准确率指标",
+        "timestamp": "2026-07-21T19:23:29.436583"
+      },
+      {
+        "role": "assistant",
+        "content": "本指标体系以准确率为核心，从分类、预测和系统可用性三个维度展开，共包含6个指标。其中目标识别准确率和态势分类准确率继承自系统数据库和知识库，权重较高（0.3和0.25），体现基础判别能力；轨迹预测和效能预测准确率反映动态分析能力；任务完成和数据一致性准确率补充系统整体可靠性。各指标均设定了三级标准，便于量化评估。",
+        "timestamp": "2026-07-21T19:23:29.436583"
+      },
+      {
+        "role": "assistant",
+        "content": "---\n\n已为您生成了 目标识别准确率、态势分类准确率、轨迹预测准确率、效能预测准确率、任务完成准确率 等共6个指标。\n\n**是否需要查询这些指标？** 如果查询，请回复「查询」并告知数据源名称；如果暂时不需要，请回复「不查询」。",
+        "timestamp": "2026-07-21T19:23:29.436583"
+      }
+    ],
+    "pending_indicators": {
+      "tree": {
+        "name": "准确率指标体系",
+        "source": "admin-db",
+        "children": [
+          {
+            "name": "分类准确率",
+            "source": "admin-db",
+            "children": [
+              {
+                "name": "目标识别准确率",
+                "source": "admin-db",
+                "children": []
+              },
+              {
+                "name": "态势分类准确率",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "预测准确率",
+            "source": "knowledge",
+            "children": [
+              {
+                "name": "轨迹预测准确率",
+                "source": "knowledge",
+                "children": []
+              },
+              {
+                "name": "效能预测准确率",
+                "source": "llm",
+                "children": []
+              }
+            ]
+          },
+          {
+            "name": "系统可用性准确率",
+            "source": "llm",
+            "children": [
+              {
+                "name": "任务完成准确率",
+                "source": "llm",
+                "children": []
+              },
+              {
+                "name": "数据一致性准确率",
+                "source": "knowledge",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "indicators": [
+        {
+          "name": "目标识别准确率",
+          "type": "admin-db",
+          "definition": "正确识别目标类型与数量的比例，反映系统对目标的精确判别能力",
+          "formula": "正确识别目标数 / 总目标数 × 100%",
+          "criteria": "≥90%为优秀，≥80%为良好，≥70%为合格",
+          "weight": "0.3"
+        },
+        {
+          "name": "态势分类准确率",
+          "type": "knowledge",
+          "definition": "系统对战场态势进行分类判断的正确比例，基于知识库中的典型态势模板",
+          "formula": "正确分类态势数 / 总态势样本数 × 100%",
+          "criteria": "≥85%为优秀，≥75%为良好，≥60%为合格",
+          "weight": "0.25"
+        },
+        {
+          "name": "轨迹预测准确率",
+          "type": "knowledge",
+          "definition": "系统预测目标运动轨迹与实际轨迹的吻合程度，反映动态预测能力",
+          "formula": "1 - (平均预测误差 / 最大允许误差) × 100%",
+          "criteria": "≥95%为优秀，≥85%为良好，≥70%为合格",
+          "weight": "0.2"
+        },
+        {
+          "name": "效能预测准确率",
+          "type": "llm",
+          "definition": "系统对作战效能（如毁伤效果）的预测值与实际值的匹配度，基于大模型推理补充",
+          "formula": "正确预测效能事件数 / 总预测事件数 × 100%",
+          "criteria": "≥80%为优秀，≥70%为良好，≥55%为合格",
+          "weight": "0.1"
+        },
+        {
+          "name": "任务完成准确率",
+          "type": "llm",
+          "definition": "系统执行指定任务时达到预期目标的准确程度，基于大模型对作战场景的推断",
+          "formula": "成功完成任务次数 / 总任务次数 × 100%",
+          "criteria": "≥90%为优秀，≥80%为良好，≥65%为合格",
+          "weight": "0.1"
+        },
+        {
+          "name": "数据一致性准确率",
+          "type": "knowledge",
+          "definition": "系统中多源数据融合后的一致性比例，反映数据质量与可信度",
+          "formula": "一致数据记录数 / 总数据记录数 × 100%",
+          "criteria": "≥95%为优秀，≥85%为良好，≥75%为合格",
+          "weight": "0.05"
+        }
+      ],
+      "summary": "本指标体系以准确率为核心，从分类、预测和系统可用性三个维度展开，共包含6个指标。其中目标识别准确率和态势分类准确率继承自系统数据库和知识库，权重较高（0.3和0.25），体现基础判别能力；轨迹预测和效能预测准确率反映动态分析能力；任务完成和数据一致性准确率补充系统整体可靠性。各指标均设定了三级标准，便于量化评估。",
+      "original_query": "分析准确率指标",
+      "generated_at": "2026-07-21T19:23:44.852714"
+    }
+  }
 }

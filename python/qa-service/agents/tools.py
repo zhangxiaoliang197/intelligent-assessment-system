@@ -39,6 +39,7 @@ import ssl
 import os
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("evaluation.tools")
 
@@ -344,10 +345,9 @@ def _fetch_dataset_structure_inner(dataset_id: str) -> dict:
     管理后台为字段添加的业务标注（annotation/businessMeaning/dataCategory）。
     优先于直接读 information_schema 的 fetch_table_structure。
 
-    实现步骤：
-    1. 调用 dataset/{id}/structure 获取物理表结构
-    2. 调用 dataset/{id}/fields 获取用户标注的字段元数据
-    3. 将两者按 columnName 合并，标注信息覆盖物理结构信息
+    实现步骤（并行优化后）：
+    1. 并行调用 dataset/{id}/structure 和 dataset/{id}/fields（2→1 个HTTP往返）
+    2. 将两者按 columnName 合并，标注信息覆盖物理结构信息
 
     Args:
         dataset_id: 数据集 ID
@@ -358,19 +358,22 @@ def _fetch_dataset_structure_inner(dataset_id: str) -> dict:
         - columns:   合并后的列信息列表，每列额外含 annotation/businessMeaning/dataCategory
         - count:     列数量
     """
-    # 步骤 1：获取物理表结构
-    struct_resp = _api_get(f"dataset/{dataset_id}/structure")
+    # 步骤 1：并行获取物理表结构和字段标注（2→1 个HTTP往返）
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        struct_future = pool.submit(_api_get, f"dataset/{dataset_id}/structure")
+        fields_future = pool.submit(_api_get, f"dataset/{dataset_id}/fields")
+
+    struct_resp = struct_future.result()
+    fields_resp = fields_future.result()
     columns = struct_resp.get("columns", []) if struct_resp.get("success") else []
 
-    # 步骤 2：获取用户标注的字段元数据
-    fields_resp = _api_get(f"dataset/{dataset_id}/fields")
+    # 以 columnName 为 key 建立标注字典，便于快速查找
     annotations = {}
     if fields_resp.get("success"):
-        # 以 columnName 为 key 建立标注字典，便于快速查找
         for fa in fields_resp.get("fields", []):
             annotations[fa.get("columnName", "")] = fa
 
-    # 步骤 3：合并物理结构与用户标注
+    # 步骤 2：合并物理结构与用户标注
     merged = []
     for col in columns:
         ann = annotations.get(col.get("columnName", ""), {})
@@ -425,6 +428,33 @@ def fetch_indicator_detail(indicator_id: str) -> dict:
         ind["fieldMapping"] = ind.get("fieldMapping") or linkage.get("fieldMapping", "{}")
         ind["calculationMethod"] = ind.get("calculationMethod") or linkage.get("calculationMethod", "")
     return ind
+
+
+def search_knowledge_base(query: str, top_k: int = 3) -> list:
+    """通过 HTTP 调用 knowledge-service 的知识库搜索接口。
+
+    Args:
+        query: 搜索查询字符串
+        top_k: 返回的最多结果数（默认 3）
+
+    Returns:
+        搜索结果的 list，搜索失败返回空列表 []。
+    """
+    KNOWLEDGE_SERVICE_URL = os.getenv("KNOWLEDGE_SERVICE_URL", "http://localhost:10252")
+    try:
+        body = json.dumps({"query": query, "top_k": top_k}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{KNOWLEDGE_SERVICE_URL}/knowledge/search",
+            data=body,
+            method="POST"
+        )
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=30, context=_ssl_ctx) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data.get("results", [])
+    except Exception as e:
+        logger.error(f"search_knowledge_base failed: {e}")
+        return []
 
 
 def fetch_evaluation_context_for_database(db_id: str, selected_tables: list = None) -> dict:

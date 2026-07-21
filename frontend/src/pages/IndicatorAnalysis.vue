@@ -118,7 +118,7 @@
                     <div v-else class="ai-response">
                       <!-- 文本回答 -->
                       <div v-if="msg.content" class="message-text">{{ msg.content }}</div>
-                      <div v-else-if="!msg.summary && !msg.tree && (!msg.indicators || msg.indicators.length === 0) && !msg.rawResults" class="message-loading">分析中...</div>
+                      <div v-else-if="!msg.tree && (!msg.indicators || msg.indicators.length === 0) && !msg.rawResults" class="message-loading">分析中...</div>
 
                       <!-- 指标树状结构 -->
                       <div v-if="msg.tree" class="tree-section">
@@ -167,12 +167,6 @@
                         </div>
                       </div>
 
-                      <!-- 分析总结 -->
-                      <div v-if="msg.summary" class="summary-section">
-                        <h5>分析总结</h5>
-                        <p>{{ msg.summary }}</p>
-                      </div>
-
                       <!-- 参考来源 -->
                       <div v-if="msg.references && msg.references.length > 0" class="references-section">
                         <h5>参考来源</h5>
@@ -188,18 +182,22 @@
                           <el-icon :class="{ rotated: !msg.dataCollapsed }"><ArrowDown /></el-icon>
                         </div>
                         <div v-show="!msg.dataCollapsed" class="data-table-wrapper">
-                          <table class="data-table">
-                            <thead>
-                              <tr>
-                                <th v-for="(col, ci) in Object.keys(msg.rawResults[0])" :key="ci">{{ col }}</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              <tr v-for="(row, ri) in (msg.dataExpanded ? msg.rawResults : msg.rawResults.slice(0, 5))" :key="ri">
-                                <td v-for="(col, ci) in Object.keys(row)" :key="ci">{{ row[col] }}</td>
-                              </tr>
-                            </tbody>
-                          </table>
+                          <el-table
+                            :data="msg.dataExpanded ? msg.rawResults : msg.rawResults.slice(0, 5)"
+                            size="small"
+                            border
+                            stripe
+                            max-height="350"
+                          >
+                            <el-table-column
+                              v-for="(col, ci) in Object.keys(msg.rawResults[0])"
+                              :key="ci"
+                              :prop="col"
+                              :label="col"
+                              min-width="120"
+                              show-overflow-tooltip
+                            />
+                          </el-table>
                           <div v-if="msg.rawResults.length > 5 && !msg.dataExpanded" class="expand-tip" @click="msg.dataExpanded = true">
                             展开全部 {{ msg.rawResults.length }} 行
                           </div>
@@ -207,6 +205,16 @@
                             收起至前 5 行
                           </div>
                         </div>
+                      </div>
+
+                      <!-- 追问快捷操作按钮 -->
+                      <div v-if="msg.confirmActions" class="confirm-actions">
+                        <el-button type="primary" size="large" @click="quickConfirm('查询')">
+                          <el-icon><CircleCheck /></el-icon> 查询指标
+                        </el-button>
+                        <el-button size="large" @click="quickConfirm('不查询')">
+                          暂不需要
+                        </el-button>
                       </div>
                     </div>
                   </div>
@@ -219,8 +227,18 @@
           <div v-if="showExecutionPanel" class="execution-panel" :style="{ width: executionPanelWidth + 'px' }">
             <div class="resize-handle" @mousedown="startResize"></div>
             <div class="panel-header">
-              <span>系统执行过程</span>
-              <el-icon class="panel-close" @click="showExecutionPanel = false"><Close /></el-icon>
+              <div class="panel-title-wrap">
+                <span>系统执行过程</span>
+                <el-tag v-if="panelState.activeSkillName" size="small" effect="plain">{{ panelState.activeSkillName }}</el-tag>
+              </div>
+              <el-icon class="panel-close" @click="showExecutionPanel = false" title="收起"><Close /></el-icon>
+            </div>
+            <div v-if="executionSteps.length" class="execution-progress">
+              <div class="execution-progress-meta">
+                <span>{{ completedExecutionCount }}/{{ executionSteps.length }} 个节点已完成</span>
+                <span>{{ executionProgress }}%</span>
+              </div>
+              <el-progress :percentage="executionProgress" :show-text="false" :stroke-width="5" />
             </div>
             <div class="execution-content custom-scroll">
               <div v-if="executionSteps.length === 0" class="panel-empty">
@@ -237,15 +255,23 @@
                 >
                   <div class="inline-step-header">
                     <span class="inline-step-icon">
-                      <el-icon v-if="step.status === 'completed'" color="#67c23a"><CircleCheck /></el-icon>
-                      <el-icon v-else-if="step.status === 'in_progress'" color="#409eff" class="is-loading"><Loading /></el-icon>
-                      <el-icon v-else-if="step.status === 'error'" color="#f56c6c"><CircleClose /></el-icon>
-                      <el-icon v-else color="#c0c4cc"><Clock /></el-icon>
+                      <el-icon v-if="step.status === 'completed'"><CircleCheck /></el-icon>
+                      <el-icon v-else-if="step.status === 'in_progress'"><Loading /></el-icon>
+                      <el-icon v-else-if="step.status === 'error'"><CircleClose /></el-icon>
+                      <el-icon v-else><Clock /></el-icon>
                     </span>
-                    <span class="inline-step-title">步骤 {{ step.step }}: {{ step.description }}</span>
+                    <span class="inline-step-title">{{ step.phase === 'dataset' ? `Skill ${step.sequence}/${step.total} · ${step.description}` : `步骤 ${step.step}: ${step.description}` }}</span>
+                  </div>
+                  <div v-if="step.phase === 'dataset'" class="inline-step-meta">
+                    <el-tag size="small" effect="plain">数据集 {{ step.sequence }}/{{ step.total }}</el-tag>
+                    <span v-if="step.datasetName">{{ step.datasetName }}</span>
+                    <span v-if="step.durationMs">{{ formatDuration(step.durationMs) }}</span>
                   </div>
                   <div v-if="step.detail" class="inline-step-detail">{{ step.detail }}</div>
-                  <div v-if="step.thinking" class="inline-step-thinking">{{ step.thinking }}</div>
+                  <details v-if="step.thinking" class="inline-step-thinking">
+                    <summary>查看执行详情</summary>
+                    <pre>{{ step.thinking }}</pre>
+                  </details>
                 </div>
               </div>
 
@@ -315,9 +341,9 @@
               </div>
             </div>
           </div>
-          <div v-else-if="hasExecutionData" class="execution-panel-toggle" @click="showExecutionPanel = true" title="展开执行过程">
-            <el-icon><DArrowLeft /></el-icon>
-            <span class="toggle-text">执行</span>
+          <div v-else-if="hasExecutionData" class="execution-panel-toggle" @click="showExecutionPanel = true" title="展开系统执行过程">
+            <el-icon><ArrowRight /></el-icon>
+            <span class="toggle-text">执行过程</span>
           </div>
         </div>
 
@@ -329,7 +355,7 @@
               type="textarea"
               :rows="3"
               placeholder="输入指标需求，如：帮我分析火力打击任务完成度指标..."
-              @keyup.enter="analyzeIndicator"
+              @keyup.enter.ctrl="analyzeIndicator"
             />
             <div class="input-actions">
               <el-tooltip :content="isListening ? '停止录音' : '语音输入'" placement="top">
@@ -340,8 +366,13 @@
                   @click="toggleSpeech"
                 />
               </el-tooltip>
-              <el-button type="primary" @click="analyzeIndicator" :loading="analyzing">
-                {{ analyzing ? '分析中...' : '分析指标' }}
+              <el-button v-if="analyzing" type="danger" plain @click="stopAnalysis">
+                <el-icon><CircleClose /></el-icon>
+                取消运行
+              </el-button>
+              <el-button v-else type="primary" @click="analyzeIndicator">
+                <el-icon><Promotion /></el-icon>
+                分析指标
               </el-button>
             </div>
           </div>
@@ -395,7 +426,7 @@
 import { ref, onMounted, computed, nextTick, watch } from 'vue'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useRouter } from 'vue-router'
-import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete, ArrowRight, ArrowDown, Microphone, CircleCheck, CircleClose, Loading, Clock, Close, Cpu, DArrowLeft, Setting } from '@element-plus/icons-vue'
+import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete, ArrowRight, ArrowDown, Microphone, CircleCheck, CircleClose, Loading, Clock, Close, Cpu, Promotion, Setting } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
@@ -463,15 +494,29 @@ const sessionId = ref(localStorage.getItem(LS_SESSION_ID) || '')
 const searchQuery = ref('')
 const chatArea = ref<HTMLElement | null>(null)
 const treeChartRefs = ref<HTMLElement[]>([])
+let activeAbortController: AbortController | null = null
+let cancelRequested = false
 
 // ── 右侧执行面板状态 ──
 const showExecutionPanel = ref(false)
 const executionPanelWidth = ref(460)
 const executionSteps = ref<Array<any>>([])
+const completedExecutionCount = computed(() =>
+  executionSteps.value.filter(step => step.status === 'completed').length
+)
+const executionProgress = computed(() => {
+  if (!executionSteps.value.length) return 0
+  const explicitProgress = executionSteps.value
+    .map(step => Number(step.progress) || 0)
+    .filter(progress => progress > 0)
+  if (explicitProgress.length) return Math.min(100, Math.max(...explicitProgress))
+  return Math.round((completedExecutionCount.value / executionSteps.value.length) * 100)
+})
 const panelState = ref({
   generatedSql: '',
   rawResults: null as any[] | null,
   indicators: null as any[] | null,
+  activeSkillName: '',
   sections: {
     steps: false,  // collapsed=false meaning open
     indicators: true,  // collapsed=true meaning closed
@@ -496,37 +541,40 @@ const toggleMsgSection = (msg: any, field: string) => {
 }
 
 const getStepStatusClass = (status: string) => {
-  if (status === 'completed') return 'step-completed'
-  if (status === 'in_progress') return 'step-in-progress'
-  if (status === 'error') return 'step-error'
-  return 'step-pending'
+  if (status === 'completed') return 'completed'
+  if (status === 'in_progress') return 'in_progress'
+  if (status === 'error') return 'error'
+  return 'pending'
+}
+
+const formatDuration = (durationMs: number) => {
+  if (!durationMs) return ''
+  if (durationMs < 1000) return `${durationMs} ms`
+  return `${(durationMs / 1000).toFixed(durationMs < 10000 ? 1 : 0)} 秒`
 }
 
 // ── 面板拖拽缩放 ──
-let resizing = false
-const startResize = (_e: MouseEvent) => {
-  resizing = true
-  document.addEventListener('mousemove', onResize)
-  document.addEventListener('mouseup', stopResize)
-  document.body.style.userSelect = 'none'
+const isResizing = ref(false)
+const startResize = (e: MouseEvent) => {
+  isResizing.value = true
+  const startX = e.clientX
+  const startWidth = executionPanelWidth.value
+  const onMouseMove = (ev: MouseEvent) => {
+    if (!isResizing.value) return
+    const delta = startX - ev.clientX
+    executionPanelWidth.value = Math.min(700, Math.max(300, startWidth + delta))
+  }
+  const onMouseUp = () => {
+    isResizing.value = false
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
   document.body.style.cursor = 'col-resize'
-}
-
-const onResize = (e: MouseEvent) => {
-  if (!resizing) return
-  const container = document.querySelector('.indicator-container') as HTMLElement
-  if (!container) return
-  const rect = container.getBoundingClientRect()
-  const newWidth = rect.right - e.clientX
-  executionPanelWidth.value = Math.max(300, Math.min(700, newWidth))
-}
-
-const stopResize = () => {
-  resizing = false
-  document.removeEventListener('mousemove', onResize)
-  document.removeEventListener('mouseup', stopResize)
-  document.body.style.userSelect = ''
-  document.body.style.cursor = ''
+  document.body.style.userSelect = 'none'
 }
 
 const persistState = () => {
@@ -600,8 +648,10 @@ const newSession = () => {
   sessionId.value = ''
   messages.value = []
   executionSteps.value = []
-  panelState.value = { generatedSql: '', rawResults: null, indicators: null, sections: { steps: false, indicators: true, sql: true, data: true } }
+  panelState.value = { generatedSql: '', rawResults: null, indicators: null, activeSkillName: '', sections: { steps: false, indicators: true, sql: true, data: true } }
   showExecutionPanel.value = false
+  activeAbortController = null
+  cancelRequested = false
   persistState()
   ElMessage.success('已创建新会话')
 }
@@ -613,8 +663,10 @@ const deleteHistory = (id: string) => {
     sessionId.value = ''
     messages.value = []
     executionSteps.value = []
-    panelState.value = { generatedSql: '', rawResults: null, indicators: null, sections: { steps: false, indicators: true, sql: true, data: true } }
+    panelState.value = { generatedSql: '', rawResults: null, indicators: null, activeSkillName: '', sections: { steps: false, indicators: true, sql: true, data: true } }
     showExecutionPanel.value = false
+    activeAbortController = null
+    cancelRequested = false
   }
   persistState()
   ElMessage.success('已删除会话')
@@ -623,6 +675,19 @@ const deleteHistory = (id: string) => {
 const selectIndicator = async (indicator: string) => {
   inputMessage.value = `分析${indicator}指标`
   await analyzeIndicator()
+}
+
+// 快捷确认查询/不查询
+const quickConfirm = async (action: string) => {
+  inputMessage.value = action
+  await analyzeIndicator()
+}
+
+// 取消运行
+const stopAnalysis = () => {
+  if (!analyzing.value) return
+  cancelRequested = true
+  activeAbortController?.abort()
 }
 
 const analyzeIndicator = async () => {
@@ -634,14 +699,15 @@ const analyzeIndicator = async () => {
   const userQuestion = inputMessage.value
   inputMessage.value = ''
   analyzing.value = true
+  cancelRequested = false
+  activeAbortController = null
 
   messages.value.push({ role: 'user', content: userQuestion })
 
-  const msgIndex = messages.value.length
+  let currentMsgIndex = messages.value.length
   messages.value.push({
     role: 'assistant',
     content: '',
-    summary: '',
     tree: null,
     indicators: [],
     references: [],
@@ -652,12 +718,24 @@ const analyzeIndicator = async () => {
     indicatorsCollapsed: false,
     dataCollapsed: false,
     indicatorsExpanded: false,
-    dataExpanded: false
+    dataExpanded: false,
+    confirmActions: false
   })
   nextTick(() => scrollToBottom())
 
   // 自动展开右侧面板
   showExecutionPanel.value = true
+
+  activeAbortController = new AbortController()
+
+  // 安全兜底：30 秒后强制恢复按钮状态，防止因异常导致 analyzing 卡死
+  const analyzingGuard = setTimeout(() => {
+    if (analyzing.value) {
+      analyzing.value = false
+      cancelRequested = false
+      activeAbortController = null
+    }
+  }, 30000)
 
   try {
     const reqBody: any = { query: userQuestion, session_id: sessionId.value || undefined }
@@ -668,6 +746,7 @@ const analyzeIndicator = async () => {
     const response = await fetch('/api/indicator/analyze/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: activeAbortController?.signal,
       body: JSON.stringify(reqBody)
     })
 
@@ -694,12 +773,12 @@ const analyzeIndicator = async () => {
           const data = JSON.parse(line)
           if (data.type === 'text') {
             fullText += data.content
-            messages.value[msgIndex] = { ...messages.value[msgIndex], content: fullText }
+            messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: fullText }
             nextTick(() => scrollToBottom())
           } else if (data.type === 'step') {
             const step = data.step || data
             // 更新左侧消息的步骤（upsert by step+description）
-            const existingSteps = messages.value[msgIndex].steps || []
+            const existingSteps = messages.value[currentMsgIndex].steps || []
             const dupIdx = existingSteps.findIndex(
               (s: any) => s.step === step.step && s.description === step.description
             )
@@ -708,7 +787,7 @@ const analyzeIndicator = async () => {
             } else {
               existingSteps.push(step)
             }
-            messages.value[msgIndex] = { ...messages.value[msgIndex], steps: [...existingSteps] }
+            messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], steps: [...existingSteps] }
             // 同步更新右侧面板的步骤（upsert by step+description）
             const panelDupIdx = executionSteps.value.findIndex(
               (s: any) => s.step === step.step && s.description === step.description
@@ -722,12 +801,11 @@ const analyzeIndicator = async () => {
             if (!showExecutionPanel.value) showExecutionPanel.value = true
             nextTick(() => scrollToBottom())
           } else if (data.type === 'result') {
-            messages.value[msgIndex] = {
-              ...messages.value[msgIndex],
-              content: fullText || data.summary || data.final_answer || '',
+            messages.value[currentMsgIndex] = {
+              ...messages.value[currentMsgIndex],
+              content: fullText || data.final_answer || '',
               tree: data.tree || null,
               indicators: data.indicators || [],
-              summary: data.summary || data.final_answer || '',
               rawResults: data.rawResults || null,
               generatedSql: data.generatedSql || ''
             }
@@ -744,12 +822,16 @@ const analyzeIndicator = async () => {
             }
           } else if (data.type === 'error') {
             fullText += '\n\n' + (data.message || data.content || '未知错误')
-            messages.value[msgIndex] = { ...messages.value[msgIndex], content: fullText }
+            messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: fullText }
             nextTick(() => scrollToBottom())
           } else if (data.type === 'new_message') {
+            const content = data.content || ''
+            // 新阶段开始，清空旧步骤，避免步骤编号重复
+            executionSteps.value = []
+            // 更新 currentMsgIndex 指向新消息，后续事件正确写入
             messages.value.push({
               role: 'assistant',
-              content: data.content || '',
+              content: content,
               summary: '',
               tree: null,
               indicators: [],
@@ -761,16 +843,18 @@ const analyzeIndicator = async () => {
               indicatorsCollapsed: false,
               dataCollapsed: false,
               indicatorsExpanded: false,
-              dataExpanded: false
+              dataExpanded: false,
+              confirmActions: content.includes('是否需要查询')
             })
+            currentMsgIndex = messages.value.length - 1
             nextTick(() => scrollToBottom())
           }
         } catch (e) { /* ignore */ }
       }
     }
 
-    if (!fullText && !messages.value[msgIndex].summary && !messages.value[msgIndex].rawResults) {
-      messages.value[msgIndex] = { ...messages.value[msgIndex], content: '分析失败，请检查网络连接或大模型配置。' }
+    if (!fullText && !messages.value[currentMsgIndex].summary && !messages.value[currentMsgIndex].rawResults) {
+      messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: '分析失败，请检查网络连接或大模型配置。' }
     }
 
     if (!sessionId.value) {
@@ -785,9 +869,16 @@ const analyzeIndicator = async () => {
       setTimeout(() => { renderTreesForMessages(); scrollToBottom() }, 300)
     })
   } catch (e: any) {
-    messages.value[msgIndex] = { ...messages.value[msgIndex], content: '分析失败，请检查网络连接或大模型配置。' }
+    if (cancelRequested || (e as Error).name === 'AbortError') {
+      messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: '本次分析已取消。' }
+    } else {
+      messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: '分析失败，请检查网络连接或大模型配置。' }
+    }
   } finally {
+    clearTimeout(analyzingGuard)
     analyzing.value = false
+    activeAbortController = null
+    cancelRequested = false
   }
 }
 
@@ -1086,10 +1177,6 @@ onMounted(async () => {
 /* ── AI Response ── */
 .ai-response { display: flex; flex-direction: column; gap: 1rem; }
 
-.summary-section { padding: 1rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 0.75rem; color: white; }
-.summary-section h5 { margin: 0 0 0.5rem 0; font-size: 1rem; font-weight: 600; }
-.summary-section p { margin: 0; line-height: 1.6; font-size: 1rem; }
-
 .tree-section, .indicators-section, .references-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
 .data-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
 
@@ -1144,29 +1231,53 @@ onMounted(async () => {
 
 .resize-handle {
   position: absolute;
-  left: 0;
   top: 0;
-  bottom: 0;
-  width: 4px;
+  left: -4px;
+  width: 8px;
+  height: 100%;
   cursor: col-resize;
   z-index: 10;
   background: transparent;
   transition: background 0.15s;
 }
-.resize-handle:hover, .resize-handle:active { background: #409eff; }
+.resize-handle:hover, .resize-handle:active { background: rgba(64, 158, 255, 0.35); }
 
 .panel-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px; border-bottom: 1px solid #e2e8f0; background: white;
   font-size: 14px; font-weight: 600; color: #374151; flex-shrink: 0;
 }
-.panel-close { cursor: pointer; color: #909399; font-size: 16px; }
-.panel-close:hover { color: #409eff; }
+.panel-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.panel-title-wrap .el-tag {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.panel-close { cursor: pointer; color: #9ca3af; font-size: 16px; }
+.panel-close:hover { color: #374151; }
 
-.execution-content { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.execution-progress {
+  padding: 10px 14px;
+  background: #fff;
+  border-bottom: 1px solid #eef2f7;
+}
+.execution-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 11px;
+}
 
-.panel-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; color: #c0c4cc; gap: 8px; }
-.panel-empty p { margin: 0; font-size: 13px; }
+.execution-content { flex: 1; overflow-y: auto; padding: 8px; }
+
+.panel-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #9ca3af; gap: 8px; font-size: 13px; }
+.panel-empty p { margin: 0; }
 
 /* Panel Section */
 .panel-section {
@@ -1186,18 +1297,50 @@ onMounted(async () => {
 /* Steps in panel */
 .steps-list { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; }
 
-.inline-step { padding: 8px 10px; border-radius: 6px; transition: background 0.15s; }
-.inline-step:hover { background: #f8fafc; }
+.inline-step { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; display: flex; flex-direction: column; gap: 4px; word-break: break-word; overflow-wrap: break-word; }
+.inline-step:last-child { border-bottom: none; }
 
-.inline-step-header { display: flex; align-items: center; gap: 8px; }
-.inline-step-icon { flex-shrink: 0; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; }
-.inline-step-icon .is-loading { animation: rotating 2s linear infinite; }
+.inline-step-header { display: flex; align-items: flex-start; gap: 8px; }
+.inline-step-icon { display: flex; align-items: center; flex-shrink: 0; margin-top: 1px; }
+.inline-step-title { font-weight: 500; color: #1f2937; flex: 1; min-width: 0; }
+.inline-step-detail { color: #6b7280; font-size: 12px; padding-left: 24px; }
+.inline-step-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 24px;
+  color: #64748b;
+  font-size: 11px;
+}
+.inline-step-thinking {
+  margin-top: 4px;
+  padding: 8px 10px;
+  background: #f3f4f6;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #6b7280;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.inline-step-thinking summary {
+  cursor: pointer;
+  color: #475569;
+  font-weight: 500;
+}
+.inline-step-thinking pre {
+  margin: 8px 0 0;
+  font: inherit;
+  white-space: pre-wrap;
+}
+.inline-step.in-progress .inline-step-icon { color: #409eff; animation: rotating 2s linear infinite; }
+.inline-step.completed .inline-step-icon { color: #67c23a; }
+.inline-step.error .inline-step-icon { color: #f56c6c; }
+.inline-step.skipped .inline-step-icon { color: #e6a23c; }
+.inline-step.pending .inline-step-icon { color: #c0c4cc; }
 
 @keyframes rotating { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
-.inline-step-title { font-size: 13px; color: #374151; font-weight: 500; }
-.inline-step-detail { font-size: 12px; color: #909399; margin-top: 2px; padding-left: 28px; }
-.inline-step-thinking { font-size: 12px; color: #909399; margin-top: 2px; padding-left: 28px; white-space: pre-wrap; word-break: break-word; }
 
 /* SQL block in panel */
 .sql-block {
@@ -1235,19 +1378,29 @@ onMounted(async () => {
 .execution-panel-toggle {
   flex-shrink: 0;
   width: 32px;
-  background: #f8fafc;
+  background: #fafafa;
   border-left: 1px solid #e2e8f0;
+  border-right: 1px solid #e2e8f0;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  transition: background 0.15s;
-  color: #909399;
+  gap: 6px;
+  transition: background 0.2s, color 0.2s;
+  color: #9ca3af;
 }
-.execution-panel-toggle:hover { background: #e8edf3; color: #409eff; }
-.toggle-text { writing-mode: vertical-rl; font-size: 12px; font-weight: 500; letter-spacing: 2px; }
+.execution-panel-toggle .el-icon {
+  writing-mode: horizontal-tb;
+  font-size: 16px;
+}
+.execution-panel-toggle .toggle-text {
+  writing-mode: vertical-rl;
+  font-size: 13px;
+  letter-spacing: 2px;
+  user-select: none;
+}
+.execution-panel-toggle:hover { background: #f0f7ff; color: #409eff; }
 
 /* ── Input Area ── */
 .input-area {
@@ -1276,4 +1429,24 @@ onMounted(async () => {
 
 .input-actions { position: absolute; bottom: 14px; right: 16px; display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 .input-actions .el-button { height: 38px; padding: 0 22px; border-radius: 10px; font-weight: 500; font-size: 14px; }
+
+/* ── 追问快捷操作按钮 ── */
+.confirm-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px dashed #e2e8f0;
+}
+.confirm-actions .el-button {
+  flex: 1;
+  height: 44px;
+  font-size: 15px;
+  font-weight: 500;
+  border-radius: 10px;
+  transition: all 0.2s;
+}
+.confirm-actions .el-button .el-icon {
+  margin-right: 4px;
+}
 </style>
