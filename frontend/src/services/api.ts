@@ -14,6 +14,14 @@ service.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
+    // The current application has no dedicated identity endpoint yet.  Skill
+    // governance therefore uses a small, gateway-friendly actor contract.  A
+    // real authentication gateway can overwrite these values, while local
+    // deployments keep the backwards-compatible administrator identity.
+    config.headers['X-User-Id'] = localStorage.getItem('skill_user_id') || 'local-admin'
+    config.headers['X-User-Role'] = localStorage.getItem('skill_user_role') || 'admin'
+    const teamIds = localStorage.getItem('skill_team_ids')
+    if (teamIds) config.headers['X-Team-Ids'] = teamIds
     return config
   },
   (error) => {
@@ -33,7 +41,15 @@ service.interceptors.response.use(
   },
   (error) => {
     // Extract server error message if available
-    const serverMsg = error?.response?.data?.message
+    const responseData = error?.response?.data
+    const detail = responseData?.detail
+    const detailMessage = Array.isArray(detail)
+      ? detail
+        .map((item: any) => item?.msg || item?.message || '')
+        .filter(Boolean)
+        .join('；')
+      : typeof detail === 'string' ? detail : ''
+    const serverMsg = responseData?.message || detailMessage
     const msg = serverMsg || error.message || '网络请求失败'
     console.error('响应错误:', msg)
     error.serverMessage = msg

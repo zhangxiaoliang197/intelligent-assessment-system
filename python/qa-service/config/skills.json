@@ -1,0 +1,215 @@
+{
+  "version": "1.0.0",
+  "skills": [
+    {
+      "id": "combat-effectiveness-overview",
+      "name": "作战效能综合评估",
+      "description": "依次核验战果、战损与资源消耗，形成整体作战效能结论。",
+      "category": "综合评估",
+      "triggers": ["整体作战效能", "综合评估", "作战效果", "效能怎么样"],
+      "recommendedQuestions": ["综合评估本次作战行动的整体效能，并指出主要短板"],
+      "steps": [
+        {"id": "combat-result", "name": "核验战果", "description": "统计命中、摧毁和任务成果，识别主要贡献单位。", "datasetKeywords": ["战果", "combat_result", "打击效果", "命中", "摧毁"]},
+        {"id": "combat-loss", "name": "核验战损", "description": "统计装备与人员损失，分析损失原因和时间分布。", "datasetKeywords": ["战损", "combat_loss", "损失", "伤亡", "损毁"]},
+        {"id": "resource-consume", "name": "核验资源消耗", "description": "统计弹药、燃料与物资消耗，评估投入产出。", "datasetKeywords": ["消耗", "resource_consume", "弹药", "燃料", "物资"]}
+      ],
+      "outputInstruction": "从目标达成、损失代价、资源效率三个维度给出结论，并明确优势、短板和改进建议。"
+    },
+    {
+      "id": "air-superiority-comparison",
+      "name": "制空权对比分析",
+      "description": "先分析分项空中能力，再核验总体制空评分，输出红蓝双方对比。",
+      "category": "空中作战",
+      "triggers": ["制空权", "制空能力", "空中优势", "红蓝空战"],
+      "recommendedQuestions": ["对比目标区域红蓝双方制空权，说明决定优势的关键因素"],
+      "steps": [
+        {"id": "air-capability", "name": "查询分项空中能力", "description": "对比占位、打击、侦察等分项能力。", "datasetKeywords": ["空中能力", "air_capability", "制空分项", "占位", "侦察能力"]},
+        {"id": "air-overall", "name": "查询总体制空能力", "description": "核验总体评分和各分项权重表现。", "datasetKeywords": ["总体制空", "air_overall", "制空权", "空中优势", "总体能力"]}
+      ],
+      "outputInstruction": "按双方分项差距、总体差距和关键制约因素输出制空权判断，并说明结论适用的区域与时间范围。"
+    },
+    {
+      "id": "strike-effectiveness-analysis",
+      "name": "火力打击效能分析",
+      "description": "从任务计划、打击战果到武器使用情况逐层核验火力打击效果。",
+      "category": "火力打击",
+      "triggers": ["打击效能", "火力打击", "毁伤效果", "命中率"],
+      "recommendedQuestions": ["评估本轮火力打击效能，分析命中和摧毁效果"],
+      "steps": [
+        {"id": "mission", "name": "查询打击任务", "description": "核验任务规模、目标与执行状态。", "datasetKeywords": ["任务", "mission", "行动", "出动", "目标任务"]},
+        {"id": "combat-result", "name": "查询打击战果", "description": "统计命中数、摧毁数和目标达成情况。", "datasetKeywords": ["战果", "combat_result", "命中", "摧毁", "打击结果"]},
+        {"id": "weapon", "name": "查询武器使用", "description": "分析武器类型、发射数量与实际贡献。", "datasetKeywords": ["武器", "weapon", "弹药", "火力", "装备效能"]}
+      ],
+      "outputInstruction": "给出任务完成率、命中摧毁表现和武器使用效率，并指出低效环节。"
+    },
+    {
+      "id": "battle-damage-assessment",
+      "name": "战损影响评估",
+      "description": "先建立参战力量基线，再分析战损，最后结合战果判断损失影响。",
+      "category": "损伤评估",
+      "triggers": ["战损影响", "损失评估", "伤亡分析", "损毁情况"],
+      "recommendedQuestions": ["分析当前战损对后续作战能力的影响"],
+      "steps": [
+        {"id": "force-baseline", "name": "查询兵力基线", "description": "获取单位、人员和装备初始规模。", "datasetKeywords": ["兵力", "force", "unit", "编制", "参战力量"]},
+        {"id": "combat-loss", "name": "查询战损明细", "description": "按单位、装备、原因和时间统计损失。", "datasetKeywords": ["战损", "combat_loss", "损失", "伤亡", "损毁"]},
+        {"id": "combat-result", "name": "查询同期战果", "description": "结合取得的战果判断损失代价是否可接受。", "datasetKeywords": ["战果", "combat_result", "命中", "摧毁", "任务成果"]}
+      ],
+      "outputInstruction": "量化损失比例和受影响能力，判断是否影响后续任务，并提出补充与调整建议。"
+    },
+    {
+      "id": "resource-support-readiness",
+      "name": "资源保障能力评估",
+      "description": "按照库存、消耗、补给的顺序评估持续保障能力。",
+      "category": "保障评估",
+      "triggers": ["资源保障", "物资保障", "弹药够不够", "持续作战"],
+      "recommendedQuestions": ["评估当前资源保障是否能够支撑下一阶段行动"],
+      "steps": [
+        {"id": "inventory", "name": "查询现有库存", "description": "核验弹药、燃料、备件与关键物资库存。", "datasetKeywords": ["库存", "inventory", "仓储", "物资余量", "储备"]},
+        {"id": "resource-consume", "name": "查询消耗速率", "description": "统计各类资源消耗量和消耗趋势。", "datasetKeywords": ["消耗", "resource_consume", "弹药", "燃料", "物资"]},
+        {"id": "supply", "name": "查询补给能力", "description": "核验补给计划、到货进度和运输能力。", "datasetKeywords": ["补给", "supply", "运输", "配送", "保障计划"]}
+      ],
+      "outputInstruction": "计算或判断可持续保障时长，列出最紧缺资源、风险时间点和优先补给建议。"
+    },
+    {
+      "id": "mission-success-review",
+      "name": "任务完成质量复盘",
+      "description": "从任务执行记录出发，对照战果与战损复盘任务完成质量。",
+      "category": "任务评估",
+      "triggers": ["任务复盘", "任务完成率", "行动复盘", "执行质量"],
+      "recommendedQuestions": ["复盘近期任务完成质量，找出未完成任务的共性原因"],
+      "steps": [
+        {"id": "mission", "name": "查询任务执行", "description": "统计任务状态、完成时长与未完成原因。", "datasetKeywords": ["任务", "mission", "行动", "执行记录", "任务完成"]},
+        {"id": "combat-result", "name": "查询任务战果", "description": "核验任务对应的命中、摧毁和目标达成。", "datasetKeywords": ["战果", "combat_result", "任务成果", "命中", "摧毁"]},
+        {"id": "combat-loss", "name": "查询任务代价", "description": "统计任务期间的人员装备损失。", "datasetKeywords": ["战损", "combat_loss", "损失", "伤亡", "损毁"]}
+      ],
+      "outputInstruction": "按完成质量、耗时、成果和代价复盘，归纳失败模式并给出可执行改进项。"
+    },
+    {
+      "id": "weapon-system-effectiveness",
+      "name": "武器系统效能评估",
+      "description": "先查武器系统基础信息，再用战果和故障损失数据验证实际效能。",
+      "category": "火力打击",
+      "triggers": ["武器效能", "装备效能", "武器系统", "哪种武器"],
+      "recommendedQuestions": ["对比各型武器系统的实际作战效能和可靠性"],
+      "steps": [
+        {"id": "weapon", "name": "查询武器系统", "description": "获取型号、数量、能力参数和使用记录。", "datasetKeywords": ["武器", "weapon", "装备", "equipment", "火力系统"]},
+        {"id": "combat-result", "name": "查询贡献战果", "description": "按武器型号统计命中、摧毁与任务贡献。", "datasetKeywords": ["战果", "combat_result", "命中", "摧毁", "打击效果"]},
+        {"id": "maintenance-loss", "name": "查询故障与损失", "description": "统计故障、维修和战损情况。", "datasetKeywords": ["维修", "maintenance", "故障", "战损", "combat_loss"]}
+      ],
+      "outputInstruction": "比较各型号的任务贡献、命中摧毁效果和可靠性，给出使用与保障优先级。"
+    },
+    {
+      "id": "recon-warning-capability",
+      "name": "侦察预警能力评估",
+      "description": "按侦察发现、预警处置、能力验证的顺序评估感知链路。",
+      "category": "空中作战",
+      "triggers": ["侦察预警", "探测能力", "预警时间", "感知能力"],
+      "recommendedQuestions": ["评估当前侦察预警链路的发现与响应能力"],
+      "steps": [
+        {"id": "recon", "name": "查询侦察发现", "description": "统计侦察覆盖、发现数量和识别准确率。", "datasetKeywords": ["侦察", "recon", "情报", "intelligence", "探测"]},
+        {"id": "warning", "name": "查询预警处置", "description": "统计预警提前量、告警等级和处置状态。", "datasetKeywords": ["预警", "warning", "告警", "雷达", "响应时间"]},
+        {"id": "air-capability", "name": "核验感知能力", "description": "使用空中能力数据验证侦察预警分项表现。", "datasetKeywords": ["空中能力", "air_capability", "侦察能力", "探测精度", "感知"]}
+      ],
+      "outputInstruction": "从覆盖范围、发现概率、识别准确率和预警提前量评估能力，指出链路薄弱点。"
+    },
+    {
+      "id": "command-decision-efficiency",
+      "name": "指挥决策效率评估",
+      "description": "连接指令、任务执行与战果数据，评估决策到行动的效率。",
+      "category": "任务评估",
+      "triggers": ["指挥效率", "决策效率", "指令响应", "命令执行"],
+      "recommendedQuestions": ["评估指挥决策到任务执行的响应效率"],
+      "steps": [
+        {"id": "command", "name": "查询指挥指令", "description": "统计命令下达时间、层级和变更情况。", "datasetKeywords": ["指挥", "command", "指令", "order", "决策"]},
+        {"id": "mission", "name": "查询任务响应", "description": "统计任务接收、启动、完成时间及状态。", "datasetKeywords": ["任务", "mission", "行动", "执行", "响应"]},
+        {"id": "combat-result", "name": "核验决策效果", "description": "用对应战果检验决策执行效果。", "datasetKeywords": ["战果", "combat_result", "任务成果", "命中", "摧毁"]}
+      ],
+      "outputInstruction": "分析决策延迟、执行延迟、变更频率和结果质量，识别主要流程瓶颈。"
+    },
+    {
+      "id": "force-readiness-assessment",
+      "name": "部队战备水平评估",
+      "description": "依次核验人员兵力、装备完好和维修保障，判断战备水平。",
+      "category": "保障评估",
+      "triggers": ["战备水平", "战备状态", "可用兵力", "装备完好率"],
+      "recommendedQuestions": ["评估各单位当前战备水平并给出排序"],
+      "steps": [
+        {"id": "force", "name": "查询人员兵力", "description": "统计编制、在位和可出动人员。", "datasetKeywords": ["兵力", "force", "人员", "unit", "编制"]},
+        {"id": "equipment", "name": "查询装备完好", "description": "统计装备在位、可用与故障数量。", "datasetKeywords": ["装备", "equipment", "完好", "可用装备", "器材"]},
+        {"id": "maintenance", "name": "查询维修保障", "description": "统计待修、在修和预计恢复情况。", "datasetKeywords": ["维修", "maintenance", "检修", "故障", "备件"]}
+      ],
+      "outputInstruction": "按人员到位、装备完好和恢复能力给出战备等级、单位排序与优先整备建议。"
+    },
+    {
+      "id": "regional-threat-assessment",
+      "name": "区域威胁综合研判",
+      "description": "先识别威胁目标，再结合情报和兵力部署形成区域风险判断。",
+      "category": "威胁研判",
+      "triggers": ["区域威胁", "威胁研判", "风险区域", "敌情分析"],
+      "recommendedQuestions": ["研判目标区域当前主要威胁及风险等级"],
+      "steps": [
+        {"id": "threat", "name": "查询威胁目标", "description": "统计目标类型、威胁等级、位置和活动状态。", "datasetKeywords": ["威胁", "threat", "目标", "target", "敌情"]},
+        {"id": "intelligence", "name": "查询情报证据", "description": "核验侦察来源、可信度和最新发现。", "datasetKeywords": ["情报", "intelligence", "侦察", "recon", "探测"]},
+        {"id": "deployment", "name": "查询兵力部署", "description": "分析双方单位和装备在区域内的分布。", "datasetKeywords": ["部署", "deployment", "兵力", "force", "unit"]}
+      ],
+      "outputInstruction": "给出威胁等级、关键目标、证据充分度和可能影响，并区分事实与推断。"
+    },
+    {
+      "id": "defense-survivability-assessment",
+      "name": "防御生存能力评估",
+      "description": "从防护配置、实际战损与保障恢复三个层面评估生存能力。",
+      "category": "损伤评估",
+      "triggers": ["生存能力", "防御能力", "防护效果", "抗毁能力"],
+      "recommendedQuestions": ["评估当前防御体系的生存与恢复能力"],
+      "steps": [
+        {"id": "defense", "name": "查询防护配置", "description": "核验防御单元、覆盖范围和防护等级。", "datasetKeywords": ["防御", "defense", "防护", "工事", "拦截"]},
+        {"id": "combat-loss", "name": "查询实际战损", "description": "统计受损对象、损失原因与区域分布。", "datasetKeywords": ["战损", "combat_loss", "损失", "损毁", "伤亡"]},
+        {"id": "support", "name": "查询恢复保障", "description": "统计维修、补给和替补恢复能力。", "datasetKeywords": ["维修", "maintenance", "补给", "supply", "保障"]}
+      ],
+      "outputInstruction": "评估防护有效性、易损环节和战损恢复速度，提出加固与冗余配置建议。"
+    },
+    {
+      "id": "target-priority-analysis",
+      "name": "目标价值与打击优先级分析",
+      "description": "依次核验目标价值、情报可信度和可用打击手段，生成优先级建议。",
+      "category": "火力打击",
+      "triggers": ["目标优先级", "打击顺序", "目标价值", "先打哪个"],
+      "recommendedQuestions": ["综合目标价值和可打击性，给出目标优先级建议"],
+      "steps": [
+        {"id": "target", "name": "查询目标价值", "description": "获取目标类型、价值等级、位置和状态。", "datasetKeywords": ["目标", "target", "威胁", "threat", "目标价值"]},
+        {"id": "intelligence", "name": "核验目标情报", "description": "核验目标发现时间、来源和可信度。", "datasetKeywords": ["情报", "intelligence", "侦察", "recon", "探测"]},
+        {"id": "weapon", "name": "查询打击手段", "description": "匹配射程、数量和适用目标类型。", "datasetKeywords": ["武器", "weapon", "火力", "装备", "弹药"]}
+      ],
+      "outputInstruction": "综合价值、紧迫性、情报可信度和可打击性输出优先级，并说明排序依据与约束。"
+    },
+    {
+      "id": "joint-operation-coordination",
+      "name": "联合作战协同评估",
+      "description": "从联合任务、指挥协同和保障协同三个方面评估体系协作效果。",
+      "category": "任务评估",
+      "triggers": ["联合作战", "协同效率", "军兵种协同", "体系协同"],
+      "recommendedQuestions": ["评估本次联合作战各力量之间的协同效果"],
+      "steps": [
+        {"id": "joint-mission", "name": "查询联合任务", "description": "统计参与力量、任务依赖与完成情况。", "datasetKeywords": ["联合任务", "joint_mission", "任务", "mission", "协同任务"]},
+        {"id": "command", "name": "查询指挥协同", "description": "分析命令传递、任务变更和响应时延。", "datasetKeywords": ["指挥", "command", "指令", "order", "协同"]},
+        {"id": "support", "name": "查询保障协同", "description": "分析跨单位资源、补给和支援情况。", "datasetKeywords": ["保障", "support", "补给", "supply", "资源"]}
+      ],
+      "outputInstruction": "按任务衔接、指挥响应和保障共享评价协同水平，列出接口瓶颈与改进措施。"
+    },
+    {
+      "id": "operational-trend-risk",
+      "name": "作战态势趋势与风险研判",
+      "description": "串联历史任务、战果、战损和资源数据，研判态势趋势与近期风险。",
+      "category": "综合评估",
+      "triggers": ["态势趋势", "风险预测", "趋势分析", "后续风险"],
+      "recommendedQuestions": ["基于近期数据研判作战态势趋势和下一阶段主要风险"],
+      "steps": [
+        {"id": "mission-history", "name": "查询任务趋势", "description": "统计任务数量、类型、完成率和周期变化。", "datasetKeywords": ["任务", "mission", "历史任务", "行动", "执行记录"]},
+        {"id": "combat-result", "name": "查询战果趋势", "description": "统计命中、摧毁和目标达成的时间变化。", "datasetKeywords": ["战果", "combat_result", "命中", "摧毁", "打击效果"]},
+        {"id": "combat-loss", "name": "查询战损趋势", "description": "统计损失数量、对象和原因的时间变化。", "datasetKeywords": ["战损", "combat_loss", "损失", "伤亡", "损毁"]},
+        {"id": "resource-consume", "name": "查询资源趋势", "description": "统计关键资源消耗与剩余保障压力。", "datasetKeywords": ["消耗", "resource_consume", "弹药", "燃料", "物资"]}
+      ],
+      "outputInstruction": "区分已发生事实与趋势推断，给出上升或下降信号、主要风险、证据和建议观察指标。"
+    }
+  ]
+}

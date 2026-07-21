@@ -918,8 +918,10 @@ async def delete_llm_config(config_id: str):
 # ========== 评估分析 API（多智能体） ==========
 try:
     from evaluation_api import evaluation_router
+    from skill_api import skill_api_router
     app.include_router(evaluation_router)
-    logger.info("Evaluation router registered")
+    app.include_router(skill_api_router)
+    logger.info("Evaluation and governed Skill routers registered")
 except Exception as e:
     logger.warning(f"Failed to register evaluation router: {e}")
 

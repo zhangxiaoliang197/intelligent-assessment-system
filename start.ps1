@@ -8,8 +8,8 @@ $root = "$PSScriptRoot"
 
 # Must set PATH first so Start-Process inherits it
 $nodeBin = Split-Path -Parent (Get-Command node -ErrorAction Stop).Source
-$javaHome = "$env:USERPROFILE\jdk17\jdk-17.0.14+7"
-$javaBin = "$javaHome\bin"
+$javaExe = (Get-Command java -ErrorAction Stop).Source
+$javaBin = Split-Path -Parent $javaExe
 $gitBin = "$env:USERPROFILE\git\cmd"
 $env:Path = "$nodeBin;$javaBin;$gitBin;" + $env:Path
 
@@ -39,7 +39,7 @@ if (-not (Test-Path $adminJar)) {
     Write-Host "  Building admin-service..." -ForegroundColor Yellow
     Push-Location "$root\java\admin-service"; mvn package -DskipTests -q; Pop-Location
 }
-Start-Process -FilePath "$javaBin\java.exe" -ArgumentList "-jar $adminJar" -WindowStyle Hidden
+Start-Process -FilePath $javaExe -ArgumentList "-jar $adminJar" -WindowStyle Hidden
 Write-Host "  Started Admin (10258)" -ForegroundColor Green
 
 # Frontend

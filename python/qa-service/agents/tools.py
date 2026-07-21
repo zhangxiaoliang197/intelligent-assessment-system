@@ -38,6 +38,7 @@ import urllib.error
 import ssl
 import os
 import logging
+import re
 
 logger = logging.getLogger("evaluation.tools")
 
@@ -177,11 +178,27 @@ def fetch_table_structure(db_id: str, table_name: str) -> dict:
         - count:     列数量
         调用失败时返回 columns=[] 且 count=0。
     """
+    # 数据集元数据来自管理端，但仍不能直接拼接进 SQL。这里仅接受常见的
+    # Unicode/空格/点/横线标识符字符，并明确拒绝引号、注释、控制字符等
+    # 可改变字符串字面量边界的内容。
+    if (
+        not isinstance(table_name, str)
+        or not table_name.strip()
+        or len(table_name) > 256
+        or re.search(r"['\"`;\x00-\x1f\x7f]", table_name)
+        or "--" in table_name
+        or "/*" in table_name
+        or "*/" in table_name
+    ):
+        logger.warning("Rejected unsafe table name while reading metadata")
+        return {"tableName": "", "columns": [], "count": 0}
+    safe_table_name = table_name.strip()
+
     # 构造 information_schema 查询 SQL
     sql = (
         f"SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_COMMENT "
         f"FROM information_schema.COLUMNS "
-        f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table_name}' "
+        f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{safe_table_name}' "
         f"ORDER BY ORDINAL_POSITION"
     )
     # 通过 execute_sql_on_database 代理执行（会经过 admin-service 的安全校验）
@@ -217,11 +234,11 @@ def fetch_table_structure(db_id: str, table_name: str) -> dict:
                 "isNullable": "YES" in (is_nullable or ""),  # MySQL: YES 表示可为空
                 "comment": comment or "",
             })
-        logger.info(f"Table [{table_name}]: got {len(columns)} columns via information_schema")
-        return {"tableName": table_name, "columns": columns, "count": len(columns)}
+        logger.info(f"Table [{safe_table_name}]: got {len(columns)} columns via information_schema")
+        return {"tableName": safe_table_name, "columns": columns, "count": len(columns)}
 
-    logger.warning(f"Failed to get structure for {table_name} on db {db_id}: {result.get('message', '')}")
-    return {"tableName": table_name, "columns": [], "count": 0}
+    logger.warning(f"Failed to get structure for {safe_table_name} on db {db_id}: {result.get('message', '')}")
+    return {"tableName": safe_table_name, "columns": [], "count": 0}
 
 
 def execute_sql_on_database(db_id: str, sql: str) -> dict:
@@ -252,7 +269,7 @@ def execute_sql_on_database(db_id: str, sql: str) -> dict:
 # 指标（Indicator）是用户预定义的计算规则，如命中率、摧毁率等。
 # 这些补充信息帮助 LLM 更准确地理解表结构并生成正确的 SQL。
 
-def fetch_datasets_for_database(db_id: str) -> list:
+def fetch_datasets_for_database(db_id: str, strict: bool = False) -> list:
     """获取与指定数据库关联的所有数据集（用户管理的补充信息）。
 
     先调用 GET /api/admin/dataset/list 获取全部数据集，
@@ -271,6 +288,8 @@ def fetch_datasets_for_database(db_id: str) -> list:
     """
     resp = _api_get("dataset/list")
     if not resp.get("success"):
+        if strict:
+            raise RuntimeError(resp.get("message") or "数据集目录服务不可用")
         return []
     # 按 databaseId 过滤：只保留与目标数据库关联的数据集
     return [ds for ds in resp.get("datasets", []) if ds.get("databaseId") == db_id]

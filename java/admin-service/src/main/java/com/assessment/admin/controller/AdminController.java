@@ -27,6 +27,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.*;
@@ -766,9 +767,10 @@ public class AdminController {
         }
 
         String tableName = body.getOrDefault("tableName", "");
-        if (tableName.isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "表名不能为空"));
+        if (!isSafeMetadataTableName(tableName)) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "表名为空或包含不支持的字符"));
         }
+        tableName = tableName.trim();
 
         // Save tableName to dataset
         ds.setTableName(tableName);
@@ -797,6 +799,10 @@ public class AdminController {
     }
 
     private ResponseEntity<Map<String, Object>> readTableColumns(DatabaseConfig dbConfig, String tableName) {
+        if (!isSafeMetadataTableName(tableName)) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "数据集表名为空或包含不支持的字符"));
+        }
+        tableName = tableName.trim();
         Driver driver = findDriverByType(dbConfig.getType());
         if (driver == null) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "不支持的数据库类型: " + dbConfig.getType()));
@@ -808,39 +814,42 @@ public class AdminController {
                 .replace("{database}", dbConfig.getDbName());
 
         try {
-            try (Connection conn = getJdbcConnection(driver, jdbcUrl, dbConfig.getUsername(), dbConfig.getPassword());
-                 Statement stmt = conn.createStatement()) {
+            try (Connection conn = getJdbcConnection(driver, jdbcUrl, dbConfig.getUsername(), dbConfig.getPassword())) {
 
                 String sql;
+                List<String> parameters = new ArrayList<>();
                 String driverName = driver.getName();
                 if ("PostgreSQL".equals(driverName)) {
-                    sql = String.format(
+                    sql =
                         "SELECT column_name, data_type, is_nullable, " +
                         "CASE WHEN EXISTS (SELECT 1 FROM information_schema.table_constraints tc " +
                         "JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name " +
-                        "WHERE tc.table_name = '%s' AND tc.constraint_type = 'PRIMARY KEY' " +
+                        "WHERE tc.table_name = ? AND tc.constraint_type = 'PRIMARY KEY' " +
                         "AND kcu.column_name = c.column_name) THEN 'YES' ELSE 'NO' END AS is_pk, " +
                         "COALESCE(pgd.description, '') AS column_comment " +
                         "FROM information_schema.columns c " +
                         "LEFT JOIN pg_catalog.pg_description pgd ON pgd.objsubid = c.ordinal_position " +
-                        "AND pgd.objoid = (SELECT oid FROM pg_class WHERE relname = '%s') " +
-                        "WHERE c.table_name = '%s' ORDER BY c.ordinal_position",
-                        tableName, tableName, tableName);
+                        "AND pgd.objoid = (SELECT oid FROM pg_class WHERE relname = ?) " +
+                        "WHERE c.table_name = ? ORDER BY c.ordinal_position";
+                    parameters.add(tableName);
+                    parameters.add(tableName);
+                    parameters.add(tableName);
                 } else if ("Oracle".equals(driverName) || "达梦数据库V8".equals(driverName)) {
-                    sql = String.format(
+                    sql =
                         "SELECT c.column_name, c.data_type, c.nullable AS is_nullable, " +
                         "CASE WHEN pk.column_name IS NOT NULL THEN 'YES' ELSE 'NO' END AS is_pk, " +
                         "COALESCE(cm.comments, '') AS column_comment " +
                         "FROM user_tab_columns c " +
                         "LEFT JOIN (SELECT cc.column_name FROM user_cons_columns cc " +
                         "JOIN user_constraints uc ON cc.constraint_name = uc.constraint_name " +
-                        "WHERE uc.constraint_type = 'P' AND uc.table_name = '%s') pk " +
+                        "WHERE uc.constraint_type = 'P' AND uc.table_name = ?) pk " +
                         "ON c.column_name = pk.column_name " +
                         "LEFT JOIN user_col_comments cm ON c.table_name = cm.table_name AND c.column_name = cm.column_name " +
-                        "WHERE c.table_name = '%s' ORDER BY c.column_id",
-                        tableName, tableName);
+                        "WHERE c.table_name = ? ORDER BY c.column_id";
+                    parameters.add(tableName);
+                    parameters.add(tableName);
                 } else if ("SQL Server".equals(driverName)) {
-                    sql = String.format(
+                    sql =
                         "SELECT c.COLUMN_NAME, c.DATA_TYPE, c.IS_NULLABLE, " +
                         "CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 'YES' ELSE 'NO' END AS is_pk, " +
                         "COALESCE(CAST(ep.value AS NVARCHAR(MAX)), '') AS column_comment " +
@@ -848,32 +857,41 @@ public class AdminController {
                         "LEFT JOIN (SELECT ku.TABLE_NAME, ku.COLUMN_NAME " +
                         "FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc " +
                         "JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku ON tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME " +
-                        "WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' AND ku.TABLE_NAME = '%s') pk " +
+                        "WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' AND ku.TABLE_NAME = ?) pk " +
                         "ON c.COLUMN_NAME = pk.COLUMN_NAME " +
-                        "LEFT JOIN sys.extended_properties ep ON ep.major_id = OBJECT_ID('%s') " +
+                        "LEFT JOIN sys.extended_properties ep ON ep.major_id = OBJECT_ID(?) " +
                         "AND ep.minor_id = c.ORDINAL_POSITION AND ep.name = 'MS_Description' " +
-                        "WHERE c.TABLE_NAME = '%s' ORDER BY c.ORDINAL_POSITION",
-                        tableName, tableName, tableName);
+                        "WHERE c.TABLE_NAME = ? ORDER BY c.ORDINAL_POSITION";
+                    parameters.add(tableName);
+                    parameters.add(tableName);
+                    parameters.add(tableName);
                 } else {
-                    sql = String.format(
+                    sql =
                         "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, " +
                         "IF(COLUMN_KEY='PRI','YES','NO') AS IS_PK, " +
                         "COALESCE(COLUMN_COMMENT,'') AS COLUMN_COMMENT " +
-                        "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='%s' AND TABLE_NAME='%s' " +
-                        "ORDER BY ORDINAL_POSITION",
-                        dbConfig.getDbName(), tableName);
+                        "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? " +
+                        "ORDER BY ORDINAL_POSITION";
+                    parameters.add(dbConfig.getDbName());
+                    parameters.add(tableName);
                 }
 
-                ResultSet rs = stmt.executeQuery(sql);
                 List<Map<String, Object>> columns = new ArrayList<>();
-                while (rs.next()) {
-                    Map<String, Object> col = new LinkedHashMap<>();
-                    col.put("columnName", rs.getString(1));
-                    col.put("dataType", rs.getString(2));
-                    col.put("isNullable", "YES".equalsIgnoreCase(rs.getString(3)));
-                    col.put("isPrimaryKey", "YES".equalsIgnoreCase(rs.getString(4)));
-                    col.put("comment", rs.getString(5) != null ? rs.getString(5) : "");
-                    columns.add(col);
+                try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                    for (int index = 0; index < parameters.size(); index++) {
+                        stmt.setString(index + 1, parameters.get(index));
+                    }
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        while (rs.next()) {
+                            Map<String, Object> col = new LinkedHashMap<>();
+                            col.put("columnName", rs.getString(1));
+                            col.put("dataType", rs.getString(2));
+                            col.put("isNullable", "YES".equalsIgnoreCase(rs.getString(3)));
+                            col.put("isPrimaryKey", "YES".equalsIgnoreCase(rs.getString(4)));
+                            col.put("comment", rs.getString(5) != null ? rs.getString(5) : "");
+                            columns.add(col);
+                        }
+                    }
                 }
 
                 return ResponseEntity.ok(Map.of("success", true, "tableName", tableName, "columns", columns, "count", columns.size()));
@@ -881,6 +899,13 @@ public class AdminController {
         } catch (Exception e) {
             return ResponseEntity.ok(Map.of("success", false, "message", "读取表结构失败: " + e.getMessage()));
         }
+    }
+
+    private boolean isSafeMetadataTableName(String tableName) {
+        return tableName != null
+                && !tableName.trim().isEmpty()
+                && tableName.length() <= 256
+                && tableName.matches("[\\p{L}\\p{N}_$# .-]+");
     }
 
     // ==================== 字段标注 ====================

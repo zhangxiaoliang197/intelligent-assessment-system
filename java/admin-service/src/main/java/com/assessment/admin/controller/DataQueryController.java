@@ -4,8 +4,8 @@ import com.assessment.admin.model.DatabaseConfig;
 import com.assessment.admin.model.Driver;
 import com.assessment.admin.repository.DatabaseConfigRepository;
 import com.assessment.admin.repository.DriverRepository;
+import com.assessment.admin.service.SqlExecutionService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -13,9 +13,6 @@ import java.io.File;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
-import java.sql.Statement;
 import java.util.*;
 
 @RestController
@@ -28,8 +25,8 @@ public class DataQueryController {
     @Autowired
     private DriverRepository driverRepo;
 
-    @Value("${driver.storage-path:drivers}")
-    private String driverStoragePath;
+    @Autowired
+    private SqlExecutionService sqlExecutionService;
 
     @PostMapping("/execute")
     public ResponseEntity<Map<String, Object>> executeQuery(@RequestBody Map<String, Object> body) {
@@ -43,69 +40,9 @@ public class DataQueryController {
             return ResponseEntity.badRequest().body(errorMap("缺少 sql 参数"));
         }
 
-        Optional<DatabaseConfig> optDb = dbConfigRepo.findById(databaseId);
-        if (optDb.isEmpty()) {
-            return ResponseEntity.badRequest().body(errorMap("数据库配置不存在: " + databaseId));
-        }
-        DatabaseConfig dbConfig = optDb.get();
-
-        Driver driver = findDriverByType(dbConfig.getType());
-        if (driver == null) {
-            return ResponseEntity.badRequest().body(errorMap("未找到匹配的数据库驱动: " + dbConfig.getType()));
-        }
-
-        String jdbcUrl = (driver.getUrlTemplate() != null ? driver.getUrlTemplate() : "")
-                .replace("{host}", dbConfig.getHost())
-                .replace("{port}", String.valueOf(dbConfig.getPort()))
-                .replace("{database}", dbConfig.getDbName());
-
-        try {
-            Connection conn = getJdbcConnection(driver, jdbcUrl, dbConfig.getUsername(), dbConfig.getPassword());
-            try (conn; Statement stmt = conn.createStatement()) {
-                boolean isResultSet = stmt.execute(sql);
-                if (isResultSet) {
-                    ResultSet rs = stmt.getResultSet();
-                    ResultSetMetaData meta = rs.getMetaData();
-                    int colCount = meta.getColumnCount();
-
-                    List<String> columns = new ArrayList<>();
-                    for (int i = 1; i <= colCount; i++) {
-                        columns.add(meta.getColumnName(i));
-                    }
-
-                    List<List<Object>> rows = new ArrayList<>();
-                    while (rs.next()) {
-                        List<Object> row = new ArrayList<>();
-                        for (int i = 1; i <= colCount; i++) {
-                            row.add(rs.getObject(i));
-                        }
-                        rows.add(row);
-                    }
-
-                    Map<String, Object> result = new HashMap<>();
-                    result.put("success", true);
-                    result.put("columns", columns);
-                    result.put("rows", rows);
-                    result.put("rowCount", rows.size());
-                    return ResponseEntity.ok(result);
-                } else {
-                    int updateCount = stmt.getUpdateCount();
-                    return ResponseEntity.ok(Map.of(
-                            "success", true,
-                            "updateCount", updateCount,
-                            "message", "SQL 执行成功，影响行数: " + updateCount
-                    ));
-                }
-            }
-        } catch (Exception e) {
-            return ResponseEntity.ok(Map.of(
-                    "success", false,
-                    "message", "SQL 执行失败: " + e.getMessage(),
-                    "columns", List.of(),
-                    "rows", List.of(),
-                    "rowCount", 0
-            ));
-        }
+        // All public SQL entry points share the same read-only validation,
+        // query timeout and row limit enforced by SqlExecutionService.
+        return ResponseEntity.ok(sqlExecutionService.executeSqlOnDatabase(databaseId, sql));
     }
 
     @PostMapping("/test-connection")

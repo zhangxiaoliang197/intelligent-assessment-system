@@ -4,21 +4,42 @@
 import json
 import logging
 import asyncio
+import copy
 import os
 import uuid
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter
+from functools import partial
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional
 
 from agents.langgraph_workflow import run_langgraph_workflow
 from agents.tools import fetch_all_databases
+from agents.skill_catalog import (
+    SkillCatalogError,
+    SkillConflictError,
+    SkillNotFoundError,
+    SkillPermissionError,
+    SkillReadOnlyError,
+    SkillStoreUnavailableError,
+    create_custom_skill,
+    delete_custom_skill,
+    get_skill,
+    get_custom_catalog_warning,
+    list_skills,
+    recommend_skills,
+    skill_availability,
+    update_custom_skill,
+)
+from agents.skill_runner import run_skill_workflow
+from skill_api import skill_actor_from_request
 
 logger = logging.getLogger("evaluation.api")
 _thread_pool = ThreadPoolExecutor(max_workers=8)
+_io_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="evaluation-history")
 
 evaluation_router = APIRouter(prefix="/evaluation", tags=["评估分析"])
 
@@ -27,7 +48,7 @@ _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(_DATA_DIR, exist_ok=True)
 _SESSIONS_FILE = os.path.join(_DATA_DIR, "evaluation_sessions.json")
 _HISTORY_FILE = os.path.join(_DATA_DIR, "evaluation_history.json")
-_write_lock = threading.Lock()
+_write_lock = threading.RLock()
 
 
 def _load_json(path, default):
@@ -44,7 +65,7 @@ def _save_json(path, data):
     with _write_lock:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
         os.replace(tmp, path)
 
 
@@ -52,39 +73,147 @@ _eval_sessions: dict = _load_json(_SESSIONS_FILE, {})
 _eval_history: list = _load_json(_HISTORY_FILE, [])
 
 
-def _save_session_to_file(sid: str, question: str, final_answer: str):
+def _save_session_to_file(
+    sid: str,
+    question: str,
+    final_answer: str,
+    skill_id: str = "",
+    result: Optional[dict] = None,
+    steps: Optional[list] = None,
+    database_id: str = "",
+    database_name: str = "",
+):
     """保存会话到文件"""
-    now = time.strftime("%Y-%m-%d %H:%M:%S")
-    _eval_sessions[sid] = {
-        "session_id": sid,
-        "question": question,
-        "final_answer": final_answer[:50000],
-        "time": now
-    }
-    _save_json(_SESSIONS_FILE, _eval_sessions)
+    global _eval_history
+    with _write_lock:
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        previous_turns = _eval_sessions.get(sid, {}).get("turns", [])
+        turn = {
+            "question": question,
+            "final_answer": final_answer[:50000],
+            "skill_id": skill_id,
+            "result": result or {},
+            "steps": steps or [],
+            "database_id": database_id,
+            "database_name": database_name,
+            "time": now,
+        }
+        _eval_sessions[sid] = {
+            "session_id": sid,
+            **turn,
+            "turns": [*previous_turns, turn][-50:],
+        }
 
-    existing = [h for h in _eval_history if h.get("id") == sid]
-    if not existing:
+        # Move the active session to the front and retain the same bounded set
+        # in both history and session detail storage.
+        _eval_history = [item for item in _eval_history if item.get("id") != sid]
         _eval_history.insert(0, {
             "id": sid,
             "title": question[:30] + ("..." if len(question) > 30 else ""),
-            "time": now
+            "time": now,
+            "skill_id": skill_id,
         })
-    else:
-        for h in _eval_history:
-            if h.get("id") == sid:
-                h["title"] = question[:30] + ("..." if len(question) > 30 else "")
-                h["time"] = now
-    _eval_history = _eval_history[:200]
-    _save_json(_HISTORY_FILE, _eval_history)
+        _eval_history = _eval_history[:200]
+        retained_ids = {item.get("id") for item in _eval_history}
+        for stored_id in list(_eval_sessions.keys()):
+            if stored_id not in retained_ids:
+                _eval_sessions.pop(stored_id, None)
+
+        _save_json(_SESSIONS_FILE, _eval_sessions)
+        _save_json(_HISTORY_FILE, _eval_history)
+
+
+def _delete_session_from_file(sid: str) -> bool:
+    """Atomically remove one session from memory and both persistence files."""
+    global _eval_history
+    with _write_lock:
+        existed = sid in _eval_sessions or any(item.get("id") == sid for item in _eval_history)
+        _eval_sessions.pop(sid, None)
+        _eval_history = [item for item in _eval_history if item.get("id") != sid]
+        _save_json(_SESSIONS_FILE, _eval_sessions)
+        _save_json(_HISTORY_FILE, _eval_history)
+        return existed
 
 
 class EvaluationRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     query: str
     session_id: Optional[str] = None
     database_id: str = Field(default="", alias="dataSourceId")
     database_name: str = ""
     attachment_id: Optional[str] = None
+    skill_id: Optional[str] = Field(default=None, alias="skillId")
+    timeout_seconds: Optional[int] = Field(default=None, ge=30, le=1800, alias="timeoutSeconds")
+
+
+class SkillRecommendRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", str_strip_whitespace=True)
+
+    query: str
+    limit: int = Field(default=3, ge=1, le=10)
+    database_id: str = Field(default="", alias="dataSourceId")
+
+
+class SkillStepInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", str_strip_whitespace=True)
+
+    id: Optional[str] = Field(default=None, max_length=64)
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(min_length=1, max_length=500)
+    dataset_keywords: list[str] = Field(
+        min_length=1,
+        max_length=12,
+        alias="datasetKeywords",
+    )
+    allow_reuse: bool = Field(default=False, alias="allowReuse")
+    dataset_id: Optional[str] = Field(default=None, max_length=128, alias="datasetId")
+    dataset_name: Optional[str] = Field(default=None, max_length=160, alias="datasetName")
+    depends_on: list[str] = Field(default_factory=list, max_length=12, alias="dependsOn")
+    run_if: str = Field(default="all_success", pattern="^(all_success|any_success|always)$", alias="runIf")
+    retry_count: int = Field(default=0, ge=0, le=3, alias="retryCount")
+    timeout_seconds: int = Field(default=130, ge=5, le=300, alias="timeoutSeconds")
+    on_failure: str = Field(default="continue", pattern="^(continue|stop|skip_dependents)$", alias="onFailure")
+
+
+class SkillOrchestrationInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    mode: str = Field(default="sequential", pattern="^(sequential|dependency)$")
+    max_concurrency: int = Field(default=1, ge=1, le=6, alias="maxConcurrency")
+    timeout_seconds: int = Field(default=600, ge=30, le=1800, alias="timeoutSeconds")
+    failure_policy: str = Field(default="continue", pattern="^(continue|stop)$", alias="failurePolicy")
+
+
+class SkillCreateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(min_length=1, max_length=500)
+    category: str = Field(min_length=1, max_length=40)
+    triggers: list[str] = Field(default_factory=list, max_length=12)
+    recommended_questions: list[str] = Field(
+        default_factory=list,
+        max_length=5,
+        alias="recommendedQuestions",
+    )
+    steps: list[SkillStepInput] = Field(min_length=1, max_length=12)
+    output_instruction: str = Field(
+        min_length=1,
+        max_length=1200,
+        alias="outputInstruction",
+    )
+    owner_id: Optional[str] = Field(default=None, max_length=128, alias="ownerId")
+    team_id: Optional[str] = Field(default=None, max_length=128, alias="teamId")
+    visibility: Optional[str] = Field(default=None, pattern="^(private|team|public)$")
+    status: Optional[str] = Field(default=None, pattern="^(draft|published|archived)$")
+    tags: Optional[list[str]] = Field(default=None, max_length=20)
+    is_template: Optional[bool] = Field(default=None, alias="isTemplate")
+    orchestration: SkillOrchestrationInput = Field(default_factory=SkillOrchestrationInput)
+
+
+class SkillUpdateRequest(SkillCreateRequest):
+    expected_revision: int = Field(ge=1, alias="expectedRevision")
 
 
 def _get_llm_config():
@@ -124,9 +253,20 @@ def _sync_llm_call(system_prompt: str, user_message: str) -> str:
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", f"Bearer {api_key}")
 
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode = ssl.CERT_NONE
+    ca_cert_file = os.getenv("LLM_CA_CERT_FILE") or config.get("caCertPath") or None
+    try:
+        ssl_ctx = ssl.create_default_context(cafile=ca_cert_file)
+    except (OSError, ssl.SSLError) as exc:
+        raise RuntimeError(f"大模型 CA 证书配置无效: {exc}") from exc
+
+    tls_setting = os.getenv("LLM_TLS_VERIFY", str(config.get("tlsVerify", True))).strip().lower()
+    verify_tls = tls_setting not in {"0", "false", "no", "off"}
+    if not verify_tls:
+        if config.get("type") != "vllm":
+            raise RuntimeError("仅内网自签名 vLLM 允许关闭 TLS 校验；公网模型必须校验证书")
+        logger.warning("TLS certificate verification is disabled for the configured vLLM endpoint")
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
 
     try:
         with urllib.request.urlopen(req, timeout=180, context=ssl_ctx) as resp:
@@ -150,10 +290,22 @@ async def async_llm_call(system_prompt: str, user_message: str) -> str:
 
 
 @evaluation_router.post("/analyze/stream")
-async def analyze_stream(request: EvaluationRequest):
-    logger.info(f"Evaluation request: {request.query[:100]}, db={request.database_id}")
+async def analyze_stream(request: EvaluationRequest, http_request: Request):
+    logger.info(
+        f"Evaluation request: {request.query[:100]}, db={request.database_id}, "
+        f"skill={request.skill_id or 'default-workflow'}"
+    )
 
     session_id = request.session_id or str(uuid.uuid4())
+    actor = skill_actor_from_request(http_request)
+    selected_skill = None
+    if request.skill_id:
+        selected_skill = get_skill(request.skill_id, actor)
+        if not selected_skill:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Skill 不存在或当前用户无权访问: {request.skill_id}",
+            )
 
     # 获取附件文本
     attachment_text = ""
@@ -166,23 +318,72 @@ async def analyze_stream(request: EvaluationRequest):
 
     async def generate():
         final_answer = ""
+        final_result = {}
+        execution_steps = []
         try:
-            async for event in run_langgraph_workflow(
-                question=request.query,
-                llm_call_fn=async_llm_call,
-                session_id=session_id,
-                database_id=request.database_id,
-                database_name=request.database_name,
-                attachment_text=attachment_text,
-            ):
+            if selected_skill:
+                workflow = run_skill_workflow(
+                    question=request.query,
+                    llm_call_fn=async_llm_call,
+                    session_id=session_id,
+                    database_id=request.database_id,
+                    database_name=request.database_name,
+                    skill=selected_skill,
+                    attachment_text=attachment_text,
+                    actor_id=actor.user_id,
+                    timeout_seconds=request.timeout_seconds,
+                )
+            else:
+                workflow = run_langgraph_workflow(
+                    question=request.query,
+                    llm_call_fn=async_llm_call,
+                    session_id=session_id,
+                    database_id=request.database_id,
+                    database_name=request.database_name,
+                    attachment_text=attachment_text,
+                )
+
+            async for event in workflow:
+                if event.get("type") == "step":
+                    incoming_step = event.get("step", {})
+                    existing_index = next(
+                        (
+                            index
+                            for index, step in enumerate(execution_steps)
+                            if step.get("step") == incoming_step.get("step")
+                        ),
+                        -1,
+                    )
+                    if existing_index >= 0:
+                        execution_steps[existing_index] = incoming_step
+                    else:
+                        execution_steps.append(incoming_step)
                 if event.get("type") == "result":
                     event["session_id"] = session_id
-                    final_answer = event.get("final_answer", "")
+                    final_result = event.get("result", {})
+                    final_answer = event.get("final_answer", "") or final_result.get("final_answer", "")
+                    if final_answer:
+                        try:
+                            loop = asyncio.get_running_loop()
+                            await loop.run_in_executor(
+                                _io_pool,
+                                partial(
+                                    _save_session_to_file,
+                                    session_id,
+                                    request.query,
+                                    final_answer,
+                                    request.skill_id or "",
+                                    final_result,
+                                    execution_steps,
+                                    request.database_id,
+                                    request.database_name,
+                                ),
+                            )
+                        except Exception as save_error:
+                            # Persistence failure must not turn an already successful
+                            # analysis into a second, contradictory stream error.
+                            logger.error(f"Failed to persist evaluation session: {save_error}", exc_info=True)
                 yield json.dumps(event, ensure_ascii=False, default=str) + "\n"
-
-            # 保存到文件
-            if final_answer:
-                _save_session_to_file(session_id, request.query, final_answer)
 
         except Exception as e:
             logger.error(f"Evaluation stream error: {e}", exc_info=True)
@@ -201,6 +402,209 @@ async def analyze_stream(request: EvaluationRequest):
             "X-Accel-Buffering": "no"
         }
     )
+
+
+def _raise_skill_http_error(exc: SkillCatalogError) -> None:
+    if isinstance(exc, SkillStoreUnavailableError):
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if isinstance(exc, (SkillReadOnlyError, SkillPermissionError)):
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if isinstance(exc, SkillNotFoundError):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(exc, SkillConflictError):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@evaluation_router.get("/skills")
+async def get_skills(
+    request: Request,
+    dataSourceId: str = "",
+    status: str = "",
+    visibility: str = "",
+    tag: str = "",
+    favorite: bool = False,
+    template: Optional[bool] = None,
+    includeArchived: bool = False,
+):
+    """Return the 15 built-ins plus all user-authored Skills."""
+    actor = skill_actor_from_request(request)
+    skills = list_skills(
+        actor,
+        include_archived=includeArchived,
+        statuses=[status] if status else None,
+        tags=[tag] if tag else None,
+        template=template,
+        favorites_only=favorite,
+    )
+    if visibility:
+        skills = [skill for skill in skills if skill.get("visibility") == visibility]
+    datasets = []
+    availability_error = ""
+    if dataSourceId:
+        from agents.tools import fetch_datasets_for_database
+
+        try:
+            datasets = await asyncio.to_thread(fetch_datasets_for_database, dataSourceId, True)
+        except Exception as exc:
+            logger.warning(f"Failed to calculate Skill availability: {exc}")
+            availability_error = str(exc)[:300]
+
+    items = []
+    for skill in skills:
+        item = dict(skill)
+        item["stepCount"] = len(skill.get("steps", []))
+        if dataSourceId:
+            item["availability"] = (
+                {
+                    "status": "unknown",
+                    "available": False,
+                    "complete": False,
+                    "matchedSteps": 0,
+                    "totalSteps": len(skill.get("steps", [])),
+                    "datasetPlan": [],
+                    "error": availability_error,
+                }
+                if availability_error
+                else {"status": "ready", **skill_availability(skill, datasets)}
+            )
+        items.append(item)
+    return {
+        "success": True,
+        "version": "1.1.0",
+        "skills": items,
+        "total": len(items),
+        "builtInTotal": sum(1 for item in items if item.get("source") == "builtin"),
+        "customTotal": sum(1 for item in items if item.get("source") == "custom"),
+        "tags": sorted({tag for item in items for tag in item.get("tags", [])}),
+        "customStoreStatus": "warning" if get_custom_catalog_warning() else "ready",
+        "customStoreMessage": get_custom_catalog_warning(),
+        "availabilityStatus": "error" if availability_error else "ready",
+        "availabilityMessage": availability_error,
+    }
+
+
+@evaluation_router.post("/skills", status_code=201)
+async def create_evaluation_skill(request: SkillCreateRequest, http_request: Request):
+    """Create a globally shared custom Skill; SQL is never accepted as input."""
+    try:
+        skill = await asyncio.to_thread(
+            create_custom_skill,
+            request.model_dump(by_alias=True, exclude_none=True),
+            skill_actor_from_request(http_request),
+        )
+    except SkillCatalogError as exc:
+        _raise_skill_http_error(exc)
+    return {"success": True, "skill": skill}
+
+
+@evaluation_router.post("/skills/recommend")
+async def recommend_evaluation_skills(request: SkillRecommendRequest, http_request: Request):
+    actor = skill_actor_from_request(http_request)
+    # Retrieve a slightly wider lexical candidate set, then combine it with
+    # data-source readiness.  This avoids confidently recommending a Skill that
+    # cannot run against the user's selected source.
+    recommendations = recommend_skills(request.query, min(10, max(request.limit * 3, request.limit)), actor=actor)
+    datasets = []
+    availability_error = ""
+    if request.database_id:
+        from agents.tools import fetch_datasets_for_database
+
+        try:
+            datasets = await asyncio.to_thread(
+                fetch_datasets_for_database, request.database_id, True
+            )
+        except Exception as exc:
+            logger.warning("Failed to enrich Skill recommendations with availability: %s", exc)
+            availability_error = str(exc)[:300]
+
+    ranked = []
+    for position, skill in enumerate(recommendations):
+        item = dict(skill)
+        base_score = int(item.get("recommendationScore") or item.get("score") or 0)
+        if request.database_id:
+            availability = skill_availability(item, datasets)
+            total = max(int(availability.get("totalSteps") or 0), 1)
+            completeness = int(availability.get("matchedSteps") or 0) / total
+            readiness_score = (
+                0
+                if availability_error
+                else round(completeness * 80) + (30 if availability.get("complete") else 0)
+            )
+            item["availability"] = {
+                "status": "unknown" if availability_error else "ready",
+                "completeness": round(completeness, 4),
+                "error": availability_error,
+                **availability,
+            }
+            item["recommendationScore"] = base_score + readiness_score
+            item["recommendationReason"] = (
+                "已按场景匹配；当前数据源完整度暂不可用"
+                if availability_error
+                else (
+                    f"命中 {len(item.get('matchedTriggers', []))} 个场景词，"
+                    f"当前数据源可匹配 {availability['matchedSteps']}/{availability['totalSteps']} 步"
+                )
+            )
+        else:
+            item["recommendationReason"] = (
+                f"命中场景词：{'、'.join(item.get('matchedTriggers', []))}"
+                if item.get("matchedTriggers")
+                else "名称或数据集关键词与当前问题匹配"
+            )
+        ranked.append((int(item.get("recommendationScore") or 0), position, item))
+    ranked.sort(key=lambda candidate: (-candidate[0], candidate[1]))
+    recommendations = [candidate[2] for candidate in ranked[: request.limit]]
+    return {"success": True, "skills": recommendations, "total": len(recommendations)}
+
+
+@evaluation_router.get("/skills/{skill_id}")
+async def get_skill_detail(skill_id: str, request: Request):
+    skill = get_skill(skill_id, skill_actor_from_request(request), include_archived=True)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill 不存在: {skill_id}")
+    return {"success": True, "skill": skill}
+
+
+@evaluation_router.put("/skills/{skill_id}")
+async def update_evaluation_skill(
+    skill_id: str,
+    request: SkillUpdateRequest,
+    http_request: Request,
+):
+    """Update a custom Skill using an optimistic revision check."""
+    payload = request.model_dump(by_alias=True, exclude_none=True)
+    expected_revision = int(payload.pop("expectedRevision"))
+    try:
+        skill = await asyncio.to_thread(
+            update_custom_skill,
+            skill_id,
+            payload,
+            expected_revision,
+            skill_actor_from_request(http_request),
+        )
+    except SkillCatalogError as exc:
+        _raise_skill_http_error(exc)
+    return {"success": True, "skill": skill}
+
+
+@evaluation_router.delete("/skills/{skill_id}")
+async def delete_evaluation_skill(
+    skill_id: str,
+    request: Request,
+    expectedRevision: int = Query(ge=1),
+):
+    """Delete a custom Skill; built-ins are permanently read-only."""
+    try:
+        skill = await asyncio.to_thread(
+            delete_custom_skill,
+            skill_id,
+            expectedRevision,
+            skill_actor_from_request(request),
+        )
+    except SkillCatalogError as exc:
+        _raise_skill_http_error(exc)
+    return {"success": True, "skill": skill}
 
 
 # ========== 指标查询端点（由 indicator-service 确认查询后调用） ==========
@@ -259,7 +663,7 @@ async def indicator_query_stream(request: IndicatorQueryRequest):
 async def get_data_sources():
     """获取所有数据源（数据库配置列表）"""
     try:
-        databases = fetch_all_databases()
+        databases = await asyncio.to_thread(fetch_all_databases)
         def _map_status(db):
             raw = db.get("status", "")
             error = db.get("errorMsg")
@@ -290,16 +694,44 @@ async def get_data_sources():
         return {"success": False, "message": str(e), "databases": [], "dataSources": []}
 
 
+@evaluation_router.get("/data-sources/{database_id}/datasets")
+async def get_data_source_datasets(database_id: str):
+    """Return server-verified dataset choices for the custom Skill editor."""
+    from agents.tools import fetch_datasets_for_database
+
+    try:
+        datasets = await asyncio.to_thread(fetch_datasets_for_database, database_id, True)
+    except Exception as exc:
+        logger.error("Failed to load datasets for custom Skill editor: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc
+    return {
+        "success": True,
+        "datasets": [
+            {
+                "id": str(dataset.get("id", "")),
+                "name": str(dataset.get("name", "")),
+                "tableName": str(dataset.get("tableName", "")),
+                "description": str(dataset.get("description", "")),
+            }
+            for dataset in datasets
+            if dataset.get("id") and dataset.get("tableName")
+        ],
+    }
+
+
 @evaluation_router.get("/history")
 async def get_history():
     """获取历史记录列表"""
-    return {"success": True, "history": _eval_history}
+    with _write_lock:
+        history = copy.deepcopy(_eval_history)
+    return {"success": True, "history": history}
 
 
 @evaluation_router.get("/session/{session_id}")
 async def get_session(session_id: str):
     """获取指定会话"""
-    session = _eval_sessions.get(session_id)
+    with _write_lock:
+        session = copy.deepcopy(_eval_sessions.get(session_id))
     if session:
         return {"success": True, "session": session}
     return {"success": False, "message": "会话不存在"}
@@ -308,10 +740,6 @@ async def get_session(session_id: str):
 @evaluation_router.delete("/session/{session_id}")
 async def delete_session(session_id: str):
     """删除指定会话"""
-    if session_id in _eval_sessions:
-        del _eval_sessions[session_id]
-        _save_json(_SESSIONS_FILE, _eval_sessions)
-    global _eval_history
-    _eval_history = [h for h in _eval_history if h.get("id") != session_id]
-    _save_json(_HISTORY_FILE, _eval_history)
-    return {"success": True, "message": "已删除"}
+    loop = asyncio.get_running_loop()
+    existed = await loop.run_in_executor(_io_pool, _delete_session_from_file, session_id)
+    return {"success": True, "message": "已删除" if existed else "会话不存在"}
