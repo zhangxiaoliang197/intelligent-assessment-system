@@ -728,20 +728,20 @@ const analyzeIndicator = async () => {
 
   activeAbortController = new AbortController()
 
-  // 安全兜底：30 秒后强制恢复按钮状态，防止因异常导致 analyzing 卡死
+  // 安全兜底：200 秒后强制恢复按钮状态，防止因异常导致 analyzing 卡死
   const analyzingGuard = setTimeout(() => {
     if (analyzing.value) {
       analyzing.value = false
       cancelRequested = false
       activeAbortController = null
     }
-  }, 30000)
+  }, 200000)
 
   try {
     const reqBody: any = { query: userQuestion, session_id: sessionId.value || undefined }
     if (selectedDataSourceId.value) {
-      reqBody.data_source_id = selectedDataSourceId.value
-      reqBody.data_source_name = selectedDataSourceName.value
+      reqBody.database_id = selectedDataSourceId.value
+      reqBody.database_name = selectedDataSourceName.value
     }
     const response = await fetch('/api/indicator/analyze/stream', {
       method: 'POST',
@@ -826,8 +826,6 @@ const analyzeIndicator = async () => {
             nextTick(() => scrollToBottom())
           } else if (data.type === 'new_message') {
             const content = data.content || ''
-            // 新阶段开始，清空旧步骤，避免步骤编号重复
-            executionSteps.value = []
             // 更新 currentMsgIndex 指向新消息，后续事件正确写入
             messages.value.push({
               role: 'assistant',

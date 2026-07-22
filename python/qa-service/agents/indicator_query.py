@@ -120,6 +120,10 @@ def _build_step(step_num, description, status='pending', detail='',
                 detail=detail, thinking=thinking, progress=progress)
 
 
+def _extract_rows(result):
+    return result.get("rows", result.get("data", result.get("results", [])))
+
+
 # =========================================================================
 # 步骤编号常量
 # =========================================================================
@@ -498,11 +502,8 @@ async def sql_execute_node(database_id, es, llm_call_fn):
 
     result = execute_sql_on_database(database_id, es.generated_sql)
 
-    # 成功路径
     if result.get("success"):
-        rows = result.get("rows",
-                          result.get("data",
-                                     result.get("results", [])))
+        rows = _extract_rows(result)
         yield {"type": "step", "step": _build_step(
             Step.SQL_EXECUTE, "Execute SQL", "completed",
             detail=f"查询成功: {len(rows)} 行返回",
@@ -510,7 +511,6 @@ async def sql_execute_node(database_id, es, llm_call_fn):
         yield {"_return": (rows, True)}
         return
 
-    # 失败 → 自动修正并重试
     err = result.get("message", "执行失败")
     logger.warning(f"SQL 执行失败: {err[:100]}")
 
@@ -542,7 +542,6 @@ async def sql_execute_node(database_id, es, llm_call_fn):
         yield {"_return": ([], False)}
         return
 
-    # 重新执行修正后的 SQL
     yield {"type": "step", "step": _build_step(
         Step.SQL_EXECUTE, "Execute SQL", "in_progress",
         detail="Re-executing corrected SQL...",
@@ -560,9 +559,7 @@ async def sql_execute_node(database_id, es, llm_call_fn):
         yield {"_return": ([], False)}
         return
 
-    rows = result.get("rows",
-                      result.get("data",
-                                 result.get("results", [])))
+    rows = _extract_rows(result)
     yield {"type": "step", "step": _build_step(
         Step.SQL_EXECUTE, "Execute SQL", "completed",
         detail=f"查询成功: {len(rows)} 行返回（修正后重试成功）",
