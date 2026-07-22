@@ -104,3 +104,208 @@ Start-Process "D:\Program Files\nodejs\npx.cmd" -ArgumentList "vite --host" -Wor
 | assessment-frontend | (nginx 反向代理) | 容器名 | ✅ |
 
 **规则：新增跨服务调用时，必须在 start-docker-run.sh 中补上对应的 -e 环境变量。**
+
+---
+
+# 代码编写规范
+
+## 一、注释语言规范（强制）
+
+### 1.1 核心规则
+- **所有注释、docstring、函数说明、代码注释必须使用中文**
+- 变量名、函数名、类名、文件名使用英文（驼峰命名）
+- 日志输出、错误信息、API响应消息使用中文
+
+### 1.2 正例
+```python
+# ✅ 正确：中文注释
+def _classify_query(query: str) -> str:
+    """先调用 qa-service 的 LLM 分类接口，失败则用关键词兜底。
+
+    Args:
+        query: 用户查询文本
+
+    Returns:
+        "concept_qa" / "indicator_analysis" / "general_chat"
+    """
+```
+
+```java
+// ✅ 正确：中文注释
+/**
+ * 概念问答核心处理逻辑
+ * @param sessionId 会话ID
+ * @param query 用户查询
+ * @return 处理结果
+ */
+public String handleConceptQa(String sessionId, String query) {
+    // 调用知识库检索接口
+    ...
+}
+```
+
+```typescript
+// ✅ 正确：中文注释
+const LS_SESSION_ID = 'solution_session_id'  // localStorage 持久化 key
+
+/**
+ * 发送用户消息
+ * @param message 消息内容
+ */
+async function sendMessage(message: string) {
+    // 构建请求参数
+    ...
+}
+```
+
+### 1.3 反例
+```python
+# ❌ 错误：英文注释
+def process_data(data):
+    """Process the input data.  # 必须用中文
+    Args:
+        data: input data
+    """
+```
+
+## 二、Python 规范
+
+### 2.1 Docstring 格式
+- 使用 Google 风格 docstring
+- 类/函数必须有 docstring，说明功能、参数、返回值
+- 复杂逻辑必须有行内注释
+
+### 2.2 命名规范
+- 模块名：`snake_case.py`
+- 类名：`PascalCase`
+- 函数名：`snake_case`
+- 变量名：`snake_case`
+- 常量名：`UPPER_SNAKE_CASE`（在 config.py 中定义）
+
+### 2.3 日志风格
+```python
+logger.info("指标分析完成，共分析 {count} 个指标")
+logger.warning("知识库检索超时，使用本地缓存")
+logger.error(f"数据库连接失败: {e}")
+```
+
+### 2.4 错误处理
+```python
+try:
+    result = http_post(url, data)
+except Exception as e:
+    logger.error(f"调用 {url} 失败: {e}")
+    # 返回统一错误格式
+    return {"success": False, "message": f"调用服务失败: {str(e)}"}
+```
+
+## 三、Java 规范
+
+### 3.1 Javadoc 格式
+- 类、公共方法必须有 Javadoc 注释，使用中文
+- 包含 `@param`、`@return`、`@throws`（如适用）
+
+### 3.2 命名规范
+- 包名：`com.assessment.<service>.<module>`
+- 类名：`PascalCase`
+- 方法名：`camelCase`
+- 变量名：`camelCase`
+- 常量名：`UPPER_SNAKE_CASE`（`static final`）
+
+### 3.3 注释风格
+```java
+// ── 检索知识库 ──
+List<String> results = knowledgeService.search(query);
+
+// 兜底：关键词匹配
+if (results.isEmpty()) {
+    results = keywordMatch(query);
+}
+```
+
+### 3.4 API 响应格式
+- 统一返回 `ResponseEntity<Map<String, Object>>`
+- 成功：`{"success": true, ...}`
+- 失败：`{"success": false, "message": "中文错误信息"}`
+
+## 四、Vue/TypeScript 规范
+
+### 4.1 注释风格
+- `<script setup>` 中使用 `// 注释内容`
+- 复杂逻辑分段使用 `// ── 标题 ──` 分隔
+- 组件 props、emit 必须有中文注释
+
+### 4.2 命名规范
+- 组件名：`PascalCase.vue`（如 `Layout.vue`）
+- 变量名：`camelCase`
+- 常量名：`UPPER_SNAKE_CASE`（局部常量）
+- 组合式函数：`useCamelCase()`（如 `useSpeechRecognition`）
+
+### 4.3 组件结构
+```vue
+<template>
+    <!-- 模板内容 -->
+</template>
+
+<script setup lang="ts">
+// 1. 导入（第三方 → 内部 → 样式）
+import { ref, computed } from 'vue'
+
+// 2. 组合式函数调用
+const { isListening, start, stop } = useSpeechRecognition()
+
+// 3. 响应式变量
+const inputMessage = ref('')
+
+// 4. 计算属性
+const isDisabled = computed(() => !inputMessage.value.trim())
+
+// 5. 方法定义
+async function sendMessage() {
+    // 发送消息逻辑
+}
+</script>
+
+<style scoped>
+/* 样式 */
+</style>
+```
+
+### 4.4 错误提示
+- 使用 `ElMessage` 时消息必须中文
+- API 错误提示使用中文
+
+## 五、通用规范
+
+### 5.1 API 统一格式
+所有后端 API 返回必须遵循：
+```json
+{
+    "success": true/false,
+    "message": "中文提示信息",
+    "data": {}  // 业务数据
+}
+```
+
+### 5.2 禁止硬编码
+- 禁止硬编码 URL、端口、密码
+- 使用环境变量或配置文件（`os.getenv` / `@Value`）
+- 常量定义在 `config.py` / `application.yml` 中
+
+### 5.3 错误信息
+- 所有面向用户的错误信息必须中文
+- 日志中的错误信息也使用中文
+- 保留英文异常堆栈用于调试
+
+### 5.4 接口文档
+- FastAPI 自动生成文档，title/description 使用中文
+- Java Controller 使用 `@Api` 注解时描述使用中文
+
+### 5.5 跨服务调用
+- 使用环境变量获取目标服务 URL
+- 添加超时时间（建议 5-30 秒）
+- 添加异常捕获和降级处理
+
+---
+
+> **说明**：本规范文件（`.trae/rules/project_rules.md`）会被 AI 自动读取，作为编程时的参考。同时建议在项目根目录添加 `CONTRIBUTING.md` 供人类开发者参考。
