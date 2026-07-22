@@ -28,7 +28,8 @@ function parseDMS(text: string): { value: number; rest: string } | null {
   let m: RegExpMatchArray | null
 
   // 中文度分秒/十进制: 从文本提取方向前缀 + 数字序列，兼容任意度/分/秒分隔符
-  const dirMatch = text.match(/^([北南东西])(纬|经)(\s*\d+(?:\S+\d+)*)/)
+  // 注意: 数字序列中的 \S+ 不能跨越范围分隔符（至/到/～），否则会把范围结束值也吞进去
+  const dirMatch = text.match(/^([北南东西])(纬|经)(\s*\d+(?:[^\u81f3至到～，,、。\s]*\d+)*)/)
   if (dirMatch) {
     const direction = dirMatch[1]
     const nums = dirMatch[3].match(/\d+(?:\.\d+)?/g)
@@ -65,6 +66,14 @@ function parseDMS(text: string): { value: number; rest: string } | null {
   m = text.match(/(\d+)\s*[°]\s*(\d+)\s*[']\s*([NSEW])/i)
   if (m) {
     return { value: dmsToDecimal(+m[1], +m[2], 0, m[3]), rest: text.slice(m[0].length) }
+  }
+  // 回退: 纯 DMS 数字无方向标识 (范围结束值, 如 "41°03′", "117°30′")
+  m = text.match(/^(\d+)\s*[°]\s*(\d+)\s*[′](?:\s*(\d+)\s*[″])?/)
+  if (m) {
+    const d = parseInt(m[1])
+    const min = parseInt(m[2])
+    const s = m[3] ? parseInt(m[3]) : 0
+    return { value: d + min / 60 + s / 3600, rest: text.slice(m[0].length) }
   }
   return null
 }
@@ -123,8 +132,11 @@ export function extractCoordinates(text: string): GeoPoint[] {
     const lng2 = lng1 ? parseDMS(match[4]) : null
     if (lat1 && lat2 && lng1 && lng2) {
       const name = findPlaceName(normalized, match.index, match[0].length) || `区域${points.length + 1}`
-      const centerLat = (lat1.value + lat2.value) / 2
-      const centerLng = (lng1.value + lng2.value) / 2
+      // 范围结束值继承起始值的方向符号 (回退解析的纯数字总是正数)
+      const lat2Signed = lat1.value >= 0 ? Math.abs(lat2.value) : -Math.abs(lat2.value)
+      const lng2Signed = lng1.value >= 0 ? Math.abs(lng2.value) : -Math.abs(lng2.value)
+      const centerLat = (lat1.value + lat2Signed) / 2
+      const centerLng = (lng1.value + lng2Signed) / 2
       points.push({
         name,
         lat: parseFloat(centerLat.toFixed(6)),
@@ -135,7 +147,8 @@ export function extractCoordinates(text: string): GeoPoint[] {
   }
 
   // --- 模式1: 中文 DMS 格式 "北纬XX°XX′，东经XX°XX′" ---
-  const cnDmsRegex = /([北南]纬[^，,、。\n]*)[，,、\s]+([东西]经[^，,、。\n]*)/g
+  // 排除范围分隔符，避免把范围文本误解析为单个点
+  const cnDmsRegex = /([北南]纬[^\u81f3至到～，,、。\n]*)[，,、\s]+([东西]经[^\u81f3至到～，,、。\n]*)/g
   while ((match = cnDmsRegex.exec(normalized)) !== null) {
     const latResult = parseDMS(match[1])
     const lngResult = latResult ? parseDMS(match[2]) : null
