@@ -260,7 +260,7 @@
                       <el-icon v-else-if="step.status === 'error'"><CircleClose /></el-icon>
                       <el-icon v-else><Clock /></el-icon>
                     </span>
-                    <span class="inline-step-title">{{ step.phase === 'dataset' ? `Skill ${step.sequence}/${step.total} · ${step.description}` : `步骤 ${step.step}: ${step.description}` }}</span>
+                    <span class="inline-step-title">{{ step.phase === 'indicator_gen' ? `阶段1 · 步骤 ${step.step}: ${step.description}` : step.phase === 'data_query' ? `阶段2 · 步骤 ${step.step}: ${step.description}` : step.phase === 'dataset' ? `Skill ${step.sequence}/${step.total} · ${step.description}` : `步骤 ${step.step}: ${step.description}` }}</span>
                   </div>
                   <div v-if="step.phase === 'dataset'" class="inline-step-meta">
                     <el-tag size="small" effect="plain">数据集 {{ step.sequence }}/{{ step.total }}</el-tag>
@@ -518,8 +518,8 @@ const panelState = ref({
   indicators: null as any[] | null,
   activeSkillName: '',
   sections: {
-    steps: false,  // collapsed=false meaning open
-    indicators: true,  // collapsed=true meaning closed
+    steps: false,  // collapsed=false 表示展开
+    indicators: true,  // collapsed=true 表示折叠
     sql: true,
     data: true
   }
@@ -728,20 +728,20 @@ const analyzeIndicator = async () => {
 
   activeAbortController = new AbortController()
 
-  // 安全兜底：30 秒后强制恢复按钮状态，防止因异常导致 analyzing 卡死
+  // 安全兜底：200 秒后强制恢复按钮状态，防止因异常导致 analyzing 卡死
   const analyzingGuard = setTimeout(() => {
     if (analyzing.value) {
       analyzing.value = false
       cancelRequested = false
       activeAbortController = null
     }
-  }, 30000)
+  }, 200000)
 
   try {
     const reqBody: any = { query: userQuestion, session_id: sessionId.value || undefined }
     if (selectedDataSourceId.value) {
-      reqBody.data_source_id = selectedDataSourceId.value
-      reqBody.data_source_name = selectedDataSourceName.value
+      reqBody.database_id = selectedDataSourceId.value
+      reqBody.database_name = selectedDataSourceName.value
     }
     const response = await fetch('/api/indicator/analyze/stream', {
       method: 'POST',
@@ -826,8 +826,6 @@ const analyzeIndicator = async () => {
             nextTick(() => scrollToBottom())
           } else if (data.type === 'new_message') {
             const content = data.content || ''
-            // 新阶段开始，清空旧步骤，避免步骤编号重复
-            executionSteps.value = []
             // 更新 currentMsgIndex 指向新消息，后续事件正确写入
             messages.value.push({
               role: 'assistant',
@@ -980,7 +978,7 @@ onMounted(async () => {
   background: transparent;
 }
 
-/* ── Sidebar ── */
+/* ── 侧边栏 ── */
 .sidebar {
   width: 260px;
   flex-shrink: 0;
@@ -1022,7 +1020,7 @@ onMounted(async () => {
 .history-search { margin-top: 4px; }
 .history-search :deep(.el-input__wrapper) { border-radius: 8px; box-shadow: 0 0 0 1px var(--border-normal) inset; background: var(--bg-card); }
 
-/* ── Main Content ── */
+/* ── 主内容区 ── */
 .main-content {
   flex: 1;
   display: flex;
@@ -1033,7 +1031,7 @@ onMounted(async () => {
   border-left: 1px solid var(--border-light);
 }
 
-/* ── Top Bar / Data Source ── */
+/* ── 顶部栏 / 数据源 ── */
 .top-bar {
   display: flex;
   justify-content: flex-end;
@@ -1055,7 +1053,7 @@ onMounted(async () => {
   font-weight: 500;
 }
 
-/* ── Data Source Dialog ── */
+/* ── 数据源配置对话框 ── */
 .data-source-list {
   display: flex;
   flex-direction: column;
@@ -1092,7 +1090,7 @@ onMounted(async () => {
   gap: 0.5rem;
 }
 
-/* ── Content Area (left chat + right panel) ── */
+/* ── 内容区（左侧对话 + 右侧面板）── */
 .content-area {
   flex: 1;
   display: flex;
@@ -1101,7 +1099,7 @@ onMounted(async () => {
   min-height: 0;
 }
 
-/* ── Chat Panel ── */
+/* ── 对话面板 ── */
 .chat-panel {
   flex: 1;
   display: flex;
@@ -1157,7 +1155,7 @@ onMounted(async () => {
 .suggest-arrow { flex-shrink: 0; font-size: 14px; color: var(--text-muted); opacity: 0; transform: translateX(-4px); transition: all 0.2s; }
 .suggest-card:hover .suggest-arrow { opacity: 1; transform: translateX(0); color: var(--card-color); }
 
-/* ── Message List ── */
+/* ── 消息列表 ── */
 .message-list { display: flex; flex-direction: column; gap: 28px; max-width: 900px; margin: 0 auto; padding: 0 40px; }
 
 .message { display: flex; gap: 16px; }
@@ -1174,13 +1172,13 @@ onMounted(async () => {
 
 .message-loading { color: var(--text-muted); font-size: 14px; padding: 8px 0; }
 
-/* ── AI Response ── */
+/* ── AI 响应 ── */
 .ai-response { display: flex; flex-direction: column; gap: 1rem; }
 
 .tree-section, .indicators-section, .references-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
 .data-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
 
-/* ── Collapsible Section Header ── */
+/* ── 可折叠区域标题 ── */
 .section-collapse-header {
   display: flex; align-items: center; justify-content: space-between;
   cursor: pointer; user-select: none;
@@ -1209,7 +1207,7 @@ onMounted(async () => {
 .references-section ul { list-style: disc; padding-left: 1.5rem; margin: 0; color: #606266; }
 .references-section li { padding: 0.25rem 0; font-size: 0.95rem; }
 
-/* ── Data Table ── */
+/* ── 数据表格 ── */
 .data-table-wrapper { overflow-x: auto; max-height: 350px; overflow-y: auto; }
 .data-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .data-table th { background: #f1f5f9; padding: 0.5rem 0.75rem; text-align: left; font-weight: 600; color: #475569; border-bottom: 2px solid #cbd5e1; position: sticky; top: 0; z-index: 1; }
@@ -1218,7 +1216,7 @@ onMounted(async () => {
 
 .data-section .section-collapse-header { margin-bottom: 0; }
 
-/* ── Execution Panel (Right) ── */
+/* ── 执行面板（右侧）── */
 .execution-panel {
   flex-shrink: 0;
   display: flex;
@@ -1279,7 +1277,7 @@ onMounted(async () => {
 .panel-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #9ca3af; gap: 8px; font-size: 13px; }
 .panel-empty p { margin: 0; }
 
-/* Panel Section */
+/* 面板区域 */
 .panel-section {
   background: white; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;
 }
@@ -1294,7 +1292,7 @@ onMounted(async () => {
 .section-header .el-icon { transition: transform 0.25s; color: #909399; font-size: 14px; }
 .section-header .el-icon.rotated { transform: rotate(180deg); }
 
-/* Steps in panel */
+/* 面板中的步骤 */
 .steps-list { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; }
 
 .inline-step { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; display: flex; flex-direction: column; gap: 4px; word-break: break-word; overflow-wrap: break-word; }
@@ -1342,7 +1340,7 @@ onMounted(async () => {
 
 @keyframes rotating { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-/* SQL block in panel */
+/* 面板中的 SQL 代码块 */
 .sql-block {
   margin: 8px 12px 12px;
   padding: 10px;
@@ -1359,7 +1357,7 @@ onMounted(async () => {
   overflow-y: auto;
 }
 
-/* Data in panel */
+/* 面板中的数据 */
 .panel-data-wrapper {
   overflow-x: auto;
   max-height: 300px;
@@ -1370,11 +1368,11 @@ onMounted(async () => {
 .panel-data-wrapper .data-table th { padding: 0.35rem 0.5rem; }
 .panel-data-wrapper .data-table td { padding: 0.3rem 0.5rem; max-width: 120px; }
 
-/* Panel indicator table */
+/* 面板中指标表格 */
 .panel-indicator-table td { max-width: none !important; overflow: visible !important; white-space: normal !important; word-break: break-word; font-size: 0.78rem; vertical-align: top; }
 .panel-formula { font-family: 'Courier New', monospace; font-size: 0.75rem; color: #409eff; background: #f0f7ff; padding: 1px 4px; border-radius: 3px; }
 
-/* ── Collapsed toggle ── */
+/* ── 折叠切换按钮 ── */
 .execution-panel-toggle {
   flex-shrink: 0;
   width: 32px;
@@ -1402,7 +1400,7 @@ onMounted(async () => {
 }
 .execution-panel-toggle:hover { background: #f0f7ff; color: #409eff; }
 
-/* ── Input Area ── */
+/* ── 输入区域 ── */
 .input-area {
   flex-shrink: 0;
   padding: 16px 40px 24px;

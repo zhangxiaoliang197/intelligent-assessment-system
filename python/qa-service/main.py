@@ -80,9 +80,9 @@ def load_llm_config():
             if data.get("success") and data.get("data"):
                 return data["data"]
             # 没有活跃配置，尝试从配置列表中取第一个可用配置作为兜底
-            logger.warning("No active LLM config found, trying config list fallback...")
+            logger.warning("没有找到活跃的 LLM 配置，尝试从配置列表兜底...")
     except Exception as e:
-        logger.warning(f"Failed to fetch LLM config from admin-service: {e}")
+        logger.warning(f"从 admin-service 获取 LLM 配置失败: {e}")
 
     # 兜底：从配置列表中取第一个可用配置（优先 vllm > openai > deepseek > 其他）
     try:
@@ -101,20 +101,20 @@ def load_llm_config():
                     for pt in priority_order:
                         for c in configs:
                             if c.get("type") == pt and c.get("apiUrl"):
-                                logger.info(f"Using {pt} config from list: model={c.get('model')}, url={c.get('apiUrl')}")
+                                logger.info(f"使用配置列表中的 {pt} 配置: model={c.get('model')}, url={c.get('apiUrl')}")
                                 return c
                     # 没匹配到优先类型，取第一个有 apiUrl 的
                     for c in configs:
                         if c.get("apiUrl"):
-                            logger.info(f"Using fallback config: type={c.get('type')}, model={c.get('model')}")
+                            logger.info(f"使用兜底配置: type={c.get('type')}, model={c.get('model')}")
                             return c
                     # 所有配置都没有 apiUrl，取第一个
-                    logger.info(f"Using first config from list: type={configs[0].get('type')}")
+                    logger.info(f"使用配置列表中的第一个配置: type={configs[0].get('type')}")
                     return configs[0]
     except Exception:
         pass
 
-    logger.warning("No LLM config available, using hardcoded defaults")
+    logger.warning("没有可用的 LLM 配置，使用硬编码默认值")
     return {
         "type": "deepseek",
         "apiUrl": "https://api.deepseek.com/v1",
@@ -200,7 +200,7 @@ def _load_image_base64(image_id: str) -> tuple:
     """
     从 data/images/{image_id} 读取图片并转为 base64 data URL。
 
-    Returns:
+    返回：
         tuple[str, str]: (data_url, mime_type)，失败时返回 ("", "")
     """
     import imghdr
@@ -226,7 +226,7 @@ def _get_attachment_text(attachment_id: Optional[str]) -> str:
         from attachment_handler import get_attachment_text
         return get_attachment_text(attachment_id) or ""
     except Exception as e:
-        logger.warning(f"Failed to get attachment text for {attachment_id}: {e}")
+        logger.warning(f"获取附件文本失败 {attachment_id}: {e}")
         return ""
 
 def _get_attachment_info(attachment_id: Optional[str]) -> tuple:
@@ -239,7 +239,7 @@ def _get_attachment_info(attachment_id: Optional[str]) -> tuple:
         filename = get_attachment_filename(attachment_id) or ""
         return text, filename
     except Exception as e:
-        logger.warning(f"Failed to get attachment info for {attachment_id}: {e}")
+        logger.warning(f"获取附件信息失败 {attachment_id}: {e}")
         return "", ""
 
 def call_llm_api(query, context="", attachment_text="", attachment_filename="", image_data_url=""):
@@ -472,7 +472,7 @@ def load_sessions():
             with open(SESSIONS_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
-            logger.warning(f"Failed to load sessions.json: {e}, trying backup")
+            logger.warning(f"加载 sessions.json 失败: {e}，尝试使用备份文件")
             bak = SESSIONS_FILE + '.bak'
             if os.path.exists(bak):
                 try:
@@ -484,7 +484,7 @@ def load_sessions():
 
 def save_sessions():
     atomic_json_write(SESSIONS_FILE, sessions)
-    logger.info("Sessions saved")
+    logger.info("会话已保存")
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -493,7 +493,7 @@ def load_history():
                 data = json.load(f)
                 return [HistoryItem(**item) for item in data]
         except Exception as e:
-            logger.warning(f"Failed to load history.json: {e}, trying backup")
+            logger.warning(f"加载 history.json 失败: {e}，尝试使用备份文件")
             bak = HISTORY_FILE + '.bak'
             if os.path.exists(bak):
                 try:
@@ -506,11 +506,11 @@ def load_history():
 
 def save_history():
     atomic_json_write(HISTORY_FILE, [h.dict() for h in chat_history])
-    logger.info("History saved")
+    logger.info("历史记录已保存")
 
 sessions = load_sessions()
 chat_history = load_history()
-logger.info(f"QA service started: {len(sessions)} sessions, {len(chat_history)} history items, context rounds={MAX_CONTEXT}")
+logger.info(f"问答服务已启动: {len(sessions)} 个会话, {len(chat_history)} 条历史记录, 上下文轮数={MAX_CONTEXT}")
 
 @app.get("/")
 async def root():
@@ -556,7 +556,7 @@ async def new_session():
     new_id = str(uuid.uuid4())
     sessions[new_id] = []
     save_sessions()
-    logger.info(f"New session created: {new_id}")
+    logger.info(f"新会话已创建: {new_id}")
     return {"success": True, "session_id": new_id}
 
 @app.delete("/qa/session/{session_id}")
@@ -565,7 +565,7 @@ async def delete_session(session_id: str):
     if session_id in sessions:
         del sessions[session_id]
         save_sessions()
-        logger.info(f"Session deleted: {session_id}")
+        logger.info(f"会话已删除: {session_id}")
         return {"success": True}
     raise HTTPException(status_code=404, detail="会话不存在")
 
@@ -591,7 +591,7 @@ async def upload_attachment(file: UploadFile = File(...)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.exception(f"Attachment upload failed: {e}")
+        logger.exception(f"附件上传失败: {e}")
         raise HTTPException(status_code=500, detail=f"文档解析失败: {str(e)[:200]}")
     finally:
         try:
@@ -855,7 +855,7 @@ async def get_llm_config():
         with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
-        logger.warning(f"Failed to fetch LLM config: {e}")
+        logger.warning(f"获取 LLM 配置失败: {e}")
         return {"success": False, "message": "无法连接到管理服务", "data": load_llm_config()}
 
 @app.get("/config/llm/list")
@@ -921,9 +921,9 @@ try:
     from skill_api import skill_api_router
     app.include_router(evaluation_router)
     app.include_router(skill_api_router)
-    logger.info("Evaluation and governed Skill routers registered")
+    logger.info("评估分析和托管 Skill 路由已注册")
 except Exception as e:
-    logger.warning(f"Failed to register evaluation router: {e}")
+    logger.warning(f"注册评估分析路由失败: {e}")
 
 @app.post("/qa/classify-query")
 async def classify_query(request: ChatRequest):
@@ -990,7 +990,7 @@ async def classify_query(request: ChatRequest):
             if "general" in raw:
                 return {"classification": "general_chat"}
     except Exception as e:
-        logger.warning(f"Classify query LLM failed: {e}")
+        logger.warning(f"LLM 查询分类失败: {e}")
 
     # ── 第三层：LLM 失败 → 关键词兜底 ──
     if kw_concept:

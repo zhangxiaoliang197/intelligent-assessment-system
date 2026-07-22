@@ -1,15 +1,13 @@
-"""Indicator Query Pipeline - modular node architecture.
+"""指标查询流水线 — 模块化节点架构。
 
-Architecture
+架构
 ────────────
-This module splits the indicator-analysis pipeline into self-contained node
-functions, each responsible for one phase.  The orchestrator `run_indicator_query`
-simply calls them in sequence, making the flow easy to read, test, and extend.
+本模块将指标分析流水线拆分为独立的节点函数，每个节点负责一个阶段。
+编排器 `run_indicator_query` 按顺序依次调用它们，使流程易于阅读、测试和扩展。
 
-Nodes follow the same protocol:
-* Yield ``{"type": "step", ...}`` events for the UI.
-* Yield ``{"_return": (data, ...)}`` as the very last event so the
-  orchestrator can pick up return values.
+节点遵循相同的协议：
+* 向 UI 产出 ``{"type": "step", ...}`` 事件。
+* 在最后产出 ``{"_return": (data, ...)}``，以便编排器获取返回值。
 """
 import asyncio
 import logging
@@ -40,11 +38,11 @@ _DB_TIMEOUT = 8
 
 
 # =========================================================================
-# Shared helpers
+# 共享辅助函数
 # =========================================================================
 
 def _pick_relevant_tables(all_tables, analysis_plan, question, max_tables=5):
-    """Heuristic keyword-scoring table selector."""
+    """基于启发式关键词打分的表选择器。"""
     import re as _re
     if not all_tables:
         return []
@@ -117,17 +115,21 @@ def _pick_relevant_tables(all_tables, analysis_plan, question, max_tables=5):
 
 
 def _build_step(step_num, description, status='pending', detail='',
-                thinking='', progress=0):
+                thinking='', progress=0, phase='data_query'):
     return dict(step=step_num, description=description, status=status,
-                detail=detail, thinking=thinking, progress=progress)
+                detail=detail, thinking=thinking, progress=progress, phase=phase)
+
+
+def _extract_rows(result):
+    return result.get("rows", result.get("data", result.get("results", [])))
 
 
 # =========================================================================
-# Step-number constants
+# 步骤编号常量
 # =========================================================================
 
 class Step:
-    """Centralised step numbering for the indicator-analysis pipeline."""
+    """指标分析流水线的集中式步骤编号定义。"""
     DATA_EXPLORE      = 2
     CHECK_DATASETS    = 3
     TABLE_SELECT      = 4
@@ -139,11 +141,11 @@ class Step:
 
 
 # =========================================================================
-# Phase 1 – Data Explore (step 2)
+# 阶段 1 – 数据探查（步骤 2）
 # =========================================================================
 
 async def data_explore_node(database_id):
-    """Fetch table list from the target database."""
+    """从目标数据库获取表列表。"""
     yield {"type": "step", "step": _build_step(
         Step.DATA_EXPLORE, "Data Explore", "in_progress",
         detail="Fetching table list...", progress=50)}
@@ -157,9 +159,9 @@ async def data_explore_node(database_id):
             timeout=_DB_TIMEOUT)
         db_connected = bool(all_tables)
     except asyncio.TimeoutError:
-        logger.warning("Table list timeout")
+        logger.warning("获取表列表超时")
     except Exception as e:
-        logger.warning(f"Table list failed: {e}")
+        logger.warning(f"获取表列表失败: {e}")
 
     yield {"type": "step", "step": _build_step(
         Step.DATA_EXPLORE, "Data Explore", "completed",
@@ -172,11 +174,11 @@ async def data_explore_node(database_id):
 
 
 # =========================================================================
-# Phase 2 – Datasets & Indicators (step 3)
+# 阶段 2 – 数据集与指标（步骤 3）
 # =========================================================================
 
 def dataset_indicator_node(database_id, indicator_defs):
-    """Fetch datasets + admin indicators; merge with caller-supplied list."""
+    """获取数据集和管理端指标；与调用方提供的列表合并。"""
     yield {"type": "step", "step": _build_step(
         Step.CHECK_DATASETS, "Check Datasets & Indicators", "in_progress",
         detail="获取关联数据集与指标配置...", progress=50)}
@@ -186,12 +188,12 @@ def dataset_indicator_node(database_id, indicator_defs):
     try:
         datasets_found = fetch_datasets_for_database(database_id)
     except Exception as e:
-        logger.warning(f"Dataset fetch failed: {e}")
+        logger.warning(f"获取数据集失败: {e}")
     try:
         ds_ids = [ds.get("id") for ds in datasets_found]
         admin_indicators = fetch_indicators_for_datasets(ds_ids)
     except Exception as e:
-        logger.warning(f"Indicator fetch failed: {e}")
+        logger.warning(f"获取指标失败: {e}")
 
     merged = list(indicator_defs or [])
     existing_names = {ind.get("name", "") for ind in merged}
@@ -213,17 +215,17 @@ def dataset_indicator_node(database_id, indicator_defs):
 
 
 # =========================================================================
-# Phase 3 – Table Selection & Schema Reading (step 4)
+# 阶段 3 – 表选择与结构读取（步骤 4）
 # =========================================================================
 
 async def table_select_node(all_tables, datasets_found, analysis_plan, question,
                             database_id, db_connected):
-    """Select relevant tables then read schemas in parallel."""
+    """选择相关表，然后并行读取表结构。"""
     yield {"type": "step", "step": _build_step(
         Step.TABLE_SELECT, "Select Tables", "in_progress",
         detail="Selecting relevant tables for indicators...", progress=30)}
 
-    # Build dataset → table lookup
+    # 构建数据集 → 表名查找映射
     dataset_table_map = {}
     for ds in datasets_found:
         tn = ds.get("tableName", "")
@@ -305,11 +307,11 @@ async def table_select_node(all_tables, datasets_found, analysis_plan, question,
 
 
 # =========================================================================
-# Phase 3.5 – Field Hints (pure data transformation)
+# 阶段 3.5 – 字段提示（纯数据转换）
 # =========================================================================
 
 def build_field_hints(schemas, merged_indicators):
-    """Attach column-mapping hints to every indicator for better SQL prompts."""
+    """为每个指标附加列映射提示，以便生成更准确的 SQL 提示词。"""
     col_index = {}
     for s in schemas:
         tname = s.get("tableName", "")
@@ -396,12 +398,12 @@ def build_field_hints(schemas, merged_indicators):
 
 
 # =========================================================================
-# Phase 4 – SQL Generation (step 5)
+# 阶段 4 – SQL 生成（步骤 5）
 # =========================================================================
 
 async def sql_generate_node(schemas, enhanced_indicators, analysis_plan,
                             question, database_id, llm_call_fn):
-    """Step 5 — delegate to text_to_sql, forward clean summary."""
+    """步骤 5 — 委托给 text_to_sql，转发清晰的摘要。"""
     yield {"type": "step", "step": _build_step(
         Step.SQL_GENERATE, "Generate SQL", "in_progress",
         detail=f"Generating SQL from {len(schemas)} table schemas...",
@@ -428,14 +430,14 @@ async def sql_generate_node(schemas, enhanced_indicators, analysis_plan,
         es = await run_text_to_sql(es, llm_call_fn)
     except Exception as e:
         es.execution_error = str(e)[:200]
-        logger.error(f"Text-to-SQL failed: {e}")
+        logger.error(f"Text-to-SQL 失败: {e}")
         yield {"type": "step", "step": _build_step(
             Step.SQL_GENERATE, "Generate SQL", "error",
-            detail=f"SQL generation failed: {str(e)[:100]}", progress=100)}
+            detail=f"SQL 生成失败: {str(e)[:100]}", progress=100)}
         yield {"_return": (es, False)}
         return
 
-    # Multi-statement guard
+    # 多条语句防护
     if es.sql_valid and es.generated_sql:
         raw = es.generated_sql
         if ";" in raw:
@@ -449,8 +451,8 @@ async def sql_generate_node(schemas, enhanced_indicators, analysis_plan,
                     break
             if first:
                 logger.info(
-                    f"Multi-statement SQL detected, "
-                    f"taking first SELECT ({len(first)} chars)")
+                    f"检测到多条 SQL 语句，"
+                    f"取第一条 SELECT（{len(first)} 字符）")
                 es.generated_sql = first
                 ok, err = _validate_sql(first)
                 es.sql_valid = ok
@@ -458,7 +460,7 @@ async def sql_generate_node(schemas, enhanced_indicators, analysis_plan,
                     es.execution_error = err
 
     if not es.sql_valid or not es.generated_sql:
-        validation_error = es.execution_error or "No valid SQL generated"
+        validation_error = es.execution_error or "未生成有效 SQL"
         es.execution_error = validation_error
         yield {"type": "step", "step": _build_step(
             Step.SQL_GENERATE, "Generate SQL", "error",
@@ -466,7 +468,7 @@ async def sql_generate_node(schemas, enhanced_indicators, analysis_plan,
         yield {"_return": (es, False)}
         return
 
-    # Merge internal text_to_sql steps into a single clean summary
+    # 将 text_to_sql 内部的步骤合并为一条简洁的摘要
     sql_gen_steps = [s for s in (es.steps or [])
                      if s.get("description", "").startswith("生成SQL")]
     was_retried = any("第" in s.get("description", "")
@@ -487,11 +489,11 @@ async def sql_generate_node(schemas, enhanced_indicators, analysis_plan,
 
 
 # =========================================================================
-# Phase 5 – SQL Execution (step 6 — includes auto-fix & retry)
+# 阶段 5 – SQL 执行（步骤 6 — 包含自动修正与重试）
 # =========================================================================
 
 async def sql_execute_node(database_id, es, llm_call_fn):
-    """Step 6 — execute SQL with auto-fix & retry on failure."""
+    """步骤 6 — 执行 SQL，失败时自动修正并重试。"""
     yield {"type": "step", "step": _build_step(
         Step.SQL_EXECUTE, "Execute SQL", "in_progress",
         detail="Executing SQL on target database...",
@@ -500,21 +502,17 @@ async def sql_execute_node(database_id, es, llm_call_fn):
 
     result = execute_sql_on_database(database_id, es.generated_sql)
 
-    # Success path
     if result.get("success"):
-        rows = result.get("rows",
-                          result.get("data",
-                                     result.get("results", [])))
+        rows = _extract_rows(result)
         yield {"type": "step", "step": _build_step(
             Step.SQL_EXECUTE, "Execute SQL", "completed",
-            detail=f"Query OK: {len(rows)} rows returned",
+            detail=f"查询成功: {len(rows)} 行返回",
             progress=100)}
         yield {"_return": (rows, True)}
         return
 
-    # Failure → auto-fix & retry
-    err = result.get("message", "Execution failed")
-    logger.warning(f"SQL execution failed: {err[:100]}")
+    err = result.get("message", "执行失败")
+    logger.warning(f"SQL 执行失败: {err[:100]}")
 
     yield {"type": "step", "step": _build_step(
         Step.SQL_EXECUTE, "Execute SQL", "in_progress",
@@ -529,7 +527,7 @@ async def sql_execute_node(database_id, es, llm_call_fn):
         es = await run_text_to_sql(es, llm_call_fn)
     except Exception as e2:
         es.execution_error = f"SQL 修正失败: {str(e2)[:200]}"
-        logger.error(f"Text-to-SQL retry failed: {e2}")
+        logger.error(f"Text-to-SQL 重试失败: {e2}")
         yield {"type": "step", "step": _build_step(
             Step.SQL_EXECUTE, "Execute SQL", "error",
             detail=f"SQL 修正失败: {str(e2)[:100]}", progress=100)}
@@ -544,7 +542,6 @@ async def sql_execute_node(database_id, es, llm_call_fn):
         yield {"_return": ([], False)}
         return
 
-    # Re-execute corrected SQL
     yield {"type": "step", "step": _build_step(
         Step.SQL_EXECUTE, "Execute SQL", "in_progress",
         detail="Re-executing corrected SQL...",
@@ -562,22 +559,20 @@ async def sql_execute_node(database_id, es, llm_call_fn):
         yield {"_return": ([], False)}
         return
 
-    rows = result.get("rows",
-                      result.get("data",
-                                 result.get("results", [])))
+    rows = _extract_rows(result)
     yield {"type": "step", "step": _build_step(
         Step.SQL_EXECUTE, "Execute SQL", "completed",
-        detail=f"Query OK: {len(rows)} rows returned（修正后重试成功）",
+        detail=f"查询成功: {len(rows)} 行返回（修正后重试成功）",
         progress=100)}
     yield {"_return": (rows, True)}
 
 
 # =========================================================================
-# Phase 6 – Result Preview (step 7)
+# 阶段 6 – 结果预览（步骤 7）
 # =========================================================================
 
 def result_preview_node(raw_results):
-    """Step 7 — render a 5-row tabular preview."""
+    """步骤 7 — 渲染 5 行的表格预览。"""
     if not raw_results or not isinstance(raw_results[0], dict):
         return
     cols = list(raw_results[0].keys())
@@ -597,23 +592,22 @@ def result_preview_node(raw_results):
 
 
 # =========================================================================
-# Phase 7 – Generate Analysis (step 8)
+# 阶段 7 – 生成分析（步骤 8）
 # =========================================================================
 
 async def analyst_node(es, raw_results, stream_llm_gen):
-    """Step 8 — delegate to run_analyst, stream tokens as real-time text events.
+    """步骤 8 — 委托给 run_analyst，以流式文本事件实时输出 token。
 
-    Uses a Queue bridge: runs the LLM call in an async background task that
-    pushes tokens into a queue; the main loop consumes the queue and yields
-    ``{"type": "text", ...}`` events so the front-end renders the analysis
-    word-by-word like a normal AI response.
+    使用队列桥接模式：在异步后台任务中调用 LLM，将 token 推入队列；
+    主循环消费队列并产出 ``{"type": "text", ...}`` 事件，
+    前端即可像正常 AI 响应一样逐词渲染分析结果。
     """
     yield {"type": "step", "step": _build_step(
         Step.ANALYST, "Generate Analysis", "in_progress",
         detail="正在基于数据调用大模型生成建议...", progress=50)}
 
     es.raw_results = raw_results
-    # 保留上游已设置的 execution_error（SQL 生成/执行失败时 used by analyst 无数据模式）
+    # 保留上游已设置的 execution_error（SQL 生成/执行失败时，analyst 使用无数据模式）
     if not raw_results:
         pass
     else:
@@ -624,7 +618,7 @@ async def analyst_node(es, raw_results, stream_llm_gen):
     exception_ref = None
 
     async def bridge_llm_fn(system_prompt, user_message):
-        """Bridge: consumes the real LLM stream into the queue + returns full text."""
+        """桥接函数：消费实时 LLM 流，将 token 推入队列并返回完整文本。"""
         nonlocal accumulated_text, exception_ref
         try:
             async for chunk in stream_llm_gen(system_prompt, user_message):
@@ -637,24 +631,24 @@ async def analyst_node(es, raw_results, stream_llm_gen):
             await token_queue.put(None)
         return accumulated_text
 
-    # Kick off the analyst in the background
+    # 在后台启动分析师任务
     task = asyncio.create_task(run_analyst(es, bridge_llm_fn))
 
-    # Consume tokens from queue, yield text events
+    # 从队列消费 token，产出文本事件
     while True:
         chunk = await token_queue.get()
         if chunk is None:
             break
         yield {"type": "text", "content": chunk}
 
-    # Wait for the analyst task to finish
+    # 等待分析师任务完成
     try:
         es = await task
     except Exception as e:
-        logger.error(f"Analyst failed: {e}")
-        es.final_answer = accumulated_text or f"Analysis failed: {str(e)[:200]}"
+        logger.error(f"分析师任务失败: {e}")
+        es.final_answer = accumulated_text or f"分析失败: {str(e)[:200]}"
 
-    # Extract thinking from run_analyst's internal sub-step
+    # 从 run_analyst 的内部子步骤中提取思考过程
     analyst_thinking = ""
     for s in (es.steps or []):
         if s.get("description", "").startswith("生成分析"):
@@ -670,14 +664,14 @@ async def analyst_node(es, raw_results, stream_llm_gen):
 
 
 # =========================================================================
-# Concept-aware indicator check — 概念类指标不走 SQL 管线
+# 概念类指标检查 — 概念类指标不走 SQL 管线
 # =========================================================================
 
 def _check_needs_sql(indicator_defs):
-    """Check whether indicators require SQL query or can be answered conceptually.
+    """检查指标是否需要 SQL 查询，还是可以直接从概念层面回答。
     
-    Some indicators (e.g. pure definitions, descriptions) don't need DB queries.
-    Returns False to skip the entire SQL pipeline.
+    某些指标（如纯定义、描述性内容）无需数据库查询。
+    返回 False 以跳过整个 SQL 流水线。
     """
     if not indicator_defs:
         return True
@@ -689,7 +683,7 @@ def _check_needs_sql(indicator_defs):
 
 async def _concept_answer_flow(question, indicator_defs, llm_call_fn,
                                 stream_llm_gen=None):
-    """Handle pure conceptual indicators directly via LLM, no SQL needed."""
+    """直接通过 LLM 处理纯概念类指标，无需 SQL。"""
     indicator_names = "、".join(
         ind.get("name", "") for ind in (indicator_defs or [])
     )
@@ -731,33 +725,30 @@ async def _concept_answer_flow(question, indicator_defs, llm_call_fn,
 
 
 # =========================================================================
-# Orchestrator (public API)
+# 编排器（公共 API）
 # =========================================================================
 
 async def run_indicator_query(question, database_id, database_name,
                               indicator_defs, analysis_plan,
                               llm_call_fn, stream_llm_gen=None):
-    """Orchestrate the full indicator-analysis pipeline.
+    """编排完整的指标分析流水线。
 
-    Calls each phase node in sequence.  Events from nodes are forwarded
-    directly to the caller; ``_return`` sentinels are consumed internally
-    to pass data from one node to the next.
+    按顺序调用各个阶段节点。节点产出的事件直接转发给调用方；
+    ``_return`` 哨兵值在内部消费，用于在节点之间传递数据。
 
     Args:
-        stream_llm_gen: Optional async generator for real-time token streaming
-                        in the analyst phase.
+        stream_llm_gen: 可选的异步生成器，用于在分析师阶段进行实时 token 流式输出。
     """
 
     # ── SQL 必要性判断（概念类指标不走 SQL 管线）─────────────────
     if not _check_needs_sql(indicator_defs):
-        logger.info(f"Conceptual indicators detected, skipping SQL pipeline. "
-                    f"indicators={len(indicator_defs)}")
+        logger.info(f"检测到概念类指标，跳过 SQL 管线。指标数={len(indicator_defs)}")
         async for ev in _concept_answer_flow(question, indicator_defs,
                                               llm_call_fn, stream_llm_gen):
             yield ev
         return
 
-    # ── Step 2: Data Explore ───────────────────────────────────────────
+    # ── 步骤 2: 数据探查 ───────────────────────────────────────────
     all_tables = db_connected = None
     async for ev in data_explore_node(database_id):
         if "_return" in ev:
@@ -765,7 +756,7 @@ async def run_indicator_query(question, database_id, database_name,
         else:
             yield ev
 
-    # ── Step 3: Check Datasets & Indicators ────────────────────────────
+    # ── 步骤 3: 检查数据集与指标 ────────────────────────────────────
     datasets = merged = None
     for ev in dataset_indicator_node(database_id, indicator_defs):
         if "_return" in ev:
@@ -773,7 +764,7 @@ async def run_indicator_query(question, database_id, database_name,
         else:
             yield ev
 
-    # ── Step 4: Table Select & Schema Read ─────────────────────────────
+    # ── 步骤 4: 表选择与结构读取 ─────────────────────────────────────
     schemas = None
     async for ev in table_select_node(all_tables, datasets, analysis_plan,
                                       question, database_id, db_connected):
@@ -782,10 +773,10 @@ async def run_indicator_query(question, database_id, database_name,
         else:
             yield ev
 
-    # ── Pure transform: field hints ────────────────────────────────────
+    # ── 纯数据转换：字段提示 ────────────────────────────────────────────
     enhanced_indicators = build_field_hints(schemas, merged)
 
-    # ── Step 5: Generate SQL ───────────────────────────────────────────
+    # ── 步骤 5: 生成 SQL ───────────────────────────────────────────
     es = gen_ok = None
     async for ev in sql_generate_node(schemas, enhanced_indicators,
                                       analysis_plan, question,
@@ -795,7 +786,7 @@ async def run_indicator_query(question, database_id, database_name,
         else:
             yield ev
 
-    # ── Step 6: Execute SQL (only if generation succeeded) ─────────────
+    # ── 步骤 6: 执行 SQL（仅当生成成功时） ─────────────────────────────
     raw_results = []
     exec_ok = False
     if gen_ok:
@@ -805,19 +796,19 @@ async def run_indicator_query(question, database_id, database_name,
             else:
                 yield ev
 
-    # ── Step 7: Result Preview (only if execution succeeded) ───────────
+    # ── 步骤 7: 结果预览（仅当执行成功时） ───────────────────────────
     if exec_ok:
         for ev in result_preview_node(raw_results):
             yield ev
 
-    # ── Step 8: Generate Analysis (always run, even on failure) ────────
+    # ── 步骤 8: 生成分析（即使失败也始终执行） ────────────────────────
     async for ev in analyst_node(es, raw_results, stream_llm_gen):
         if "_return" in ev:
-            pass  # final_answer already in es
+            pass  # final_answer 已在 es 中
         else:
             yield ev
 
-    # ── Final result ───────────────────────────────────────────────────
+    # ── 最终结果 ───────────────────────────────────────────────────
     raw_preview = raw_results[:20] if raw_results else []
     yield {
         "type": "result",

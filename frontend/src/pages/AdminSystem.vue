@@ -780,12 +780,12 @@ async function openTableStructure(row: any) {
   currentStructDs.value = row.id
   structColumns.value = []
 
-  // Validate dataset has a database
+  // 验证数据集是否关联了数据库
   if (!row.databaseId) {
     ElMessage.warning('数据集未关联数据库，请先编辑数据集选择关联的数据库')
     return
   }
-  // Check database connection status
+  // 检查数据库连接状态
   const linkedDb = databases.value.find((d: any) => d.id === row.databaseId)
   if (!linkedDb) {
     ElMessage.error('关联的数据库配置已不存在，请重新编辑数据集')
@@ -796,7 +796,7 @@ async function openTableStructure(row: any) {
     return
   }
 
-  // Try to load existing cached structure
+  // 尝试加载已缓存的表结构
   try {
     const res = await api.get(`/admin/dataset/${row.id}/structure`)
     if (res && res.success && res.columns && res.columns.length > 0) {
@@ -807,7 +807,7 @@ async function openTableStructure(row: any) {
         businessMeaning: c.businessMeaning || '',
         dataCategory: c.dataCategory || ''
       }))
-      // Merge existing annotations
+      // 合并已有的标注信息
       try {
         const faRes = await api.get(`/admin/dataset/${row.id}/fields`)
         if (faRes && faRes.success && faRes.fields) {
@@ -831,7 +831,7 @@ async function openTableStructure(row: any) {
     }
   }
 
-  // Need to read structure - prompt for table name
+  // 需要读取表结构 - 提示输入表名
   try {
     const { value: tableName } = await ElMessageBox.prompt('请输入要读取的数据表名', '读取表结构', {
       confirmButtonText: '读取', cancelButtonText: '取消',
@@ -848,7 +848,7 @@ async function openTableStructure(row: any) {
         businessMeaning: '',
         dataCategory: ''
       }))
-      // Update local dataset
+      // 更新本地数据集信息
       const ds = datasets.value.find((d: any) => d.id === row.id)
       if (ds) ds.tableName = res.tableName
     } else {
@@ -976,7 +976,7 @@ async function openIndicatorLink(row: any) {
   linkForm.value = { datasetId: row.datasetId || '', calculationMethod: row.calculationMethod || '' }
   linkFields.value = []
 
-  // Load existing linkage data
+  // 加载已有的关联数据
   try {
     const res = await api.get(`/admin/indicator/${row.id}/linkage`)
     if (res && res.success && res.data) {
@@ -984,7 +984,7 @@ async function openIndicatorLink(row: any) {
       linkForm.value.calculationMethod = res.data.calculationMethod || ''
 
       if (res.data.linkedFields) {
-        // Parse field mapping
+        // 解析字段映射
         let mapping: Record<string, number> = {}
         try {
           if (res.data.fieldMapping) mapping = JSON.parse(res.data.fieldMapping)
@@ -999,7 +999,7 @@ async function openIndicatorLink(row: any) {
     }
   } catch {}
 
-  // If no fields loaded yet but dataset is set, load fields
+  // 如果尚未加载字段但已设置数据集，则加载字段
   if (linkFields.value.length === 0 && linkForm.value.datasetId) {
     await loadLinkFields()
   }
@@ -1028,7 +1028,7 @@ async function loadLinkFields() {
 
 async function saveIndicatorLink() {
   if (!linkingIndId.value) return
-  // Build field mapping from weights
+  // 根据权重构建字段映射
   const mapping: Record<string, number> = {}
   linkFields.value.forEach(f => {
     if (f.mapWeight > 0) mapping[f.columnName] = f.mapWeight
