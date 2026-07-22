@@ -1179,7 +1179,7 @@ const buildChartOption = (chartConfig: any, rawResults: any[]): any => {
     }
   }
 
-  // bar / line
+  // 柱状图 / 折线图
   const series = yAxisFields.map((field: string) => ({
     name: field,
     type: vizType,

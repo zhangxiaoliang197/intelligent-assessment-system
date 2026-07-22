@@ -104,8 +104,7 @@ def _save_session_to_file(
             "turns": [*previous_turns, turn][-50:],
         }
 
-        # Move the active session to the front and retain the same bounded set
-        # in both history and session detail storage.
+        # 将会话移到历史记录最前面，并在历史记录和会话详情中保留同一有界集合
         _eval_history = [item for item in _eval_history if item.get("id") != sid]
         _eval_history.insert(0, {
             "id": sid,
@@ -124,7 +123,7 @@ def _save_session_to_file(
 
 
 def _delete_session_from_file(sid: str) -> bool:
-    """Atomically remove one session from memory and both persistence files."""
+    """原子性地从内存和两个持久化文件中移除一个会话"""
     global _eval_history
     with _write_lock:
         existed = sid in _eval_sessions or any(item.get("id") == sid for item in _eval_history)
@@ -286,13 +285,13 @@ def _sync_llm_call(system_prompt: str, user_message: str) -> str:
 
 async def async_llm_call(system_prompt: str, user_message: str,
                          on_token=None) -> str:
-    """Call LLM, optionally streaming tokens one-by-one via *on_token* callback.
+    """调用 LLM，可选择通过 *on_token* 回调逐个流式传输 token。
 
-    When *on_token* is provided the function uses SSE streaming internally,
-    invoking ``on_token(chunk)`` for each received token.  Without *on_token*
-    the standard blocking call is dispatched to the thread pool.
+    当提供 *on_token* 时，函数内部使用 SSE 流式传输，
+    对每个接收到的 token 调用 ``on_token(chunk)``。
+    不提供 *on_token* 时，将标准的阻塞调用派发到线程池。
 
-    Returns the full response text in both modes.
+    两种模式均返回完整的响应文本。
     """
     if on_token:
         return await _async_stream_llm_internal(
@@ -306,11 +305,10 @@ async def _async_stream_llm_internal(
     system_prompt: str, user_message: str,
     on_token,
 ) -> str:
-    """Stream LLM tokens via SSE, invoking *on_token* for each.
+    """通过 SSE 流式传输 LLM token，对每个 token 调用 *on_token*。
 
-    Uses an ``asyncio.Queue`` bridged to a thread-pool worker that reads
-    the SSE stream (urllib is synchronous).  The async caller consumes the
-    queue and calls ``on_token``.
+    使用 ``asyncio.Queue`` 桥接到线程池工作线程，该线程读取
+    SSE 流（urllib 是同步的）。异步调用者消费队列并调用 ``on_token``。
     """
     import urllib.request
     import urllib.error
@@ -360,7 +358,7 @@ async def _async_stream_llm_internal(
             raise RuntimeError(
                 "仅内网自签名 vLLM 允许关闭 TLS 校验；公网模型必须校验证书"
             )
-        logger.warning("TLS verification disabled for vLLM endpoint")
+        logger.warning("已为 vLLM 端点禁用 TLS 校验")
         ssl_ctx.check_hostname = False
         ssl_ctx.verify_mode = ssl.CERT_NONE
 
@@ -369,7 +367,7 @@ async def _async_stream_llm_internal(
     error_ref = []
 
     def _read_sse():
-        """Thread-pool worker that reads SSE lines and feeds token_queue."""
+        """线程池工作线程，读取 SSE 行并将 token 送入队列"""
         nonlocal full_text
         try:
             with urllib.request.urlopen(req, timeout=300,
@@ -426,10 +424,10 @@ async def _async_stream_llm_internal(
 async def async_gen_llm_stream(
     system_prompt: str, user_message: str,
 ):
-    """Async generator that yields LLM response tokens one-by-one via SSE.
+    """异步生成器，通过 SSE 逐个生成 LLM 响应 token。
 
-    Yields:
-        str: Each text token as it arrives from the streaming API.
+    生成：
+        str: 从流式 API 到达的每个文本 token。
     """
     collected = []
 
@@ -445,8 +443,8 @@ async def async_gen_llm_stream(
 @evaluation_router.post("/analyze/stream")
 async def analyze_stream(request: EvaluationRequest, http_request: Request):
     logger.info(
-        f"Evaluation request: {request.query[:100]}, db={request.database_id}, "
-        f"skill={request.skill_id or 'default-workflow'}"
+        f"评估请求: {request.query[:100]}, 数据库={request.database_id}, "
+        f"技能={request.skill_id or 'default-workflow'}"
     )
 
     session_id = request.session_id or str(uuid.uuid4())
@@ -533,13 +531,12 @@ async def analyze_stream(request: EvaluationRequest, http_request: Request):
                                 ),
                             )
                         except Exception as save_error:
-                            # Persistence failure must not turn an already successful
-                            # analysis into a second, contradictory stream error.
-                            logger.error(f"Failed to persist evaluation session: {save_error}", exc_info=True)
+                            # 持久化失败不能将已成功的分析变成第二个矛盾的流错误
+                            logger.error(f"持久化评估会话失败: {save_error}", exc_info=True)
                 yield json.dumps(event, ensure_ascii=False, default=str) + "\n"
 
         except Exception as e:
-            logger.error(f"Evaluation stream error: {e}", exc_info=True)
+            logger.error(f"评估流错误: {e}", exc_info=True)
             yield json.dumps({
                 "type": "error",
                 "message": f"系统异常: {str(e)[:500]}",
@@ -580,7 +577,7 @@ async def get_skills(
     template: Optional[bool] = None,
     includeArchived: bool = False,
 ):
-    """Return the 15 built-ins plus all user-authored Skills."""
+    """返回 15 个内置 Skill 加上所有用户创建的 Skill"""
     actor = skill_actor_from_request(request)
     skills = list_skills(
         actor,
@@ -600,7 +597,7 @@ async def get_skills(
         try:
             datasets = await asyncio.to_thread(fetch_datasets_for_database, dataSourceId, True)
         except Exception as exc:
-            logger.warning(f"Failed to calculate Skill availability: {exc}")
+            logger.warning(f"计算 Skill 可用性失败: {exc}")
             availability_error = str(exc)[:300]
 
     items = []
@@ -639,7 +636,7 @@ async def get_skills(
 
 @evaluation_router.post("/skills", status_code=201)
 async def create_evaluation_skill(request: SkillCreateRequest, http_request: Request):
-    """Create a globally shared custom Skill; SQL is never accepted as input."""
+    """创建全局共享的自定义 Skill；不接受 SQL 作为输入"""
     try:
         skill = await asyncio.to_thread(
             create_custom_skill,
@@ -654,9 +651,8 @@ async def create_evaluation_skill(request: SkillCreateRequest, http_request: Req
 @evaluation_router.post("/skills/recommend")
 async def recommend_evaluation_skills(request: SkillRecommendRequest, http_request: Request):
     actor = skill_actor_from_request(http_request)
-    # Retrieve a slightly wider lexical candidate set, then combine it with
-    # data-source readiness.  This avoids confidently recommending a Skill that
-    # cannot run against the user's selected source.
+    # 检索稍宽的词汇候选集，然后与数据源就绪状态结合。
+    # 这避免了自信地推荐一个无法针对用户所选源运行的 Skill。
     recommendations = recommend_skills(request.query, min(10, max(request.limit * 3, request.limit)), actor=actor)
     datasets = []
     availability_error = ""
@@ -668,7 +664,7 @@ async def recommend_evaluation_skills(request: SkillRecommendRequest, http_reque
                 fetch_datasets_for_database, request.database_id, True
             )
         except Exception as exc:
-            logger.warning("Failed to enrich Skill recommendations with availability: %s", exc)
+            logger.warning("无法用可用性信息丰富 Skill 推荐: %s", exc)
             availability_error = str(exc)[:300]
 
     ranked = []
@@ -725,7 +721,7 @@ async def update_evaluation_skill(
     request: SkillUpdateRequest,
     http_request: Request,
 ):
-    """Update a custom Skill using an optimistic revision check."""
+    """使用乐观修订检查更新自定义 Skill"""
     payload = request.model_dump(by_alias=True, exclude_none=True)
     expected_revision = int(payload.pop("expectedRevision"))
     try:
@@ -747,7 +743,7 @@ async def delete_evaluation_skill(
     request: Request,
     expectedRevision: int = Query(ge=1),
 ):
-    """Delete a custom Skill; built-ins are permanently read-only."""
+    """删除自定义 Skill；内置 Skill 为永久只读"""
     try:
         skill = await asyncio.to_thread(
             delete_custom_skill,
@@ -775,13 +771,13 @@ async def indicator_query_stream(request: IndicatorQueryRequest):
     """
     指标查询流式端点 — 由 indicator-service 在用户确认查询后调用。
 
-    复用评估分析的 Data Explore → Table Select → SQL Gen → SQL Exec → Analyst 管线，
-    但不经过 Orchestrator 意图识别。
+    复用评估分析的数据探索 → 表选择 → SQL 生成 → SQL 执行 → 分析管线，
+    但不经过编排器意图识别。
     """
     from agents.indicator_query import run_indicator_query
 
-    logger.info(f"Indicator query stream: q={request.question[:80]}, db={request.database_id}, "
-                f"indicators={len(request.indicator_defs)}")
+    logger.info(f"指标查询流: 问题={request.question[:80]}, 数据库={request.database_id}, "
+                f"指标数={len(request.indicator_defs)}")
 
     async def generate():
         try:
@@ -796,7 +792,7 @@ async def indicator_query_stream(request: IndicatorQueryRequest):
             ):
                 yield json.dumps(event, ensure_ascii=False, default=str) + "\n"
         except Exception as e:
-            logger.error(f"Indicator query stream error: {e}", exc_info=True)
+            logger.error(f"指标查询流错误: {e}", exc_info=True)
             yield json.dumps({
                 "type": "error",
                 "message": f"查询异常: {str(e)[:500]}",
@@ -844,19 +840,19 @@ async def get_data_sources():
             ]
         }
     except Exception as e:
-        logger.error(f"Failed to load data sources: {e}")
+        logger.error(f"加载数据源失败: {e}")
         return {"success": False, "message": str(e), "databases": [], "dataSources": []}
 
 
 @evaluation_router.get("/data-sources/{database_id}/datasets")
 async def get_data_source_datasets(database_id: str):
-    """Return server-verified dataset choices for the custom Skill editor."""
+    """返回经服务端验证的数据集选项，供自定义 Skill 编辑器使用"""
     from agents.tools import fetch_datasets_for_database
 
     try:
         datasets = await asyncio.to_thread(fetch_datasets_for_database, database_id, True)
     except Exception as exc:
-        logger.error("Failed to load datasets for custom Skill editor: %s", exc)
+        logger.error("加载自定义 Skill 编辑器的数据集失败: %s", exc)
         raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc
     return {
         "success": True,

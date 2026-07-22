@@ -77,7 +77,7 @@ def _api_get(path: str, timeout: int = 30) -> dict:
         with urllib.request.urlopen(req, timeout=timeout, context=_ssl_ctx) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
-        logger.error(f"API GET {path} failed: {e}")
+        logger.error(f"API GET {path} 失败: {e}")
         # 返回统一错误格式，调用方通过 success 字段判断是否成功
         return {"success": False, "message": str(e)}
 
@@ -191,7 +191,7 @@ def fetch_table_structure(db_id: str, table_name: str) -> dict:
         or "/*" in table_name
         or "*/" in table_name
     ):
-        logger.warning("Rejected unsafe table name while reading metadata")
+        logger.warning("读取元数据时拒绝不安全的表名")
         return {"tableName": "", "columns": [], "count": 0}
     safe_table_name = table_name.strip()
 
@@ -235,10 +235,10 @@ def fetch_table_structure(db_id: str, table_name: str) -> dict:
                 "isNullable": "YES" in (is_nullable or ""),  # MySQL: YES 表示可为空
                 "comment": comment or "",
             })
-        logger.info(f"Table [{safe_table_name}]: got {len(columns)} columns via information_schema")
+        logger.info(f"表 [{safe_table_name}]: 通过 information_schema 获取到 {len(columns)} 列")
         return {"tableName": safe_table_name, "columns": columns, "count": len(columns)}
 
-    logger.warning(f"Failed to get structure for {safe_table_name} on db {db_id}: {result.get('message', '')}")
+    logger.warning(f"获取表 {safe_table_name} 在数据库 {db_id} 上的结构失败: {result.get('message', '')}")
     return {"tableName": safe_table_name, "columns": [], "count": 0}
 
 
@@ -453,7 +453,7 @@ def search_knowledge_base(query: str, top_k: int = 3) -> list:
             data = json.loads(resp.read().decode("utf-8"))
             return data.get("results", [])
     except Exception as e:
-        logger.error(f"search_knowledge_base failed: {e}")
+        logger.error(f"knowledge_base 搜索失败: {e}")
         return []
 
 

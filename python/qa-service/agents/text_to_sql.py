@@ -42,10 +42,10 @@ _sql_handler.setFormatter(logging.Formatter(
     "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
 _sql_handler.setLevel(logging.DEBUG)
 logger.addHandler(_sql_handler)
-logger.info(f"SQL gen log initialized → {_sql_log_path}")
+logger.info(f"SQL 生成日志已初始化 → {_sql_log_path}")
 
 # ============================================================================
-# System Prompt：发送给 LLM 的 SQL 生成指令模板
+# 系统提示词：发送给 LLM 的 SQL 生成指令模板
 # 占位符 {table_context} / {indicator_context} / {question} / {analysis_plan} / {filters}
 # 运行时通过 .format() 填充
 # ============================================================================
@@ -125,7 +125,7 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
     Returns:
         EvaluationState: 更新后的工作流状态（含 generated_sql / sql_valid）
     """
-    logger.info(f"Running text-to-sql for: {state.question[:100]}")
+    logger.info(f"正在运行 text-to-sql，问题: {state.question[:100]}")
 
     # 前置检查 1：无数据源时跳过 SQL 生成
     if not state.database_id:
@@ -264,14 +264,14 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
                                        f"【最终SQL】\n{sql[:600]}" +
                                        (f"\n... 共 {len(sql)} 字符" if len(sql) > 600 else "")
                                    ))
-                    logger.info(f"SQL generated after {attempts + 1} attempts")
+                    logger.info(f"SQL 生成成功，尝试次数: {attempts + 1}")
                     return state
                 else:
                     # 校验失败：记录错误，准备重试
                     last_error = error_msg
                     state.add_step(5.1, f"生成SQL{attempt_label}", "in_progress",
                                    detail=f"SQL校验失败: {error_msg[:120]}")
-                    logger.warning(f"SQL validation failed: {error_msg}")
+                    logger.warning(f"SQL 校验失败: {error_msg}")
             else:
                 # 未提取到 SQL：检查模型是否明确表示"无需查询"
                 no_sql = _extract_no_sql(response)
@@ -289,7 +289,7 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
 
         except Exception as e:
             last_error = str(e)[:300]
-            logger.error(f"Text-to-SQL attempt {attempts + 1} failed: {e}")
+            logger.error(f"Text-to-SQL 第 {attempts + 1} 次尝试失败: {e}")
             state.add_step(5.1, "生成SQL", "error",
                           detail=f"调用失败: {last_error[:120]}")
             # 超时错误不重试，避免无限等待
@@ -481,9 +481,8 @@ def _validate_sql(sql: str) -> tuple:
     """
     cleaned = _clean_sql(sql)
     sql_upper = cleaned.upper()
-    # Quoted identifiers are valid function names in several dialects. Remove
-    # identifier quote characters for safety inspection so "pg_sleep" cannot
-    # bypass the deny rules.
+    # 引号括起来的标识符在多种 SQL 方言中是合法的函数名。
+    # 安全检查时移除标识符引号字符，防止 "pg_sleep" 绕过禁用规则。
     safety_sql_upper = re.sub(r'["`\[\]]', '', sql_upper)
 
     # 检查 1：禁止危险关键字（使用 \b 单词边界，避免匹配字段名中的子串）

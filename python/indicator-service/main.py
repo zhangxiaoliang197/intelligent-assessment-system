@@ -456,10 +456,10 @@ def _stream_indicator_query(session_id: str, query: str, database_id: str, datab
     调用 qa-service 的 evaluation-api 执行指标查询管线。
 
     将指标分析结果作为 indicator_defs 传入，复用评估分析的
-    Data Explore → Table Select → SQL Gen → SQL Exec → Analyst 管线。
+    数据探索 → 表选择 → SQL生成 → SQL执行 → 分析建议 管线。
 
-    Yields:
-        SSE JSON 行（每行以 \n 结尾）
+    输出：
+        NDJSON 行（每行以 \n 结尾），包含 step/text/result 类型事件
     """
     body = json.dumps({
         "question": query,
@@ -903,7 +903,7 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                     s = _ensure_session(session_id)
                     s["messages"].append({"role": "user", "content": user_text, "timestamp": now_str})
 
-                    # 先创建助手消息，后续所有 text 事件都流入同一个 bubble
+                    # 先创建助手消息，后续所有 text 事件都流入同一消息气泡
                     yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
 
                     start_text = f"好的，正在使用数据源「{database_name or database_id}」查询这些指标..."
@@ -1003,7 +1003,7 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                 s = _ensure_session(session_id)
                 s["messages"].append({"role": "user", "content": user_text, "timestamp": now_str})
 
-                # 先创建助手消息，后续所有 text 事件都流入同一个 bubble
+                # 先创建助手消息，后续所有 text 事件都流入同一消息气泡
                 yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
 
                 start_text = f"好的，使用数据源「{database_name or database_id}」开始查询指标..."
@@ -1131,12 +1131,10 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
 需求：{request.query}{ctx_str}
 {db_indicators_text}
 
-请严格按照以下步骤输出：
+请严格按照以下格式输出：
 
-第一步：先输出一行 ---JSON--- 作为分隔符。
-第二步：紧跟一个可以被 json.loads 解析的 JSON 对象，包含 tree、indicators、summary 三个字段。
-第三步：输出一行 ---分析结束--- 作为分隔符。
-第四步：最后输出一段简短的分析总结（1-2句话，描述你构建指标体系的核心思路）。
+仅输出一个可以被 json.loads 解析的 JSON 对象，包含 tree、indicators、summary 三个字段。
+
 
 JSON格式要求：
 {{
@@ -1164,12 +1162,7 @@ JSON格式要求：
 
     def generate():
         full_text = ""
-        json_buf = ""
-        lead_buf = ""       # lead 阶段缓冲：发现 --- 后暂存的文本
-        saw_sep = False     # 是否已发现 ---（可能正在接收 ---JSON---）
         now_str = datetime.now().isoformat()
-        phase = "lead"  # lead → json → analysis → done
-        result_sent = False
 
         # ── Phase 1 Step 1：正在解析指标体系 ──
         yield json.dumps({
@@ -1198,103 +1191,6 @@ JSON格式要求：
                         if data.get("type") == "text":
                             chunk = data.get("content", "")
                             full_text += chunk
-
-                            if phase == "lead":
-                                # 查找 ---JSON--- 分隔符
-                                sep_idx = full_text.find("---JSON---")
-                                if sep_idx >= 0:
-                                    # ---JSON--- 已找到，不重复转发 pre 文本
-                                    # （pre 内容已通过逐片 chunk 转发到前端）
-                                    # 直接进入 JSON 解析阶段
-                                    json_start = sep_idx + len("---JSON---")
-                                    json_buf = full_text[json_start:]
-                                    saw_sep = False
-                                    phase = "json"
-                                else:
-                                    # 还没到分隔符，逐片转发（同时过滤 --- 标记符残余）
-                                    if "---" in chunk or saw_sep:
-                                        # 发现 --- 标记 → 进入缓冲模式
-                                        # 后续所有不含 --- 的 token（如 "JSON"）都不会泄漏
-                                        if "---" in chunk:
-                                            clean_end = chunk.find("---")
-                                            if clean_end > 0:
-                                                clean_chunk = chunk[:clean_end].strip()
-                                                # 有中文才转发，过滤标记符碎片（如 "JSON"、"J" 等）
-                                                if clean_chunk and any('\u4e00' <= c <= '\u9fff' for c in clean_chunk):
-                                                    yield json.dumps({"type": "text", "content": clean_chunk}, ensure_ascii=False) + "\n"
-                                        # 不管是否在 chunk 中找到 ---，都设置缓冲标记
-                                        # 这样下一段 token（如 "JSON"、"已为您生成了"）不会泄漏
-                                        saw_sep = True
-                                    elif chunk.strip():
-                                        yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
-
-                            elif phase == "json":
-                                json_buf += chunk
-                                # 查找 ---分析结束--- 分隔符
-                                end_idx = json_buf.find("---分析结束---")
-                                if end_idx >= 0:
-                                    json_str = json_buf[:end_idx]
-                                    # 解析 JSON
-                                    result = parse_structured_response(json_str)
-                                    tree = result.get("tree")
-                                    indicators = result.get("indicators", [])
-                                    summary = result.get("summary", "")
-
-                                    # 指标生成失败
-                                    if not indicators:
-                                        yield json.dumps({
-                                            "type": "error",
-                                            "session_id": session_id,
-                                            "message": "指标体系生成失败：大模型未返回有效结果，请检查大模型配置后重试。",
-                                        }, ensure_ascii=False) + "\n"
-                                        return
-
-                                    # ── Step 1 完成 ──
-                                    indicator_count = len(indicators)
-                                    yield json.dumps({
-                                        "type": "step",
-                                        "step": {"step": 1, "description": "解析指标体系", "status": "completed",
-                                                 "detail": f"共识别 {indicator_count} 个指标"}
-                                    }, ensure_ascii=False) + "\n"
-
-                                    # 保存待查询的指标体系
-                                    indicator_names = [ind.get("name", "") for ind in indicators[:5]]
-                                    names_str = "、".join(indicator_names)
-                                    if indicator_count > 5:
-                                        names_str += f" 等共{indicator_count}个指标"
-                                    _set_pending_indicators(session_id, {
-                                        "tree": tree,
-                                        "indicators": indicators,
-                                        "summary": summary,
-                                        "original_query": request.query,
-                                        "generated_at": datetime.now().isoformat(),
-                                    })
-                                    _set_session_stage(session_id, "awaiting_confirmation")
-
-                                    # ── 发送 result，前端渲染指标卡片 ──
-                                    yield json.dumps({
-                                        "type": "result",
-                                        "session_id": session_id,
-                                        "tree": tree,
-                                        "indicators": indicators,
-                                    }, ensure_ascii=False, default=str) + "\n"
-
-                                    result_sent = True
-                                    phase = "analysis"
-
-                                    # 发送结构化摘要（代替冗余的 raw remaining 文本）
-                                    yield json.dumps({
-                                        "type": "text",
-                                        "content": f"已为您生成 {indicator_count} 个指标的指标体系，包含指标树状结构和各指标的计算方式。主要指标：{names_str}。"
-                                    }, ensure_ascii=False) + "\n"
-
-                            elif phase == "analysis":
-                                # 分析文本自然流式输出
-                                # 过滤与已有内容高度重复的文本
-                                if not chunk.strip():
-                                    continue
-                                yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
-
                         elif data.get("type") == "error":
                             yield json.dumps({"type": "text", "content": data.get("content", "")}, ensure_ascii=False) + "\n"
                     except json.JSONDecodeError:
@@ -1303,45 +1199,117 @@ JSON格式要求：
         except Exception as e:
             yield json.dumps({"type": "text", "content": f"分析失败: {str(e)[:200]}"}, ensure_ascii=False) + "\n"
 
-        # ── 容错：如果 LLM 没按新格式输出，走旧逻辑 ──
-        if not result_sent:
-            result = parse_structured_response(full_text)
-            tree = result.get("tree")
-            indicators = result.get("indicators", [])
-            # 清理 full_text 中的标记符，避免 ---JSON--- 等泄漏给前端
-            clean_fallback = re.sub(r'---.*?(?:JSON|正在生成指标体系|分析结束).*?---', '', full_text).strip()
-            summary = result.get("summary", result.get("answer", clean_fallback[:200]))
-            if not indicators:
-                yield json.dumps({
-                    "type": "error",
-                    "session_id": session_id,
-                    "message": "指标体系生成失败：大模型未返回有效结果，请检查大模型配置后重试。",
-                }, ensure_ascii=False) + "\n"
-                return
-            indicator_count = len(indicators)
+        # ── 从 LLM 响应中提取并解析 JSON 指标体系 ──
+        result = parse_structured_response(full_text)
+        tree = result.get("tree")
+        indicators = result.get("indicators", [])
+        clean_fallback = re.sub(r'---.*?(?:JSON|正在生成指标体系|END).*?---', '', full_text).strip()
+        summary = result.get("summary", result.get("answer", clean_fallback[:200]))
+        
+        if not indicators:
+            yield json.dumps({
+                "type": "error",
+                "session_id": session_id,
+                "message": "指标体系生成失败：大模型未返回有效结果，请检查大模型配置后重试。",
+            }, ensure_ascii=False) + "\n"
+            return
+        
+        indicator_count = len(indicators)
+        yield json.dumps({
+            "type": "step",
+            "step": {"step": 1, "description": "解析指标体系", "status": "completed",
+                     "detail": f"共识别 {indicator_count} 个指标"}
+        }, ensure_ascii=False) + "\n"
+        
+        indicator_names = [ind.get("name", "") for ind in indicators[:5]]
+        names_str = "、".join(indicator_names)
+        if indicator_count > 5:
+            names_str += f" 等共{indicator_count}个指标"
+        _set_pending_indicators(session_id, {
+            "tree": tree,
+            "indicators": indicators,
+            "summary": summary,
+            "original_query": request.query,
+            "generated_at": datetime.now().isoformat(),
+        })
+        _set_session_stage(session_id, "awaiting_confirmation")
+        
+        # ── 发送 result，前端渲染指标卡片 ──
+        yield json.dumps({
+            "type": "result",
+            "session_id": session_id,
+            "tree": tree,
+            "indicators": indicators,
+        }, ensure_ascii=False, default=str) + "\n"
+
+        # ── 第二次调用 LLM：生成结构化分析摘要并流式输出 ──
+        if indicators:
+            # 构建指标简要描述文本
+            ind_brief_parts = []
+            for ind in indicators:
+                parts = [f"- {ind.get('name', '')}"]
+                if ind.get('type'):
+                    parts.append(f"[{ind['type']}]")
+                if ind.get('formula'):
+                    parts.append(f"公式: {ind['formula']}")
+                ind_brief_parts.append(" ".join(parts))
+            ind_brief_text = "\n".join(ind_brief_parts)
+
+            summary_system_prompt = (
+                "你是一个专业的指标体系分析助手。请根据以下指标体系信息，用1-2句话生成一段简洁的结构化分析摘要。"
+                "要求包含：指标总数、主要维度构成、来源分布（admin-db/knowledge/llm各多少）、核心指标。"
+                "语言简洁、信息完整、不重复。"
+                f"\n\n指标总数：{len(indicators)}\n\n指标详情：\n{ind_brief_text}"
+            )
+
             yield json.dumps({
                 "type": "step",
-                "step": {"step": 1, "description": "解析指标体系", "status": "completed",
-                         "detail": f"共识别 {indicator_count} 个指标"}
+                "step": {"step": 2, "description": "生成分析摘要", "status": "in_progress",
+                         "detail": "正在调用大模型生成指标体系分析摘要..."}
             }, ensure_ascii=False) + "\n"
-            indicator_names = [ind.get("name", "") for ind in indicators[:5]]
-            names_str = "、".join(indicator_names)
-            if indicator_count > 5:
-                names_str += f" 等共{indicator_count}个指标"
-            _set_pending_indicators(session_id, {
-                "tree": tree,
-                "indicators": indicators,
-                "summary": summary,
-                "original_query": request.query,
-                "generated_at": datetime.now().isoformat(),
-            })
-            _set_session_stage(session_id, "awaiting_confirmation")
-            yield json.dumps({
-                "type": "result",
-                "session_id": session_id,
-                "tree": tree,
-                "indicators": indicators,
-            }, ensure_ascii=False, default=str) + "\n"
+
+            try:
+                summary_body = json.dumps({"query": summary_system_prompt, "top_k": 3}).encode("utf-8")
+                summary_req = urllib.request.Request(
+                    f"{QA_SERVICE_URL}/qa/chat/stream",
+                    data=summary_body, method="POST"
+                )
+                summary_req.add_header("Content-Type", "application/json")
+                summary_ctx_ssl = ssl.create_default_context()
+                summary_ctx_ssl.check_hostname = False
+                summary_ctx_ssl.verify_mode = ssl.CERT_NONE
+
+                summary_text_buf = ""
+                with urllib.request.urlopen(summary_req, timeout=180, context=summary_ctx_ssl) as summary_resp:
+                    for summary_line in summary_resp:
+                        summary_line_str = summary_line.decode("utf-8").strip()
+                        if not summary_line_str:
+                            continue
+                        try:
+                            summary_data = json.loads(summary_line_str)
+                            if summary_data.get("type") == "text":
+                                chunk = summary_data.get("content", "")
+                                summary_text_buf += chunk
+                                yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
+                        except json.JSONDecodeError:
+                            continue
+
+                yield json.dumps({
+                    "type": "step",
+                    "step": {"step": 2, "description": "生成分析摘要", "status": "completed",
+                             "detail": f"分析摘要已生成 (共 {len(summary_text_buf)} 字符)"}
+                }, ensure_ascii=False) + "\n"
+
+                # 用第二次 LLM 的输出更新 summary，供会话保存
+                summary = summary_text_buf
+
+            except Exception as e:
+                logger.warning(f"Second LLM summary call failed: {e}")
+                yield json.dumps({
+                    "type": "step",
+                    "step": {"step": 2, "description": "生成分析摘要", "status": "error",
+                             "detail": f"生成摘要失败: {str(e)[:80]}"}
+                }, ensure_ascii=False) + "\n"
 
         # ── 追加追问文本（独立消息）──
         indicator_names = [ind.get("name", "") for ind in indicators[:5]]
@@ -1361,7 +1329,7 @@ JSON格式要求：
         # 保存会话
         s = _ensure_session(session_id)
         s["messages"].append({"role": "user", "content": request.query, "timestamp": now_str})
-        s["messages"].append({"role": "assistant", "content": summary or full_text[:200], "timestamp": now_str})
+        s["messages"].append({"role": "assistant", "content": summary or f"已生成 {len(indicators)} 个指标", "timestamp": now_str})
         s["messages"].append({"role": "assistant", "content": follow_up.strip(), "timestamp": now_str})
         if len(s["messages"]) > MAX_CONTEXT * 4:
             s["messages"] = s["messages"][-(MAX_CONTEXT * 4):]
