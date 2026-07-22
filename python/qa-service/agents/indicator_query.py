@@ -115,9 +115,9 @@ def _pick_relevant_tables(all_tables, analysis_plan, question, max_tables=5):
 
 
 def _build_step(step_num, description, status='pending', detail='',
-                thinking='', progress=0):
+                thinking='', progress=0, phase='data_query'):
     return dict(step=step_num, description=description, status=status,
-                detail=detail, thinking=thinking, progress=progress)
+                detail=detail, thinking=thinking, progress=progress, phase=phase)
 
 
 def _extract_rows(result):

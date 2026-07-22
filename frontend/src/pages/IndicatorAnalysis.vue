@@ -260,7 +260,7 @@
                       <el-icon v-else-if="step.status === 'error'"><CircleClose /></el-icon>
                       <el-icon v-else><Clock /></el-icon>
                     </span>
-                    <span class="inline-step-title">{{ step.phase === 'dataset' ? `Skill ${step.sequence}/${step.total} · ${step.description}` : `步骤 ${step.step}: ${step.description}` }}</span>
+                    <span class="inline-step-title">{{ step.phase === 'indicator_gen' ? `阶段1 · 步骤 ${step.step}: ${step.description}` : step.phase === 'data_query' ? `阶段2 · 步骤 ${step.step}: ${step.description}` : step.phase === 'dataset' ? `Skill ${step.sequence}/${step.total} · ${step.description}` : `步骤 ${step.step}: ${step.description}` }}</span>
                   </div>
                   <div v-if="step.phase === 'dataset'" class="inline-step-meta">
                     <el-tag size="small" effect="plain">数据集 {{ step.sequence }}/{{ step.total }}</el-tag>

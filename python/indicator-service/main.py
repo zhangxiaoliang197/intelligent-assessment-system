@@ -805,7 +805,7 @@ JSON格式要求：
         # ── Phase 1 Step 1：正在解析指标体系 ──
         yield json.dumps({
             "type": "step",
-            "step": {"step": 1, "description": "解析指标体系", "status": "in_progress", "detail": "正在调用大模型分析指标需求"}
+            "step": {"step": 1, "description": "解析指标体系", "status": "in_progress", "detail": "正在调用大模型分析指标需求", "phase": "indicator_gen"}
         }, ensure_ascii=False) + "\n"
 
         try:
@@ -844,7 +844,7 @@ JSON格式要求：
         yield json.dumps({
             "type": "step",
             "step": {"step": 1, "description": "解析指标体系", "status": "completed",
-                     "detail": f"共识别 {indicator_count} 个指标"}
+                     "detail": f"共识别 {indicator_count} 个指标", "phase": "indicator_gen"}
         }, ensure_ascii=False) + "\n"
         
         indicator_names = [ind.get("name", "") for ind in indicators[:5]]
@@ -891,7 +891,7 @@ JSON格式要求：
             yield json.dumps({
                 "type": "step",
                 "step": {"step": 2, "description": "生成分析摘要", "status": "in_progress",
-                         "detail": "正在调用大模型生成指标体系分析摘要..."}
+                         "detail": "正在调用大模型生成指标体系分析摘要...", "phase": "indicator_gen"}
             }, ensure_ascii=False) + "\n"
 
             try:
@@ -915,7 +915,7 @@ JSON格式要求：
                 yield json.dumps({
                     "type": "step",
                     "step": {"step": 2, "description": "生成分析摘要", "status": "completed",
-                             "detail": f"分析摘要已生成 (共 {len(summary_text_buf)} 字符)"}
+                             "detail": f"分析摘要已生成 (共 {len(summary_text_buf)} 字符)", "phase": "indicator_gen"}
                 }, ensure_ascii=False) + "\n"
 
                 summary = summary_text_buf
@@ -925,7 +925,7 @@ JSON格式要求：
                 yield json.dumps({
                     "type": "step",
                     "step": {"step": 2, "description": "生成分析摘要", "status": "error",
-                             "detail": f"生成摘要失败: {str(e)[:80]}"}
+                             "detail": f"生成摘要失败: {str(e)[:80]}", "phase": "indicator_gen"}
                 }, ensure_ascii=False) + "\n"
 
         # ── 追加追问文本（独立消息）──
