@@ -272,25 +272,15 @@ def parse_structured_response(answer: str) -> dict:
     try:
         json_str = None
 
-        # 优先级1: 查找 ---JSON--- 或 ---正在生成指标体系--- 分隔符，取分隔符之后的部分
-        sep_match = re.search(r'---\s*(?:JSON|正在生成指标体系)\s*---', answer)
-        if sep_match:
-            after_sep = answer[sep_match.end():].strip()
-            if after_sep:
-                json_str = after_sep
-
-        # 优先级2: 如果已提取到分隔符后的内容，尝试直接解析；否则按原逻辑搜索
-        if json_str is None:
-            # 否则按原有逻辑搜索
-            json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', answer)
+        json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', answer)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            json_match = re.search(r'\{[\s\S]*\}', answer)
             if json_match:
-                json_str = json_match.group(1)
+                json_str = json_match.group(0)
             else:
-                json_match = re.search(r'\{[\s\S]*\}', answer)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    json_str = answer
+                json_str = answer
 
         json_str = json_str.strip()
         data = json.loads(json_str)
@@ -583,7 +573,7 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                     # 先创建助手消息，后续所有 text 事件都流入同一消息气泡
                     yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
 
-                    start_text = f"好的，正在使用数据源「{database_name or database_id}」查询这些指标..."
+                    start_text = f"好的，正在使用数据源「{database_name or database_id}」查询这些指标...\n\n"
                     yield json.dumps({"type": "text", "content": start_text}, ensure_ascii=False) + "\n"
 
                     # 调用 evaluation-api 执行查询管线
@@ -667,7 +657,7 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                 # 先创建助手消息，后续所有 text 事件都流入同一消息气泡
                 yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
 
-                start_text = f"好的，使用数据源「{database_name or database_id}」开始查询指标..."
+                start_text = f"好的，使用数据源「{database_name or database_id}」开始查询指标...\n\n"
                 yield json.dumps({"type": "text", "content": start_text}, ensure_ascii=False) + "\n"
 
                 final_answer = ""
@@ -818,6 +808,7 @@ JSON格式要求：
                     if data.get("type") == "text":
                         chunk = data.get("content", "")
                         full_text += chunk
+                        yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
                     elif data.get("type") == "error":
                         yield json.dumps({"type": "text", "content": data.get("content", "")}, ensure_ascii=False) + "\n"
                 except json.JSONDecodeError:
@@ -829,8 +820,7 @@ JSON格式要求：
         result = parse_structured_response(full_text)
         tree = result.get("tree")
         indicators = result.get("indicators", [])
-        clean_fallback = re.sub(r'---.*?(?:JSON|正在生成指标体系|END).*?---', '', full_text).strip()
-        summary = result.get("summary", result.get("answer", clean_fallback[:200]))
+        summary = result.get("summary", result.get("answer", full_text[:200]))
         
         if not indicators:
             yield json.dumps({
@@ -903,12 +893,10 @@ JSON格式要求：
                     try:
                         summary_data = json.loads(line_str)
                         if summary_data.get("type") == "text":
-                            chunk = summary_data.get("content", "")
-                            chunk = re.sub(r'^---\s*', '', chunk)
-                            chunk = re.sub(r'^(?:JSON|END|正在生成指标体系|分析结束)\s*[:：]?\s*', '', chunk)
-                            if chunk:
-                                summary_text_buf += chunk
-                                yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
+                                chunk = summary_data.get("content", "")
+                                if chunk:
+                                    summary_text_buf += chunk
+                                    yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
                     except json.JSONDecodeError:
                         continue
 

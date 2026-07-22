@@ -171,7 +171,7 @@ def _empty_state() -> dict:
 
 
 def _add_step(steps, step_num, description, status="pending",
-              detail="", thinking="", progress=None):
+              detail="", thinking="", progress=None, phase="data_query"):
     """
     向 steps 列表追加一条前端可渲染的步骤记录。
 
@@ -183,6 +183,7 @@ def _add_step(steps, step_num, description, status="pending",
         detail:     步骤附带的详细描述文本
         thinking:   大模型的"思维链"原文，前端可折叠展示
         progress:   0-100 的进度百分比（None 时根据 status 自动推算）
+        phase:      阶段标识（indicator_gen/data_query/dataset），用于前端区分不同阶段
     """
     if progress is None:
         # 根据状态自动推算进度：completed→100, in_progress→50, 其他→0
@@ -194,6 +195,7 @@ def _add_step(steps, step_num, description, status="pending",
         "detail": detail,
         "thinking": thinking,
         "progress": progress,
+        "phase": phase,
     })
 
 

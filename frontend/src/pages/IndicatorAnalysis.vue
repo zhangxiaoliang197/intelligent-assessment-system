@@ -118,7 +118,7 @@
                     <div v-else class="ai-response">
                       <!-- 文本回答 -->
                       <div v-if="msg.content" class="message-text">{{ msg.content }}</div>
-                      <div v-else-if="!msg.tree && (!msg.indicators || msg.indicators.length === 0) && !msg.rawResults" class="message-loading">分析中...</div>
+                      <div v-if="msg.querying && !msg.rawResults && (!msg.indicators || msg.indicators.length === 0)" class="message-loading">分析中...</div>
 
                       <!-- 指标树状结构 -->
                       <div v-if="msg.tree" class="tree-section">
@@ -249,8 +249,8 @@
               <!-- 执行步骤列表（平铺，仿评估分析风格） -->
               <div v-if="executionSteps.length > 0" class="steps-list">
                 <div
-                  v-for="step in executionSteps"
-                  :key="step.step + '_' + step.description + '_' + step.status"
+                  v-for="(step, index) in executionSteps"
+                  :key="step.phase + '_' + step.step + '_' + step.description"
                   :class="['inline-step', getStepStatusClass(step.status)]"
                 >
                   <div class="inline-step-header">
@@ -260,7 +260,7 @@
                       <el-icon v-else-if="step.status === 'error'"><CircleClose /></el-icon>
                       <el-icon v-else><Clock /></el-icon>
                     </span>
-                    <span class="inline-step-title">{{ step.phase === 'indicator_gen' ? `阶段1 · 步骤 ${step.step}: ${step.description}` : step.phase === 'data_query' ? `阶段2 · 步骤 ${step.step}: ${step.description}` : step.phase === 'dataset' ? `Skill ${step.sequence}/${step.total} · ${step.description}` : `步骤 ${step.step}: ${step.description}` }}</span>
+                    <span class="inline-step-title">{{ step.phase === 'indicator_gen' ? `阶段1 · 步骤 ${index + 1}: ${step.description}` : step.phase === 'data_query' ? `阶段2 · 步骤 ${index + 1}: ${step.description}` : step.phase === 'dataset' ? `Skill ${step.sequence}/${step.total} · ${step.description}` : `步骤 ${index + 1}: ${step.description}` }}</span>
                   </div>
                   <div v-if="step.phase === 'dataset'" class="inline-step-meta">
                     <el-tag size="small" effect="plain">数据集 {{ step.sequence }}/{{ step.total }}</el-tag>
@@ -777,10 +777,10 @@ const analyzeIndicator = async () => {
             nextTick(() => scrollToBottom())
           } else if (data.type === 'step') {
             const step = data.step || data
-            // 更新左侧消息的步骤（upsert by step+description）
+            // 更新左侧消息的步骤（upsert by phase+step+description）
             const existingSteps = messages.value[currentMsgIndex].steps || []
             const dupIdx = existingSteps.findIndex(
-              (s: any) => s.step === step.step && s.description === step.description
+              (s: any) => s.phase === step.phase && s.step === step.step && s.description === step.description
             )
             if (dupIdx >= 0) {
               existingSteps.splice(dupIdx, 1, step)
@@ -788,9 +788,9 @@ const analyzeIndicator = async () => {
               existingSteps.push(step)
             }
             messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], steps: [...existingSteps] }
-            // 同步更新右侧面板的步骤（upsert by step+description）
+            // 同步更新右侧面板的步骤（upsert by phase+step+description）
             const panelDupIdx = executionSteps.value.findIndex(
-              (s: any) => s.step === step.step && s.description === step.description
+              (s: any) => s.phase === step.phase && s.step === step.step && s.description === step.description
             )
             if (panelDupIdx >= 0) {
               executionSteps.value.splice(panelDupIdx, 1, { ...step })
@@ -807,7 +807,8 @@ const analyzeIndicator = async () => {
               tree: data.tree || null,
               indicators: data.indicators || [],
               rawResults: data.rawResults || null,
-              generatedSql: data.generatedSql || ''
+              generatedSql: data.generatedSql || '',
+              querying: false
             }
             // 更新右侧面板
             if (data.generatedSql) panelState.value.generatedSql = data.generatedSql
@@ -826,25 +827,43 @@ const analyzeIndicator = async () => {
             nextTick(() => scrollToBottom())
           } else if (data.type === 'new_message') {
             const content = data.content || ''
-            // 更新 currentMsgIndex 指向新消息，后续事件正确写入
-            messages.value.push({
-              role: 'assistant',
-              content: content,
-              summary: '',
-              tree: null,
-              indicators: [],
-              references: [],
-              steps: [],
-              rawResults: null,
-              generatedSql: '',
-              treeCollapsed: false,
-              indicatorsCollapsed: false,
-              dataCollapsed: false,
-              indicatorsExpanded: false,
-              dataExpanded: false,
-              confirmActions: content.includes('是否需要查询')
-            })
-            currentMsgIndex = messages.value.length - 1
+            const currentMsg = messages.value[currentMsgIndex]
+            const isEmptyMsg = currentMsg && 
+              !currentMsg.content && 
+              !currentMsg.tree && 
+              (!currentMsg.indicators || currentMsg.indicators.length === 0) && 
+              !currentMsg.rawResults && 
+              !currentMsg.generatedSql && 
+              (!currentMsg.steps || currentMsg.steps.length === 0)
+            
+            if (isEmptyMsg) {
+              messages.value[currentMsgIndex] = {
+                ...currentMsg,
+                content: content,
+                confirmActions: content.includes('是否需要查询'),
+                querying: true
+              }
+            } else {
+              messages.value.push({
+                role: 'assistant',
+                content: content,
+                summary: '',
+                tree: null,
+                indicators: [],
+                references: [],
+                steps: [],
+                rawResults: null,
+                generatedSql: '',
+                treeCollapsed: false,
+                indicatorsCollapsed: false,
+                dataCollapsed: false,
+                indicatorsExpanded: false,
+                dataExpanded: false,
+                confirmActions: content.includes('是否需要查询'),
+                querying: true
+              })
+              currentMsgIndex = messages.value.length - 1
+            }
             nextTick(() => scrollToBottom())
           }
         } catch (e) { /* ignore */ }
@@ -852,7 +871,9 @@ const analyzeIndicator = async () => {
     }
 
     if (!fullText && !messages.value[currentMsgIndex].summary && !messages.value[currentMsgIndex].rawResults) {
-      messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: '分析失败，请检查网络连接或大模型配置。' }
+      messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: '分析失败，请检查网络连接或大模型配置。', querying: false }
+    } else if (messages.value[currentMsgIndex].querying) {
+      messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], querying: false }
     }
 
     if (!sessionId.value) {
@@ -868,9 +889,9 @@ const analyzeIndicator = async () => {
     })
   } catch (e: any) {
     if (cancelRequested || (e as Error).name === 'AbortError') {
-      messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: '本次分析已取消。' }
+      messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: '本次分析已取消。', querying: false }
     } else {
-      messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: '分析失败，请检查网络连接或大模型配置。' }
+      messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: '分析失败，请检查网络连接或大模型配置。', querying: false }
     }
   } finally {
     clearTimeout(analyzingGuard)
