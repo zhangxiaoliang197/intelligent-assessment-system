@@ -29,7 +29,6 @@ mkdir -p "$DATA_DIR/knowledge"
 mkdir -p "$DATA_DIR/qa"
 mkdir -p "$DATA_DIR/ontology"
 mkdir -p "$DATA_DIR/evaluation"
-mkdir -p "$DATA_DIR/solution-eval"
 mkdir -p "$DATA_DIR/config"
 
 echo "  数据目录: $DATA_DIR"
