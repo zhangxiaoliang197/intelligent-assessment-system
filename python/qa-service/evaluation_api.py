@@ -579,14 +579,17 @@ async def get_skills(
 ):
     """返回 15 个内置 Skill 加上所有用户创建的 Skill"""
     actor = skill_actor_from_request(request)
-    skills = list_skills(
-        actor,
-        include_archived=includeArchived,
-        statuses=[status] if status else None,
-        tags=[tag] if tag else None,
-        template=template,
-        favorites_only=favorite,
-    )
+    try:
+        skills = list_skills(
+            actor,
+            include_archived=includeArchived,
+            statuses=[status] if status else None,
+            tags=[tag] if tag else None,
+            template=template,
+            favorites_only=favorite,
+        )
+    except SkillCatalogError as exc:
+        raise HTTPException(status_code=500, detail=f"Skill 目录加载失败: {exc}")
     if visibility:
         skills = [skill for skill in skills if skill.get("visibility") == visibility]
     datasets = []
