@@ -27,8 +27,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.*;
 
@@ -349,7 +351,9 @@ public class AdminController {
 
     // ==================== 数据库表查询 ====================
     @GetMapping("/database/{dbId}/tables")
-    public ResponseEntity<Map<String, Object>> listDatabaseTables(@PathVariable String dbId) {
+    public ResponseEntity<Map<String, Object>> listDatabaseTables(
+            @PathVariable String dbId,
+            @RequestParam(defaultValue = "false") boolean includeColumns) {
         Optional<DatabaseConfig> optDb = dbConfigRepo.findById(dbId);
         if (optDb.isEmpty()) {
             return ResponseEntity.badRequest().body(errorMap("数据库配置不存在"));
@@ -367,31 +371,47 @@ public class AdminController {
                 .replace("{database}", dbConfig.getDbName());
 
         try {
-            try (Connection conn = getJdbcConnection(driver, jdbcUrl, dbConfig.getUsername(), dbConfig.getPassword());
-                 Statement stmt = conn.createStatement()) {
-
-                String sql;
-                String driverName = driver.getName();
-                if ("PostgreSQL".equals(driverName)) {
-                    sql = "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name";
-                } else if ("Oracle".equals(driverName) || "达梦数据库V8".equals(driverName)) {
-                    sql = "SELECT table_name FROM user_tables ORDER BY table_name";
-                } else if ("SQL Server".equals(driverName)) {
-                    sql = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME";
-                } else {
-                    sql = String.format(
-                        "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='%s' AND TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME",
-                        dbConfig.getDbName());
+            try (Connection conn = getJdbcConnection(driver, jdbcUrl, dbConfig.getUsername(), dbConfig.getPassword())) {
+                DatabaseMetaData metadata = conn.getMetaData();
+                String catalog = safeCatalog(conn);
+                String schema = safeSchema(conn);
+                List<Map<String, Object>> tables = new ArrayList<>();
+                Set<String> seen = new HashSet<>();
+                appendMetadataTables(metadata, catalog, schema, tables, seen);
+                // 某些旧 JDBC 驱动不会正确实现 Connection#getSchema。仅在首轮
+                // 为空时放宽 schema，再由去重和系统 schema 过滤保证目录可用。
+                if (tables.isEmpty() && schema != null) {
+                    appendMetadataTables(metadata, catalog, null, tables, seen);
                 }
-
-                ResultSet rs = stmt.executeQuery(sql);
-                List<Map<String, String>> tables = new ArrayList<>();
-                while (rs.next()) {
-                    Map<String, String> t = new HashMap<>();
-                    t.put("tableName", rs.getString(1));
-                    tables.add(t);
+                if (tables.isEmpty()) {
+                    appendMetadataTables(metadata, null, null, tables, seen);
                 }
-                return ResponseEntity.ok(Map.of("success", true, "tables", tables, "total", tables.size()));
+                tables.sort(Comparator.comparing(item -> String.valueOf(item.get("tableName")), String.CASE_INSENSITIVE_ORDER));
+                if (includeColumns) {
+                    for (Map<String, Object> table : tables) {
+                        try {
+                            String tableCatalog = String.valueOf(table.getOrDefault("catalogName", ""));
+                            String tableSchema = String.valueOf(table.getOrDefault("schemaName", ""));
+                            List<Map<String, Object>> columns = readMetadataColumns(
+                                    metadata,
+                                    tableCatalog.isBlank() ? null : tableCatalog,
+                                    tableSchema.isBlank() ? null : tableSchema,
+                                    String.valueOf(table.get("tableName")));
+                            table.put("columns", columns);
+                            table.put("columnCount", columns.size());
+                        } catch (SQLException metadataError) {
+                            table.put("columns", List.of());
+                            table.put("columnCount", 0);
+                            table.put("metadataError", metadataError.getMessage());
+                        }
+                    }
+                }
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("success", true);
+                response.put("tables", tables);
+                response.put("total", tables.size());
+                appendDatabaseProfile(response, dbConfig, metadata);
+                return ResponseEntity.ok(response);
             }
         } catch (Exception e) {
             return ResponseEntity.ok(Map.of("success", false, "message", "读取数据表失败: " + e.getMessage()));
@@ -407,6 +427,21 @@ public class AdminController {
         if (optDb.isEmpty()) {
             return ResponseEntity.badRequest()
                     .body(Map.of("success", false, "message", "数据库配置不存在"));
+        }
+        return readTableColumns(optDb.get(), tableName);
+    }
+
+    /**
+     * 直接读取所选数据源中的物理表结构，不要求事先创建 Dataset 记录。
+     * Skill 运行时通过这个入口按当前数据库的真实元数据选择表。
+     */
+    @GetMapping("/database/{dbId}/table-structure")
+    public ResponseEntity<Map<String, Object>> getDatabaseTableStructure(
+            @PathVariable String dbId,
+            @RequestParam String tableName) {
+        Optional<DatabaseConfig> optDb = dbConfigRepo.findById(dbId);
+        if (optDb.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "数据库配置不存在"));
         }
         return readTableColumns(optDb.get(), tableName);
     }
@@ -828,89 +863,127 @@ public class AdminController {
 
         try {
             try (Connection conn = getJdbcConnection(driver, jdbcUrl, dbConfig.getUsername(), dbConfig.getPassword())) {
-
-                String sql;
-                List<String> parameters = new ArrayList<>();
-                String driverName = driver.getName();
-                if ("PostgreSQL".equals(driverName)) {
-                    sql =
-                        "SELECT column_name, data_type, is_nullable, " +
-                        "CASE WHEN EXISTS (SELECT 1 FROM information_schema.table_constraints tc " +
-                        "JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name " +
-                        "WHERE tc.table_name = ? AND tc.constraint_type = 'PRIMARY KEY' " +
-                        "AND kcu.column_name = c.column_name) THEN 'YES' ELSE 'NO' END AS is_pk, " +
-                        "COALESCE(pgd.description, '') AS column_comment " +
-                        "FROM information_schema.columns c " +
-                        "LEFT JOIN pg_catalog.pg_description pgd ON pgd.objsubid = c.ordinal_position " +
-                        "AND pgd.objoid = (SELECT oid FROM pg_class WHERE relname = ?) " +
-                        "WHERE c.table_name = ? ORDER BY c.ordinal_position";
-                    parameters.add(tableName);
-                    parameters.add(tableName);
-                    parameters.add(tableName);
-                } else if ("Oracle".equals(driverName) || "达梦数据库V8".equals(driverName)) {
-                    sql =
-                        "SELECT c.column_name, c.data_type, c.nullable AS is_nullable, " +
-                        "CASE WHEN pk.column_name IS NOT NULL THEN 'YES' ELSE 'NO' END AS is_pk, " +
-                        "COALESCE(cm.comments, '') AS column_comment " +
-                        "FROM user_tab_columns c " +
-                        "LEFT JOIN (SELECT cc.column_name FROM user_cons_columns cc " +
-                        "JOIN user_constraints uc ON cc.constraint_name = uc.constraint_name " +
-                        "WHERE uc.constraint_type = 'P' AND uc.table_name = ?) pk " +
-                        "ON c.column_name = pk.column_name " +
-                        "LEFT JOIN user_col_comments cm ON c.table_name = cm.table_name AND c.column_name = cm.column_name " +
-                        "WHERE c.table_name = ? ORDER BY c.column_id";
-                    parameters.add(tableName);
-                    parameters.add(tableName);
-                } else if ("SQL Server".equals(driverName)) {
-                    sql =
-                        "SELECT c.COLUMN_NAME, c.DATA_TYPE, c.IS_NULLABLE, " +
-                        "CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 'YES' ELSE 'NO' END AS is_pk, " +
-                        "COALESCE(CAST(ep.value AS NVARCHAR(MAX)), '') AS column_comment " +
-                        "FROM INFORMATION_SCHEMA.COLUMNS c " +
-                        "LEFT JOIN (SELECT ku.TABLE_NAME, ku.COLUMN_NAME " +
-                        "FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc " +
-                        "JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku ON tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME " +
-                        "WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' AND ku.TABLE_NAME = ?) pk " +
-                        "ON c.COLUMN_NAME = pk.COLUMN_NAME " +
-                        "LEFT JOIN sys.extended_properties ep ON ep.major_id = OBJECT_ID(?) " +
-                        "AND ep.minor_id = c.ORDINAL_POSITION AND ep.name = 'MS_Description' " +
-                        "WHERE c.TABLE_NAME = ? ORDER BY c.ORDINAL_POSITION";
-                    parameters.add(tableName);
-                    parameters.add(tableName);
-                    parameters.add(tableName);
-                } else {
-                    sql =
-                        "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, " +
-                        "IF(COLUMN_KEY='PRI','YES','NO') AS IS_PK, " +
-                        "COALESCE(COLUMN_COMMENT,'') AS COLUMN_COMMENT " +
-                        "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? " +
-                        "ORDER BY ORDINAL_POSITION";
-                    parameters.add(dbConfig.getDbName());
-                    parameters.add(tableName);
+                DatabaseMetaData metadata = conn.getMetaData();
+                List<Map<String, Object>> columns = readMetadataColumns(
+                        metadata, safeCatalog(conn), safeSchema(conn), tableName);
+                if (columns.isEmpty()) {
+                    columns = readMetadataColumns(metadata, null, null, tableName);
                 }
 
-                List<Map<String, Object>> columns = new ArrayList<>();
-                try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-                    for (int index = 0; index < parameters.size(); index++) {
-                        stmt.setString(index + 1, parameters.get(index));
-                    }
-                    try (ResultSet rs = stmt.executeQuery()) {
-                        while (rs.next()) {
-                            Map<String, Object> col = new LinkedHashMap<>();
-                            col.put("columnName", rs.getString(1));
-                            col.put("dataType", rs.getString(2));
-                            col.put("isNullable", "YES".equalsIgnoreCase(rs.getString(3)));
-                            col.put("isPrimaryKey", "YES".equalsIgnoreCase(rs.getString(4)));
-                            col.put("comment", rs.getString(5) != null ? rs.getString(5) : "");
-                            columns.add(col);
-                        }
-                    }
-                }
-
-                return ResponseEntity.ok(Map.of("success", true, "tableName", tableName, "columns", columns, "count", columns.size()));
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("success", true);
+                response.put("tableName", tableName);
+                response.put("columns", columns);
+                response.put("count", columns.size());
+                appendDatabaseProfile(response, dbConfig, metadata);
+                return ResponseEntity.ok(response);
             }
         } catch (Exception e) {
             return ResponseEntity.ok(Map.of("success", false, "message", "读取表结构失败: " + e.getMessage()));
+        }
+    }
+
+    private List<Map<String, Object>> readMetadataColumns(
+            DatabaseMetaData metadata, String catalog, String schema, String tableName) throws SQLException {
+        Set<String> primaryKeys = new HashSet<>();
+        try {
+            try (ResultSet rs = metadata.getPrimaryKeys(catalog, schema, tableName)) {
+                while (rs.next()) {
+                    String columnName = rs.getString("COLUMN_NAME");
+                    if (columnName != null) primaryKeys.add(columnName.toLowerCase(Locale.ROOT));
+                }
+            }
+        } catch (SQLException ignored) {
+            // 部分旧 JDBC 驱动不支持主键元数据；仍返回字段，主键标记默认为 false。
+        }
+
+        List<Map<String, Object>> columns = new ArrayList<>();
+        try (ResultSet rs = metadata.getColumns(catalog, schema, tableName, "%")) {
+            while (rs.next()) {
+                String columnName = rs.getString("COLUMN_NAME");
+                Map<String, Object> column = new LinkedHashMap<>();
+                column.put("columnName", columnName);
+                column.put("dataType", Objects.toString(rs.getString("TYPE_NAME"), ""));
+                column.put("isNullable", rs.getInt("NULLABLE") != DatabaseMetaData.columnNoNulls);
+                column.put("isPrimaryKey", columnName != null && primaryKeys.contains(columnName.toLowerCase(Locale.ROOT)));
+                column.put("comment", Objects.toString(rs.getString("REMARKS"), ""));
+                column.put("ordinalPosition", rs.getInt("ORDINAL_POSITION"));
+                columns.add(column);
+            }
+        }
+        columns.sort(Comparator.comparingInt(item -> ((Number) item.get("ordinalPosition")).intValue()));
+        columns.forEach(item -> item.remove("ordinalPosition"));
+        return columns;
+    }
+
+    private void appendMetadataTables(
+            DatabaseMetaData metadata,
+            String catalog,
+            String schema,
+            List<Map<String, Object>> tables,
+            Set<String> seen) throws SQLException {
+        Set<String> systemSchemas = Set.of(
+                "information_schema", "pg_catalog", "sys", "mysql", "performance_schema");
+        try (ResultSet rs = metadata.getTables(catalog, schema, "%", new String[]{"TABLE"})) {
+            while (rs.next()) {
+                String tableName = rs.getString("TABLE_NAME");
+                String schemaName = Objects.toString(rs.getString("TABLE_SCHEM"), "");
+                if (tableName == null
+                        || tableName.isBlank()
+                        || systemSchemas.contains(schemaName.toLowerCase(Locale.ROOT))
+                        || !seen.add(tableName.toLowerCase(Locale.ROOT))) {
+                    continue;
+                }
+                Map<String, Object> table = new LinkedHashMap<>();
+                table.put("tableName", tableName);
+                table.put("schemaName", schemaName);
+                table.put("catalogName", Objects.toString(rs.getString("TABLE_CAT"), ""));
+                tables.add(table);
+            }
+        }
+    }
+
+    private String safeCatalog(Connection connection) {
+        try {
+            return connection.getCatalog();
+        } catch (SQLException ignored) {
+            return null;
+        }
+    }
+
+    private String safeSchema(Connection connection) {
+        try {
+            return connection.getSchema();
+        } catch (SQLException | AbstractMethodError ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * Attach both the configured driver type and the JDBC driver's actual
+     * database product information. SQL generation uses the actual product
+     * first, so a custom driver id does not accidentally select the wrong
+     * dialect.
+     */
+    private void appendDatabaseProfile(
+            Map<String, Object> target,
+            DatabaseConfig dbConfig,
+            DatabaseMetaData metadata) {
+        target.put("databaseType", Objects.toString(dbConfig.getType(), ""));
+        try {
+            target.put("databaseProductName", Objects.toString(metadata.getDatabaseProductName(), ""));
+        } catch (SQLException ignored) {
+            target.put("databaseProductName", "");
+        }
+        try {
+            target.put("databaseProductVersion", Objects.toString(metadata.getDatabaseProductVersion(), ""));
+        } catch (SQLException ignored) {
+            target.put("databaseProductVersion", "");
+        }
+        try {
+            target.put("identifierQuoteString", Objects.toString(metadata.getIdentifierQuoteString(), "").trim());
+        } catch (SQLException ignored) {
+            target.put("identifierQuoteString", "");
         }
     }
 

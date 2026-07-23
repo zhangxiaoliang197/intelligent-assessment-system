@@ -271,14 +271,23 @@
                 <div v-if="skill.availability" class="availability-line">
                   <el-icon><Coin /></el-icon>
                   <span>
-                    当前数据源匹配 {{ skill.availability.matchedSteps }}/{{ skill.availability.totalSteps }} 步
+                    <template v-if="skill.availability.runtimeSelectable && !skill.availability.complete">
+                      已发现当前数据源真实表，运行时按字段结构动态适配
+                    </template>
+                    <template v-else>
+                      当前数据源匹配 {{ skill.availability.matchedSteps }}/{{ skill.availability.totalSteps }} 步
+                    </template>
                   </span>
                   <el-tag
                     size="small"
                     :type="skill.availability.complete ? 'success' : skill.availability.available ? 'warning' : 'danger'"
                     effect="plain"
                   >
-                    {{ skill.availability.complete ? '完整可用' : skill.availability.available ? '部分匹配' : '未匹配' }}
+                    {{ skill.availability.complete
+                      ? '完整可用'
+                      : skill.availability.runtimeSelectable
+                        ? '动态适配'
+                        : skill.availability.available ? '部分匹配' : '未匹配' }}
                   </el-tag>
                 </div>
               </div>

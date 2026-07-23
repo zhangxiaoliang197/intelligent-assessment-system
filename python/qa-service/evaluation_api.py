@@ -595,10 +595,12 @@ async def get_skills(
     datasets = []
     availability_error = ""
     if dataSourceId:
-        from agents.tools import fetch_datasets_for_database
+        from agents.tools import fetch_skill_datasets_for_database
 
         try:
-            datasets = await asyncio.to_thread(fetch_datasets_for_database, dataSourceId, True)
+            datasets = await asyncio.to_thread(
+                fetch_skill_datasets_for_database, dataSourceId, True, False
+            )
         except Exception as exc:
             logger.warning(f"计算 Skill 可用性失败: {exc}")
             availability_error = str(exc)[:300]
@@ -660,11 +662,11 @@ async def recommend_evaluation_skills(request: SkillRecommendRequest, http_reque
     datasets = []
     availability_error = ""
     if request.database_id:
-        from agents.tools import fetch_datasets_for_database
+        from agents.tools import fetch_skill_datasets_for_database
 
         try:
             datasets = await asyncio.to_thread(
-                fetch_datasets_for_database, request.database_id, True
+                fetch_skill_datasets_for_database, request.database_id, True, False
             )
         except Exception as exc:
             logger.warning("无法用可用性信息丰富 Skill 推荐: %s", exc)
@@ -849,11 +851,13 @@ async def get_data_sources():
 
 @evaluation_router.get("/data-sources/{database_id}/datasets")
 async def get_data_source_datasets(database_id: str):
-    """返回经服务端验证的数据集选项，供自定义 Skill 编辑器使用"""
-    from agents.tools import fetch_datasets_for_database
+    """返回经服务端验证的数据集选项，供自定义 Skill 编辑器使用。"""
+    from agents.tools import fetch_skill_datasets_for_database
 
     try:
-        datasets = await asyncio.to_thread(fetch_datasets_for_database, database_id, True)
+        datasets = await asyncio.to_thread(
+            fetch_skill_datasets_for_database, database_id, True, False
+        )
     except Exception as exc:
         logger.error("加载自定义 Skill 编辑器的数据集失败: %s", exc)
         raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc

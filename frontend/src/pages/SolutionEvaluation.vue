@@ -132,7 +132,9 @@
             >
               <strong>{{ skill.name }}</strong>
               <span v-if="skill.availability">
-                数据完整度 {{ skill.availability.matchedSteps }}/{{ skill.availability.totalSteps }}
+                {{ skill.availability.runtimeSelectable && !skill.availability.complete
+                  ? '按当前数据源真实表结构动态适配'
+                  : `数据完整度 ${skill.availability.matchedSteps}/${skill.availability.totalSteps}` }}
               </span>
               <span v-else>{{ skill.recommendationReason || '问题场景匹配' }}</span>
             </button>
@@ -935,9 +937,13 @@ const refreshSkillsForDataSource = async (dataSourceId: string, notify = false) 
     const activeSkill = catalog.skills.find(skill => skill.id === selectedSkillId.value)
     const availability = activeSkill?.availability
     if (notify && availability?.totalSteps && !availability.complete) {
-      ElMessage.warning(
-        `「${activeSkill?.name}」在当前数据源仅匹配 ${availability.matchedSteps}/${availability.totalSteps} 个步骤，请在 Skills 库中检查数据集绑定`
-      )
+      if (availability.runtimeSelectable) {
+        ElMessage.info(`「${activeSkill?.name}」将根据当前数据源的真实表结构动态适配`)
+      } else {
+        ElMessage.warning(
+          `「${activeSkill?.name}」在当前数据源仅匹配 ${availability.matchedSteps}/${availability.totalSteps} 个步骤，请在 Skills 库中检查数据集绑定`
+        )
+      }
     }
   } catch (error: any) {
     if (requestSequence !== skillCatalogRequestSequence) return
@@ -998,7 +1004,9 @@ const selectRecommendedSkill = (skill: EvaluationSkill) => {
   showExecutionPanel.value = true
   const availability = skill.availability
   ElMessage.success(
-    availability?.totalSteps
+    availability?.runtimeSelectable && !availability.complete
+      ? `已采用推荐 Skill：${skill.name}（运行时按当前数据源动态适配）`
+      : availability?.totalSteps
       ? `已采用推荐 Skill：${skill.name}（数据完整度 ${availability.matchedSteps}/${availability.totalSteps}）`
       : `已采用推荐 Skill：${skill.name}`
   )

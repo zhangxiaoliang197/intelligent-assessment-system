@@ -10,7 +10,7 @@ Java admin-service 之间的 HTTP 通信层（Communication Layer）。
 
 它封装了所有对 admin-service REST API 的调用，提供以下能力：
 1. 数据源管理：获取数据库配置列表、表名列表
-2. 表结构查询：通过 information_schema 读取列信息
+2. 表结构查询：通过 JDBC 元数据读取当前数据源的真实列信息
 3. SQL 代理执行：将 SQL 转发到 admin-service，由后者在目标数据库上执行
 4. 数据集/指标管理：获取用户管理的数据集、指标定义及其关联关系
 
@@ -32,9 +32,11 @@ admin-service 是 Java Spring Boot 服务，监听端口 10258。
 - SQL 执行通过 admin-service 代理，由 Java 端做参数化查询防护
 - 所有 API 调用都有超时限制（GET 30s，POST 120s），防止连接挂死
 """
+import hashlib
 import json
 import urllib.request
 import urllib.error
+import urllib.parse
 import ssl
 import os
 import logging
@@ -42,6 +44,13 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("evaluation.tools")
+
+_DATABASE_PROFILE_KEYS = (
+    "databaseType",
+    "databaseProductName",
+    "databaseProductVersion",
+    "identifierQuoteString",
+)
 
 # admin-service 的基地址，支持通过环境变量覆盖（Docker 部署时设为容器名）
 ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
@@ -146,11 +155,13 @@ def fetch_database_config(db_id: str) -> dict:
     return {}
 
 
-def fetch_database_tables(db_id: str) -> list:
+def fetch_database_tables(
+    db_id: str, include_columns: bool = False, strict: bool = False
+) -> list:
     """获取指定数据库中的所有表名。
 
     调用 admin-service 的 GET /api/admin/database/{db_id}/tables 接口。
-    admin-service 会连接目标数据库，通过 SHOW TABLES 或 information_schema 获取表名。
+    admin-service 会连接目标数据库，通过 JDBC 元数据获取实际表名。
 
     在工作流中的角色：这是数据探查（Discovery）阶段的第一步，
     为后续的表结构读取和 SQL 生成提供可用表列表。
@@ -162,45 +173,30 @@ def fetch_database_tables(db_id: str) -> list:
         表名字符串列表，如 ["t_combat_record", "t_equipment", "t_mission"]。
         调用失败或数据库无表时返回空列表 []。
     """
-    resp = _api_get(f"database/{db_id}/tables")
+    query = "?includeColumns=true" if include_columns else ""
+    resp = _api_get(f"database/{urllib.parse.quote(str(db_id), safe='')}/tables{query}")
     if resp.get("success"):
-        # 提取每个表对象的 tableName 字段
-        return [t.get("tableName", "") for t in resp.get("tables", [])]
+        tables = [
+            table for table in resp.get("tables", [])
+            if isinstance(table, dict) and table.get("tableName")
+        ]
+        if include_columns:
+            profile = {key: resp.get(key, "") for key in _DATABASE_PROFILE_KEYS}
+            for table in tables:
+                table.update(profile)
+            return tables
+        return [table.get("tableName", "") for table in tables]
+    if strict:
+        raise RuntimeError(resp.get("message") or "无法读取数据源中的物理表")
     return []
 
 
 def fetch_table_structure(db_id: str, table_name: str) -> dict:
-    """读取数据库中指定表的完整结构信息（列名、类型、主键、注释）。
+    """通过 JDBC 元数据读取当前数据源中的真实表结构。
 
-    实现方式：通过 information_schema.COLUMNS 查询目标表的元数据。
-    具体 SQL：
-        SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_COMMENT
-        FROM information_schema.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table_name}'
-        ORDER BY ORDINAL_POSITION
-
-    这种方式的优势：
-    1. 不依赖 admin-service 是否有 read-structure 接口
-    2. 返回标准的 information_schema 格式，便于统一解析
-    3. 能获取列注释（COLUMN_COMMENT），丰富 LLM 的上下文
-
-    在工作流中的角色：这是数据探查阶段的第二步，
-    为 SQL Agent 提供生成 SQL 所需的字段信息。
-
-    Args:
-        db_id:      数据库配置 ID
-        table_name: 要读取结构的表名
-
-    Returns:
-        字典，包含：
-        - tableName: 表名
-        - columns:   列信息列表，每个元素为 {"columnName", "dataType", "isPrimaryKey", "isNullable", "comment"}
-        - count:     列数量
-        调用失败时返回 columns=[] 且 count=0。
+    数据库类型、数据库名和系统目录差异由 admin-service/JDBC 驱动处理；
+    这里不拼接任何数据库方言专用的系统表查询。
     """
-    # 数据集元数据来自管理端，但仍不能直接拼接进 SQL。这里仅接受常见的
-    # Unicode/空格/点/横线标识符字符，并明确拒绝引号、注释、控制字符等
-    # 可改变字符串字面量边界的内容。
     if (
         not isinstance(table_name, str)
         or not table_name.strip()
@@ -213,19 +209,28 @@ def fetch_table_structure(db_id: str, table_name: str) -> dict:
         logger.warning("读取元数据时拒绝不安全的表名")
         return {"tableName": "", "columns": [], "count": 0}
     safe_table_name = table_name.strip()
-
-    # 调用 admin-service 的多库适配 API（已适配 MySQL/PG/Oracle/达梦/SQL Server）
-    # 返回格式统一：columns 中每项含 columnName/dataType/isNullable(bool)/isPrimaryKey(bool)/comment
-    resp = _api_get(f"database/{db_id}/table/{safe_table_name}/columns")
-    if resp.get("success"):
-        logger.info(f"表 [{safe_table_name}]: 通过 admin-service 获取到 {resp.get('count', 0)} 列")
-        return {
-            "tableName": resp.get("tableName", safe_table_name),
-            "columns": resp.get("columns", []),
-            "count": resp.get("count", 0),
+    query = urllib.parse.urlencode({"tableName": safe_table_name})
+    result = _api_get(
+        f"database/{urllib.parse.quote(str(db_id), safe='')}/table-structure?{query}"
+    )
+    if result.get("success"):
+        columns = result.get("columns", [])
+        columns = columns if isinstance(columns, list) else []
+        structure = {
+            "tableName": result.get("tableName") or safe_table_name,
+            "columns": columns,
+            "count": len(columns),
         }
+        for key in _DATABASE_PROFILE_KEYS:
+            structure[key] = result.get(key, "")
+        return structure
 
-    logger.warning(f"获取表 {safe_table_name} 在数据库 {db_id} 上的结构失败: {resp.get('message', '')}")
+    logger.warning(
+        "Failed to get structure for %s on db %s: %s",
+        safe_table_name,
+        db_id,
+        result.get("message", ""),
+    )
     return {"tableName": safe_table_name, "columns": [], "count": 0}
 
 
@@ -283,6 +288,90 @@ def fetch_datasets_for_database(db_id: str, strict: bool = False) -> list:
     return [ds for ds in resp.get("datasets", []) if ds.get("databaseId") == db_id]
 
 
+def fetch_skill_datasets_for_database(
+    db_id: str, strict: bool = False, include_columns: bool = True
+) -> list:
+    """构建 Skill 使用的当前数据源目录。
+
+    已登记 Dataset 只作为业务名称、描述和字段标注的增强信息。目录的
+    基础始终来自用户当前选择的数据源中的真实物理表，因此新环境无需先
+    按开发环境的数据库名或表名重建 Dataset 记录。
+    """
+    table_query = "?includeColumns=true" if include_columns else ""
+    table_path = (
+        f"database/{urllib.parse.quote(str(db_id), safe='')}/tables{table_query}"
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        dataset_future = pool.submit(_api_get, "dataset/list")
+        table_future = pool.submit(_api_get, table_path)
+        dataset_response = dataset_future.result()
+        table_response = table_future.result()
+    dataset_ok = bool(dataset_response.get("success"))
+    table_ok = bool(table_response.get("success"))
+    if strict and not dataset_ok and not table_ok:
+        message = table_response.get("message") or dataset_response.get("message")
+        raise RuntimeError(message or "数据集目录与物理表目录均不可用")
+
+    configured = [
+        item for item in dataset_response.get("datasets", [])
+        if isinstance(item, dict)
+        and str(item.get("databaseId") or "") == str(db_id)
+        and item.get("tableName")
+    ] if dataset_ok else []
+    physical_tables = [
+        item for item in table_response.get("tables", [])
+        if isinstance(item, dict) and item.get("tableName")
+    ] if table_ok else []
+    physical_by_name = {
+        str(item["tableName"]).casefold(): item for item in physical_tables
+    }
+    database_profile = {
+        key: table_response.get(key, "") for key in _DATABASE_PROFILE_KEYS
+    }
+
+    merged = []
+    covered_tables = set()
+    for item in configured:
+        table_name = str(item.get("tableName") or "").strip()
+        physical = physical_by_name.get(table_name.casefold())
+        # 当物理目录可读时，不让已失效的旧 Dataset 绑定进入当前数据源。
+        if table_ok and physical is None:
+            continue
+        dataset = dict(item)
+        dataset["source"] = "configured"
+        dataset["isLiveTable"] = False
+        if physical:
+            dataset["columns"] = physical.get("columns", [])
+            dataset["schemaName"] = physical.get("schemaName", "")
+            dataset["catalogName"] = physical.get("catalogName", "")
+        dataset.update(database_profile)
+        merged.append(dataset)
+        covered_tables.add(table_name.casefold())
+
+    for table in physical_tables:
+        table_name = str(table.get("tableName") or "").strip()
+        if not table_name or table_name.casefold() in covered_tables:
+            continue
+        stable_key = hashlib.sha256(
+            f"{db_id}\0{table_name}".encode("utf-8")
+        ).hexdigest()[:24]
+        live_dataset = {
+            "id": f"live-{stable_key}",
+            "name": table_name,
+            "tableName": table_name,
+            "description": "当前数据源实时发现的物理表",
+            "databaseId": db_id,
+            "source": "live",
+            "isLiveTable": True,
+            "columns": table.get("columns", []),
+            "schemaName": table.get("schemaName", ""),
+            "catalogName": table.get("catalogName", ""),
+        }
+        live_dataset.update(database_profile)
+        merged.append(live_dataset)
+    return merged
+
+
 def fetch_all_indicators() -> list:
     """获取系统中所有指标定义。
 
@@ -330,7 +419,7 @@ def _fetch_dataset_structure_inner(dataset_id: str) -> dict:
 
     这是获取表结构的"增强路径"：不仅读取物理表结构，还合并用户在
     管理后台为字段添加的业务标注（annotation/businessMeaning/dataCategory）。
-    优先于直接读 information_schema 的 fetch_table_structure。
+    优先于直接读取 JDBC 元数据的 fetch_table_structure。
 
     实现步骤（并行优化后）：
     1. 并行调用 dataset/{id}/structure 和 dataset/{id}/fields（2→1 个HTTP往返）
@@ -374,7 +463,14 @@ def _fetch_dataset_structure_inner(dataset_id: str) -> dict:
             "businessMeaning": ann.get("businessMeaning", ""),  # 业务含义说明
             "dataCategory": ann.get("dataCategory", ""),    # 数据分类（如 战果/战损/资源）
         })
-    return {"tableName": struct_resp.get("tableName", ""), "columns": merged, "count": len(merged)}
+    structure = {
+        "tableName": struct_resp.get("tableName", ""),
+        "columns": merged,
+        "count": len(merged),
+    }
+    for key in _DATABASE_PROFILE_KEYS:
+        structure[key] = struct_resp.get(key, "")
+    return structure
 
 
 def fetch_indicator_detail(indicator_id: str) -> dict:
@@ -449,13 +545,13 @@ def fetch_evaluation_context_for_database(db_id: str, selected_tables: list = No
 
     这是数据探查（Discovery）阶段的"一站式"聚合函数，一次调用即可获取
     评估工作流所需的全部元数据。它整合了以下信息：
-    1. 数据库中所有表的 DDL（从 information_schema 实时读取）
+    1. 数据库中所有表的结构（从 JDBC 元数据实时读取）
     2. 用户管理的数据集标注（业务描述、字段标注）
     3. 用户管理的指标定义（计算规则、字段映射）
 
-    表结构获取优先级：数据集标注 > information_schema 直接查询。
+    表结构获取优先级：数据集标注 > JDBC 元数据直接查询。
     如果某个表有对应的数据集，则使用带标注的增强结构；
-    如果没有，则使用 information_schema 的标准结构。
+    如果没有，则使用 JDBC 返回的标准结构。
 
     在工作流中的角色：这是 orchestrator_node 之后、sql_generator_node 之前
     调用的核心函数，为 LLM 提供完整的数据库元数据上下文。
@@ -491,7 +587,7 @@ def fetch_evaluation_context_for_database(db_id: str, selected_tables: list = No
     linked_indicators = fetch_indicators_for_datasets(linked_ds_ids)
 
     # 步骤 4：逐个读取每个表的结构
-    # 优先级：有数据集的表用增强结构（含业务标注），无数据集的表用 information_schema
+    # 优先级：有数据集的表用增强结构（含业务标注），无数据集的表用 JDBC 元数据
     schemas = []
     for table_name in target_tables:
         ds = dataset_table_map.get(table_name)
@@ -502,7 +598,7 @@ def fetch_evaluation_context_for_database(db_id: str, selected_tables: list = No
             schema["datasetId"] = ds.get("id", "")
             schema["description"] = ds.get("description", "")
         else:
-            # 无数据集：使用标准路径，直接从 information_schema 读取
+            # 无数据集：使用标准路径，直接从 JDBC 元数据读取
             schema = fetch_table_structure(db_id, table_name)
             schema["datasetName"] = table_name      # 无数据集时以表名作为显示名
             schema["datasetId"] = ""                 # 无关联数据集 ID

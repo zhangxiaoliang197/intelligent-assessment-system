@@ -60,7 +60,12 @@
                 <div>
                   <strong>{{ preflightResult.runnable ? '可以运行' : '存在阻断项' }}</strong>
                   <span>
-                    已匹配 {{ preflightResult.availability?.matchedSteps || 0 }}/{{ preflightResult.availability?.totalSteps || skill.stepCount }} 个数据步骤
+                    <template v-if="preflightResult.availability?.runtimeSelectable && !preflightResult.availability?.complete">
+                      未固定绑定的步骤将在运行时按当前数据源真实字段选择
+                    </template>
+                    <template v-else>
+                      已匹配 {{ preflightResult.availability?.matchedSteps || 0 }}/{{ preflightResult.availability?.totalSteps || skill.stepCount }} 个数据步骤
+                    </template>
                   </span>
                 </div>
               </div>
@@ -608,6 +613,7 @@ const qualityKeywords = ref<string[]>([])
 const preflightPercentage = computed(() => {
   const availability = preflightResult.value?.availability
   if (!availability?.totalSteps) return preflightResult.value?.runnable ? 100 : 0
+  if (availability.runtimeSelectable && preflightResult.value?.runnable) return 100
   const raw = availability.completeness == null
     ? availability.matchedSteps / availability.totalSteps
     : availability.completeness

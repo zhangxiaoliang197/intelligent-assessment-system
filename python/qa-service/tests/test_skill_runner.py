@@ -144,6 +144,81 @@ class SkillWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result["queryResults"][0]["rows"]), 20)
         self.assertTrue(result["queryResults"][1]["queryTruncated"])
 
+    async def test_database_error_regenerates_sql_instead_of_repeating_it(self):
+        skill = {
+            "id": "test-dialect-repair",
+            "name": "方言修正测试",
+            "description": "验证数据库报错后重新生成 SQL",
+            "category": "测试",
+            "outputInstruction": "返回结果",
+            "steps": [{
+                "id": "task",
+                "name": "查询任务",
+                "description": "查询任务记录",
+                "datasetKeywords": ["task"],
+                "retryCount": 1,
+            }],
+        }
+        datasets = [{"id": "task-ds", "name": "任务", "tableName": "TASK_LOG"}]
+        generated = []
+        executed = []
+
+        async def fake_text_to_sql(state, _llm, max_retries=1):
+            sql = (
+                "SELECT BAD_COLUMN FROM TASK_LOG"
+                if not generated
+                else "SELECT ID FROM TASK_LOG"
+            )
+            generated.append(sql)
+            state.generated_sql = sql
+            state.sql_valid = True
+            state.sql_dialect = "oracle"
+            return state
+
+        def fake_execute(_database_id, sql):
+            executed.append(sql)
+            if len(executed) == 1:
+                return {"success": False, "message": "ORA-00904: invalid identifier"}
+            return {"success": True, "columns": ["ID"], "rows": [{"ID": 1}]}
+
+        async def fake_llm(_system, _user):
+            return "unused"
+
+        with (
+            patch("agents.skill_runner.fetch_datasets_for_database", return_value=datasets),
+            patch(
+                "agents.skill_runner._fetch_dataset_structure_inner",
+                return_value={
+                    "tableName": "TASK_LOG",
+                    "columns": [{"columnName": "ID", "dataType": "NUMBER"}],
+                    "databaseProductName": "Oracle",
+                },
+            ),
+            patch("agents.skill_runner.fetch_indicators_for_datasets", return_value=[]),
+            patch("agents.skill_runner.run_text_to_sql", side_effect=fake_text_to_sql),
+            patch("agents.skill_runner.execute_sql_on_database", side_effect=fake_execute),
+        ):
+            events = [
+                event
+                async for event in run_skill_workflow(
+                    question="查询任务",
+                    database_id="db-oracle",
+                    database_name="Oracle业务库",
+                    skill=skill,
+                    llm_call_fn=fake_llm,
+                    include_synthesis=False,
+                )
+            ]
+
+        self.assertEqual(
+            executed,
+            ["SELECT BAD_COLUMN FROM TASK_LOG", "SELECT ID FROM TASK_LOG"],
+        )
+        self.assertEqual(generated, executed)
+        result = next(event["result"] for event in events if event["type"] == "result")
+        self.assertEqual("completed", result["queryResults"][0]["status"])
+        self.assertEqual("SELECT ID FROM TASK_LOG", result["queryResults"][0]["sql"])
+
     async def test_synthesis_failure_marks_the_run_partial(self):
         skill = {
             "id": "test-synthesis-status",

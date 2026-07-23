@@ -14,10 +14,8 @@ LangGraph 工作流引擎
         ├── orchestrator_start_node    ← 入口：构建 LLM prompt
         ├── orchestrator_execute_node  ← 调用 LLM + 意图解析
         │       │
-        │       ├─(combat_effectiveness)→ combat_agent_node → END
-        │       ├─(air_superiority)     → air_agent_node    → END
         │       ├─(无数据源)            → simple_analysis_node → END
-        │       └─(data_query)          → data_explore_node（主线继续）
+        │       └─(任意数据库分析意图)   → data_explore_node（主线继续）
         │                                      │
         ├── data_explore_node          ← 连接数据库，获取所有表名
         │                                      │
@@ -443,11 +441,13 @@ def route_by_intent(state: WorkflowState) -> str:
     """
     根据 orchestrator 识别出的 query_type 决定下一个节点。
 
-    路由规则（优先级从高到低）：
-        - "combat_effectiveness" → combat_agent（作战效能分析专用智能体）
-        - "air_superiority"       → air_agent（制空权分析专用智能体）
-        - 无 database_id         → simple_analysis（无数据源，走通用分析）
-        - 其他（含 data_query）   → data_explore（有数据源，走标准 SQL 管线）
+    路由规则：
+        - 无 database_id → simple_analysis（无数据源，走通用分析）
+        - 有 database_id → data_explore（所有意图统一读取当前数据库真实元数据，
+          再由数据库方言感知的 Text-to-SQL 生成查询）
+
+    旧版 combat_agent/air_agent 会执行配置文件中的固定示例 SQL，无法适配
+    内网不同表名和 Oracle/MySQL 方言，因此不再进入生产路由。
 
     Args:
         state: 当前状态（含 query_type / database_id）
@@ -455,11 +455,6 @@ def route_by_intent(state: WorkflowState) -> str:
     Returns:
         下一个节点的名称字符串（必须与 add_node 中注册的名称一致）
     """
-    query_type = state.get("query_type", "data_query")
-    if query_type == "combat_effectiveness":
-        return "combat_agent"
-    if query_type == "air_superiority":
-        return "air_agent"
     if not state.get("database_id"):
         return "simple_analysis"
     return "data_explore"
@@ -1132,7 +1127,7 @@ async def finalize_node(state: WorkflowState, config: RunnableConfig) -> Workflo
     # 截断原始结果，防止前端渲染过大数据集
     raw_results = state.get("raw_results", [])[:20]
     result = {
-        "type": "data_query" if state.get("query_type") == "data_query" else "general",
+        "type": "data_query" if state.get("database_id") else "general",
         "final_answer": state.get("final_answer", "分析完成"),
         "generatedSql": state.get("generated_sql", ""),
         "rawResults": raw_results,
@@ -1157,8 +1152,9 @@ def build_workflow_graph() -> StateGraph:
     构建 LangGraph StateGraph 并声明节点和边的拓扑结构。
 
     注意：
-        - combat_agent / air_agent / simple_analysis 三条分支直接到 END，
-          不走 data_explore → ... → finalize 主线。
+        - 只有无数据源的 simple_analysis 分支直接到 END。
+        - 所有有数据源的意图都走动态元数据与方言感知 SQL 主线；固定 SQL
+          的旧 combat_agent / air_agent 节点不再注册。
         - chart_agent 是条件节点，仅在 route_chart 返回 "chart_agent" 时执行；
           无论是否执行，最终都汇入 analyst_start。
 
@@ -1170,8 +1166,6 @@ def build_workflow_graph() -> StateGraph:
     # ═══ 注册所有节点 ═══
     graph.add_node("orchestrator_start", orchestrator_start_node)
     graph.add_node("orchestrator_execute", orchestrator_execute_node)
-    graph.add_node("combat_agent", combat_agent_node)
-    graph.add_node("air_agent", air_agent_node)
     graph.add_node("simple_analysis", simple_analysis_node)
     graph.add_node("data_explore", data_explore_node)
     graph.add_node("dataset_check", dataset_check_node)
@@ -1192,15 +1186,11 @@ def build_workflow_graph() -> StateGraph:
 
     # orchestrator 之后按意图分流（条件边）
     graph.add_conditional_edges("orchestrator_execute", route_by_intent, {
-        "combat_agent": "combat_agent",
-        "air_agent": "air_agent",
         "simple_analysis": "simple_analysis",
         "data_explore": "data_explore",
     })
 
-    # 三条快捷出口（直接到 END）
-    graph.add_edge("combat_agent", END)
-    graph.add_edge("air_agent", END)
+    # 无数据源快捷出口（直接到 END）
     graph.add_edge("simple_analysis", END)
 
     # 标准 SQL 管线（线性链）

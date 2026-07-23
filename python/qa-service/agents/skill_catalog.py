@@ -1213,6 +1213,7 @@ def _dataset_score(dataset: Dict[str, Any], keywords: Iterable[str]) -> tuple[in
     name_compact = _compact(name)
     table_compact = _compact(table)
     description_compact = _compact(description)
+    columns = dataset.get("columns") if isinstance(dataset.get("columns"), list) else []
 
     best_score = 0
     best_keyword = ""
@@ -1233,6 +1234,19 @@ def _dataset_score(dataset: Dict[str, Any], keywords: Iterable[str]) -> tuple[in
             score = max(score, 70)
         if description_compact and _field_matches_keyword(raw_description, raw_keyword):
             score = max(score, 35)
+        for column in columns:
+            if not isinstance(column, dict):
+                continue
+            column_name = column.get("columnName") or column.get("name")
+            column_comment = (
+                column.get("comment")
+                or column.get("businessMeaning")
+                or column.get("annotation")
+            )
+            if _field_matches_keyword(column_name, raw_keyword):
+                score = max(score, 55)
+            if _field_matches_keyword(column_comment, raw_keyword):
+                score = max(score, 50)
 
         if score > best_score:
             best_score = score
@@ -1255,6 +1269,11 @@ def resolve_skill_datasets(
     for sequence, step in enumerate(skill.get("steps", []), start=1):
         candidates = []
         configured_dataset_id = str(step.get("datasetId") or "").strip()
+        configured_dataset_exists = any(
+            str(dataset.get("id") or "") == configured_dataset_id
+            and _text(dataset.get("tableName"))
+            for dataset in datasets
+        ) if configured_dataset_id else False
         for dataset in datasets:
             # A named dataset without a physical table cannot be executed by a
             # dataset_query stage and must not make a Skill appear available.
@@ -1263,7 +1282,7 @@ def resolve_skill_datasets(
             dataset_key = str(dataset.get("id") or dataset.get("tableName") or dataset.get("name"))
             if dataset_key in used_ids and not step.get("allowReuse"):
                 continue
-            if configured_dataset_id:
+            if configured_dataset_exists:
                 if str(dataset.get("id") or "") != configured_dataset_id:
                     continue
                 score, keyword = 1000, configured_dataset_id
@@ -1298,11 +1317,14 @@ def resolve_skill_datasets(
 def skill_availability(skill: Dict[str, Any], datasets: List[Dict[str, Any]]) -> Dict[str, Any]:
     resolved = resolve_skill_datasets(skill, datasets)
     matched = [item for item in resolved if item["dataset"]]
+    runtime_selectable = bool(datasets) and len(matched) < len(resolved)
     return {
         "matchedSteps": len(matched),
         "totalSteps": len(resolved),
-        "available": bool(matched),
+        "available": bool(matched) or runtime_selectable,
         "complete": len(matched) == len(resolved),
+        "runtimeSelectable": runtime_selectable,
+        "selectionMode": "runtime" if runtime_selectable else "configured",
         "datasetPlan": [
             {
                 "sequence": item["sequence"],

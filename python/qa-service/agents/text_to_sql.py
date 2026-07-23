@@ -30,6 +30,7 @@ import os
 import re
 from .state import EvaluationState
 from .crewdefs import SQL_AGENT
+from .sql_dialect import database_profile_from_schemas, normalize_database_dialect, sql_dialect_prompt
 
 logger = logging.getLogger("evaluation.text_to_sql")
 
@@ -56,7 +57,10 @@ TEXT_TO_SQL_SYSTEM_PROMPT = f"""# 角色: {SQL_AGENT['role']}
 
 ---
 
-你是SQL生成专家。目标数据库类型: **{database_type}**。请生成该数据库方言的SQL。
+你是SQL生成专家。目标数据库类型: **{{database_type}}**。请生成该数据库方言的SQL。
+
+## 当前数据库方言（必须严格遵守）
+{{database_dialect_context}}
 
 ## 表结构
 {{table_context}}
@@ -78,14 +82,14 @@ TEXT_TO_SQL_SYSTEM_PROMPT = f"""# 角色: {SQL_AGENT['role']}
 
 ## 规则
 1. 只生成SELECT，禁止INSERT/UPDATE/DELETE/DROP/ALTER/CREATE
-2. 正确使用表名和字段名
-3. WHERE条件注意字段类型：时间用函数、数字直接比较、字符串加引号
+2. 正确使用当前元数据中的表名和字段名，并严格使用“当前数据库方言”指定的语法
+3. WHERE条件注意字段类型：日期函数、标识符引号、空值函数和分页写法都必须符合当前数据库方言
 4. 多表用JOIN
 5. 聚合用GROUP BY
 6. 不要添加LIMIT，返回全部数据
 7. **只能生成一条SELECT语句**，禁止生成多条SQL（不要用分号分隔多个查询）
 8. 如果指标定义中有公式，将公式中的每个计算项映射到具体的表字段：
-   - 先输出指标→字段对应关系（如"命中次数→表名.hit_count"）
+   - 先输出指标→字段对应关系；表名和字段名必须从上方当前数据源的表结构中选择
    - 再根据对应关系生成SQL
 9. 如果某个指标无法在现有表结构中找到对应字段，跳过该指标，只计算能找到字段的
 10. **注意中文公式项到英文表字段的映射** — 表结构中的字段名是英文的，而指标公式中的计算项可能是中文（如"命中次数"对应 hit_count），请结合列名和注释/含义来进行中英映射
@@ -101,8 +105,7 @@ TEXT_TO_SQL_SYSTEM_PROMPT = f"""# 角色: {SQL_AGENT['role']}
 ## 输出格式（先给字段映射，再给SQL）
 ```
 指标字段映射:
-- "命中次数" → combat_result.hit_count
-- "射击次数" → combat_result.fire_count
+- "<指标计算项>" → <当前数据源中的实际表名>.<实际字段名>
 
 ```sql
 -- 说明
@@ -147,6 +150,20 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
         state.generated_sql = ""
         state.sql_valid = False
         return state
+
+    profile = database_profile_from_schemas(
+        state.table_schemas,
+        database_type=state.database_type,
+        database_product_name=state.database_product_name,
+        database_product_version=state.database_product_version,
+        identifier_quote_string=state.identifier_quote_string,
+    )
+    state.database_type = profile["databaseType"]
+    state.database_product_name = profile["databaseProductName"]
+    state.database_product_version = profile["databaseProductVersion"]
+    state.identifier_quote_string = profile["identifierQuoteString"]
+    state.sql_dialect = profile["dialect"]
+    database_dialect_context = sql_dialect_prompt(profile)
 
     # workflow 已预取并筛选 table_schemas，直接使用
     table_count = len(state.table_schemas)
@@ -199,8 +216,10 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
     sql = ""
     last_error = None
     attempts = 0
+    retry_budget = max(0, int(max_retries))
+    dialect_retry_granted = False
 
-    while attempts <= max_retries:
+    while attempts <= retry_budget:
         # 构建步骤标签：首次无标签，重试时标注次数
         attempt_label = "" if attempts == 0 else f" (第{attempts+1}次)"
         step_id = 5 if attempts == 0 else 5.2
@@ -215,17 +234,24 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
 
         # 构建历史错误上下文（用于执行失败后的重试）
         prev_error = getattr(state, "previous_error", "") or ""
+        correction_error = prev_error or (last_error if attempts > 0 else "")
         error_context = ""
-        if prev_error:
+        if correction_error:
             error_context = (
-                f"上一次生成的SQL执行时数据库返回了以下错误，请修正：\n"
-                f"```\n{prev_error}\n```\n"
-                f"请分析错误原因并重新生成正确的SQL。"
+                f"上一次 SQL 在校验或数据库执行阶段返回了以下错误，请修正：\n"
+                f"```\n{correction_error}\n```\n"
+                f"请结合当前数据库方言分析错误原因并重新生成正确的SQL。"
             )
 
         # 填充 prompt 模板，注入当前上下文
         system_prompt = TEXT_TO_SQL_SYSTEM_PROMPT.format(
-            database_type=state.database_type or "MySQL",
+            database_type=(
+                state.database_product_name
+                or state.database_type
+                or state.sql_dialect
+                or "ANSI"
+            ),
+            database_dialect_context=database_dialect_context,
             table_context=table_context,
             indicator_context=indicator_context,
             question=state.question,
@@ -243,8 +269,14 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
             logger.info(f"[Attempt {attempts+1}] 分析计划(前200字): {state.analysis_plan[:200]}")
             logger.info(f"[Attempt {attempts+1}] 指示器上下文:\n{indicator_context[:500]}")
             logger.info(f"[Attempt {attempts+1}] 表结构上下文(前500字):\n{table_context[:500]}")
-            if prev_error:
-                logger.info(f"[Attempt {attempts+1}] 上次错误: {prev_error[:200]}")
+            logger.info(
+                "[Attempt %s] SQL方言: %s (%s)",
+                attempts + 1,
+                state.sql_dialect,
+                state.database_product_name or state.database_type or "unknown",
+            )
+            if correction_error:
+                logger.info(f"[Attempt {attempts+1}] 上次错误: {correction_error[:200]}")
 
             response = await llm_call_fn(system_prompt,
                                         f"请根据以上 {table_count} 张表的结构，生成能查询以下指标数据的SQL：\n{indicator_context[:800]}")
@@ -259,7 +291,7 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
 
             if sql:
                 # SQL 提取成功，进行安全校验
-                is_valid, error_msg = _validate_sql(sql)
+                is_valid, error_msg = _validate_sql(sql, state.sql_dialect)
                 if is_valid:
                     # 校验通过：清理 SQL 并写入 state
                     state.generated_sql = _clean_sql(sql)
@@ -276,6 +308,16 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
                 else:
                     # 校验失败：记录错误，准备重试
                     last_error = error_msg
+                    # 方言不兼容属于系统可判定的问题。即使业务步骤把
+                    # retryCount 设为 0，也允许一次有界纠正，避免把 MySQL
+                    # SQL 直接用于 Oracle 后让整个 Skill 无法执行。
+                    if (
+                        "方言不兼容" in error_msg
+                        and not dialect_retry_granted
+                        and attempts >= retry_budget
+                    ):
+                        retry_budget += 1
+                        dialect_retry_granted = True
                     state.add_step(5.1, f"生成SQL{attempt_label}", "in_progress",
                                    detail=f"SQL校验失败: {error_msg[:120]}")
                     logger.warning(f"SQL 校验失败: {error_msg}")
@@ -467,7 +509,72 @@ _DANGEROUS_SELECT_PATTERNS = {
 }
 
 
-def _validate_sql(sql: str) -> tuple:
+_DIALECT_FORBIDDEN_PATTERNS = {
+    "oracle": (
+        (r"\bLIMIT\b", "Oracle 不支持 LIMIT"),
+        (r"`", "Oracle 不支持反引号标识符"),
+        (r"\b(?:IFNULL|DATE_FORMAT|STR_TO_DATE|GROUP_CONCAT)\s*\(", "Oracle 不支持 MySQL 函数"),
+        (
+            r"\b(?:FROM|JOIN)\s+(?:\"[^\"]+\"|[A-Za-z_][\w$#]*)(?:\s*\.\s*(?:\"[^\"]+\"|[A-Za-z_][\w$#]*))?\s+AS\s+",
+            "Oracle 表别名不能使用 AS",
+        ),
+    ),
+    "mysql": (
+        (r"\bROWNUM\b", "MySQL 不支持 Oracle ROWNUM"),
+        (r"\bFETCH\s+(?:FIRST|NEXT)\b", "MySQL 不支持 FETCH FIRST/NEXT"),
+        (r"\b(?:NVL|TO_DATE|LISTAGG)\s*\(", "MySQL 不支持 Oracle 函数"),
+        (r"::\s*[A-Za-z_]", "MySQL 不支持 PostgreSQL :: 类型转换"),
+    ),
+    "postgresql": (
+        (r"`", "PostgreSQL 不支持反引号标识符"),
+        (r"\bROWNUM\b", "PostgreSQL 不支持 Oracle ROWNUM"),
+        (r"\bTOP\s*(?:\(|\d)", "PostgreSQL 不支持 SQL Server TOP"),
+        (r"\b(?:IFNULL|NVL|DATE_FORMAT|STR_TO_DATE)\s*\(", "PostgreSQL 不支持该厂商专用函数"),
+    ),
+    "sqlserver": (
+        (r"\bLIMIT\b", "SQL Server 不支持 LIMIT"),
+        (r"\bROWNUM\b", "SQL Server 不支持 Oracle ROWNUM"),
+        (r"`", "SQL Server 不支持反引号标识符"),
+        (r"::\s*[A-Za-z_]", "SQL Server 不支持 PostgreSQL :: 类型转换"),
+        (r"\b(?:NVL|TO_DATE|DATE_FORMAT|STR_TO_DATE)\s*\(", "SQL Server 不支持该厂商专用函数"),
+    ),
+    "dameng": (
+        (r"\bLIMIT\b", "达梦数据库当前兼容模式不使用 LIMIT"),
+        (r"`", "达梦数据库不支持反引号标识符"),
+        (r"\b(?:IFNULL|DATE_FORMAT|STR_TO_DATE|GROUP_CONCAT)\s*\(", "达梦数据库不支持 MySQL 函数"),
+    ),
+    "sqlite": (
+        (r"\bROWNUM\b", "SQLite 不支持 Oracle ROWNUM"),
+        (r"\bTOP\s*(?:\(|\d)", "SQLite 不支持 SQL Server TOP"),
+        (r"\b(?:NVL|TO_DATE|DATE_FORMAT|STR_TO_DATE)\s*\(", "SQLite 不支持该厂商专用函数"),
+    ),
+    "ansi": (
+        (r"\b(?:LIMIT|ROWNUM)\b", "未识别数据库时不能使用厂商专用行数限制"),
+        (r"\bTOP\s*(?:\(|\d)", "未识别数据库时不能使用 SQL Server TOP"),
+        (r"`", "未识别数据库时不能使用反引号标识符"),
+        (
+            r"\b(?:IFNULL|NVL|TO_DATE|DATE_FORMAT|STR_TO_DATE|GROUP_CONCAT|LISTAGG)\s*\(",
+            "未识别数据库时不能使用厂商专用函数",
+        ),
+    ),
+}
+
+
+def _validate_sql_dialect(sql: str, dialect: str) -> tuple[bool, str]:
+    """Reject common cross-database syntax before it reaches JDBC."""
+    normalized_dialect = normalize_database_dialect(dialect, dialect)
+    if normalized_dialect == "h2":
+        return True, ""
+    inspected = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
+    inspected = re.sub(r"--[^\r\n]*", " ", inspected)
+    inspected = re.sub(r"'(?:''|[^'])*'", "''", inspected)
+    for pattern, message in _DIALECT_FORBIDDEN_PATTERNS.get(normalized_dialect, ()):
+        if re.search(pattern, inspected, flags=re.IGNORECASE):
+            return False, f"{normalized_dialect} 方言不兼容: {message}"
+    return True, ""
+
+
+def _validate_sql(sql: str, dialect: str = "") -> tuple:
     """
     SQL 安全校验：确保生成的 SQL 仅包含只读查询操作。
 
@@ -476,7 +583,7 @@ def _validate_sql(sql: str) -> tuple:
        （使用单词边界正则匹配，避免误判字段名中含有关键字的情况）
     2. 必须以 SELECT 或 WITH（CTE）开头
     3. 括号必须成对匹配
-    4. 使用聚合函数时必须有 GROUP BY（兼容 MySQL only_full_group_by 模式）
+    4. 校验数据库方言，并确保聚合列与非聚合列满足严格 GROUP BY 规则
 
     Args:
         sql: 待校验的 SQL 字符串
@@ -514,7 +621,13 @@ def _validate_sql(sql: str) -> tuple:
     if cleaned.count("(") != cleaned.count(")"):
         return False, "括号不匹配"
 
-    # 检查 4：聚合函数必须有 GROUP BY（MySQL only_full_group_by 兼容性）
+    # 检查 4：拒绝明显属于其他数据库产品的方言，避免把 MySQL SQL 发往 Oracle 等。
+    if dialect:
+        dialect_ok, dialect_msg = _validate_sql_dialect(cleaned, dialect)
+        if not dialect_ok:
+            return False, dialect_msg
+
+    # 检查 5：聚合列与非聚合列必须满足各主流数据库的严格 GROUP BY 规则。
     agg_check_ok, agg_check_msg = _check_aggregate_group_by(cleaned, sql_upper)
     if not agg_check_ok:
         return False, agg_check_msg
@@ -534,8 +647,8 @@ def _check_aggregate_group_by(sql: str, sql_upper: str) -> tuple:
     """
     校验 SQL 中使用了聚合函数时必须包含 GROUP BY 子句。
 
-    背景：MySQL 5.7.5+ 默认开启 only_full_group_by 模式，要求 SELECT 中的
-    非聚合列必须出现在 GROUP BY 中，否则直接报错。
+    背景：Oracle、PostgreSQL、SQL Server 以及启用 only_full_group_by 的
+    MySQL 都要求 SELECT 中的非聚合列出现在 GROUP BY 中。
 
     校验逻辑：
     1. 提取 SELECT ... FROM 之间的列列表
@@ -572,7 +685,7 @@ def _check_aggregate_group_by(sql: str, sql_upper: str) -> tuple:
     select_part = _extract_select_clause(sql_upper)
     if not select_part:
         # 无法解析 SELECT 子句，保守返回警告让 LLM 自行修正
-        return False, "缺少 GROUP BY 子句：SQL 使用了聚合函数但未包含 GROUP BY，与 MySQL only_full_group_by 模式不兼容"
+        return False, "缺少 GROUP BY 子句：SQL 使用了聚合函数和无法解析的选择项"
 
     # 4. 统计非聚合字段数量：按逗号拆分 SELECT 字段，排除纯聚合项
     #    如果存在非聚合字段（如普通列名、CASE WHEN、子查询等），则必须要求 GROUP BY
@@ -597,7 +710,7 @@ def _check_aggregate_group_by(sql: str, sql_upper: str) -> tuple:
     if non_agg_count > 0:
         return False, (
             f"缺少 GROUP BY 子句：SELECT 中包含 {non_agg_count} 个非聚合字段，"
-            "但缺少 GROUP BY，与 MySQL only_full_group_by 模式不兼容"
+            "但缺少 GROUP BY，不符合当前数据库的严格聚合规则"
         )
 
     # 全部是聚合函数 (如 SELECT COUNT(*), MAX(score) FROM t)，不需要 GROUP BY
