@@ -77,6 +77,10 @@ class EvaluationState:
     # 数据源名称（如 "作战数据库"），用于前端展示和 Prompt 上下文
     database_name: str = ""
 
+    # 数据库类型（MySQL / PostgreSQL / Oracle / SQL Server / 达梦数据库V8.1）
+    # 用于 text-to-sql 告诉 LLM 生成对应方言的 SQL
+    database_type: str = ""
+
     # 用户关联的数据集 ID 列表（数据集是表 + 业务标注的组合）
     # 用于提供额外的表结构信息和业务上下文
     dataset_ids: List[str] = field(default_factory=list)

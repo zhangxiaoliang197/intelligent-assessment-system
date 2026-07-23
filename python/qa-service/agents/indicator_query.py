@@ -19,6 +19,7 @@ from .tools import (
     fetch_database_tables, fetch_datasets_for_database,
     fetch_indicators_for_datasets, fetch_table_structure,
     _fetch_dataset_structure_inner, execute_sql_on_database,
+    fetch_database_config,
 )
 from .text_to_sql import run_text_to_sql, _validate_sql
 from .analyst import run_analyst
@@ -402,14 +403,15 @@ def build_field_hints(schemas, merged_indicators):
 # =========================================================================
 
 async def sql_generate_node(schemas, enhanced_indicators, analysis_plan,
-                            question, database_id, llm_call_fn):
+                            question, database_id, llm_call_fn, database_type=""):
     """步骤 5 — 委托给 text_to_sql，转发清晰的摘要。"""
     yield {"type": "step", "step": _build_step(
         Step.SQL_GENERATE, "Generate SQL", "in_progress",
         detail=f"Generating SQL from {len(schemas)} table schemas...",
         progress=50)}
 
-    es = EvaluationState(question=question, database_id=database_id)
+    es = EvaluationState(question=question, database_id=database_id,
+                         database_type=database_type)
     es.table_schemas = schemas
     es.indicator_defs = enhanced_indicators
     es.analysis_plan = analysis_plan or ""
@@ -740,6 +742,10 @@ async def run_indicator_query(question, database_id, database_name,
         stream_llm_gen: 可选的异步生成器，用于在分析师阶段进行实时 token 流式输出。
     """
 
+    # ── 获取数据库类型（用于 SQL 方言适配）─────────────────────────
+    db_config = fetch_database_config(database_id) if database_id else {}
+    database_type = db_config.get("type", "")
+
     # ── SQL 必要性判断（概念类指标不走 SQL 管线）─────────────────
     if not _check_needs_sql(indicator_defs):
         logger.info(f"检测到概念类指标，跳过 SQL 管线。指标数={len(indicator_defs)}")
@@ -780,7 +786,8 @@ async def run_indicator_query(question, database_id, database_name,
     es = gen_ok = None
     async for ev in sql_generate_node(schemas, enhanced_indicators,
                                       analysis_plan, question,
-                                      database_id, llm_call_fn):
+                                      database_id, llm_call_fn,
+                                      database_type):
         if "_return" in ev:
             es, gen_ok = ev["_return"]
         else:

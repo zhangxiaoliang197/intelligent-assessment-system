@@ -127,6 +127,25 @@ def fetch_all_databases() -> list:
     return resp.get("databases", []) if resp.get("success") else []
 
 
+def fetch_database_config(db_id: str) -> dict:
+    """获取单个数据库配置（含 type 字段，用于判断数据库方言）。
+
+    从 fetch_all_databases() 的结果中按 id 过滤。
+
+    Args:
+        db_id: 数据库配置 ID
+
+    Returns:
+        数据库配置字典，包含 id/name/type/host/port/databaseName 等字段。
+        未找到时返回空字典 {}。
+    """
+    dbs = fetch_all_databases()
+    for db in dbs:
+        if db.get("id") == db_id:
+            return db
+    return {}
+
+
 def fetch_database_tables(db_id: str) -> list:
     """获取指定数据库中的所有表名。
 
@@ -195,50 +214,18 @@ def fetch_table_structure(db_id: str, table_name: str) -> dict:
         return {"tableName": "", "columns": [], "count": 0}
     safe_table_name = table_name.strip()
 
-    # 构造 information_schema 查询 SQL
-    sql = (
-        f"SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_COMMENT "
-        f"FROM information_schema.COLUMNS "
-        f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{safe_table_name}' "
-        f"ORDER BY ORDINAL_POSITION"
-    )
-    # 通过 execute_sql_on_database 代理执行（会经过 admin-service 的安全校验）
-    result = execute_sql_on_database(db_id, sql)
-    if result.get("success"):
-        columns = []
-        # Java admin-service 返回 {"rows": [...], "columns": [...]}
-        # 兼容多种可能的字段名：rows / data / results
-        rows = result.get("rows", result.get("data", result.get("results", [])))
-        for row in rows:
-            # 行数据可能是 dict（MySQL 返回关联数组）或 list（位置索引）
-            if isinstance(row, dict):
-                # dict 形式：通过字段名取值，兼容大小写变体
-                col_name = row.get("COLUMN_NAME", "") or row.get("column_name", "")
-                data_type = row.get("DATA_TYPE", "") or row.get("data_type", "")
-                is_nullable = row.get("IS_NULLABLE", "") or row.get("is_nullable", "")
-                col_key = row.get("COLUMN_KEY", "") or row.get("column_key", "")
-                comment = row.get("COLUMN_COMMENT", "") or row.get("column_comment", "")
-            elif isinstance(row, list):
-                # list 形式：按 information_schema 查询的列顺序解析
-                # 顺序：COLUMN_NAME(0), DATA_TYPE(1), IS_NULLABLE(2), COLUMN_KEY(3), COLUMN_COMMENT(4)
-                col_name = row[0] if len(row) > 0 else ""
-                data_type = row[1] if len(row) > 1 else ""
-                is_nullable = row[2] if len(row) > 2 else ""
-                col_key = row[3] if len(row) > 3 else ""
-                comment = row[4] if len(row) > 4 else ""
-            else:
-                continue  # 无法识别的行格式，跳过
-            columns.append({
-                "columnName": col_name,
-                "dataType": data_type,
-                "isPrimaryKey": "PRI" in (col_key or ""),   # MySQL: PRI 表示主键
-                "isNullable": "YES" in (is_nullable or ""),  # MySQL: YES 表示可为空
-                "comment": comment or "",
-            })
-        logger.info(f"表 [{safe_table_name}]: 通过 information_schema 获取到 {len(columns)} 列")
-        return {"tableName": safe_table_name, "columns": columns, "count": len(columns)}
+    # 调用 admin-service 的多库适配 API（已适配 MySQL/PG/Oracle/达梦/SQL Server）
+    # 返回格式统一：columns 中每项含 columnName/dataType/isNullable(bool)/isPrimaryKey(bool)/comment
+    resp = _api_get(f"database/{db_id}/table/{safe_table_name}/columns")
+    if resp.get("success"):
+        logger.info(f"表 [{safe_table_name}]: 通过 admin-service 获取到 {resp.get('count', 0)} 列")
+        return {
+            "tableName": resp.get("tableName", safe_table_name),
+            "columns": resp.get("columns", []),
+            "count": resp.get("count", 0),
+        }
 
-    logger.warning(f"获取表 {safe_table_name} 在数据库 {db_id} 上的结构失败: {result.get('message', '')}")
+    logger.warning(f"获取表 {safe_table_name} 在数据库 {db_id} 上的结构失败: {resp.get('message', '')}")
     return {"tableName": safe_table_name, "columns": [], "count": 0}
 
 

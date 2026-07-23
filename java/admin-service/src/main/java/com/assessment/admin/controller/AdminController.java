@@ -398,6 +398,19 @@ public class AdminController {
         }
     }
 
+    // ==================== 数据库表列查询（支持多数据库） ====================
+    @GetMapping("/database/{dbId}/table/{tableName}/columns")
+    public ResponseEntity<Map<String, Object>> getTableColumns(
+            @PathVariable String dbId,
+            @PathVariable String tableName) {
+        Optional<DatabaseConfig> optDb = dbConfigRepo.findById(dbId);
+        if (optDb.isEmpty()) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("success", false, "message", "数据库配置不存在"));
+        }
+        return readTableColumns(optDb.get(), tableName);
+    }
+
     // ==================== 数据集管理（MySQL持久化） ====================
     @GetMapping("/dataset/list")
     public ResponseEntity<Map<String, Object>> listDatasets() {
