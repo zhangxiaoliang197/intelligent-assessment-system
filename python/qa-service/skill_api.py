@@ -326,10 +326,10 @@ async def create_ai_skill_draft(payload: SkillAiDraftRequest, request: Request):
     datasets: list[dict[str, Any]] = []
     if payload.database_id:
         try:
-            from agents.tools import fetch_datasets_for_database
+            from agents.tools import fetch_skill_datasets_for_database
 
             datasets = await asyncio.to_thread(
-                fetch_datasets_for_database, payload.database_id, True
+                fetch_skill_datasets_for_database, payload.database_id, True, True
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"读取数据源失败: {exc}") from exc
@@ -588,7 +588,7 @@ async def preflight_skill(
         include_schema=payload.include_schema,
     )
     # Both names are returned for old clients and the richer management UI.
-    result["runnable"] = bool(result.get("ready"))
+    result["runnable"] = bool(result.get("ready") or result.get("runtimeSelectable"))
     result["dataSourceId"] = result.get("databaseId", payload.database_id)
     return {"success": True, "preflight": result, **result}
 

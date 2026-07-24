@@ -242,7 +242,29 @@ async def _select_queries_by_llm(user_query, groups, llm_call_fn):
         return query_list
 
 
-async def run_stream(user_query: str, database_id: str, llm_call_fn, need_conclusion: bool = True):
+async def run_stream(
+    user_query: str,
+    database_id: str,
+    llm_call_fn,
+    need_conclusion: bool = True,
+):
+    """Compatibility entrypoint using the dynamic, dialect-aware SQL pipeline.
+
+    Historical versions executed SQL templates from ``air_queries.json``
+    directly. Direct callers now use the current database's JDBC metadata and
+    detected SQL dialect instead of fixed table names.
+    """
+    from .langgraph_workflow import run_langgraph_workflow
+
+    async for event in run_langgraph_workflow(
+        question=user_query,
+        llm_call_fn=llm_call_fn,
+        database_id=database_id,
+    ):
+        yield event
+
+
+async def _legacy_run_stream(user_query: str, database_id: str, llm_call_fn, need_conclusion: bool = True):
     """制空权分析 — 异步流式生成器
 
     该函数是制空权分析的主入口，以异步生成器形式逐步 yield SSE 事件。

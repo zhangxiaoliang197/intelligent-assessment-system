@@ -50,6 +50,8 @@ export interface EvaluationSkillAvailability {
   totalSteps: number
   available: boolean
   complete: boolean
+  runtimeSelectable?: boolean
+  selectionMode?: 'configured' | 'runtime'
   completeness?: number
   datasetPlan: SkillDatasetPlanItem[]
   missingSteps?: string[]

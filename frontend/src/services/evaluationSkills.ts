@@ -132,6 +132,12 @@ const normalizeAvailability = (value: unknown): EvaluationSkillAvailability | un
     totalSteps,
     available: asBoolean(availability.available, matchedSteps > 0),
     complete: asBoolean(availability.complete, totalSteps > 0 && matchedSteps === totalSteps),
+    runtimeSelectable: asBoolean(
+      availability.runtimeSelectable ?? availability.runtime_selectable
+    ),
+    selectionMode: asString(availability.selectionMode ?? availability.selection_mode) === 'runtime'
+      ? 'runtime'
+      : 'configured',
     completeness: availability.completeness == null
       ? (totalSteps ? matchedSteps / totalSteps : 0)
       : Number(availability.completeness),
@@ -470,7 +476,10 @@ export const preflightEvaluationSkill = async (
     totalSteps: response.totalSteps ?? response.total_steps,
     completeness: response.completeness,
     complete: response.ready,
-    available: Number(response.matchedSteps ?? response.matched_steps) > 0,
+    available: Number(response.matchedSteps ?? response.matched_steps) > 0
+      || asBoolean(response.runtimeSelectable ?? response.runtime_selectable),
+    runtimeSelectable: response.runtimeSelectable ?? response.runtime_selectable,
+    selectionMode: (response.runtimeSelectable ?? response.runtime_selectable) ? 'runtime' : 'configured',
     datasetPlan: response.datasetPlan ?? response.dataset_plan
   })
   return {

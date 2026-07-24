@@ -25,11 +25,14 @@ echo "  MySQL: ${MYSQL_USER}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}"
 # ─── 宿主机数据目录 (重启不丢失) ───
 DATA_DIR="$BASE_DIR/data"
 mkdir -p "$DATA_DIR/drivers"
+# 首次部署：从项目复制默认 JDBC 驱动到持久化目录（volume 挂载会覆盖容器内 /app/drivers）
+if [ ! -f "$DATA_DIR/drivers/mysql-connector-j.jar" ]; then
+    cp "$BASE_DIR/drivers/"*.jar "$DATA_DIR/drivers/" 2>/dev/null || true
+fi
 mkdir -p "$DATA_DIR/knowledge"
 mkdir -p "$DATA_DIR/qa"
 mkdir -p "$DATA_DIR/ontology"
 mkdir -p "$DATA_DIR/evaluation"
-mkdir -p "$DATA_DIR/solution-eval"
 mkdir -p "$DATA_DIR/config"
 
 echo "  数据目录: $DATA_DIR"

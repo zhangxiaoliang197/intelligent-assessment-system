@@ -98,7 +98,7 @@ class CustomSkillCatalogTests(unittest.TestCase):
             delete_custom_skill(built_in["id"], 1)
         self.assertEqual(15, len(list_builtin_skills()))
 
-    def test_exact_dataset_id_wins_over_conflicting_keywords(self) -> None:
+    def test_exact_dataset_id_wins_and_stale_binding_falls_back_to_current_source(self) -> None:
         skill = _payload()
         skill["steps"] = [
             {
@@ -120,7 +120,8 @@ class CustomSkillCatalogTests(unittest.TestCase):
         self.assertEqual(1000, plan[0]["score"])
 
         missing_plan = resolve_skill_datasets(skill, datasets[:1])
-        self.assertIsNone(missing_plan[0]["dataset"])
+        self.assertEqual("keyword", missing_plan[0]["dataset"]["id"])
+        self.assertEqual("wrong_table", missing_plan[0]["matchedKeyword"])
 
     def test_corrupt_custom_database_does_not_hide_builtins(self) -> None:
         Path(custom_skill_store._DB_PATH).write_bytes(b"not a sqlite database")

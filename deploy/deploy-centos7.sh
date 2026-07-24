@@ -170,29 +170,17 @@ services:
     networks:
       - assessment-net
 
-  solution-evaluation-service:
-    image: assessment-solution-evaluation:latest
-    container_name: assessment-solution-evaluation
-    ports:
-      - "10259:10259"
-    restart: always
-    environment:
-      - QA_SERVICE_URL=http://assessment-qa:10253
-      - INDICATOR_SERVICE_URL=http://assessment-indicator:10254
-      - ADMIN_SERVICE_URL=http://assessment-admin:10258
-      - COMBAT_QUERIES_PATH=/app/queries-custom.json
-    volumes:
-      - "$DEPLOY_TARGET/data/solution-eval:/app/data"
-      - "$DEPLOY_TARGET/data/config/queries.json:/app/queries-custom.json:ro"
-    networks:
-      - assessment-net
-
 networks:
   assessment-net:
     driver: bridge
 DOCKERCOMPOSE
 
-mkdir -p "$DEPLOY_TARGET/data"/{drivers,knowledge,qa,ontology,evaluation,solution-eval,config}
+mkdir -p "$DEPLOY_TARGET/data"/{drivers,knowledge,qa,ontology,evaluation,config}
+
+# 复制默认 JDBC 驱动到持久化目录（volume 挂载会覆盖容器内 /app/drivers）
+if [ -f "$PROJECT_DIR/drivers/mysql-connector-j.jar" ] && [ ! -f "$DEPLOY_TARGET/data/drivers/mysql-connector-j.jar" ]; then
+    cp "$PROJECT_DIR/drivers/"*.jar "$DEPLOY_TARGET/data/drivers/" 2>/dev/null || true
+fi
 
 cp "$DEPLOY_DIR/queries.json" "$DEPLOY_TARGET/data/config/queries.json" 2>/dev/null || echo '[]' > "$DEPLOY_TARGET/data/config/queries.json"
 
@@ -247,7 +235,7 @@ chmod +x "$DEPLOY_TARGET"/*.sh
 # ---------- 防火墙 ----------
 if systemctl is-active --quiet firewalld 2>/dev/null; then
     log_info "配置防火墙..."
-    for port in 10086 10252 10253 10254 10255 10256 10258 10259; do
+    for port in 10086 10252 10253 10254 10255 10256 10258; do
         firewall-cmd --permanent --add-port=$port/tcp 2>/dev/null || true
     done
     firewall-cmd --reload 2>/dev/null || true

@@ -104,7 +104,7 @@ class CustomSkillApiTests(unittest.TestCase):
         self.assertEqual(422, response.status_code)
 
     def test_recommendation_reports_zero_completeness_for_empty_data_source(self) -> None:
-        with patch("agents.tools.fetch_datasets_for_database", return_value=[]):
+        with patch("agents.tools.fetch_skill_datasets_for_database", return_value=[]):
             response = self.client.post(
                 "/evaluation/skills/recommend",
                 json={
@@ -120,6 +120,34 @@ class CustomSkillApiTests(unittest.TestCase):
         self.assertEqual(0, recommendations[0]["availability"]["matchedSteps"])
         self.assertEqual(0.0, recommendations[0]["availability"]["completeness"])
         self.assertFalse(recommendations[0]["availability"]["available"])
+
+    def test_skill_library_keeps_builtins_and_exposes_live_tables_without_datasets(self) -> None:
+        live_tables = [{
+            "id": "live-current",
+            "name": "INNER_TABLE_01",
+            "tableName": "INNER_TABLE_01",
+            "description": "当前数据源实时发现的物理表",
+            "isLiveTable": True,
+        }]
+        with patch(
+            "agents.tools.fetch_skill_datasets_for_database",
+            return_value=live_tables,
+        ):
+            catalog_response = self.client.get(
+                "/evaluation/skills",
+                params={"dataSourceId": "inner-db"},
+            )
+            datasets_response = self.client.get(
+                "/evaluation/data-sources/inner-db/datasets"
+            )
+
+        self.assertEqual(200, catalog_response.status_code, catalog_response.text)
+        catalog = catalog_response.json()
+        self.assertEqual(15, catalog["builtInTotal"])
+        self.assertEqual(15, catalog["total"])
+        self.assertTrue(catalog["skills"][0]["availability"]["runtimeSelectable"])
+        self.assertEqual(200, datasets_response.status_code, datasets_response.text)
+        self.assertEqual("INNER_TABLE_01", datasets_response.json()["datasets"][0]["tableName"])
 
     def test_governance_routes_publish_share_export_clone_and_import(self) -> None:
         created_response = self.client.post("/evaluation/skills", json=_payload())

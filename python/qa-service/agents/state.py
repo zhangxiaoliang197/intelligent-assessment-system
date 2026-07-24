@@ -77,9 +77,12 @@ class EvaluationState:
     # 数据源名称（如 "作战数据库"），用于前端展示和 Prompt 上下文
     database_name: str = ""
 
-    # 数据库类型（MySQL / PostgreSQL / Oracle / SQL Server / 达梦数据库V8.1）
-    # 用于 text-to-sql 告诉 LLM 生成对应方言的 SQL
+    # 数据库配置类型与 JDBC 实际产品信息，用于 text-to-sql 选择对应 SQL 方言
     database_type: str = ""
+    database_product_name: str = ""
+    database_product_version: str = ""
+    identifier_quote_string: str = ""
+    sql_dialect: str = ""
 
     # 用户关联的数据集 ID 列表（数据集是表 + 业务标注的组合）
     # 用于提供额外的表结构信息和业务上下文
@@ -107,11 +110,11 @@ class EvaluationState:
     # 第三阶段：数据源发现 — 从数据库动态读取元数据
     # ============================================================
 
-    # 目标数据库中包含的所有表名（通过 information_schema 实时查询）
+    # 目标数据库中包含的所有表名（通过 JDBC 元数据实时读取）
     database_tables: List[str] = field(default_factory=list)
 
     # 目标表的完整结构信息列表，每个元素包含 tableName / columns 等字段
-    # 结构来源优先级：数据集标注 > information_schema 直接查询
+    # 结构来源优先级：数据集标注 > JDBC 元数据直接读取
     table_schemas: List[Dict] = field(default_factory=list)
 
     # 与目标数据集关联的指标定义列表
@@ -133,7 +136,7 @@ class EvaluationState:
     # SQL 生成失败时的重试次数（最多重试 2 次，超过则降级为 general_analysis）
     sql_retry_count: int = 0
 
-    # 上一次 SQL 执行的 MySQL 错误信息（用于执行重试时的上下文注入）
+    # 上一次 SQL 执行的目标数据库错误信息（用于执行重试时的上下文注入）
     # 为空字符串表示无历史错误；非空时 run_text_to_sql 会将其加入 prompt
     previous_error: str = ""
 
