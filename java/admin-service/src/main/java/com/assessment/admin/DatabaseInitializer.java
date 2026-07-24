@@ -116,7 +116,7 @@ public class DatabaseInitializer implements CommandLineRunner {
         });
         presets.put("Oracle", new String[]{
                 "oracle.jdbc.OracleDriver",
-                "jdbc:oracle:thin:@{host}:{port}:{database}",
+                "jdbc:oracle:thin:@//{host}:{port}/{database}",
                 null
         });
         presets.put("达梦数据库V8", new String[]{
