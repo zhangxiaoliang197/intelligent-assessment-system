@@ -8,7 +8,7 @@ param(
     [string]$HostName = $env:MYSQL_HOST ?? "localhost",
     [string]$Port     = $env:MYSQL_PORT ?? "3306",
     [string]$User     = $env:MYSQL_USER ?? "root",
-    [string]$Password = $env:MYSQL_PASSWORD ?? "root",
+    [string]$Password = $env:MYSQL_PASSWORD ?? "",
     [string]$Database = $env:MYSQL_DATABASE ?? "assessment",
     [switch]$SkipConfirm
 )

@@ -47,13 +47,13 @@ db:
     port: ${MYSQL_PORT:3306}
     database: ${MYSQL_DATABASE:assessment}
     user: ${MYSQL_USER:root}
-    password: ${MYSQL_PASSWORD:1025}
+    password: ${MYSQL_PASSWORD:}
   postgresql:
     host: ${PG_HOST:localhost}
     port: ${PG_PORT:5432}
     database: ${PG_DATABASE:assessment}
     user: ${PG_USER:postgres}
-    password: ${PG_PASSWORD:postgres}
+    password: ${PG_PASSWORD:}
 
 # ─── 驱动文件存储路径 ───
 driver:

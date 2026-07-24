@@ -32,7 +32,7 @@ public class DataSourceConfig {
     private String mysqlDb;
     @Value("${db.mysql.user:root}")
     private String mysqlUser;
-    @Value("${db.mysql.password:root}")
+    @Value("${db.mysql.password:}")
     private String mysqlPassword;
 
     // ───────── PostgreSQL ─────────
@@ -44,7 +44,7 @@ public class DataSourceConfig {
     private String pgDb;
     @Value("${db.postgresql.user:postgres}")
     private String pgUser;
-    @Value("${db.postgresql.password:postgres}")
+    @Value("${db.postgresql.password:}")
     private String pgPassword;
 
     @Bean

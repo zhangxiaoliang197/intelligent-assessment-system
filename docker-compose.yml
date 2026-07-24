@@ -2,11 +2,11 @@
 # 智能评估系统 - Docker Compose 配置
 # ------------------------------------------------------------
 # 生产环境部署前请通过 .env 文件或环境变量覆盖以下关键配置：
-#   MYSQL_HOST     — 元数据库地址（容器内访问宿主机用 host.docker.internal）
+#   MYSQL_HOST     — 元数据库地址（无默认值，必须配置；远程填 IP，本地开发通过 .env 配置）
 #   MYSQL_PORT     — 元数据库端口（默认 3306）
 #   MYSQL_DATABASE — 元数据库名（默认 assessment）
 #   MYSQL_USER     — 元数据库用户名（默认 root）
-#   MYSQL_PASSWORD — 元数据库密码（默认 root，生产环境务必修改）
+#   MYSQL_PASSWORD — 元数据库密码（无默认值，必须通过 .env 或环境变量配置）
 #   DB_TYPE        — 元数据库类型（默认 mysql，可选 h2/postgresql）
 #
 # drivers 命名卷说明：
@@ -96,18 +96,20 @@ services:
     restart: always
     networks:
       - assessment-net
-    # ─── 元数据库连接配置（与 start-docker-run.sh 对齐）───
-    # MYSQL_HOST 默认 host.docker.internal：Linux 上需配合下面的 extra_hosts
-    # 解析到宿主机；Docker Desktop (Windows/Mac) 原生支持。
-    # 若元数据库在远程机器上，请改为对应 IP。
+    # ─── 元数据库连接配置（与 start-docker-run.sh / deploy-centos7.sh 对齐）───
+    # MYSQL_HOST 无默认值：必须通过 .env 或环境变量显式配置。
+    #   - 远程数据库：填 IP 地址（如 192.168.1.100）
+    #   - 宿主机数据库：填 host.docker.internal（需配合下方 extra_hosts）
+    #   - 本地开发：.env 文件中配置 MYSQL_HOST=localhost
     environment:
       - DB_TYPE=${DB_TYPE:-mysql}
-      - MYSQL_HOST=${MYSQL_HOST:-host.docker.internal}
+      - MYSQL_HOST=${MYSQL_HOST:-}
       - MYSQL_PORT=${MYSQL_PORT:-3306}
       - MYSQL_DATABASE=${MYSQL_DATABASE:-assessment}
       - MYSQL_USER=${MYSQL_USER:-root}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-1025}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-}
     # Linux 下让 host.docker.internal 解析到宿主机网关
+    # （仅在 MYSQL_HOST=host.docker.internal 时需要，远程数据库可忽略）
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # ─── JDBC 驱动持久化 ───

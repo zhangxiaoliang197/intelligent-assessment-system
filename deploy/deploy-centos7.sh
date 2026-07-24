@@ -76,11 +76,19 @@ log_info "Step 3/4: 部署项目文件..."
 
 mkdir -p "$DEPLOY_TARGET"
 
-MYSQL_HOST="${MYSQL_HOST:-172.17.0.1}"
+MYSQL_HOST="${MYSQL_HOST:-}"
 MYSQL_PORT="${MYSQL_PORT:-3306}"
 MYSQL_DATABASE="${MYSQL_DATABASE:-assessment}"
 MYSQL_USER="${MYSQL_USER:-root}"
-MYSQL_PASSWORD="${MYSQL_PASSWORD:-root}"
+MYSQL_PASSWORD="${MYSQL_PASSWORD:-}"
+DB_TYPE="${DB_TYPE:-mysql}"
+
+# 校验：MYSQL_HOST 必须显式配置（元数据库在远程，无默认值）
+if [ -z "$MYSQL_HOST" ]; then
+    log_error "MYSQL_HOST 未配置。请通过环境变量指定元数据库地址。"
+    echo "  示例: MYSQL_HOST=192.168.1.100 MYSQL_PASSWORD=xxx bash deploy-centos7.sh"
+    exit 1
+fi
 
 cat > "$DEPLOY_TARGET/docker-compose.yml" << DOCKERCOMPOSE
 services:
@@ -127,6 +135,8 @@ services:
     environment:
       - QA_SERVICE_URL=http://assessment-qa:10253
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
+    volumes:
+      - "$DEPLOY_TARGET/data/indicator:/app/data"
     networks:
       - assessment-net
 
@@ -164,23 +174,24 @@ services:
       - MYSQL_DATABASE=$MYSQL_DATABASE
       - MYSQL_USER=$MYSQL_USER
       - MYSQL_PASSWORD=$MYSQL_PASSWORD
-      - DB_TYPE=mysql
+      - DB_TYPE=$DB_TYPE
     volumes:
-      - "$DEPLOY_TARGET/data/drivers:/app/drivers"
+      - drivers-data:/app/drivers
     networks:
       - assessment-net
 
 networks:
   assessment-net:
     driver: bridge
+
+volumes:
+  drivers-data:
 DOCKERCOMPOSE
 
-mkdir -p "$DEPLOY_TARGET/data"/{drivers,knowledge,qa,ontology,evaluation,config}
+mkdir -p "$DEPLOY_TARGET/data"/{knowledge,qa,ontology,evaluation,indicator,config}
 
-# 复制默认 JDBC 驱动到持久化目录（volume 挂载会覆盖容器内 /app/drivers）
-if [ -f "$PROJECT_DIR/drivers/mysql-connector-j.jar" ] && [ ! -f "$DEPLOY_TARGET/data/drivers/mysql-connector-j.jar" ]; then
-    cp "$PROJECT_DIR/drivers/"*.jar "$DEPLOY_TARGET/data/drivers/" 2>/dev/null || true
-fi
+# drivers 使用命名卷 drivers-data，首次启动时自动从镜像内 /app/drivers 复制驱动。
+# 如需补充 Oracle/达梦等驱动，请通过管理后台「驱动管理」页面上传，或重新构建镜像。
 
 cp "$DEPLOY_DIR/queries.json" "$DEPLOY_TARGET/data/config/queries.json" 2>/dev/null || echo '[]' > "$DEPLOY_TARGET/data/config/queries.json"
 
