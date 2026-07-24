@@ -25,6 +25,9 @@ services:
     restart: always
     networks:
       - assessment-net
+    environment:
+      - ADMIN_SERVICE_URL=http://assessment-admin:10258
+      - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
 
   indicator-service:
     image: assessment-indicator:latest
@@ -34,6 +37,11 @@ services:
     restart: always
     networks:
       - assessment-net
+    environment:
+      - QA_SERVICE_URL=http://assessment-qa:10253
+      - ADMIN_SERVICE_URL=http://assessment-admin:10258
+      - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
+      - EVALUATION_API_URL=http://assessment-qa:10253
 
   evaluation-service:
     image: assessment-evaluation:latest
