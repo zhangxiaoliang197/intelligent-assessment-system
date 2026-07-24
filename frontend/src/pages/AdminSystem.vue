@@ -694,6 +694,9 @@ async function onSelectDsDbChange(dbId: string) {
     const res = await api.get(`/admin/database/${dbId}/tables`)
     if (res && res.success && res.tables) {
       dbTables.value = res.tables
+      if (res.tables.length === 0) {
+        ElMessage.warning(res.hint || '该数据库中未发现用户表，请检查数据库连接或手动刷新')
+      }
     } else {
       ElMessage.warning(res?.message || '获取数据表失败')
     }

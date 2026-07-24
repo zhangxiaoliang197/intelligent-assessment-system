@@ -105,6 +105,7 @@ class WorkflowState(TypedDict, total=False):
     dataset_defs: list      # 匹配到的数据集定义字典列表
     indicator_defs: list    # 匹配到的指标定义字典列表
     db_connected: bool      # 是否成功连接到数据源数据库
+    db_error_hint: str      # 数据库连接/查询失败的诊断提示信息
 
     # ── SQL 生成 + 执行阶段产出 ──────────────────────────────────────
     generated_sql: str      # LLM 生成的 SQL 语句
@@ -152,6 +153,7 @@ def _empty_state() -> dict:
         "dataset_defs": [],
         "indicator_defs": [],
         "db_connected": False,
+        "db_error_hint": "",
         "generated_sql": "",
         "sql_valid": False,
         "sql_retry_count": 0,
@@ -629,6 +631,7 @@ async def data_explore_node(state: WorkflowState, config: RunnableConfig) -> Wor
 
     all_tables = []
     db_connected = False
+    db_error_hint = ""
     db_id = state.get("database_id", "")
 
     try:
@@ -639,15 +642,20 @@ async def data_explore_node(state: WorkflowState, config: RunnableConfig) -> Wor
             timeout=_DB_TIMEOUT
         )
         db_connected = bool(all_tables)  # 有表返回则视为连接成功
+        if not db_connected:
+            db_error_hint = "未能读取到数据表，请确认数据库连接配置和账号权限正确"
     except asyncio.TimeoutError:
         logger.warning("获取表列表超时")
+        db_error_hint = "数据源查询超时，请检查网络或数据库负载"
     except Exception as e:
         logger.warning(f"获取表列表失败: {e}")
+        db_error_hint = f"数据源查询失败: {e}"
 
     _add_step(steps, 2, "数据源探查", "completed",
               detail=f"发现 {len(all_tables)} 张数据表")
 
-    return {**state, "steps": steps, "database_tables": all_tables, "db_connected": db_connected}
+    return {**state, "steps": steps, "database_tables": all_tables,
+            "db_connected": db_connected, "db_error_hint": db_error_hint}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -924,7 +932,8 @@ async def sql_execute_node(state: WorkflowState, config: RunnableConfig) -> Work
 
     # ── 跳过条件 2：数据库未连接 ──
     if not db_connected:
-        _add_step(steps, 6, "执行SQL查询", "skipped", detail="数据库未连接")
+        hint = state.get("db_error_hint", "数据库未连接")
+        _add_step(steps, 6, "执行SQL查询", "skipped", detail=hint)
         return {**state, "steps": steps}
 
     # ── 执行 SQL ──

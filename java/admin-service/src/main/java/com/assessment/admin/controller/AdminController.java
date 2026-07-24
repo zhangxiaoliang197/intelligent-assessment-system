@@ -386,6 +386,10 @@ public class AdminController {
                 if (tables.isEmpty()) {
                     appendMetadataTables(metadata, null, null, tables, seen);
                 }
+                // 兜底：Oracle/达梦 JDBC 元数据接口兼容性问题，改用直接 SQL 查询 user_tables
+                if (tables.isEmpty() && isOracleLike(driver)) {
+                    appendTablesViaSql(conn, tables, seen);
+                }
                 tables.sort(Comparator.comparing(item -> String.valueOf(item.get("tableName")), String.CASE_INSENSITIVE_ORDER));
                 if (includeColumns) {
                     for (Map<String, Object> table : tables) {
@@ -410,6 +414,9 @@ public class AdminController {
                 response.put("success", true);
                 response.put("tables", tables);
                 response.put("total", tables.size());
+                if (tables.isEmpty()) {
+                    response.put("hint", "该数据库中未发现用户表，请确认当前账号有对应 schema 的查询权限");
+                }
                 appendDatabaseProfile(response, dbConfig, metadata);
                 return ResponseEntity.ok(response);
             }
@@ -923,7 +930,16 @@ public class AdminController {
             List<Map<String, Object>> tables,
             Set<String> seen) throws SQLException {
         Set<String> systemSchemas = Set.of(
-                "information_schema", "pg_catalog", "sys", "mysql", "performance_schema");
+                "information_schema", "pg_catalog", "sys", "mysql", "performance_schema",
+                // Oracle 系统 schema
+                "system", "ctxsys", "mdsys", "xdb", "wmsys", "outln", "dbsnmp",
+                "appqossys", "oracle_ocm", "dvsys", "lbacsys", "gsmadmin_internal",
+                "sysman", "aux_stats$", "dip", "oem_monitor", "remotesys",
+                // 达梦 系统 schema
+                "sysdba", "sysauditor", "syssso",
+                // SQL Server 系统 schema
+                "sysadmin"
+        );
         try (ResultSet rs = metadata.getTables(catalog, schema, "%", new String[]{"TABLE"})) {
             while (rs.next()) {
                 String tableName = rs.getString("TABLE_NAME");
@@ -992,6 +1008,39 @@ public class AdminController {
                 && !tableName.trim().isEmpty()
                 && tableName.length() <= 256
                 && tableName.matches("[\\p{L}\\p{N}_$# .-]+");
+    }
+
+    /**
+     * 判断是否为 Oracle / 达梦 类数据库（使用 user_tables 兜底查询）
+     * 通过 JDBC 驱动类名判断，比 Driver.name 更可靠
+     */
+    private boolean isOracleLike(Driver driver) {
+        if (driver == null) return false;
+        String cls = driver.getDriverClass();
+        return cls != null && (cls.contains("oracle") || cls.contains("dm.jdbc"));
+    }
+
+    /**
+     * 通过直接 SQL 查询 user_tables 获取当前用户拥有的表（兜底方案）
+     * Oracle/达梦 JDBC 驱动的 getTables() 在某些版本中可能返回空，此方法作为补充。
+     */
+    private void appendTablesViaSql(Connection conn, List<Map<String, Object>> tables, Set<String> seen) {
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT table_name FROM user_tables ORDER BY table_name")) {
+            while (rs.next()) {
+                String tableName = rs.getString(1);
+                if (tableName == null || tableName.isBlank() || !seen.add(tableName.toLowerCase(Locale.ROOT))) {
+                    continue;
+                }
+                Map<String, Object> table = new LinkedHashMap<>();
+                table.put("tableName", tableName);
+                table.put("schemaName", "");
+                table.put("catalogName", "");
+                tables.add(table);
+            }
+        } catch (SQLException e) {
+            // 兜底查询也失败，保持 tables 为空，由上层统一处理
+        }
     }
 
     // ==================== 字段标注 ====================

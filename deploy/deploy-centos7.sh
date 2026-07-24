@@ -177,6 +177,11 @@ DOCKERCOMPOSE
 
 mkdir -p "$DEPLOY_TARGET/data"/{drivers,knowledge,qa,ontology,evaluation,config}
 
+# 复制默认 JDBC 驱动到持久化目录（volume 挂载会覆盖容器内 /app/drivers）
+if [ -f "$PROJECT_DIR/drivers/mysql-connector-j.jar" ] && [ ! -f "$DEPLOY_TARGET/data/drivers/mysql-connector-j.jar" ]; then
+    cp "$PROJECT_DIR/drivers/"*.jar "$DEPLOY_TARGET/data/drivers/" 2>/dev/null || true
+fi
+
 cp "$DEPLOY_DIR/queries.json" "$DEPLOY_TARGET/data/config/queries.json" 2>/dev/null || echo '[]' > "$DEPLOY_TARGET/data/config/queries.json"
 
 log_info "docker-compose.yml 已部署"
