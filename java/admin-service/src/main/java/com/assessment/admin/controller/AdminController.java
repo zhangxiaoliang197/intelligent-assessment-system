@@ -18,6 +18,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -38,6 +40,8 @@ import java.util.*;
 @RestController
 @RequestMapping("/api/admin")
 public class AdminController {
+
+    private static final Logger logger = LoggerFactory.getLogger(AdminController.class);
 
     @Autowired
     private DatabaseConfigRepository dbConfigRepo;
@@ -76,7 +80,7 @@ public class AdminController {
         });
         DRIVER_PRESETS.put("Oracle", new String[]{
                 "oracle.jdbc.OracleDriver",
-                "jdbc:oracle:thin:@{host}:{port}:{database}"
+                "jdbc:oracle:thin:@//{host}:{port}/{database}"
         });
         DRIVER_PRESETS.put("达梦数据库V8", new String[]{
                 "dm.jdbc.driver.DmDriver",
@@ -388,7 +392,9 @@ public class AdminController {
                 }
                 // 兜底：Oracle/达梦 JDBC 元数据接口兼容性问题，改用直接 SQL 查询 user_tables
                 if (tables.isEmpty() && isOracleLike(driver)) {
+                    logger.info("触发Oracle/达梦兜底查询: driverClass={}", driver.getDriverClass());
                     appendTablesViaSql(conn, tables, seen);
+                    logger.info("Oracle/达梦兜底查询结果: {} 张表", tables.size());
                 }
                 tables.sort(Comparator.comparing(item -> String.valueOf(item.get("tableName")), String.CASE_INSENSITIVE_ORDER));
                 if (includeColumns) {
@@ -417,6 +423,16 @@ public class AdminController {
                 if (tables.isEmpty()) {
                     response.put("hint", "该数据库中未发现用户表，请确认当前账号有对应 schema 的查询权限");
                 }
+                // ── 诊断信息 ──
+                Map<String, Object> diag = new LinkedHashMap<>();
+                diag.put("driverName", driver.getName());
+                diag.put("driverClass", driver.getDriverClass());
+                diag.put("connectionCatalog", catalog);
+                diag.put("connectionSchema", schema);
+                diag.put("oracleFallbackTriggered", isOracleLike(driver));
+                response.put("_diag", diag);
+                logger.info("表列表查询完成: db={}, driver={}, catalog={}, schema={}, 结果={}张表, oracle兜底={}",
+                        dbConfig.getName(), driver.getName(), catalog, schema, tables.size(), isOracleLike(driver));
                 appendDatabaseProfile(response, dbConfig, metadata);
                 return ResponseEntity.ok(response);
             }
@@ -940,8 +956,10 @@ public class AdminController {
                 // SQL Server 系统 schema
                 "sysadmin"
         );
+        int rawCount = 0;
         try (ResultSet rs = metadata.getTables(catalog, schema, "%", new String[]{"TABLE"})) {
             while (rs.next()) {
+                rawCount++;
                 String tableName = rs.getString("TABLE_NAME");
                 String schemaName = Objects.toString(rs.getString("TABLE_SCHEM"), "");
                 if (tableName == null
@@ -956,6 +974,10 @@ public class AdminController {
                 table.put("catalogName", Objects.toString(rs.getString("TABLE_CAT"), ""));
                 tables.add(table);
             }
+        }
+        if (rawCount > 0) {
+            logger.info("JDBC元数据: catalog={}, schema={}, 原始={}张, 保留={}张",
+                    catalog, schema, rawCount, tables.size());
         }
     }
 
@@ -1039,7 +1061,24 @@ public class AdminController {
                 tables.add(table);
             }
         } catch (SQLException e) {
-            // 兜底查询也失败，保持 tables 为空，由上层统一处理
+            logger.warn("user_tables 兜底查询失败: {}", e.getMessage());
+            // 尝试 all_tables（用户可能有跨 schema 访问权限）
+            try (Statement stmt2 = conn.createStatement();
+                 ResultSet rs2 = stmt2.executeQuery("SELECT table_name FROM all_tables ORDER BY table_name")) {
+                while (rs2.next()) {
+                    String tableName = rs2.getString(1);
+                    if (tableName == null || tableName.isBlank() || !seen.add(tableName.toLowerCase(Locale.ROOT))) {
+                        continue;
+                    }
+                    Map<String, Object> table = new LinkedHashMap<>();
+                    table.put("tableName", tableName);
+                    table.put("schemaName", "");
+                    table.put("catalogName", "");
+                    tables.add(table);
+                }
+            } catch (SQLException e2) {
+                logger.warn("all_tables 兜底查询也失败: {}", e2.getMessage());
+            }
         }
     }
 

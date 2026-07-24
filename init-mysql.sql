@@ -133,7 +133,7 @@ VALUES
 ('driver_mysql',      'MySQL',           'com.mysql.cj.jdbc.Driver',               'jdbc:mysql://{host}:{port}/{database}?useSSL=false&serverTimezone=Asia/Shanghai&connectionCollation=utf8mb4_unicode_ci&sessionVariables=character_set_client=utf8mb4,character_set_connection=utf8mb4,character_set_results=utf8mb4', 'mysql-connector-j.jar',  'drivers/mysql-connector-j.jar',  NOW(), NOW()),
 ('driver_postgresql', 'PostgreSQL',      'org.postgresql.Driver',                  'jdbc:postgresql://{host}:{port}/{database}', 'postgresql.jar', 'drivers/postgresql.jar', NOW(), NOW()),
 ('driver_sqlserver',  'SQL Server',      'com.microsoft.sqlserver.jdbc.SQLServerDriver', 'jdbc:sqlserver://{host}:{port};databaseName={database}', 'mssql-jdbc.jar', 'drivers/mssql-jdbc.jar', NOW(), NOW()),
-('driver_oracle',     'Oracle',          'oracle.jdbc.OracleDriver',               'jdbc:oracle:thin:@{host}:{port}:{database}', NULL, NULL, NOW(), NOW()),
+('driver_oracle',     'Oracle',          'oracle.jdbc.OracleDriver',               'jdbc:oracle:thin:@//{host}:{port}/{database}', NULL, NULL, NOW(), NOW()),
 ('driver_dameng',     '达梦数据库V8.1',    'dm.jdbc.driver.DmDriver',                'jdbc:dm://{host}:{port}/{database}', NULL, NULL, NOW(), NOW());
 
 -- 3.2 默认大模型配置（DeepSeek）
