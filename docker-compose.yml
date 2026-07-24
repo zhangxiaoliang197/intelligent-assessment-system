@@ -1,3 +1,20 @@
+# ============================================================
+# 智能评估系统 - Docker Compose 配置
+# ------------------------------------------------------------
+# 生产环境部署前请通过 .env 文件或环境变量覆盖以下关键配置：
+#   MYSQL_HOST     — 元数据库地址（容器内访问宿主机用 host.docker.internal）
+#   MYSQL_PORT     — 元数据库端口（默认 3306）
+#   MYSQL_DATABASE — 元数据库名（默认 assessment）
+#   MYSQL_USER     — 元数据库用户名（默认 root）
+#   MYSQL_PASSWORD — 元数据库密码（默认 root，生产环境务必修改）
+#   DB_TYPE        — 元数据库类型（默认 mysql，可选 h2/postgresql）
+#
+# drivers 命名卷说明：
+#   首次启动时 Docker 会把镜像内 /app/drivers 的驱动（MySQL/PostgreSQL/
+#   SQL Server）自动复制到命名卷，之后通过 Web 界面上传的 Oracle/达梦等
+#   驱动也会持久化到该卷，容器重启不丢失。
+# ============================================================
+
 services:
   frontend:
     image: assessment-frontend:latest
@@ -16,6 +33,8 @@ services:
     restart: always
     networks:
       - assessment-net
+    volumes:
+      - knowledge-data:/app/data
 
   qa-service:
     image: assessment-qa:latest
@@ -28,6 +47,8 @@ services:
     environment:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
+    volumes:
+      - qa-data:/app/data
 
   indicator-service:
     image: assessment-indicator:latest
@@ -42,6 +63,8 @@ services:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
       - EVALUATION_API_URL=http://assessment-qa:10253
+    volumes:
+      - indicator-data:/app/data
 
   evaluation-service:
     image: assessment-evaluation:latest
@@ -51,6 +74,8 @@ services:
     restart: always
     networks:
       - assessment-net
+    volumes:
+      - evaluation-data:/app/data
 
   ontology-service:
     image: assessment-ontology:latest
@@ -60,6 +85,8 @@ services:
     restart: always
     networks:
       - assessment-net
+    volumes:
+      - ontology-data:/app/data
 
   admin-service:
     image: assessment-admin:latest
@@ -69,7 +96,34 @@ services:
     restart: always
     networks:
       - assessment-net
+    # ─── 元数据库连接配置（与 start-docker-run.sh 对齐）───
+    # MYSQL_HOST 默认 host.docker.internal：Linux 上需配合下面的 extra_hosts
+    # 解析到宿主机；Docker Desktop (Windows/Mac) 原生支持。
+    # 若元数据库在远程机器上，请改为对应 IP。
+    environment:
+      - DB_TYPE=${DB_TYPE:-mysql}
+      - MYSQL_HOST=${MYSQL_HOST:-host.docker.internal}
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-assessment}
+      - MYSQL_USER=${MYSQL_USER:-root}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-1025}
+    # Linux 下让 host.docker.internal 解析到宿主机网关
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # ─── JDBC 驱动持久化 ───
+    # 命名卷首次挂载会自动从镜像内 /app/drivers 复制现有驱动；
+    # 之后通过管理后台上传的 Oracle/达梦等驱动也会持久化到此卷。
+    volumes:
+      - drivers-data:/app/drivers
 
 networks:
   assessment-net:
     driver: bridge
+
+volumes:
+  knowledge-data:
+  qa-data:
+  indicator-data:
+  evaluation-data:
+  ontology-data:
+  drivers-data:

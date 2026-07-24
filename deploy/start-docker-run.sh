@@ -3,7 +3,7 @@
 # 智能评估系统 - Docker run 启动脚本
 # 适用于: Docker 无 docker compose 插件的环境
 # 用法: bash start-docker-run.sh [MYSQL_HOST] [MYSQL_USER] [MYSQL_PASSWORD]
-#   bash start-docker-run.sh                           # 默认连宿主机MySQL (root/root)
+#   bash start-docker-run.sh                           # 默认连宿主机MySQL (root/1025)
 #   bash start-docker-run.sh 192.168.1.100             # 指定MySQL IP
 #   bash start-docker-run.sh 192.168.1.100 root mypass # 指定全部
 # ========================================
@@ -14,7 +14,7 @@ BASE_DIR="/opt/intelligent-assessment"
 # ─── MySQL 连接参数 ───
 MYSQL_HOST="${1:-172.17.0.1}"
 MYSQL_USER="${2:-root}"
-MYSQL_PASSWORD="${3:-root}"
+MYSQL_PASSWORD="${3:-1025}"
 MYSQL_PORT="${MYSQL_PORT:-3306}"
 MYSQL_DATABASE="${MYSQL_DATABASE:-assessment}"
 

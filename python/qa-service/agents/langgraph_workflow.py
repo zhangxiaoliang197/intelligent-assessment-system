@@ -90,6 +90,7 @@ class WorkflowState(TypedDict, total=False):
     database_id: str        # 用户选择的数据源 ID（可为空串 = 无数据源）
     database_name: str      # 用户选择的数据源名称（仅用于展示）
     attachment_text: str    # 用户上传的文档解析后的纯文本（空串 = 未上传）
+    database_type: str      # 数据库类型（MySQL/Oracle/PostgreSQL/达梦等），用于 SQL 方言适配
 
     # ── orchestrator 阶段产出（意图识别后写入）────────────────────────
     intent: str             # 大模型识别出的用户意图，如 "综合评估"
@@ -148,6 +149,7 @@ def _empty_state() -> dict:
         "query_type": "data_query",          # 默认按数据库查询处理
         "need_conclusion": True,              # 默认生成结论
         "need_chart": False,                  # 默认不生成图表
+        "database_type": "",                  # 默认未知方言，由 data_explore_node 填充
         "database_tables": [],
         "table_schemas": [],
         "dataset_defs": [],
@@ -615,6 +617,7 @@ async def data_explore_node(state: WorkflowState, config: RunnableConfig) -> Wor
     实现细节：
         - 使用 run_in_executor 将同步的 fetch_database_tables 放到线程池执行
         - 设置 _DB_TIMEOUT 超时，防止阻塞整个工作流
+        - 同时获取 database_type（数据库方言），供后续 text_to_sql 生成正确方言的 SQL
         - 结果写入 database_tables 和 db_connected 字段
 
     Args:
@@ -622,9 +625,9 @@ async def data_explore_node(state: WorkflowState, config: RunnableConfig) -> Wor
         config: 运行时配置
 
     Returns:
-        更新后的状态，写入 database_tables / db_connected / steps
+        更新后的状态，写入 database_tables / db_connected / database_type / steps
     """
-    from .tools import fetch_database_tables
+    from .tools import fetch_database_tables, fetch_database_config
     steps = list(state.get("steps", []))
     _add_step(steps, 2, "数据源探查", "in_progress",
               detail="正在连接数据源查询数据表...")
@@ -633,17 +636,24 @@ async def data_explore_node(state: WorkflowState, config: RunnableConfig) -> Wor
     db_connected = False
     db_error_hint = ""
     db_id = state.get("database_id", "")
+    database_type = state.get("database_type", "")
 
+    loop = asyncio.get_event_loop()
     try:
-        loop = asyncio.get_event_loop()
+        # 并行获取表列表和数据库类型配置（database_type 用于 SQL 方言适配）
+        tables_task = loop.run_in_executor(None, fetch_database_tables, db_id)
+        config_task = loop.run_in_executor(None, fetch_database_config, db_id)
         # 将同步阻塞调用放到线程池，避免阻塞事件循环
-        all_tables = await asyncio.wait_for(
-            loop.run_in_executor(None, fetch_database_tables, db_id),
-            timeout=_DB_TIMEOUT
-        )
+        all_tables = await asyncio.wait_for(tables_task, timeout=_DB_TIMEOUT)
         db_connected = bool(all_tables)  # 有表返回则视为连接成功
         if not db_connected:
             db_error_hint = "未能读取到数据表，请确认数据库连接配置和账号权限正确"
+        # 获取数据库类型，失败不阻断主流程（text_to_sql 会回退到默认方言）
+        try:
+            db_config = await asyncio.wait_for(config_task, timeout=_DB_TIMEOUT)
+            database_type = db_config.get("type", "") if db_config else ""
+        except Exception as e:
+            logger.warning(f"获取数据库类型失败: {e}")
     except asyncio.TimeoutError:
         logger.warning("获取表列表超时")
         db_error_hint = "数据源查询超时，请检查网络或数据库负载"
@@ -655,7 +665,8 @@ async def data_explore_node(state: WorkflowState, config: RunnableConfig) -> Wor
               detail=f"发现 {len(all_tables)} 张数据表")
 
     return {**state, "steps": steps, "database_tables": all_tables,
-            "db_connected": db_connected, "db_error_hint": db_error_hint}
+            "db_connected": db_connected, "db_error_hint": db_error_hint,
+            "database_type": database_type}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -876,9 +887,11 @@ async def text_to_sql_execute_node(state: WorkflowState, config: RunnableConfig)
     schemas = state.get("table_schemas", [])
 
     # 组装给 text_to_sql 模块的状态
+    # database_type 来自 data_explore_node，用于让 LLM 生成正确方言的 SQL
     es = EvaluationState(
         question=state["question"],
         database_id=state.get("database_id", ""),
+        database_type=state.get("database_type", ""),
     )
     es.table_schemas = schemas
     es.indicator_defs = state.get("indicator_defs", [])
