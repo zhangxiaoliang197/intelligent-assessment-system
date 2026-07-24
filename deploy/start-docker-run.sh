@@ -3,20 +3,31 @@
 # 智能评估系统 - Docker run 启动脚本
 # 适用于: Docker 无 docker compose 插件的环境
 # 用法: bash start-docker-run.sh [MYSQL_HOST] [MYSQL_USER] [MYSQL_PASSWORD]
-#   bash start-docker-run.sh                           # 默认连宿主机MySQL (root/1025)
-#   bash start-docker-run.sh 192.168.1.100             # 指定MySQL IP
+#   bash start-docker-run.sh 192.168.1.100             # 指定远程MySQL IP
 #   bash start-docker-run.sh 192.168.1.100 root mypass # 指定全部
+#   或通过环境变量：MYSQL_HOST=192.168.1.100 MYSQL_PASSWORD=xxx bash start-docker-run.sh
+# 注意: MYSQL_HOST 无默认值，必须通过参数或环境变量显式配置。
 # ========================================
 
 NET_NAME="assessment-net"
 BASE_DIR="/opt/intelligent-assessment"
 
 # ─── MySQL 连接参数 ───
-MYSQL_HOST="${1:-172.17.0.1}"
-MYSQL_USER="${2:-root}"
-MYSQL_PASSWORD="${3:-1025}"
+MYSQL_HOST="${1:-${MYSQL_HOST:-}}"
+MYSQL_USER="${2:-${MYSQL_USER:-root}}"
+MYSQL_PASSWORD="${3:-${MYSQL_PASSWORD:-}}"
 MYSQL_PORT="${MYSQL_PORT:-3306}"
 MYSQL_DATABASE="${MYSQL_DATABASE:-assessment}"
+DB_TYPE="${DB_TYPE:-mysql}"
+
+# 校验：MYSQL_HOST 必须显式配置
+if [ -z "$MYSQL_HOST" ]; then
+    echo "ERROR: MYSQL_HOST 未配置。请通过参数或环境变量指定元数据库地址。"
+    echo "  用法: bash start-docker-run.sh <MYSQL_HOST> [MYSQL_USER] [MYSQL_PASSWORD]"
+    echo "  示例: bash start-docker-run.sh 192.168.1.100 root mypass"
+    echo "  或:   MYSQL_HOST=192.168.1.100 bash start-docker-run.sh"
+    exit 1
+fi
 
 echo "========================================"
 echo "智能评估系统 - Docker 启动脚本"
@@ -24,11 +35,7 @@ echo "========================================"
 echo "  MySQL: ${MYSQL_USER}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}"
 # ─── 宿主机数据目录 (重启不丢失) ───
 DATA_DIR="$BASE_DIR/data"
-mkdir -p "$DATA_DIR/drivers"
-# 首次部署：从项目复制默认 JDBC 驱动到持久化目录（volume 挂载会覆盖容器内 /app/drivers）
-if [ ! -f "$DATA_DIR/drivers/mysql-connector-j.jar" ]; then
-    cp "$BASE_DIR/drivers/"*.jar "$DATA_DIR/drivers/" 2>/dev/null || true
-fi
+# drivers 使用 Docker 命名卷（首次自动从镜像内 /app/drivers 复制，无需宿主机目录）
 mkdir -p "$DATA_DIR/knowledge"
 mkdir -p "$DATA_DIR/qa"
 mkdir -p "$DATA_DIR/ontology"
@@ -113,6 +120,8 @@ docker run -d --name assessment-indicator \
     -p 10254:10254 \
     -e QA_SERVICE_URL="http://assessment-qa:10253" \
     -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
+    -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
+    -e EVALUATION_API_URL="http://assessment-qa:10253" \
     --restart always \
     assessment-indicator:latest
 
@@ -142,14 +151,14 @@ echo "[启动] 基础管理服务 (10258)..."
 docker run -d --name assessment-admin \
     --network "$NET_NAME" \
     -p 10258:10258 \
-    -v "$DATA_DIR/drivers:/app/drivers" \
+    -v drivers-data:/app/drivers \
     --restart always \
     -e MYSQL_HOST="$MYSQL_HOST" \
     -e MYSQL_PORT="$MYSQL_PORT" \
     -e MYSQL_DATABASE="$MYSQL_DATABASE" \
     -e MYSQL_USER="$MYSQL_USER" \
     -e MYSQL_PASSWORD="$MYSQL_PASSWORD" \
-    -e DB_TYPE="mysql" \
+    -e DB_TYPE="$DB_TYPE" \
     assessment-admin:latest
 
 # ─── 9. 等待管理服务就绪后启动前端 ───

@@ -92,6 +92,8 @@ Start-Process "D:\Program Files\nodejs\npx.cmd" -ArgumentList "vite --host" -Wor
 | assessment-qa | `KNOWLEDGE_SERVICE_URL` | assessment-knowledge:10252 | ✅ |
 | assessment-indicator | `QA_SERVICE_URL` | assessment-qa:10253 | ✅ |
 | assessment-indicator | `ADMIN_SERVICE_URL` | assessment-admin:10258 | ✅ |
+| assessment-indicator | `KNOWLEDGE_SERVICE_URL` | assessment-knowledge:10252 | ✅ |
+| assessment-indicator | `EVALUATION_API_URL` | assessment-qa:10253 | ✅ |
 | assessment-solution-evaluation | `QA_SERVICE_URL` | assessment-qa:10253 | ✅ |
 | assessment-solution-evaluation | `INDICATOR_SERVICE_URL` | assessment-indicator:10254 | ✅ |
 | assessment-solution-evaluation | `ADMIN_SERVICE_URL` | assessment-admin:10258 | ✅ |
