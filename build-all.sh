@@ -6,7 +6,7 @@
 # ========================================
 set -e
 
-PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 IMAGES_DIR="$PROJECT_DIR/docker-images"
 mkdir -p "$IMAGES_DIR"
 
@@ -31,13 +31,19 @@ build_and_save() {
         -f "$PROJECT_DIR/docker/Dockerfile.$DOCKERFILE" \
         "$PROJECT_DIR"
 
+    if [[ "$IMAGE_NAME" == "qa" ]]; then
+        echo ">>> 校验 QA 镜像内 Skill 目录..."
+        docker run --rm --entrypoint python "assessment-$IMAGE_NAME:latest" \
+            -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 15; print('Skill catalog OK:', len(catalog['skills']))"
+    fi
+
     echo -e "${GREEN}>>> 导出 assessment-$IMAGE_NAME.tar${NC}"
     docker save -o "$IMAGES_DIR/assessment-$IMAGE_NAME.tar" "assessment-$IMAGE_NAME:latest"
     echo ""
 }
 
 echo "========================================="
-echo "阶段 1/3: 构建 Python 微服务 (6个)"
+echo "阶段 1/3: 构建 Python 微服务 (5个)"
 echo "========================================="
 echo ""
 
@@ -46,7 +52,6 @@ build_and_save "qa"                    "qa"                    "10253" "智能�
 build_and_save "indicator"             "indicator"             "10254" "指标分析服务"
 build_and_save "evaluation"            "evaluation"            "10255" "评估分析服务"
 build_and_save "ontology"              "ontology"              "10256" "本体模型服务"
-build_and_save "solution-evaluation"   "solution-evaluation"   "10259" "评估分析服务(多Agent)"
 
 echo "========================================="
 echo "阶段 2/3: 构建 Java 服务 (1个)"
@@ -64,7 +69,7 @@ build_and_save "frontend"    "frontend"    "80"   "前端界面"
 
 echo ""
 echo "========================================"
-echo -e "${GREEN}全部 8 个镜像构建完成!${NC}"
+echo -e "${GREEN}全部 7 个镜像构建完成!${NC}"
 echo "========================================"
 echo ""
 echo "镜像文件位于: $IMAGES_DIR/"

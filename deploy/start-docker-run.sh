@@ -1,4 +1,6 @@
 #!/bin/bash
+set -euo pipefail
+
 # ========================================
 # 智能评估系统 - Docker run 启动脚本
 # 适用于: Docker 无 docker compose 插件的环境
@@ -44,6 +46,26 @@ mkdir -p "$DATA_DIR/config"
 
 echo "  数据目录: $DATA_DIR"
 
+# 从待启动镜像导出并校验同一份内置 Skill 目录，随后以只读单文件
+# 挂载。这样即使历史容器或错误的整目录挂载曾污染 /app/config，
+# 新容器也会得到确定、可审计的目录文件。
+SKILLS_FILE="$DATA_DIR/config/skills.json"
+CATALOG_EXPORT_CONTAINER="assessment-qa-catalog-export-$$"
+echo "  校验 QA 镜像内置 Skill 目录..."
+docker run --rm --entrypoint python assessment-qa:latest \
+    -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 15; print('  Skill catalog OK:', len(catalog['skills']))"
+docker rm -f "$CATALOG_EXPORT_CONTAINER" >/dev/null 2>&1 || true
+docker create --name "$CATALOG_EXPORT_CONTAINER" assessment-qa:latest >/dev/null
+if ! docker cp "$CATALOG_EXPORT_CONTAINER:/app/config/skills.json" "$SKILLS_FILE.tmp"; then
+    docker rm -f "$CATALOG_EXPORT_CONTAINER" >/dev/null 2>&1 || true
+    rm -f "$SKILLS_FILE.tmp"
+    echo "ERROR: 无法从 assessment-qa:latest 导出 /app/config/skills.json"
+    exit 1
+fi
+docker rm "$CATALOG_EXPORT_CONTAINER" >/dev/null
+mv -f "$SKILLS_FILE.tmp" "$SKILLS_FILE"
+test -s "$SKILLS_FILE"
+
 QUERIES_FILE="$DATA_DIR/config/queries.json"
 if [ ! -f "$QUERIES_FILE" ]; then
     echo "  首次部署: 复制 queries.json 模板到 $QUERIES_FILE"
@@ -59,6 +81,24 @@ if [ ! -f "$AIR_QUERIES_FILE" ]; then
         cp "/opt/intelligent-assessment/deploy/air_queries.json" "$AIR_QUERIES_FILE" 2>/dev/null || \
         echo '{"regionRules":{"patterns":[],"placeholder":"{region}","defaultValue":"全部区域"},"groups":[]}' > "$AIR_QUERIES_FILE"
 fi
+
+# docker run 不会自动替换同名容器。部署新镜像前精确删除本系统的
+# 旧容器，避免名称冲突后继续由旧 QA 容器提供服务。
+SERVICE_CONTAINERS=(
+    assessment-frontend
+    assessment-admin
+    assessment-ontology
+    assessment-evaluation
+    assessment-indicator
+    assessment-qa
+    assessment-knowledge
+)
+for container_name in "${SERVICE_CONTAINERS[@]}"; do
+    if docker ps -a --format '{{.Names}}' | grep -qx "$container_name"; then
+        echo "  替换旧容器: $container_name"
+        docker rm -f "$container_name" >/dev/null
+    fi
+done
 
 # ─── 创建网络 ───
 docker network inspect "$NET_NAME" >/dev/null 2>&1 || \
@@ -110,7 +150,9 @@ docker run -d --name assessment-qa \
     -p 10253:10253 \
     -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
     -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
+    -e EVALUATION_SKILL_CATALOG_PATH="/app/config/skills.json" \
     -v "$DATA_DIR/qa:/app/data" \
+    -v "$SKILLS_FILE:/app/config/skills.json:ro" \
     --restart always \
     assessment-qa:latest
 
@@ -183,6 +225,44 @@ docker run -d --name assessment-frontend \
     -p 10086:80 \
     --restart always \
     assessment-frontend:latest
+
+# ─── 4. 真实容器与 HTTP 冒烟校验 ───
+echo ""
+echo "========================================"
+echo "[4/8] 校验 QA 容器和 Skill 目录接口..."
+echo "========================================"
+EXPECTED_IMAGE_ID="$(docker image inspect assessment-qa:latest --format '{{.Id}}')"
+ACTUAL_IMAGE_ID="$(docker inspect assessment-qa --format '{{.Image}}')"
+if [ "$EXPECTED_IMAGE_ID" != "$ACTUAL_IMAGE_ID" ]; then
+    echo "ERROR: QA 容器没有使用 assessment-qa:latest"
+    echo "  expected=$EXPECTED_IMAGE_ID"
+    echo "  actual=$ACTUAL_IMAGE_ID"
+    exit 1
+fi
+docker exec assessment-qa test -s /app/config/skills.json
+
+QA_READY=0
+for i in $(seq 1 60); do
+    if curl -fsS http://127.0.0.1:10253/health >/dev/null 2>&1; then
+        QA_READY=1
+        echo "  QA 健康检查通过 (${i}s)"
+        break
+    fi
+    sleep 1
+done
+if [ "$QA_READY" -ne 1 ]; then
+    echo "ERROR: QA 服务未通过健康检查"
+    docker logs --tail 100 assessment-qa
+    exit 1
+fi
+
+SKILL_RESPONSE="$(curl -fsS http://127.0.0.1:10253/evaluation/skills)"
+if ! echo "$SKILL_RESPONSE" | grep -Eq '"builtInTotal"[[:space:]]*:[[:space:]]*15'; then
+    echo "ERROR: Skill 目录接口未返回 15 个内置 Skill"
+    echo "$SKILL_RESPONSE"
+    exit 1
+fi
+echo "  Skill 目录接口校验通过: 15 个内置 Skill"
 
 # ─── 状态汇总 ───
 echo ""

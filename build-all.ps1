@@ -48,6 +48,16 @@ function Build-And-Save {
         exit 1
     }
 
+    if ($ImageName -eq "qa") {
+        Write-Host ">>> 校验 QA 镜像内 Skill 目录..." -ForegroundColor Yellow
+        docker run --rm --entrypoint python "assessment-${ImageName}:latest" `
+            -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 15; print('Skill catalog OK:', len(catalog['skills']))"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ERROR: QA 镜像缺少或无法加载 /app/config/skills.json，停止导出!" -ForegroundColor Red
+            exit 1
+        }
+    }
+
     Write-Host ">>> 导出 assessment-$ImageName.tar ..." -ForegroundColor Green
     docker save -o "$IMAGES_DIR\assessment-$ImageName.tar" "assessment-${ImageName}:latest"
 
@@ -55,10 +65,10 @@ function Build-And-Save {
     Write-Host "  [OK] assessment-$ImageName.tar ($([math]::Round($size, 1)) MB)" -ForegroundColor Green
 }
 
-# ---- 阶段1: Python 服务 (6个) ----
+# ---- 阶段1: Python 服务 (5个) ----
 Write-Host ""
 Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host "阶段 1/3: 构建 Python 微服务 (6个)" -ForegroundColor Cyan
+Write-Host "阶段 1/3: 构建 Python 微服务 (5个)" -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 
 Build-And-Save "knowledge"             "knowledge"             "10252" "知识库服务"
@@ -66,7 +76,6 @@ Build-And-Save "qa"                    "qa"                    "10253" "智能�
 Build-And-Save "indicator"             "indicator"             "10254" "指标分析服务"
 Build-And-Save "evaluation"            "evaluation"            "10255" "评估分析服务"
 Build-And-Save "ontology"              "ontology"              "10256" "本体模型服务"
-Build-And-Save "solution-evaluation"   "solution-evaluation"   "10259" "评估分析服务(多Agent)"
 
 # ---- 阶段2: Java 服务 (1个) ----
 Write-Host ""
@@ -87,7 +96,7 @@ Build-And-Save "frontend"    "frontend"    "80"   "前端界面"
 # ---- 汇总 ----
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "全部 8 个镜像构建完成!" -ForegroundColor Green
+Write-Host "全部 7 个镜像构建完成!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Get-ChildItem $IMAGES_DIR | ForEach-Object {

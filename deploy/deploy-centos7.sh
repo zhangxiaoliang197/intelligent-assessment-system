@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -71,6 +72,11 @@ fi
 
 log_info "共加载 $IMAGE_COUNT 个镜像"
 
+# 不允许把缺少内置 Skill 目录的 QA 镜像带入运行阶段。
+log_info "校验 assessment-qa:latest 内置 Skill 目录..."
+docker run --rm --entrypoint python assessment-qa:latest \
+    -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 15; print('Skill catalog OK:', len(catalog['skills']))"
+
 # ---------- 部署项目 ----------
 log_info "Step 3/4: 部署项目文件..."
 
@@ -121,8 +127,10 @@ services:
     environment:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
+      - EVALUATION_SKILL_CATALOG_PATH=/app/config/skills.json
     volumes:
       - "$DEPLOY_TARGET/data/qa:/app/data"
+      - "$DEPLOY_TARGET/data/config/skills.json:/app/config/skills.json:ro"
     networks:
       - assessment-net
 
@@ -195,6 +203,22 @@ mkdir -p "$DEPLOY_TARGET/data"/{knowledge,qa,ontology,evaluation,indicator,confi
 
 cp "$DEPLOY_DIR/queries.json" "$DEPLOY_TARGET/data/config/queries.json" 2>/dev/null || echo '[]' > "$DEPLOY_TARGET/data/config/queries.json"
 
+# 导出经过镜像构建闸门校验的目录文件，运行时以只读单文件挂载，
+# 避免历史遗留的 /app/config 整目录挂载遮蔽镜像内容。
+SKILLS_FILE="$DEPLOY_TARGET/data/config/skills.json"
+CATALOG_EXPORT_CONTAINER="assessment-qa-catalog-export-$$"
+docker rm -f "$CATALOG_EXPORT_CONTAINER" >/dev/null 2>&1 || true
+docker create --name "$CATALOG_EXPORT_CONTAINER" assessment-qa:latest >/dev/null
+if ! docker cp "$CATALOG_EXPORT_CONTAINER:/app/config/skills.json" "$SKILLS_FILE.tmp"; then
+    docker rm -f "$CATALOG_EXPORT_CONTAINER" >/dev/null 2>&1 || true
+    rm -f "$SKILLS_FILE.tmp"
+    log_error "无法从 assessment-qa:latest 导出 /app/config/skills.json"
+    exit 1
+fi
+docker rm "$CATALOG_EXPORT_CONTAINER" >/dev/null
+mv -f "$SKILLS_FILE.tmp" "$SKILLS_FILE"
+test -s "$SKILLS_FILE"
+
 log_info "docker-compose.yml 已部署"
 
 # ---------- 创建管理脚本 ----------
@@ -202,15 +226,77 @@ log_info "Step 4/4: 创建服务管理脚本..."
 
 cat > "$DEPLOY_TARGET/start.sh" << 'STARTSCRIPT'
 #!/bin/bash
+set -euo pipefail
+
 echo "智能评估系统 - 启动所有服务..."
 cd /opt/intelligent-assessment
-docker compose up -d
+
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE=(docker-compose)
+else
+    echo "ERROR: 未找到 docker compose 或 docker-compose"
+    exit 1
+fi
+
+# 清理可能由旧版 docker run 脚本创建的同名容器。所有持久数据均在
+# /opt/intelligent-assessment/data 下，重建容器不会删除业务数据。
+SERVICE_CONTAINERS=(
+    assessment-frontend
+    assessment-admin
+    assessment-ontology
+    assessment-evaluation
+    assessment-indicator
+    assessment-qa
+    assessment-knowledge
+)
+for container_name in "${SERVICE_CONTAINERS[@]}"; do
+    if docker ps -a --format '{{.Names}}' | grep -qx "$container_name"; then
+        echo "替换旧容器: $container_name"
+        docker rm -f "$container_name" >/dev/null
+    fi
+done
+
+"${COMPOSE[@]}" up -d --force-recreate
 echo ""
-echo "等待服务就绪..."
-sleep 5
+echo "校验运行容器使用的新 QA 镜像..."
+EXPECTED_IMAGE_ID="$(docker image inspect assessment-qa:latest --format '{{.Id}}')"
+ACTUAL_IMAGE_ID="$(docker inspect assessment-qa --format '{{.Image}}')"
+if [[ "$EXPECTED_IMAGE_ID" != "$ACTUAL_IMAGE_ID" ]]; then
+    echo "ERROR: QA 容器仍未使用 assessment-qa:latest"
+    echo "  expected=$EXPECTED_IMAGE_ID"
+    echo "  actual=$ACTUAL_IMAGE_ID"
+    exit 1
+fi
+docker exec assessment-qa test -s /app/config/skills.json
+
+QA_READY=0
+for i in $(seq 1 60); do
+    if curl -fsS http://127.0.0.1:10253/health >/dev/null 2>&1; then
+        QA_READY=1
+        echo "QA 健康检查通过 (${i}s)"
+        break
+    fi
+    sleep 1
+done
+if [[ "$QA_READY" -ne 1 ]]; then
+    echo "ERROR: QA 服务未通过健康检查"
+    docker logs --tail 100 assessment-qa
+    exit 1
+fi
+
+SKILL_RESPONSE="$(curl -fsS http://127.0.0.1:10253/evaluation/skills)"
+if ! echo "$SKILL_RESPONSE" | grep -Eq '"builtInTotal"[[:space:]]*:[[:space:]]*15'; then
+    echo "ERROR: Skill 目录接口未返回 15 个内置 Skill"
+    echo "$SKILL_RESPONSE"
+    exit 1
+fi
+echo "Skill 目录接口校验通过: 15 个内置 Skill"
+
 echo ""
 echo "服务状态:"
-docker compose ps
+"${COMPOSE[@]}" ps
 echo ""
 echo "访问地址: http://$(hostname -I | awk '{print $1}'):10086"
 STARTSCRIPT
@@ -235,10 +321,9 @@ STATUS
 
 cat > "$DEPLOY_TARGET/restart.sh" << 'RESTART'
 #!/bin/bash
-echo "智能评估系统 - 重启所有服务..."
-cd /opt/intelligent-assessment
-docker compose restart
-echo "服务已重启"
+set -euo pipefail
+echo "智能评估系统 - 以当前镜像重建所有服务..."
+exec bash /opt/intelligent-assessment/start.sh
 RESTART
 
 chmod +x "$DEPLOY_TARGET"/*.sh

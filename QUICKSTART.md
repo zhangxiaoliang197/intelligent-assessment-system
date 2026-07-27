@@ -33,26 +33,39 @@ cd intelligent-assessment-system
 
 ### 2. 构建镜像
 
+Linux / macOS：
+
 ```bash
-docker-compose build
+bash deploy/build-images.sh
+```
+
+Windows PowerShell：
+
+```powershell
+.\build-all.ps1
 ```
 
 ### 3. 启动服务
 
 ```bash
-docker-compose up -d
+bash scripts/start.sh
 ```
 
 ### 4. 验证服务
 
 ```bash
-docker-compose ps
+curl -fsS http://127.0.0.1:10253/health
+curl -fsS http://127.0.0.1:10253/evaluation/skills
 ```
 
 所有服务启动后，访问：
 
-- 前端界面: http://localhost:3000
-- API网关: http://localhost:8080
+- 前端界面: http://localhost:10086
+- Skill 目录接口: http://localhost:10253/evaluation/skills
+
+> `docker compose restart` 只会重启旧容器，不会应用刚加载或刚构建的
+> 新镜像。更新后请运行 `bash scripts/start.sh`，脚本会强制重建容器并
+> 校验 15 个内置 Skill。
 
 ## 方式二：本地开发模式
 
@@ -168,7 +181,7 @@ docker-compose logs -f <service-name>
 ### Q: 如何重启服务？
 
 ```bash
-docker-compose restart <service-name>
+bash scripts/start.sh
 ```
 
 ## 下一步

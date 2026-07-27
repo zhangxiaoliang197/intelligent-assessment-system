@@ -81,9 +81,23 @@ mvn spring-boot:run
 ```
 
 ### Docker部署
+
+Linux / macOS：
+
 ```bash
-docker-compose up -d
+bash deploy/build-images.sh
+bash scripts/start.sh
 ```
+
+Windows PowerShell 构建：
+
+```powershell
+.\build-all.ps1
+```
+
+`scripts/start.sh` 会以当前镜像强制重建容器，并验证 QA 健康检查与
+15 个内置 Skill。更新镜像后不要使用 `docker compose restart`，该命令
+仍会复用旧容器。
 
 ## 📁 项目结构
 
