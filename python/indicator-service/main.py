@@ -311,82 +311,38 @@ def parse_structured_response(answer: str) -> dict:
 
 
 def get_default_tree() -> Dict:
-    return {
-        "name": "作战效能指标体系",
-        "source": "knowledge",
-        "children": [
-            {
-                "name": "打击能力",
-                "source": "knowledge",
-                "children": [
-                    {"name": "命中率", "source": "knowledge"},
-                    {"name": "摧毁率", "source": "knowledge"},
-                    {"name": "突防率", "source": "llm"}
-                ]
-            },
-            {
-                "name": "生存能力",
-                "source": "knowledge",
-                "children": [
-                    {"name": "存活率", "source": "knowledge"},
-                    {"name": "防护能力", "source": "llm"}
-                ]
-            },
-            {
-                "name": "保障能力",
-                "source": "knowledge",
-                "children": [
-                    {"name": "补给效率", "source": "knowledge"},
-                    {"name": "维护能力", "source": "llm"}
-                ]
-            }
+    """从 admin-service 动态获取已配置指标，按 category 分组构建指标树。
+
+    admin-service 不可达或返回空时返回空树（不抛异常、不返回伪造数据），
+    与 /indicator/list、/indicator/detail、/indicator/algorithm 的取数模式一致。
+    """
+    empty_tree = {"name": "已配置指标体系", "source": "admin-db", "children": []}
+    try:
+        data = http_get(f"{ADMIN_SERVICE_URL}/api/admin/indicator/list", timeout=5)
+        if not (data and data.get("success")):
+            return empty_tree
+
+        indicators = data.get("indicators", [])
+        if not indicators:
+            return empty_tree
+
+        # 按 category 分组构建二级树
+        groups: Dict[str, List[Dict]] = {}
+        for ind in indicators:
+            category = ind.get("category", "未分类") or "未分类"
+            groups.setdefault(category, []).append({
+                "name": ind.get("name", ""),
+                "source": "admin-db"
+            })
+
+        children = [
+            {"name": category, "source": "admin-db", "children": leaves}
+            for category, leaves in groups.items()
         ]
-    }
-
-
-def get_default_indicators() -> List[Dict]:
-    return [
-        {
-            "name": "命中率",
-            "type": "knowledge",
-            "definition": "武器系统命中目标的概率，反映精确打击能力。",
-            "formula": "命中率 = 命中次数 / 射击次数 × 100%",
-            "criteria": "优秀: ≥85%, 良好: ≥75%, 合格: ≥65%",
-            "weight": "0.35"
-        },
-        {
-            "name": "摧毁率",
-            "type": "knowledge",
-            "definition": "被命中目标中被摧毁的比例，反映毁伤效果。",
-            "formula": "摧毁率 = 摧毁数量 / 命中数量 × 100%",
-            "criteria": "优秀: ≥80%, 良好: ≥70%, 合格: ≥60%",
-            "weight": "0.30"
-        },
-        {
-            "name": "突防率",
-            "type": "llm",
-            "definition": "成功突破敌方防御系统的概率，反映突防能力。",
-            "formula": "突防率 = 成功突防次数 / 总突防次数 × 100%",
-            "criteria": "根据具体作战场景确定",
-            "weight": "0.25"
-        },
-        {
-            "name": "存活率",
-            "type": "knowledge",
-            "definition": "作战单元在作战环境中保持功能的概率，反映生存能力。",
-            "formula": "存活率 = 存活数量 / 初始数量 × 100%",
-            "criteria": "优秀: ≥90%, 良好: ≥80%, 合格: ≥70%",
-            "weight": "0.20"
-        },
-        {
-            "name": "防护能力",
-            "type": "llm",
-            "definition": "系统抵御外部威胁的能力，包括装甲防护、电子对抗等。",
-            "formula": "防护能力评分 = Σ(防护分项得分 × 分项权重)",
-            "criteria": "根据防护等级确定",
-            "weight": "0.15"
-        }
-    ]
+        return {"name": "已配置指标体系", "source": "admin-db", "children": children}
+    except Exception as e:
+        logger.warning(f"Failed to fetch indicator tree from admin: {e}")
+        return empty_tree
 
 
 # ========== API 端点 ==========
@@ -967,7 +923,7 @@ async def get_history(session_id: str):
 
 @app.get("/indicator/tree")
 async def get_indicator_tree():
-    return get_default_tree()
+    return {"success": True, "tree": get_default_tree()}
 
 
 @app.get("/indicator/detail/{indicator_name}")
