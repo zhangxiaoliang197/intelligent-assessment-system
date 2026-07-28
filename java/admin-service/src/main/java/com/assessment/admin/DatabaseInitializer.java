@@ -2,8 +2,10 @@ package com.assessment.admin;
 
 import com.assessment.admin.model.Driver;
 import com.assessment.admin.model.LlmConfig;
+import com.assessment.admin.model.MapServiceConfig;
 import com.assessment.admin.repository.DriverRepository;
 import com.assessment.admin.repository.LlmConfigRepository;
+import com.assessment.admin.repository.MapServiceConfigRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +26,7 @@ public class DatabaseInitializer implements CommandLineRunner {
 
     private final DriverRepository driverRepo;
     private final LlmConfigRepository llmConfigRepo;
+    private final MapServiceConfigRepository mapConfigRepo;
 
     @Value("${db.type:mysql}")
     private String dbType;
@@ -50,9 +53,11 @@ public class DatabaseInitializer implements CommandLineRunner {
     @Value("${db.postgresql.password:postgres}")
     private String pgPassword;
 
-    public DatabaseInitializer(DriverRepository driverRepo, LlmConfigRepository llmConfigRepo) {
+    public DatabaseInitializer(DriverRepository driverRepo, LlmConfigRepository llmConfigRepo,
+                               MapServiceConfigRepository mapConfigRepo) {
         this.driverRepo = driverRepo;
         this.llmConfigRepo = llmConfigRepo;
+        this.mapConfigRepo = mapConfigRepo;
     }
 
     @Override
@@ -60,6 +65,7 @@ public class DatabaseInitializer implements CommandLineRunner {
         createDatabaseIfNotExists();
         initDefaultDrivers();
         initDefaultLlmConfig();
+        initDefaultMapServiceConfig();
     }
 
     private void createDatabaseIfNotExists() {
@@ -164,6 +170,24 @@ public class DatabaseInitializer implements CommandLineRunner {
         config.setUpdateTime(LocalDateTime.now());
         llmConfigRepo.save(config);
         log.info("默认LLM配置已插入 (DeepSeek)");
+    }
+
+    private void initDefaultMapServiceConfig() {
+        if (mapConfigRepo.count() > 0) {
+            log.info("地图服务配置表已有数据，跳过初始化");
+            return;
+        }
+
+        MapServiceConfig config = new MapServiceConfig();
+        config.setId("map_001");
+        config.setName("GeoWebCache 内网地图（默认）");
+        config.setType("geowebcache");
+        config.setBaseUrl("/geowebcache/gwc");
+        config.setIsActive(true);
+        config.setCreateTime(LocalDateTime.now());
+        config.setUpdateTime(LocalDateTime.now());
+        mapConfigRepo.save(config);
+        log.info("默认地图服务配置已插入 (GeoWebCache)");
     }
 
     private static String pad(int num) {

@@ -73,6 +73,8 @@ _build_docker.ps1
 
 # Personal dev docs (don't commit)
 CLAUDE.md
+读我.docx
+GeoWebCache-使用指南.md
 
 # Runtime data files (don't commit)
 **/data/sessions.json

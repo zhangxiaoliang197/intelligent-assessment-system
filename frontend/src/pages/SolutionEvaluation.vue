@@ -437,6 +437,21 @@
                     </div>
                     <!-- 分析建议（2-3条） -->
                     <div v-if="msg.content" class="message-text" v-html="renderMarkdown(msg.content)"></div>
+
+                    <!-- 地图显示提示 -->
+                    <div v-if="msg.showMapPrompt" class="map-prompt">
+                      <div class="map-prompt-text">
+                        <span>检测到回复中包含 {{ msg.geoPoints.length }} 个地理坐标，是否在地图上显示？</span>
+                      </div>
+                      <div class="map-prompt-actions">
+                        <el-button size="small" type="primary" @click="msg.showMap = true; msg.showMapPrompt = false">显示地图</el-button>
+                        <el-button size="small" @click="msg.showMapPrompt = false">不显示</el-button>
+                      </div>
+                    </div>
+                    <GeoMap
+                      v-if="msg.showMap && msg.geoPoints && msg.geoPoints.length > 0"
+                      :points="msg.geoPoints"
+                    />
                   </div>
                 </div>
               </div>
@@ -619,6 +634,8 @@ import {
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
 import SkillsLibrary from '@/pages/SkillsLibrary.vue'
+import GeoMap from '@/components/GeoMap.vue'
+import { processMapData } from '@/composables/useMapPrompt'
 import api from '@/services/api'
 import {
   cancelSkillExecution,
@@ -1362,6 +1379,11 @@ const sendMessage = async () => {
         // Skill 结果卡已经包含综合结论，正文不再重复显示。
         aiMessage.content = result.type === 'skill' || result.need_conclusion === false ? '' : answerText
         aiMessage.result = result
+        // 提取坐标并设置地图状态
+        const mapData = processMapData(answerText, query)
+        aiMessage.geoPoints = mapData.geoPoints
+        aiMessage.showMap = mapData.showMap
+        aiMessage.showMapPrompt = mapData.showMapPrompt
         if (data.session_id) persistCompletedRun(data.session_id)
         scrollToBottom()
         return
@@ -1507,6 +1529,13 @@ const loadHistory = async (item: any) => {
     }
 
     if (!restoredMessages) throw new Error('会话没有可恢复的消息内容')
+    // 恢复历史消息中的地图状态
+    restoredMessages.forEach((msg: any) => {
+      if (msg.geoPoints && msg.geoPoints.length > 0) {
+        msg.showMap = true
+        msg.showMapPrompt = false
+      }
+    })
     messages.value = [...restoredMessages]
     sessionId.value = item.id
     restoreSessionContext(item)
@@ -1622,6 +1651,13 @@ onMounted(async () => {
   // 恢复上次会话的消息
   if (sessionId.value && sessionMessages.value[sessionId.value]) {
     messages.value = [...sessionMessages.value[sessionId.value]]
+    // 恢复历史消息中的地图状态
+    messages.value.forEach((msg: any) => {
+      if (msg.geoPoints && msg.geoPoints.length > 0) {
+        msg.showMap = true
+        msg.showMapPrompt = false
+      }
+    })
     restoreSessionContext()
   }
   await initData()
@@ -2151,6 +2187,34 @@ onMounted(async () => {
   background: white;
   border: 1px solid #e2e8f0;
   color: #374151;
+}
+
+/* ── 地图显示提示 ── */
+.map-prompt {
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: #f0f7ff;
+  border: 1px solid #d0e5ff;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.map-prompt-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #374151;
+  font-size: 14px;
+}
+
+.map-prompt-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .assistant .message-text strong {
