@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional
 
-from agents.langgraph_workflow import run_langgraph_workflow
+from agents.react_workflow import run_react_workflow
 from agents.tools import fetch_all_databases
 from agents.skill_catalog import (
     SkillCatalogError,
@@ -485,7 +485,7 @@ async def analyze_stream(request: EvaluationRequest, http_request: Request):
                     timeout_seconds=request.timeout_seconds,
                 )
             else:
-                workflow = run_langgraph_workflow(
+                workflow = run_react_workflow(
                     question=request.query,
                     llm_call_fn=async_llm_call,
                     session_id=session_id,

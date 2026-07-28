@@ -89,6 +89,4 @@ data/
 # Tile service cache (large tile files)
 python/tile-service/tiles/
 
-# 本地启动/停止脚本
-start.ps1
-stop.ps1
+

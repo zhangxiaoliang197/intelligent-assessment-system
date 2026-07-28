@@ -372,7 +372,7 @@
               type="textarea"
               :rows="3"
               placeholder="输入指标需求，如：帮我分析火力打击任务完成度指标..."
-              @keyup.enter.ctrl="analyzeIndicator"
+              @keydown.enter.exact.prevent="analyzeIndicator"
             />
             <div class="input-actions">
               <el-tooltip :content="isListening ? '停止录音' : '语音输入'" placement="top">

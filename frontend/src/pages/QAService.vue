@@ -129,7 +129,7 @@
               type="textarea"
               :rows="3"
               placeholder="请输入您的问题..."
-              @keyup.enter.ctrl="sendMessage"
+              @keydown.enter.exact.prevent="sendMessage"
             />
             <div class="input-actions">
               <input

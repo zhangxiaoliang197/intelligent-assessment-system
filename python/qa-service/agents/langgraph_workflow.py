@@ -300,23 +300,53 @@ async def orchestrator_start_node(state: WorkflowState, config: RunnableConfig) 
     对应 DAG 位置：入口节点 → orchestrator_execute_node
     本节点不调用 LLM，仅做 prompt 构建 + 进度推送，响应极快（<1ms）。
 
+    新增：前置快速分类——如果用户问题明显属于"不需要查库"的类型
+    （地理、天气、通识等），直接标记为 general_analysis，跳过 LLM 调用。
+
     Args:
         state:  当前工作流状态（含 question / database_id / database_name）
         config: LangGraph 运行时配置
 
     Returns:
-        更新后的状态，添加 _sys_prompt / _usr_prompt 和初始进度步骤
+        更新后的状态，添加 _sys_prompt / _usr_prompt 或直接写入 query_type
     """
     from .orchestrator import build_orchestrator_prompt
-    steps = list(state.get("steps", []))  # 浅拷贝，避免修改上游引用
+    steps = list(state.get("steps", []))
+    question = state["question"]
+
+    # ── 前置快速分类：检测明显不需要查库的问题 ──
+    # 这些关键词代表的问题，无论数据源内容是什么，都不太可能需要查数据库。
+    # 仅拦截"明显不相关"的类型，模糊问题仍交给 orchestrator LLM 判断。
+    _NON_DATA_QUERY_PATTERNS = [
+        "地理位置", "在哪儿", "在哪里", "坐标", "经纬度",
+        "北纬", "东经", "南纬", "西经", "经度", "纬度",
+        "地图", "标注", "位置信息",
+        "今天天气", "天气预报", "多少度", "天气如何",
+        "你是谁", "你能做什么", "你会什么", "介绍一下",
+        "什么是", "概念", "定义", "解释",
+    ]
+    q_lower = question.lower()
+    is_non_data = any(p in q_lower for p in _NON_DATA_QUERY_PATTERNS)
+
+    if is_non_data:
+        logger.info(f"前置分类拦截：问题明显不需要查库 → general_analysis: {question[:60]}")
+        _add_step(steps, 1, "分析问题意图", "completed",
+                  detail="检测到通用问题，跳过数据库查询")
+        return {
+            **state, "steps": steps,
+            "intent": "通用问答",
+            "query_type": "general_analysis",
+            "need_conclusion": True,
+            "need_chart": False,
+            "_skip_orchestrator": True,  # 标记跳过 orchestrator LLM 调用
+        }
 
     # 步骤 1：意图识别 — 标记为进行中
     _add_step(steps, 1, "分析问题意图", "in_progress",
               detail="正在调用大模型分析用户问题...")
-    # 子步骤 1.1：大模型调用 — 标记为进行中
     _add_step(steps, 1.1, "大模型调用", "in_progress",
               detail="正在将问题发送给大模型进行意图识别...",
-              thinking=f"用户问题: {state['question'][:300]}")
+              thinking=f"用户问题: {question[:300]}")
 
     # 构建 orchestrator 的 system / user prompt（复用已有模块）
     es = EvaluationState(
@@ -357,6 +387,13 @@ async def orchestrator_execute_node(state: WorkflowState, config: RunnableConfig
     from .orchestrator import apply_orchestrator_result
     llm_call_fn = _get_llm_call_fn(config)
     steps = list(state.get("steps", []))
+
+    # ── 前置分类已拦截，直接跳过 LLM 调用 ──
+    if state.get("_skip_orchestrator"):
+        _add_step(steps, 1.1, "快捷路由", "completed",
+                  detail="问题类型无需数据库查询，跳过意图分析")
+        return {**state, "steps": steps}
+
     sys_prompt = state.get("_sys_prompt", "")
     usr_prompt = state.get("_usr_prompt", "")
 
@@ -400,14 +437,7 @@ async def orchestrator_execute_node(state: WorkflowState, config: RunnableConfig
     need_conclusion = es.entities.get("need_conclusion", True)
     need_chart = es.entities.get("need_chart", False)
 
-    # ── 路由修正 1：有数据源但 LLM 判为通用分析 → 强制切为数据查询 ──
-    if state.get("database_id") and query_type == "general_analysis":
-        query_type = "data_query"
-        es.entities["query_type"] = "data_query"
-        _add_step(steps, 1.2, "路由修正", "completed",
-                  detail="已选择数据源，自动切换为数据库查询模式")
-
-    # ── 路由修正 2：作战效能降级──
+    # ── 路由修正：作战效能降级──
     # 如果 LLM 判为 combat_effectiveness 但用户问题中没有"整体评估"类关键词，
     # 说明用户只是问具体数据而非整体评估，降级为 data_query
     if query_type == "combat_effectiveness":
@@ -446,12 +476,9 @@ def route_by_intent(state: WorkflowState) -> str:
     根据 orchestrator 识别出的 query_type 决定下一个节点。
 
     路由规则：
+        - general_analysis → simple_analysis（通用分析，无需查库）
         - 无 database_id → simple_analysis（无数据源，走通用分析）
-        - 有 database_id → data_explore（所有意图统一读取当前数据库真实元数据，
-          再由数据库方言感知的 Text-to-SQL 生成查询）
-
-    旧版 combat_agent/air_agent 会执行配置文件中的固定示例 SQL，无法适配
-    内网不同表名和 Oracle/MySQL 方言，因此不再进入生产路由。
+        - 有 database_id → data_explore（数据库查询，走 SQL 管线）
 
     Args:
         state: 当前状态（含 query_type / database_id）
@@ -459,6 +486,10 @@ def route_by_intent(state: WorkflowState) -> str:
     Returns:
         下一个节点的名称字符串（必须与 add_node 中注册的名称一致）
     """
+    query_type = state.get("query_type", "")
+    # LLM 判定为通用分析 → 无论是否有数据源都走通用分析
+    if query_type == "general_analysis":
+        return "simple_analysis"
     if not state.get("database_id"):
         return "simple_analysis"
     return "data_explore"

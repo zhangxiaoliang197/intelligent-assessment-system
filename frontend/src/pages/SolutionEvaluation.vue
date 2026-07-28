@@ -523,7 +523,7 @@
               type="textarea"
               :rows="3"
               :placeholder="inputPlaceholder"
-              @keyup.enter.ctrl="sendMessage"
+              @keydown.enter.exact.prevent="sendMessage"
             />
             <div class="input-actions">
               <el-tooltip :content="isListening ? '停止录音' : '语音输入'" placement="top">
@@ -635,7 +635,7 @@ import {
 import Layout from '@/components/Layout.vue'
 import SkillsLibrary from '@/pages/SkillsLibrary.vue'
 import GeoMap from '@/components/GeoMap.vue'
-import { processMapData } from '@/composables/useMapPrompt'
+import { processMapData, extractGeoFromResults } from '@/composables/useMapPrompt'
 import api from '@/services/api'
 import {
   cancelSkillExecution,
@@ -1379,11 +1379,35 @@ const sendMessage = async () => {
         // Skill 结果卡已经包含综合结论，正文不再重复显示。
         aiMessage.content = result.type === 'skill' || result.need_conclusion === false ? '' : answerText
         aiMessage.result = result
-        // 提取坐标并设置地图状态
-        const mapData = processMapData(answerText, query)
-        aiMessage.geoPoints = mapData.geoPoints
-        aiMessage.showMap = mapData.showMap
-        aiMessage.showMapPrompt = mapData.showMapPrompt
+        // 提取坐标并设置地图状态（来源1: final_answer 文本中的DMS格式坐标）
+        const textMapData = processMapData(answerText, query)
+        // 提取坐标（来源2: 查询结果数据中的经度/纬度数值列）
+        const resultGeoPoints = extractGeoFromResults(result)
+        // 合并去重（按 lat,lng 去重）
+        const allGeoPoints = textMapData.geoPoints.slice()
+        const existingKeys = new Set(allGeoPoints.map(p => `${p.lat},${p.lng}`))
+        for (const pt of resultGeoPoints) {
+          if (!existingKeys.has(`${pt.lat},${pt.lng}`)) {
+            allGeoPoints.push(pt)
+            existingKeys.add(`${pt.lat},${pt.lng}`)
+          }
+        }
+        // 综合判断：任一方有坐标 + 用户未明确要求 → 弹出提示
+        if (allGeoPoints.length > 0) {
+          if (textMapData.showMap) {
+            aiMessage.geoPoints = allGeoPoints
+            aiMessage.showMap = true
+            aiMessage.showMapPrompt = false
+          } else {
+            aiMessage.geoPoints = allGeoPoints
+            aiMessage.showMap = false
+            aiMessage.showMapPrompt = true
+          }
+        } else {
+          aiMessage.geoPoints = []
+          aiMessage.showMap = false
+          aiMessage.showMapPrompt = false
+        }
         if (data.session_id) persistCompletedRun(data.session_id)
         scrollToBottom()
         return

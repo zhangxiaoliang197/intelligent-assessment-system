@@ -248,15 +248,14 @@ async def run_stream(
     llm_call_fn,
     need_conclusion: bool = True,
 ):
-    """Compatibility entrypoint using the dynamic, dialect-aware SQL pipeline.
+    """Compatibility entrypoint using the react multi-agent workflow.
 
     Historical versions executed SQL templates from ``air_queries.json``
-    directly. Direct callers now use the current database's JDBC metadata and
-    detected SQL dialect instead of fixed table names.
+    directly. Direct callers now use the react workflow.
     """
-    from .langgraph_workflow import run_langgraph_workflow
+    from .react_workflow import run_react_workflow
 
-    async for event in run_langgraph_workflow(
+    async for event in run_react_workflow(
         question=user_query,
         llm_call_fn=llm_call_fn,
         database_id=database_id,

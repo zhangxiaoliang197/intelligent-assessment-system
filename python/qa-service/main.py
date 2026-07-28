@@ -190,6 +190,19 @@ def search_knowledge(query, top_k=5):
         return []
 
 
+# ── 知识库检索跳过判断 ──
+# 某些问题类型不需要知识库上下文（如地理坐标、地图可视化、纯分析等）
+_SKIP_KNOWLEDGE_KEYWORDS = [
+    "地图", "坐标", "经纬度", "北纬", "东经", "标注", "在地图上",
+    "地理", "位置", "所在位置", "定位",
+]
+
+def _should_skip_knowledge(query: str) -> bool:
+    """判断是否需要跳过知识库检索。"""
+    q = query.lower()
+    return any(kw in q for kw in _SKIP_KNOWLEDGE_KEYWORDS)
+
+
 # ── 图片支持检测 ──
 # 仅列出已验证支持 OpenAI image_url 格式的模型。
 # deepseek-chat 实际不支持 image_url → 不列入。
@@ -319,8 +332,12 @@ def get_llm_messages(query, context="", attachment_text="", attachment_filename=
     if not api_key and llm_type != "vllm":
         return None, None, None, None, None, None, "大模型 API Key 未配置，请在「基础管理 → 大模型配置」中设置。"
 
-    # ── 知识库检索 ──
-    knowledge_chunks = search_knowledge(query, top_k=5)
+    # ── 知识库检索（地理/坐标类问题无需检索） ──
+    if _should_skip_knowledge(query):
+        logger.info(f"跳过知识库检索（地理/坐标相关）: {query[:50]}")
+        knowledge_chunks = []
+    else:
+        knowledge_chunks = search_knowledge(query, top_k=5)
     knowledge_context = ""
     references = []
     sources = []
