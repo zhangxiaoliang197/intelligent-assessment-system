@@ -42,11 +42,12 @@ class SkillRuntimeApiSmokeTests(unittest.TestCase):
         main_module = importlib.import_module("main")
         importlib.import_module("evaluation_api")
         importlib.import_module("skill_api")
-        main_client = TestClient(main_module.app)
-        try:
+        with TestClient(main_module.app) as main_client:
+            health = main_client.get("/health")
             response = main_client.get("/evaluation/schedules")
-        finally:
-            main_client.close()
+        self.assertEqual(health.status_code, 200, health.text)
+        self.assertTrue(health.json()["skillCatalog"]["ready"])
+        self.assertEqual(15, health.json()["skillCatalog"]["skillCount"])
         self.assertEqual(response.status_code, 200, response.text)
 
     def test_preflight_and_trial_contracts(self):

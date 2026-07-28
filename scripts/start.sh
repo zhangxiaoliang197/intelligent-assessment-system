@@ -1,37 +1,45 @@
 #!/bin/bash
+set -euo pipefail
 
-echo "========================================"
-echo "智能评估系统 - 启动脚本"
-echo "========================================"
-echo ""
-
-PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
-echo "正在启动所有服务..."
-docker-compose up -d
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE=(docker-compose)
+else
+    echo "ERROR: 未找到 docker compose 或 docker-compose"
+    exit 1
+fi
 
-echo ""
-echo "等待服务启动..."
-sleep 10
+echo "========================================"
+echo "智能评估系统 - 以当前镜像重建服务"
+echo "========================================"
 
-echo ""
-echo "========================================"
-echo "服务状态："
-echo "========================================"
-docker-compose ps
+"${COMPOSE[@]}" up -d --force-recreate
 
-echo ""
-echo "========================================"
-echo "访问地址："
-echo "========================================"
-echo "前端界面: http://localhost:3000"
-echo "API网关:  http://localhost:8080"
-echo "知识库服务: http://localhost:8001"
-echo "智能问答服务: http://localhost:8002"
-echo "指标分析服务: http://localhost:8003"
-echo "评估分析服务: http://localhost:8004"
-echo "本体模型服务: http://localhost:8005"
-echo "基础管理服务: http://localhost:8081"
-echo "Neo4j图数据库: http://localhost:7474"
-echo "========================================"
+QA_READY=0
+for i in $(seq 1 60); do
+    if curl -fsS http://127.0.0.1:10253/health >/dev/null 2>&1; then
+        QA_READY=1
+        break
+    fi
+    sleep 1
+done
+if [[ "$QA_READY" -ne 1 ]]; then
+    echo "ERROR: QA 服务未通过健康检查"
+    docker logs --tail 100 assessment-qa
+    exit 1
+fi
+
+SKILL_RESPONSE="$(curl -fsS http://127.0.0.1:10253/evaluation/skills)"
+if ! echo "$SKILL_RESPONSE" | grep -Eq '"builtInTotal"[[:space:]]*:[[:space:]]*15'; then
+    echo "ERROR: Skill 目录接口未返回 15 个内置 Skill"
+    echo "$SKILL_RESPONSE"
+    exit 1
+fi
+
+echo "Skill 目录校验通过: 15 个内置 Skill"
+"${COMPOSE[@]}" ps
+echo "访问地址: http://localhost:10086"

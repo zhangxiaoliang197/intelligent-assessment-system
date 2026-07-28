@@ -36,6 +36,9 @@ build_image "knowledge" "knowledge"
 save_image "knowledge"
 
 build_image "qa" "qa"
+echo "[校验] assessment-qa:latest 内置 Skill 目录 ..."
+docker run --rm --entrypoint python assessment-qa:latest \
+    -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 15; print('Skill catalog OK:', len(catalog['skills']))"
 save_image "qa"
 
 build_image "indicator" "indicator"

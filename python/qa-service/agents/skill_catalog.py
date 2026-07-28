@@ -47,11 +47,14 @@ logger = logging.getLogger("evaluation.skill_catalog")
 _custom_catalog_warning = ""
 
 
+_CATALOG_ENV_VAR = "EVALUATION_SKILL_CATALOG_PATH"
 _CATALOG_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "config",
     "skills.json",
 )
+
+
 class SkillCatalogError(ValueError):
     """Raised when a Skill catalog or Skill definition is malformed."""
 
@@ -284,13 +287,40 @@ def _validate_skill(skill: Dict[str, Any], seen_ids: set[str]) -> None:
         raise SkillCatalogError(f"Skill {skill_id} timeoutSeconds must be 30-1800")
 
 
-@lru_cache(maxsize=1)
-def _load_catalog_cached() -> Dict[str, Any]:
+def get_catalog_file() -> str:
+    """Return the configured catalog path as an absolute path.
+
+    The module-relative default works for source checkouts and the Docker
+    image. Deployments may mount the catalog elsewhere and opt in through an
+    explicit environment variable.
+    """
+
+    configured = os.getenv(_CATALOG_ENV_VAR, "").strip() or _CATALOG_FILE
+    return os.path.abspath(os.path.expanduser(configured))
+
+
+@lru_cache(maxsize=4)
+def _load_catalog_cached(catalog_file: str) -> Dict[str, Any]:
     try:
-        with open(_CATALOG_FILE, "r", encoding="utf-8") as file:
+        with open(catalog_file, "r", encoding="utf-8") as file:
             catalog = json.load(file)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise SkillCatalogError(f"Unable to load Skill catalog: {exc}") from exc
+    except FileNotFoundError as exc:
+        raise SkillCatalogError(
+            f"Skill catalog file is missing: {catalog_file}. "
+            "Rebuild or redeploy the QA image and recreate the QA container."
+        ) from exc
+    except PermissionError as exc:
+        raise SkillCatalogError(
+            f"Skill catalog file is not readable: {catalog_file}: {exc}"
+        ) from exc
+    except OSError as exc:
+        raise SkillCatalogError(
+            f"Unable to read Skill catalog {catalog_file}: {exc}"
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise SkillCatalogError(
+            f"Skill catalog is not valid JSON: {catalog_file}: {exc}"
+        ) from exc
 
     skills = catalog.get("skills")
     if not isinstance(skills, list) or not skills:
@@ -306,7 +336,28 @@ def _load_catalog_cached() -> Dict[str, Any]:
 
 def load_catalog() -> Dict[str, Any]:
     """Return a defensive copy of the validated built-in Skill catalog."""
-    return copy.deepcopy(_load_catalog_cached())
+    return copy.deepcopy(_load_catalog_cached(get_catalog_file()))
+
+
+def get_catalog_diagnostics() -> Dict[str, Any]:
+    """Return deployment-safe readiness information for health checks."""
+
+    catalog_file = get_catalog_file()
+    try:
+        catalog = _load_catalog_cached(catalog_file)
+    except SkillCatalogError as exc:
+        return {
+            "ready": False,
+            "path": catalog_file,
+            "skillCount": 0,
+            "error": str(exc),
+        }
+    return {
+        "ready": True,
+        "path": catalog_file,
+        "skillCount": len(catalog["skills"]),
+        "error": "",
+    }
 
 
 def _decorate_skill(

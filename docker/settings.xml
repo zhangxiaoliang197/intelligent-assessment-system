@@ -1,9 +1,9 @@
 <settings>
   <mirrors>
     <mirror>
-      <id>aliyun</id>
+      <id>maven-central</id>
       <mirrorOf>central</mirrorOf>
-      <url>https://maven.aliyun.com/repository/public</url>
+      <url>https://repo.maven.apache.org/maven2</url>
     </mirror>
   </mirrors>
 </settings>

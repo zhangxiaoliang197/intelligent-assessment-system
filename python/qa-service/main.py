@@ -34,6 +34,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+async def validate_required_skill_catalog():
+    """Fail fast instead of running a partially broken QA service."""
+    from agents.skill_catalog import get_catalog_diagnostics
+
+    diagnostics = get_catalog_diagnostics()
+    if not diagnostics["ready"]:
+        logger.critical("Skill 目录启动校验失败: %s", diagnostics["error"])
+        raise RuntimeError(diagnostics["error"])
+    logger.info(
+        "Skill 目录启动校验通过: path=%s, skills=%s",
+        diagnostics["path"],
+        diagnostics["skillCount"],
+    )
+
+
 # LLM 配置现在从 Java admin-service 的 MySQL 数据库中获取
 # 支持多配置管理和活跃配置切换
 ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
@@ -521,7 +538,15 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    from agents.skill_catalog import get_catalog_diagnostics
+
+    diagnostics = get_catalog_diagnostics()
+    if not diagnostics["ready"]:
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "unhealthy", "skillCatalog": diagnostics},
+        )
+    return {"status": "healthy", "skillCatalog": diagnostics}
 
 # ========== 会话管理 API ==========
 
