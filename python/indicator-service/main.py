@@ -809,9 +809,8 @@ JSON格式要求：
                 try:
                     data = json.loads(line_str)
                     if data.get("type") == "text":
-                        chunk = data.get("content", "")
-                        full_text += chunk
-                        yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
+                        # 方案B：JSON 指标体系仅后台累积，不推送给前端
+                        full_text += data.get("content", "")
                     elif data.get("type") == "error":
                         yield json.dumps({"type": "text", "content": data.get("content", "")}, ensure_ascii=False) + "\n"
                 except json.JSONDecodeError:
@@ -875,16 +874,20 @@ JSON格式要求：
             ind_brief_text = "\n".join(ind_brief_parts)
 
             summary_system_prompt = (
-                "你是一个专业的指标体系分析助手。请根据以下指标体系信息，用1-2句话生成一段简洁的结构化分析摘要。"
-                "要求包含：指标总数、主要维度构成、来源分布（admin-db/knowledge/llm各多少）、核心指标。"
-                "语言简洁、信息完整、不重复。"
+                "你是一个专业的指标体系分析助手。请根据以下指标体系信息，用自然语言向用户详细汇报分析结论。\n"
+                "要求：\n"
+                "1. 用3-5段话详细说明分析结果，语言专业但易懂\n"
+                "2. 包含：指标总数、主要维度构成、来源分布（admin-db/knowledge/llm各多少）\n"
+                "3. 逐个介绍核心指标的名称、定义、计算公式和评估标准\n"
+                "4. 给出整体评估建议\n"
+                "5. 不要输出JSON或任何结构化格式，只输出自然语言\n"
                 f"\n\n指标总数：{len(indicators)}\n\n指标详情：\n{ind_brief_text}"
             )
 
             yield json.dumps({
                 "type": "step",
-                "step": {"step": 2, "description": "生成分析摘要", "status": "in_progress",
-                         "detail": "正在调用大模型生成指标体系分析摘要...", "phase": "indicator_gen"}
+                "step": {"step": 2, "description": "生成分析结论", "status": "in_progress",
+                         "detail": "正在调用大模型生成分析结论...", "phase": "indicator_gen"}
             }, ensure_ascii=False) + "\n"
 
             try:
@@ -905,8 +908,8 @@ JSON格式要求：
 
                 yield json.dumps({
                     "type": "step",
-                    "step": {"step": 2, "description": "生成分析摘要", "status": "completed",
-                             "detail": f"分析摘要已生成 (共 {len(summary_text_buf)} 字符)", "phase": "indicator_gen"}
+                    "step": {"step": 2, "description": "生成分析结论", "status": "completed",
+                             "detail": f"分析结论已生成 (共 {len(summary_text_buf)} 字符)", "phase": "indicator_gen"}
                 }, ensure_ascii=False) + "\n"
 
                 summary = summary_text_buf
@@ -915,8 +918,8 @@ JSON格式要求：
                 logger.warning(f"Second LLM summary call failed: {e}")
                 yield json.dumps({
                     "type": "step",
-                    "step": {"step": 2, "description": "生成分析摘要", "status": "error",
-                             "detail": f"生成摘要失败: {str(e)[:80]}", "phase": "indicator_gen"}
+                    "step": {"step": 2, "description": "生成分析结论", "status": "error",
+                             "detail": f"生成结论失败: {str(e)[:80]}", "phase": "indicator_gen"}
                 }, ensure_ascii=False) + "\n"
 
         # ── 追加追问文本（独立消息）──

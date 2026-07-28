@@ -116,8 +116,7 @@
 
                     <!-- AI消息 -->
                     <div v-else class="ai-response">
-                      <!-- 文本回答 -->
-                      <div v-if="msg.content" class="message-text">{{ msg.content }}</div>
+                      <!-- loading 提示（step1 阶段，指标卡片到达前显示） -->
                       <div v-if="msg.querying && !msg.rawResults && (!msg.indicators || msg.indicators.length === 0)" class="message-loading">分析中...</div>
 
                       <!-- 指标树状结构 -->
@@ -166,6 +165,9 @@
                           </div>
                         </div>
                       </div>
+
+                      <!-- 文本回答（流式分析结论，在指标树和卡片之后显示） -->
+                      <div v-if="msg.content" class="message-text">{{ msg.content }}</div>
 
                       <!-- 参考来源 -->
                       <div v-if="msg.references && msg.references.length > 0" class="references-section">
