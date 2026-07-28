@@ -73,6 +73,7 @@ _build_docker.ps1
 
 # Personal dev docs (don't commit)
 CLAUDE.md
+CLAUDE.local.md
 
 # Runtime data files (don't commit)
 **/data/sessions.json
