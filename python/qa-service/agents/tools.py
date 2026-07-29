@@ -156,7 +156,8 @@ def fetch_database_config(db_id: str) -> dict:
 
 
 def fetch_database_tables(
-    db_id: str, include_columns: bool = False, strict: bool = False
+    db_id: str, include_columns: bool = False, strict: bool = False,
+    with_comments: bool = False
 ) -> list:
     """获取指定数据库中的所有表名。
 
@@ -168,9 +169,16 @@ def fetch_database_tables(
 
     Args:
         db_id: 数据库配置 ID
+        include_columns: 是否在结果中包含每张表的列信息（默认 False）
+        strict: 为 True 时调用失败抛异常而非返回空列表（默认 False）
+        with_comments: 为 True 时返回 list[dict]（含 tableName/tableComment/
+            schemaName/catalogName），而非 list[str]。用于表选择阶段利用
+            表注释提升中文问题的匹配准确率。默认 False 以保持向后兼容。
 
     Returns:
-        表名字符串列表，如 ["t_combat_record", "t_equipment", "t_mission"]。
+        include_columns=True: list[dict]，每张表含完整列信息
+        with_comments=True（且 include_columns=False）: list[dict]，含表名和注释
+        默认: 表名字符串列表，如 ["t_combat_record", "t_equipment", "t_mission"]
         调用失败或数据库无表时返回空列表 []。
     """
     query = "?includeColumns=true" if include_columns else ""
@@ -185,6 +193,16 @@ def fetch_database_tables(
             for table in tables:
                 table.update(profile)
             return tables
+        if with_comments:
+            return [
+                {
+                    "tableName": t.get("tableName", ""),
+                    "tableComment": t.get("tableComment", ""),
+                    "schemaName": t.get("schemaName", ""),
+                    "catalogName": t.get("catalogName", ""),
+                }
+                for t in tables
+            ]
         return [table.get("tableName", "") for table in tables]
     if strict:
         raise RuntimeError(resp.get("message") or "无法读取数据源中的物理表")

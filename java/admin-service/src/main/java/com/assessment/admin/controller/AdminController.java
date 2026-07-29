@@ -971,6 +971,8 @@ public class AdminController {
                 table.put("tableName", tableName);
                 table.put("schemaName", schemaName);
                 table.put("catalogName", Objects.toString(rs.getString("TABLE_CAT"), ""));
+                // 读取表注释（JDBC getTables() 第5列 REMARKS），供 Python 侧表选择语义匹配使用
+                table.put("tableComment", Objects.toString(rs.getString("REMARKS"), ""));
                 tables.add(table);
             }
         }
@@ -1047,7 +1049,10 @@ public class AdminController {
      */
     private void appendTablesViaSql(Connection conn, List<Map<String, Object>> tables, Set<String> seen) {
         try (Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT table_name FROM user_tables ORDER BY table_name")) {
+             ResultSet rs = stmt.executeQuery(
+                     "SELECT t.table_name, COALESCE(c.comments, '') AS table_comment " +
+                     "FROM user_tables t LEFT JOIN user_tab_comments c " +
+                     "ON t.table_name = c.table_name ORDER BY t.table_name")) {
             while (rs.next()) {
                 String tableName = rs.getString(1);
                 if (tableName == null || tableName.isBlank() || !seen.add(tableName.toLowerCase(Locale.ROOT))) {
@@ -1057,6 +1062,7 @@ public class AdminController {
                 table.put("tableName", tableName);
                 table.put("schemaName", "");
                 table.put("catalogName", "");
+                table.put("tableComment", Objects.toString(rs.getString(2), ""));
                 tables.add(table);
             }
         } catch (SQLException e) {
@@ -1073,6 +1079,7 @@ public class AdminController {
                     table.put("tableName", tableName);
                     table.put("schemaName", "");
                     table.put("catalogName", "");
+                    table.put("tableComment", "");
                     tables.add(table);
                 }
             } catch (SQLException e2) {

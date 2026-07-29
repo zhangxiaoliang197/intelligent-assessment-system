@@ -10,6 +10,7 @@
 * 在最后产出 ``{"_return": (data, ...)}``，以便编排器获取返回值。
 """
 import asyncio
+import json
 import logging
 import os
 import re
@@ -42,76 +43,148 @@ _DB_TIMEOUT = 8
 # 共享辅助函数
 # =========================================================================
 
-def _pick_relevant_tables(all_tables, analysis_plan, question, max_tables=5):
-    """基于启发式关键词打分的表选择器。"""
+def _normalize_name(name: str) -> str:
+    """名称归一化：去空格、标点、转小写，便于中文/英文混合匹配。
+
+    消除全半角括号、引号、连接符等差异，例如 "作战 效能（综合）" → "作战效能综合"。
+    与 indicator-service/main.py 中的 _normalize_name 保持一致。
+    """
+    if not name:
+        return ""
+    return re.sub(r'[\s\u3000（）()【】\[\]《》<>「」“”‘’\-_·、，。！？：；]+', '', name).lower()
+
+
+def _char_bigrams(text: str) -> set:
+    """对中文友好的 2-gram 分词：返回字符串的二元字符集合。
+
+    与 indicator-service/main.py 中的 _char_bigrams 保持一致，
+    不引入 jieba 依赖。
+    """
+    if not text or len(text) < 2:
+        return set()
+    return {text[i:i + 2] for i in range(len(text) - 1)}
+
+
+def _jaccard(set_a: set, set_b: set) -> float:
+    """计算两个集合的 Jaccard 相似度。"""
+    if not set_a or not set_b:
+        return 0.0
+    inter = len(set_a & set_b)
+    union = len(set_a | set_b)
+    return inter / union if union > 0 else 0.0
+
+
+def _extract_table_info(t):
+    """从 all_tables 元素中提取 (表名, 表注释) 二元组。
+
+    兼容 list[str] 和 list[dict] 两种输入格式：
+    - str: 直接作为表名，注释为空
+    - dict: 取 tableName 字段，tableComment 字段可能存在
+    """
+    if isinstance(t, dict):
+        return t.get("tableName", ""), t.get("tableComment", "")
+    return str(t), ""
+
+
+def _pick_relevant_tables(all_tables, analysis_plan, question, max_tables=12):
+    """基于启发式关键词打分 + 2-gram 语义匹配的表选择器。
+
+    兼容 list[str] 和 list[dict]（含 tableComment）两种输入。
+    使用动态阈值替代硬截断：取得分 > 0 的表，按得分降序排列，
+    上限 max_tables（默认 12），同分优先非系统表。
+    """
     import re as _re
     if not all_tables:
         return []
-    if len(all_tables) <= max_tables:
-        return all_tables
 
-    _CN_EN_MAP = {
-        "存活": ["survival", "surviving", "unit_survival"],
-        "生存": ["survival", "surviving", "unit_survival"],
-        "命中": ["hit", "combat_result"],
-        "射击": ["shot", "combat_result"],
-        "突防": ["penetration", "breach", "penetration_record"],
-        "战损": ["loss", "combat_loss"],
-        "损耗": ["loss", "combat_loss", "resource_consume"],
-        "补给": ["resource", "consume", "supply", "resource_consume"],
-        "维护": ["maintenance", "repair"],
-        "防护": ["protection", "protection_capability"],
-        "任务": ["mission", "mission_record"],
-        "达成": ["mission", "success", "mission_record"],
-        "时效": ["timing", "mission_timing"],
-        "耗时": ["timing", "mission_timing"],
-    }
+    # ── 统一转换为 (name, comment) 列表，同时保留原始引用 ──
+    table_infos = []
+    for t in all_tables:
+        name, comment = _extract_table_info(t)
+        if name:
+            table_infos.append((name, comment, t))
 
-    scores = {t: 0 for t in all_tables}
+    if len(table_infos) <= max_tables:
+        # 表数量未超上限，直接返回全部表名
+        return [name for name, _, _ in table_infos]
+
+    scores = {name: 0 for name, _, _ in table_infos}
     plan_lower = (analysis_plan or '').lower()
-    for t in all_tables:
-        if t.lower() in plan_lower:
-            scores[t] += 100
+    question_norm = _normalize_name(question or '')
+    question_bigrams = _char_bigrams(question_norm)
+    plan_norm = _normalize_name(analysis_plan or '')
+    plan_bigrams = _char_bigrams(plan_norm)
 
-    search_text = f"{question} {analysis_plan}".lower()
-    for cn, en_list in _CN_EN_MAP.items():
-        if cn in search_text:
-            for en in en_list:
-                for t in all_tables:
-                    if en in t.lower():
-                        scores[t] += 30
+    for name, comment, _ in table_infos:
+        name_lower = name.lower()
+        name_norm = _normalize_name(name)
+        name_bigrams = _char_bigrams(name_norm)
+        comment_lower = (comment or '').lower()
+        comment_norm = _normalize_name(comment)
+        comment_bigrams = _char_bigrams(comment_norm)
 
-    for t in all_tables:
-        keywords = set(t.lower().replace('_', ' ').split())
-        base_name = t.lower()
+        # 去掉常见表前缀后得到"业务名"
+        base_name = name_lower
         for prefix in ['ass_', 'test_', 'sys_', 'tbl_']:
             if base_name.startswith(prefix):
                 base_name = base_name[len(prefix):]
                 break
-        for word in question.lower().split():
-            word = word.strip(',.?!()')
-            if len(word) >= 2 and (word in keywords or word in base_name):
-                scores[t] += 20
-        for word in plan_lower.split():
-            word = word.strip(',.?!()')
-            if len(word) >= 2 and (word in keywords or word in base_name):
-                scores[t] += 10
 
+        # ── 策略 1：表名出现在分析计划原文中 → +100 ──
+        if name_lower in plan_lower:
+            scores[name] += 100
+
+        # ── 策略 2：表名 bigram 与问题 bigram Jaccard ≥ 0.3 → 加分 ──
+        if question_bigrams and name_bigrams:
+            sim = _jaccard(question_bigrams, name_bigrams)
+            if sim >= 0.3:
+                scores[name] += int(sim * 30)
+
+        # ── 策略 3：表名 bigram 与分析计划 bigram Jaccard ≥ 0.3 → 加分 ──
+        if plan_bigrams and name_bigrams:
+            sim = _jaccard(plan_bigrams, name_bigrams)
+            if sim >= 0.3:
+                scores[name] += int(sim * 15)
+
+        # ── 策略 4：表注释中包含问题 bigram → +15/词 ──
+        if comment_bigrams and question_bigrams:
+            overlap = comment_bigrams & question_bigrams
+            scores[name] += len(overlap) * 15
+
+        # ── 策略 5：表注释 bigram 与问题 bigram Jaccard ≥ 0.3 → 加分 ──
+        if question_bigrams and comment_bigrams:
+            sim = _jaccard(question_bigrams, comment_bigrams)
+            if sim >= 0.3:
+                scores[name] += int(sim * 20)
+
+        # ── 策略 6：分析计划中"表 xxx"格式 → +200 ──
+        # （在下方统一处理）
+
+    # ── 策略 6：分析计划中的"表 xxx"或"TABLE xxx"格式 → +200 ──
     table_pattern = _re.findall(
-        r'(?:table\s*|TABLE\s+)([a-zA-Z_][a-zA-Z0-9_]*)',
+        r'(?:table\s*|TABLE\s+|表\s*)([a-zA-Z_][a-zA-Z0-9_]*)',
         analysis_plan or '', _re.IGNORECASE
     )
     for match in table_pattern:
-        for t in all_tables:
-            if t.lower() == match.lower():
-                scores[t] += 200
+        for name, _, _ in table_infos:
+            if name.lower() == match.lower():
+                scores[name] += 200
 
-    sorted_tables = sorted(scores.items(), key=lambda x: -x[1])
-    top = [t for t, s in sorted_tables if s > 0]
+    # ── 排序：按得分降序，同分时非系统表优先 ──
+    def _sort_key(item):
+        name, score = item
+        is_sys = name.lower().startswith(('ass_', 'sys_', 'test_', 'tbl_'))
+        return (-score, 1 if is_sys else 0, name.lower())
+
+    sorted_tables = sorted(scores.items(), key=_sort_key)
+    top = [name for name, s in sorted_tables if s > 0]
+
     if not top:
-        non_sys = [t for t in all_tables
-                   if not t.startswith('ass_') and not t.startswith('sys_')]
-        top = non_sys[:max_tables] if non_sys else all_tables[:max_tables]
+        # 完全无匹配 → fallback：取非系统表前 max_tables 张
+        non_sys = [name for name, _, _ in table_infos
+                   if not name.lower().startswith(('ass_', 'sys_', 'test_', 'tbl_'))]
+        top = non_sys[:max_tables] if non_sys else [name for name, _, _ in table_infos[:max_tables]]
+
     return top[:max_tables]
 
 
@@ -146,7 +219,7 @@ class Step:
 # =========================================================================
 
 async def data_explore_node(database_id):
-    """从目标数据库获取表列表。"""
+    """从目标数据库获取表列表（含表注释，用于后续表选择的语义匹配）。"""
     yield {"type": "step", "step": _build_step(
         Step.DATA_EXPLORE, "Data Explore", "in_progress",
         detail="Fetching table list...", progress=50)}
@@ -156,7 +229,8 @@ async def data_explore_node(database_id):
     try:
         loop = asyncio.get_event_loop()
         all_tables = await asyncio.wait_for(
-            loop.run_in_executor(None, fetch_database_tables, database_id),
+            loop.run_in_executor(
+                None, fetch_database_tables, database_id, False, False, True),
             timeout=_DB_TIMEOUT)
         db_connected = bool(all_tables)
     except asyncio.TimeoutError:
@@ -164,11 +238,13 @@ async def data_explore_node(database_id):
     except Exception as e:
         logger.warning(f"获取表列表失败: {e}")
 
+    # all_tables 为 list[dict]（含 tableName/tableComment），显示时提取表名
+    table_names = [_extract_table_info(t)[0] for t in all_tables]
     yield {"type": "step", "step": _build_step(
         Step.DATA_EXPLORE, "Data Explore", "completed",
         detail=f"找到 {len(all_tables)} 张数据表",
         thinking="数据库可用表清单：\n" +
-                 "\n".join(f"  • {t}" for t in all_tables[:20])
+                 "\n".join(f"  • {tn}" for tn in table_names[:20])
                  + ("\n  ..." if len(all_tables) > 20 else ""),
         progress=100)}
     yield {"_return": (all_tables, db_connected)}
@@ -235,10 +311,13 @@ async def table_select_node(all_tables, datasets_found, analysis_plan, question,
 
     relevant = _pick_relevant_tables(
         all_tables, analysis_plan, question, max_tables=8)
+    # all_tables 可能是 list[dict]（含 tableName/tableComment），
+    # 需从中提取表名与 dataset_table_map（key 为表名字符串）比较
     for t in list(all_tables):
-        if t in dataset_table_map and t not in relevant:
+        tname = _extract_table_info(t)[0]
+        if tname in dataset_table_map and tname not in relevant:
             if len(relevant) < 6:
-                relevant.append(t)
+                relevant.append(tname)
 
     n = len(relevant)
     logger.info(f"[table_select] 从{len(all_tables)}张表中选出了{n}张: {relevant}")
@@ -308,12 +387,99 @@ async def table_select_node(all_tables, datasets_found, analysis_plan, question,
 
 
 # =========================================================================
-# 阶段 3.5 – 字段提示（纯数据转换）
+# 阶段 3.5 – 字段提示（纯数据转换 + LLM 语义兜底）
 # =========================================================================
 
-def build_field_hints(schemas, merged_indicators):
-    """为每个指标附加列映射提示，以便生成更准确的 SQL 提示词。"""
+
+async def _llm_match_formula_words(formula_words, schemas, llm_call_fn):
+    """用 LLM 批量判断公式词对应哪些列。失败返回空 dict。
+
+    作为 build_field_hints 的第 4 级兜底：当本地三级匹配
+    (admin fieldMapping / bigram Jaccard / 精确匹配) 全部未命中时，
+    一次 LLM 调用批量判断所有未命中公式词对应哪些列。
+    """
+    if not formula_words or not llm_call_fn:
+        return {}
+
+    # 构建列清单 + comment 反查表
+    col_lines = []
+    col_lookup = {}  # (table, column) -> comment，用于回填注释
+    for s in schemas:
+        tname = s.get("tableName", "")
+        for col in s.get("columns", []):
+            cname = col.get("columnName", "")
+            comment = (col.get("comment", "")
+                       or col.get("businessMeaning", "") or "")
+            col_lines.append(f"- {tname}.{cname} ({comment})")
+            col_lookup[(tname, cname)] = comment[:60]
+
+    if not col_lines:
+        return {}
+
+    system_prompt = (
+        "你是数据库字段映射专家。给定指标公式中的概念词和数据库列清单，"
+        "判断每个概念词最可能对应哪些列。\n"
+        "只返回严格的 JSON，格式：\n"
+        '{"概念词": [{"table":"表名","column":"列名"}, ...]}\n'
+        "规则：\n"
+        "1. 每个概念词最多返回2个最相关的列\n"
+        "2. 找不到对应列则返回空数组 []\n"
+        "3. 只返回 JSON，不要任何其他文字，不要 markdown 代码块"
+    )
+    user_message = (
+        f"概念词列表：\n{chr(10).join(formula_words)}\n\n"
+        f"数据库列清单：\n{chr(10).join(col_lines)}"
+    )
+
+    try:
+        response = await llm_call_fn(system_prompt, user_message)
+        logger.info(f"[build_field_hints] LLM批量匹配 {len(formula_words)} 个公式词，"
+                    f"响应 {len(response)} 字符")
+    except Exception as e:
+        logger.warning(f"[build_field_hints] LLM 调用失败，降级: {e}")
+        return {}
+
+    # 解析 JSON（容错：剥离 markdown 代码块和前后说明）
+    json_match = re.search(r'\{.*\}', response, re.DOTALL)
+    if not json_match:
+        logger.warning("[build_field_hints] LLM 响应未找到 JSON")
+        return {}
+    try:
+        result = json.loads(json_match.group())
+    except json.JSONDecodeError as e:
+        logger.warning(f"[build_field_hints] LLM JSON 解析失败: {e}")
+        return {}
+
+    # 转换格式 + 回填 comment
+    matches = {}
+    for word, cols in result.items():
+        col_list = []
+        for c in (cols if isinstance(cols, list) else [])[:2]:
+            t = c.get("table", "") if isinstance(c, dict) else ""
+            col = c.get("column", "") if isinstance(c, dict) else ""
+            if t and col:
+                cmt = col_lookup.get((t, col), "")
+                col_list.append((t, col, cmt))
+        if col_list:
+            matches[word] = col_list
+    logger.info(f"[build_field_hints] LLM 返回 {len(matches)} 个公式词的映射")
+    return matches
+
+
+async def build_field_hints(schemas, merged_indicators, llm_call_fn=None):
+    """为每个指标附加列映射提示，以便生成更准确的 SQL 提示词。
+
+    优先级：
+    1. admin 已配置的 fieldMapping（JSON 字符串，格式 {"中文计算项": "表名.字段名"}）
+       — 用户在管理后台预先配置的权威映射，标注 [admin配置]
+    2. bigram Jaccard 模糊匹配 — 公式词与列名/列注释的 2-gram 语义相似度
+    3. 精确命中列索引 — 公式词直接匹配列名关键词
+    4. LLM 语义匹配 — 上述三级全部未命中时，批量调 LLM 判断公式词对应列（兜底）
+    """
+    # ── 构建列索引：(关键词) → [(表名, 列名, 注释), ...] ──
     col_index = {}
+    # 同时构建 bigram 索引：(列名+注释的 bigram) → [(表名, 列名, 注释), ...]
+    col_bigram_index = []
     for s in schemas:
         tname = s.get("tableName", "")
         for col in s.get("columns", []):
@@ -328,70 +494,90 @@ def build_field_hints(schemas, merged_indicators):
                 if len(kw) >= 2:
                     col_index.setdefault(kw, []).append(
                         (tname, cname, comment[:60]))
+            # 构建 bigram 索引条目
+            col_text = _normalize_name(f"{cname} {comment}")
+            col_bigrams = _char_bigrams(col_text)
+            if col_bigrams:
+                col_bigram_index.append((col_bigrams, tname, cname, comment[:60]))
 
-    # 中英对照映射：中文公式词 → 可能的英文列名关键词
-    _CN2EN_MAP = {
-        # combat_result 相关
-        "命中次数": ["hit", "hit_count", "hits"],
-        "射击次数": ["fire", "fire_count", "shot", "shots", "fire_times"],
-        "摧毁数": ["destroy", "destroy_count", "killed"],
-        "命中数": ["hit", "hit_count"],
-        "突防次数": ["penetration", "penetration_count", "breach"],
-        "总突防次数": ["penetration", "penetration_count", "total_penetration"],
-        "成功突防次数": ["penetration", "penetration_success"],
-        # mission_record 相关
-        "总任务数": ["total_mission", "mission_count", "total_task"],
-        "完成任务数": ["completed_mission", "mission_completed", "task_done"],
-        "按时完成任务数": ["ontime_mission", "ontime_complete", "timely_completed"],
-        "逾期任务数": ["overdue", "overdue_mission", "delayed"],
-        "任务总耗时": ["duration", "total_duration", "elapsed"],
-        "计划耗时": ["planned_duration", "planned_time", "plan_duration"],
-        # resource_consume 相关
-        "资源消耗量": ["consumed", "consumption", "resource_used"],
-        "资源总量": ["total", "total_resource", "budget"],
-        "实际消耗": ["consumed", "actual_consumption", "actual_used"],
-        "补给量": ["supply", "resupply", "supplied"],
-        # 通用
-        "总数量": ["total", "total_count", "count"],
-        "成功数": ["success", "success_count", "succeeded"],
-        "失败数": ["fail", "failure", "fail_count", "failed"],
-        "合格数": ["qualified", "pass", "pass_count", "eligible"],
-        "返工数": ["rework", "rework_count"],
-        "用时": ["duration", "time", "elapsed", "cost_time"],
-        "得分": ["score", "grade", "mark"],
-    }
-
-    enhanced = []
+    # ── 第一遍：本地三级匹配，收集未命中公式词 ──
+    pending_llm_words = set()       # 跨指标去重的未命中公式词
+    per_ind_local = []              # [(e, hints, unmatched), ...]
     for ind in merged_indicators:
         e = dict(ind)
-        formula = ind.get("formula", "")
+
+        # ── 存储 calculationMethod 供下游 prompt 使用 ──
+        calc_method = ind.get("calculationMethod") or ""
+        if calc_method:
+            e["_calc_method"] = calc_method[:500]
+
         hints = []
-        formula_words = re.findall(r'[一-龥a-zA-Z_]{2,}', formula)
-        for fw in formula_words[:10]:
-            # 1) 直接匹配列索引
-            matches = col_index.get(fw.lower(), [])
-            # 2) 中英映射兜底
-            if not matches:
-                en_keywords = _CN2EN_MAP.get(fw, [])
-                for ekw in en_keywords:
-                    matches = col_index.get(ekw.lower(), [])
-                    if matches:
-                        break
-            # 3) 部分匹配：英文关键词模糊匹配列名
-            if not matches:
-                en_keywords = _CN2EN_MAP.get(fw, [])
-                for ekw in en_keywords:
-                    for idx_key, idx_vals in col_index.items():
-                        if ekw in idx_key or idx_key in ekw:
-                            matches.extend(idx_vals)
-                    if matches:
-                        break
-            if matches:
-                for tname, cname, ccomment in matches[:2]:
-                    hint = f"'{fw}' -> {tname}.{cname}"
-                    if ccomment:
-                        hint += f" ({ccomment})"
-                    hints.append(hint)
+
+        # ── 优先级 1：admin 已配置的 fieldMapping（JSON 字符串）──
+        field_mapping_str = ind.get("fieldMapping") or ""
+        if field_mapping_str and field_mapping_str.strip() not in ("", "{}"):
+            try:
+                mapping = json.loads(field_mapping_str) if isinstance(field_mapping_str, str) else field_mapping_str
+                if isinstance(mapping, dict):
+                    for cn_term, col_path in mapping.items():
+                        col_path_str = str(col_path) if col_path else ""
+                        if "." in col_path_str:
+                            fm_tname, fm_cname = col_path_str.split(".", 1)
+                        else:
+                            fm_tname, fm_cname = "(见表)", col_path_str
+                        hints.append(f"'{cn_term}' -> {fm_tname}.{fm_cname} [admin配置]")
+            except (json.JSONDecodeError, ValueError, TypeError) as ex:
+                logger.warning(f"指标 {ind.get('name', '')} fieldMapping 解析失败: {ex}")
+
+        # ── 优先级 2 & 3：bigram 模糊匹配 + 精确命中（仅当无 admin 配置时）──
+        unmatched = []
+        if not hints:
+            formula = ind.get("formula", "")
+            formula_words = re.findall(r'[一-龥a-zA-Z_]{2,}', formula)
+            for fw in formula_words[:10]:
+                # 优先：精确命中列索引
+                matches = col_index.get(fw.lower(), [])
+
+                # 兜底：bigram Jaccard 模糊匹配
+                if not matches:
+                    fw_bigrams = _char_bigrams(_normalize_name(fw))
+                    if fw_bigrams:
+                        scored = []
+                        for col_bg, tname, cname, ccomment in col_bigram_index:
+                            sim = _jaccard(fw_bigrams, col_bg)
+                            if sim >= 0.3:
+                                scored.append((sim, tname, cname, ccomment))
+                        # 按相似度降序取 top-2
+                        scored.sort(key=lambda x: -x[0])
+                        matches = [(t, c, cm) for _, t, c, cm in scored[:2]]
+
+                if matches:
+                    for tname, cname, ccomment in matches[:2]:
+                        hint = f"'{fw}' -> {tname}.{cname}"
+                        if ccomment:
+                            hint += f" ({ccomment})"
+                        hints.append(hint)
+                else:
+                    unmatched.append(fw)  # 三级本地全未命中 → 待 LLM 处理
+
+        per_ind_local.append((e, hints, unmatched))
+        pending_llm_words.update(unmatched)
+
+    # ── 优先级 4：LLM 批量语义匹配（兜底）──
+    llm_result = {}
+    if pending_llm_words:
+        llm_result = await _llm_match_formula_words(
+            list(pending_llm_words), schemas, llm_call_fn)
+
+    # ── 第二遍：回填 LLM 结果 + 组装最终 hints ──
+    enhanced = []
+    for e, hints, unmatched in per_ind_local:
+        for fw in unmatched:
+            for tname, cname, ccomment in llm_result.get(fw, [])[:2]:
+                hint = f"'{fw}' -> {tname}.{cname}"
+                if ccomment:
+                    hint += f" ({ccomment})"
+                hints.append(hint)
         if hints:
             e["_field_hints"] = "; ".join(hints[:5])
         enhanced.append(e)
@@ -779,8 +965,8 @@ async def run_indicator_query(question, database_id, database_name,
         else:
             yield ev
 
-    # ── 纯数据转换：字段提示 ────────────────────────────────────────────
-    enhanced_indicators = build_field_hints(schemas, merged)
+    # ── 字段提示（本地三级匹配 + LLM 语义兜底）────────────────────────────
+    enhanced_indicators = await build_field_hints(schemas, merged, llm_call_fn)
 
     # ── 步骤 5: 生成 SQL ───────────────────────────────────────────
     es = gen_ok = None

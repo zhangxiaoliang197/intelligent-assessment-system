@@ -214,49 +214,50 @@ def call_llm_for_indicator_analysis(query: str, context: str = "") -> dict:
         if context:
             ctx = f"\n\n历史对话上下文:\n{context}"
 
-        prompt = f"""请分析以下指标需求，并返回结构化的JSON数据：
+        # 拉取实际证据，来源标签由代码层标注（与流式主流程一致）
+        admin_indicators = _fetch_admin_indicators()
+        kb_results = _fetch_kb_results(query, top_k=5)
+        db_indicators_text = _build_admin_indicators_text(admin_indicators)
+        kb_text = _build_kb_text(kb_results)
+
+        prompt = f"""请分析以下指标需求，并返回结构化的 JSON 数据：
 
 需求：{query}{ctx}
+{db_indicators_text}
+{kb_text}
 
-请按照以下JSON格式返回分析结果（必须是可以被json.loads解析的JSON格式）：
+请按照以下 JSON 格式返回分析结果（必须是可以被 json.loads 解析的 JSON 格式）：
 {{
     "tree": {{
-        "name": "根节点名称，如：作战效能指标体系",
-        "source": "knowledge 或 llm",
+        "name": "根节点名称",
         "children": [
-            {{
-                "name": "一级指标名称",
-                "source": "knowledge 或 llm",
-                "children": [
-                    {{"name": "二级指标名称", "source": "knowledge 或 llm"}}
-                ]
-            }}
+            {{"name": "子节点名称", "children": [...]}}
         ]
     }},
     "indicators": [
-        {{
-            "name": "指标名称",
-            "type": "knowledge 或 llm",
-            "definition": "指标定义",
-            "formula": "计算公式",
-            "criteria": "评估标准",
-            "weight": "权重值"
-        }}
+        {{"name": "指标名称", "definition": "指标定义", "formula": "计算公式", "criteria": "评估标准", "weight": "权重值"}}
     ],
     "summary": "分析总结说明"
 }}
 
 要求：
-1. tree.children最多3层结构
-2. indicators至少包含5个指标
-3. 每个指标必须包含name, definition, formula
-4. 只返回JSON数据，不要其他说明文字
+1. tree.children 最多 3 层结构
+2. indicators 至少包含 5 个指标
+3. 每个指标必须包含 name, definition, formula
+4. 不要在 JSON 中输出 type 或 source 字段，来源标签由系统根据实际数据来源自动标注
+5. 如能复用上述已配置指标，请直接使用其原始名称（保持名称完全一致以便系统识别）
+6. 只返回 JSON 数据，不要其他说明文字
 """
 
         data = http_post(f"{QA_SERVICE_URL}/qa/chat", {"query": prompt, "top_k": 10}, timeout=120)
         if data:
             answer = data.get("answer", "")
             result = parse_structured_response(answer)
+            # 代码层标注来源（不让 LLM 自主打标）
+            result["indicators"] = _annotate_indicators(
+                result.get("indicators", []), admin_indicators, kb_results
+            )
+            result["tree"] = _annotate_tree_source(result.get("tree"), result["indicators"])
             return result
         else:
             raise Exception("LLM 返回空数据")
@@ -308,6 +309,293 @@ def parse_structured_response(answer: str) -> dict:
             "summary": "",
             "references": []
         }
+
+
+# ========== 指标来源标注（代码层根据实际证据标注，不让 LLM 自主打标） ==========
+
+# 来源优先级权重：admin-db 最高（已配置数据最权威），knowledge 次之，llm 最低
+_SOURCE_PRIORITY = {"admin-db": 3, "knowledge": 2, "llm": 1}
+
+
+def _normalize_name(name: str) -> str:
+    """名称归一化：去空格、标点、转小写，便于中文/英文混合匹配。
+
+    消除全半角括号、引号、连接符等差异，例如 "作战 效能（综合）" → "作战效能综合"。
+    """
+    if not name:
+        return ""
+    return re.sub(r'[\s\u3000（）()【】\[\]《》<>「」“”‘’\-_·、，。！？：；]+', '', name).lower()
+
+
+def _char_bigrams(text: str) -> set:
+    """对中文友好的 2-gram 分词：返回字符串的二元字符集合。
+
+    与 knowledge-service 的 TF-IDF char_wb 风格一致，不引入 jieba 依赖。
+    """
+    if not text or len(text) < 2:
+        return set()
+    return {text[i:i + 2] for i in range(len(text) - 1)}
+
+
+def _jaccard(set_a: set, set_b: set) -> float:
+    """计算两个集合的 Jaccard 相似度。"""
+    if not set_a or not set_b:
+        return 0.0
+    inter = len(set_a & set_b)
+    union = len(set_a | set_b)
+    return inter / union if union else 0.0
+
+
+def _fetch_admin_indicators() -> List[Dict]:
+    """统一从 admin-service 获取已配置指标列表，失败返回空列表。
+
+    供指标分析主流程与非流式辅助函数复用，避免重复代码。
+    """
+    try:
+        data = http_get(f"{ADMIN_SERVICE_URL}/api/admin/indicator/list", timeout=5)
+        if data and data.get("success"):
+            return data.get("indicators", [])
+    except Exception as e:
+        logger.warning(f"Failed to fetch indicators from admin: {e}")
+    return []
+
+
+def _fetch_kb_results(query: str, top_k: int = 5) -> List[Dict]:
+    """统一调用 knowledge-service 检索知识库，失败返回空列表。
+
+    与 concept_qa 路径（main.py 概念问答分支）一致，修复指标分析路径不查知识库的缺陷。
+    """
+    try:
+        data = http_post(
+            f"{KNOWLEDGE_SERVICE_URL}/knowledge/search",
+            {"query": query, "top_k": top_k},
+            timeout=30,
+        )
+        if data:
+            return data.get("results", [])
+    except Exception as e:
+        logger.warning(f"Knowledge search failed: {e}")
+    return []
+
+
+def _build_admin_indicators_text(admin_indicators: List[Dict]) -> str:
+    """构建已配置指标的 prompt 注入文本。
+
+    提示 LLM 如能复用已配置指标请保持名称完全一致，以便代码层按名称匹配标 admin-db 来源。
+    """
+    if not admin_indicators:
+        return ""
+    text = "\n## 系统中已配置的指标（来自数据库，可直接复用其名称、定义、公式）:\n"
+    for ind in admin_indicators:
+        parts = [f"- {ind.get('name', '')}"]
+        if ind.get("category"):
+            parts.append(f"分类: {ind['category']}")
+        if ind.get("formula"):
+            parts.append(f"公式: {ind['formula']}")
+        if ind.get("description"):
+            parts.append(f"描述: {ind['description']}")
+        if ind.get("weight") is not None:
+            parts.append(f"权重: {ind['weight']}")
+        text += ", ".join(parts) + "\n"
+    text += "\n如能复用上述已配置指标，请直接使用其原始名称（保持名称完全一致以便系统识别）。\n"
+    return text
+
+
+def _build_kb_text(kb_results: List[Dict]) -> str:
+    """构建知识库检索结果的 prompt 注入文本。"""
+    if not kb_results:
+        return ""
+    text = "\n## 知识库检索到的相关参考资料:\n"
+    for i, r in enumerate(kb_results):
+        text += f"\n[{i + 1}] {r.get('title', '未知')}\n{r.get('content', '')}\n"
+    return text
+
+
+def _match_admin_indicator(ind_name: str, admin_indicators: List[Dict]) -> Optional[Dict]:
+    """判断 LLM 生成的指标名是否对应 admin-service 中已配置指标。
+
+    匹配规则（按优先级）：
+    1. 归一化后名称完全相等
+    2. 归一化后名称包含关系（短串长度 ≥ 2，避免单字误判）
+    3. 2-gram Jaccard 重叠率 ≥ 0.6
+
+    Returns:
+        匹配到的 admin 指标 dict，未匹配返回 None。
+    """
+    if not ind_name or not admin_indicators:
+        return None
+    norm_target = _normalize_name(ind_name)
+    if not norm_target:
+        return None
+
+    # 规则 1：归一化后完全相等
+    for ind in admin_indicators:
+        if norm_target == _normalize_name(ind.get("name", "")):
+            return ind
+
+    # 规则 2：包含关系（短串长度 ≥ 2）
+    for ind in admin_indicators:
+        norm_ind = _normalize_name(ind.get("name", ""))
+        if len(norm_ind) >= 2 and len(norm_target) >= 2:
+            if norm_ind in norm_target or norm_target in norm_ind:
+                return ind
+
+    # 规则 3：2-gram Jaccard ≥ 0.6
+    target_grams = _char_bigrams(norm_target)
+    if target_grams:
+        for ind in admin_indicators:
+            norm_ind = _normalize_name(ind.get("name", ""))
+            ind_grams = _char_bigrams(norm_ind)
+            if _jaccard(target_grams, ind_grams) >= 0.6:
+                return ind
+
+    return None
+
+
+def _match_kb_result(ind_name: str, ind_definition: str,
+                     kb_results: List[Dict]) -> Optional[Dict]:
+    """判断 LLM 生成的指标是否对应到知识库检索结果。
+
+    匹配规则：
+    1. 指标名（归一化后长度 ≥ 2）出现在某条知识库 chunk 的 title+content 中
+    2. definition 的 2-gram 与 chunk content 的 2-gram Jaccard ≥ 0.5
+
+    Returns:
+        匹配到的知识库 dict，未匹配返回 None。
+    """
+    if not ind_name or not kb_results:
+        return None
+    norm_name = _normalize_name(ind_name)
+    if len(norm_name) < 2:
+        return None
+
+    # 规则 1：指标名出现在知识库 chunk 文本中
+    for r in kb_results:
+        combined = _normalize_name(
+            (r.get("title", "") or "") + (r.get("content", "") or "")
+        )
+        if norm_name in combined:
+            return r
+
+    # 规则 2：definition 的 2-gram 与 content 的 2-gram Jaccard ≥ 0.5
+    def_text = (ind_definition or "").strip()
+    if def_text:
+        def_grams = _char_bigrams(_normalize_name(def_text))
+        if def_grams:
+            for r in kb_results:
+                content_grams = _char_bigrams(
+                    _normalize_name(r.get("content", "") or "")
+                )
+                if _jaccard(def_grams, content_grams) >= 0.5:
+                    return r
+
+    return None
+
+
+def _annotate_indicators(indicators: List[Dict],
+                         admin_indicators: List[Dict],
+                         kb_results: List[Dict]) -> List[Dict]:
+    """给每个 LLM 生成的指标打上正确的 type 字段。
+
+    来源判定（匹配优先级 admin-db > knowledge > llm）：
+    - admin-db: 名称匹配 admin-service 已配置指标
+    - knowledge: 内容能对应到知识库检索结果
+    - llm: 其他（LLM 自身知识推断补充）
+
+    匹配到 admin-db 时，同时合并 admin 指标的 fieldMapping / calculationMethod /
+    datasetId 字段，使下游 SQL 生成管线能直接利用已配置的字段映射和计算方法，
+    无需 LLM 自行猜测公式计算项与表字段的对应关系。
+    """
+    for ind in indicators:
+        name = ind.get("name", "")
+        definition = ind.get("definition", "")
+
+        # 优先级 1：匹配 admin-db 已配置指标
+        matched = _match_admin_indicator(name, admin_indicators)
+        if matched:
+            ind["type"] = "admin-db"
+            # 合并 admin 已配置的字段映射和计算方法（加法式扩展，向后兼容）
+            if matched.get("fieldMapping"):
+                ind["fieldMapping"] = matched["fieldMapping"]
+            if matched.get("calculationMethod"):
+                ind["calculationMethod"] = matched["calculationMethod"]
+            if matched.get("datasetId"):
+                ind["datasetId"] = matched["datasetId"]
+            continue
+        # 优先级 2：匹配知识库检索结果
+        if _match_kb_result(name, definition, kb_results):
+            ind["type"] = "knowledge"
+            continue
+        # 优先级 3：兜底为 LLM 自身知识
+        ind["type"] = "llm"
+
+    admin_cnt = sum(1 for i in indicators if i.get("type") == "admin-db")
+    kb_cnt = sum(1 for i in indicators if i.get("type") == "knowledge")
+    llm_cnt = sum(1 for i in indicators if i.get("type") == "llm")
+    logger.info(
+        f"指标来源标注完成: 共 {len(indicators)} 个, "
+        f"admin-db={admin_cnt}, knowledge={kb_cnt}, llm={llm_cnt}"
+    )
+    return indicators
+
+
+def _annotate_tree_source(tree: Optional[Dict], indicators: List[Dict]) -> Optional[Dict]:
+    """根据 indicators 的 type 反推 tree 节点的 source 字段。
+
+    叶子节点查 name->type 映射；中间/根节点取所有子节点中最高优先级来源
+    （admin-db=3 > knowledge=2 > llm=1）。若 tree 为 None 直接返回。
+    """
+    if not tree:
+        return tree
+
+    # 构建 归一化名称 -> type 映射（优先取高优先级来源）
+    name_to_type: Dict[str, str] = {}
+    for ind in indicators:
+        norm = _normalize_name(ind.get("name", ""))
+        if not norm:
+            continue
+        existing = name_to_type.get(norm)
+        new_type = ind.get("type", "llm")
+        if not existing or _SOURCE_PRIORITY.get(new_type, 0) > _SOURCE_PRIORITY.get(existing, 0):
+            name_to_type[norm] = new_type
+
+    def _annotate_node(node: Dict) -> str:
+        """递归标注节点 source，返回当前节点的来源（用于父节点聚合）。"""
+        if not isinstance(node, dict):
+            return "llm"
+        children = node.get("children")
+        # 叶子节点：查名称映射
+        if not children:
+            norm = _normalize_name(node.get("name", ""))
+            src = name_to_type.get(norm, "llm")
+            node["source"] = src
+            return src
+        # 中间/根节点：取子节点中最高优先级来源
+        child_sources = [_annotate_node(c) for c in children if isinstance(c, dict)]
+        if not child_sources:
+            # children 非空但解析后为空，按叶子处理
+            norm = _normalize_name(node.get("name", ""))
+            src = name_to_type.get(norm, "llm")
+            node["source"] = src
+            return src
+        best = max(child_sources, key=lambda s: _SOURCE_PRIORITY.get(s, 0))
+        node["source"] = best
+        return best
+
+    _annotate_node(tree)
+    return tree
+
+
+def _compute_source_distribution(indicators: List[Dict]) -> Dict[str, int]:
+    """统计来源分布，返回 {'admin-db': N, 'knowledge': M, 'llm': K}。"""
+    dist = {"admin-db": 0, "knowledge": 0, "llm": 0}
+    for ind in indicators:
+        t = ind.get("type", "llm")
+        if t in dist:
+            dist[t] += 1
+        else:
+            dist["llm"] += 1
+    return dist
 
 
 def get_default_tree() -> Dict:
@@ -696,56 +984,44 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
     context = build_context(session_id)
     ctx_str = f"\n\n历史对话上下文:\n{context}" if context else ""
 
-    # 从 admin 获取已配置的指标作为参考
-    db_indicators_text = ""
-    try:
-        db_data = http_get(f"{ADMIN_SERVICE_URL}/api/admin/indicator/list", timeout=5)
-        if db_data and db_data.get("success") and db_data.get("indicators"):
-            db_indicators_text = "\n## 系统中已配置的指标（来自数据库，可直接引用）:\n"
-            for ind in db_data["indicators"]:
-                parts = [f"- {ind['name']}"]
-                if ind.get("category"): parts.append(f"分类: {ind['category']}")
-                if ind.get("formula"): parts.append(f"公式: {ind['formula']}")
-                if ind.get("description"): parts.append(f"描述: {ind['description']}")
-                if ind.get("weight") is not None: parts.append(f"权重: {ind['weight']}")
-                db_indicators_text += ", ".join(parts) + "\n"
-            db_indicators_text += "\n上述已配置指标的数据来源标记为 \"admin-db\"。\n"
-    except Exception as e:
-        logger.warning(f"Failed to fetch indicators from admin: {e}")
+    # ── 拉取实际证据：admin-service 已配置指标 + knowledge-service 知识库检索 ──
+    # 来源标签由代码层根据这些实际证据标注，不让 LLM 自主打标
+    admin_indicators = _fetch_admin_indicators()
+    kb_results = _fetch_kb_results(request.query, top_k=5)
+    db_indicators_text = _build_admin_indicators_text(admin_indicators)
+    kb_text = _build_kb_text(kb_results)
 
-    prompt = f"""请分析以下指标需求，基于：1)系统已配置的指标数据库 2)知识库中的专业知识 3)你自身的领域知识，综合给出分析结果。
+    prompt = f"""请分析以下指标需求，并返回结构化的 JSON 数据。
 
 需求：{request.query}{ctx_str}
 {db_indicators_text}
+{kb_text}
 
 请严格按照以下格式输出：
 
 仅输出一个可以被 json.loads 解析的 JSON 对象，包含 tree、indicators、summary 三个字段。
 
-
-JSON格式要求：
+JSON 格式要求：
 {{
     "tree": {{
         "name": "根节点名称",
-        "source": "admin-db 或 knowledge 或 llm",
         "children": [{{
             "name": "子节点名称",
-            "source": "admin-db 或 knowledge 或 llm",
             "children": [...]
         }}]
     }},
     "indicators": [
-        {{"name": "指标名称", "type": "admin-db 或 knowledge 或 llm", "definition": "定义", "formula": "公式", "criteria": "标准", "weight": "权重"}}
+        {{"name": "指标名称", "definition": "定义", "formula": "公式", "criteria": "标准", "weight": "权重"}}
     ],
     "summary": "分析总结说明"
 }}
 
-来源标注规则：
-- \"admin-db\" = 来自系统已配置的指标数据库
-- \"knowledge\" = 来自知识库检索的参考资料
-- \"llm\" = 来自大模型自身知识推断补充
-
-要求：tree.children最多3层，indicators至少3个指标，每个指标须包含name/type/definition/formula，优先使用admin-db已有配置"""
+要求：
+1. tree.children 最多 3 层结构
+2. indicators 至少包含 3 个指标，每个指标必须包含 name、definition、formula
+3. 不要在 JSON 中输出 type 或 source 字段，来源标签由系统根据实际数据来源自动标注
+4. 如能复用上述已配置指标，请直接使用其原始名称（保持名称完全一致以便系统识别）
+5. 只返回 JSON 数据，不要其他说明文字"""
 
     def generate():
         full_text = ""
@@ -779,7 +1055,15 @@ JSON格式要求：
         tree = result.get("tree")
         indicators = result.get("indicators", [])
         summary = result.get("summary", result.get("answer", full_text[:200]))
-        
+
+        # ── 代码层根据实际证据标注来源（不让 LLM 自主打标）──
+        # admin-db: 名称匹配 admin-service 已配置指标
+        # knowledge: 内容对应 knowledge-service 检索结果
+        # llm: 其他
+        indicators = _annotate_indicators(indicators, admin_indicators, kb_results)
+        tree = _annotate_tree_source(tree, indicators)
+        source_dist = _compute_source_distribution(indicators)
+
         if not indicators:
             yield json.dumps({
                 "type": "error",
@@ -818,25 +1102,32 @@ JSON格式要求：
 
         # ── 第二次调用 LLM：生成结构化分析摘要并流式输出 ──
         if indicators:
-            # 构建指标简要描述文本
+            # 构建指标简要描述文本（不再拼接 type 标签，避免污染 LLM 复述）
             ind_brief_parts = []
             for ind in indicators:
                 parts = [f"- {ind.get('name', '')}"]
-                if ind.get('type'):
-                    parts.append(f"[{ind['type']}]")
                 if ind.get('formula'):
                     parts.append(f"公式: {ind['formula']}")
                 ind_brief_parts.append(" ".join(parts))
             ind_brief_text = "\n".join(ind_brief_parts)
 
+            # 由代码精确统计的来源分布（不让 LLM 自行估算）
+            dist_text = (
+                f"admin-db(已配置){source_dist['admin-db']} 个，"
+                f"knowledge(知识库){source_dist['knowledge']} 个，"
+                f"llm(AI生成){source_dist['llm']} 个"
+            )
+
             summary_system_prompt = (
-                "你是一个专业的指标体系分析助手。请根据以下指标体系信息，用自然语言向用户详细汇报分析结论。\n"
+                "你是一个专业的指标体系分析助手。请根据以下指标体系信息，用自然语言向用户简洁汇报分析结论。\n"
                 "要求：\n"
-                "1. 用3-5段话详细说明分析结果，语言专业但易懂\n"
-                "2. 包含：指标总数、主要维度构成、来源分布（admin-db/knowledge/llm各多少）\n"
-                "3. 逐个介绍核心指标的名称、定义、计算公式和评估标准\n"
-                "4. 给出整体评估建议\n"
-                "5. 不要输出JSON或任何结构化格式，只输出自然语言\n"
+                "1. 分段简要说明分析结果，语言专业但易懂\n"
+                "2. 包含：指标总数、主要维度构成\n"
+                f"3. 以下是由系统精确统计的来源分布数据，请直接引用，不要自行估算：{dist_text}\n"
+                "4. 简要列举核心指标的名称和主要评估方向，无需展开公式细节\n"
+                "5. 给出1条整体评估建议\n"
+                "6. 不要输出JSON或任何结构化格式，只输出自然语言\n"
+                "7. 总输出字数严格控制在500字以内，超出部分将被截断\n"
                 f"\n\n指标总数：{len(indicators)}\n\n指标详情：\n{ind_brief_text}"
             )
 

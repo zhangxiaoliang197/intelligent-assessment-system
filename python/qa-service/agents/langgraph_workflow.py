@@ -201,78 +201,144 @@ def _add_step(steps, step_num, description, status="pending",
     })
 
 
-def _pick_relevant_tables(all_tables, analysis_plan, question, max_tables=5):
-    """
-    从全部表名中筛选最相关的表（最多 max_tables 张），用于减少后续 LLM prompt 长度。
+def _normalize_name(name: str) -> str:
+    """名称归一化：去空格、标点、转小写，便于中文/英文混合匹配。
 
-    评分策略（多项加分叠加）：
-        1. 表名出现在 analysis_plan 原文中 → +100
-        2. 表关键字（分词后）与问题关键词重合 → +20/词
-        3. 表关键字（分词后）与分析计划关键词重合 → +10/词
-        4. analysis_plan 中出现"表 xxx"或"TABLE xxx"格式 → +200
-        5. 若无匹配 → 取非系统表（不以 ass_/sys_ 开头）的前 max_tables 张
+    与 indicator-service/main.py 中的 _normalize_name 保持一致。
+    """
+    if not name:
+        return ""
+    return re.sub(r'[\s\u3000（）()【】\[\]《》<>「」“”‘’\-_·、，。！？：；]+', '', name).lower()
+
+
+def _char_bigrams(text: str) -> set:
+    """对中文友好的 2-gram 分词：返回字符串的二元字符集合。
+
+    与 indicator-service/main.py 中的 _char_bigrams 保持一致，
+    不引入 jieba 依赖。
+    """
+    if not text or len(text) < 2:
+        return set()
+    return {text[i:i + 2] for i in range(len(text) - 1)}
+
+
+def _jaccard(set_a: set, set_b: set) -> float:
+    """计算两个集合的 Jaccard 相似度。"""
+    if not set_a or not set_b:
+        return 0.0
+    inter = len(set_a & set_b)
+    union = len(set_a | set_b)
+    return inter / union if union > 0 else 0.0
+
+
+def _extract_table_info(t):
+    """从 all_tables 元素中提取 (表名, 表注释) 二元组。
+
+    兼容 list[str] 和 list[dict] 两种输入格式：
+    - str: 直接作为表名，注释为空
+    - dict: 取 tableName 字段，tableComment 字段可能存在
+    """
+    if isinstance(t, dict):
+        return t.get("tableName", ""), t.get("tableComment", "")
+    return str(t), ""
+
+
+def _pick_relevant_tables(all_tables, analysis_plan, question, max_tables=12):
+    """
+    从全部表名中筛选最相关的表，用于减少后续 LLM prompt 长度。
+
+    兼容 list[str] 和 list[dict]（含 tableComment）两种输入。
+    使用 2-gram Jaccard 语义匹配 + 表注释打分，替代旧的空格分词。
+    动态阈值：取得分 > 0 的表，按得分降序排列，上限 max_tables（默认 12），
+    同分优先非系统表。
 
     Args:
-        all_tables:    所有表名的字符串列表
+        all_tables:    所有表名（list[str] 或 list[dict]）
         analysis_plan: orchestrator 生成的分析计划文本
         question:      用户原始问题文本
-        max_tables:    最多返回的表数量（默认 5）
+        max_tables:    最多返回的表数量（默认 12）
 
     Returns:
         排序后的表名列表（最多 max_tables 个元素）
     """
     if not all_tables:
         return []
-    if len(all_tables) <= max_tables:
-        return all_tables  # 表本身就不多，全返回
 
-    scores = {t: 0 for t in all_tables}  # 每个表的累积得分
-
-    # ── 策略 1：表名直接出现在分析计划中 → +100 ──
-    plan_lower = analysis_plan.lower()
+    # ── 统一转换为 (name, comment) 列表 ──
+    table_infos = []
     for t in all_tables:
-        if t.lower() in plan_lower:
-            scores[t] += 100
+        name, comment = _extract_table_info(t)
+        if name:
+            table_infos.append((name, comment, t))
 
-    # ── 策略 2+3：关键词匹配（问题 + 分析计划）─────
-    for t in all_tables:
-        # 分词：将下划线分隔的表名拆成关键词集合
-        keywords = set(t.lower().replace("_", " ").split())
-        # 去掉常见表前缀后得到"业务名"（如 ass_mission → mission）
-        base_name = t.lower()
-        for prefix in ["ass_", "test_", "sys_", "tbl_"]:
-            if base_name.startswith(prefix):
-                base_name = base_name[len(prefix):]
-                break
-        # 匹配用户问题中的词（至少2字符，避免匹配到"的"/"了"等虚词）
-        for word in question.lower().split():
-            word = word.strip(",，。.!！?？()（）")
-            if len(word) >= 2 and (word in keywords or word in base_name):
-                scores[t] += 20
-        # 匹配分析计划中的词
-        for word in plan_lower.split():
-            word = word.strip(",，。.!！?？()（）")
-            if len(word) >= 2 and (word in keywords or word in base_name):
-                scores[t] += 10
+    if len(table_infos) <= max_tables:
+        return [name for name, _, _ in table_infos]
 
-    # ── 策略 4：分析计划中的"表 xxx"格式 → +200 ──
+    scores = {name: 0 for name, _, _ in table_infos}
+    plan_lower = (analysis_plan or '').lower()
+    question_norm = _normalize_name(question or '')
+    question_bigrams = _char_bigrams(question_norm)
+    plan_norm = _normalize_name(analysis_plan or '')
+    plan_bigrams = _char_bigrams(plan_norm)
+
+    for name, comment, _ in table_infos:
+        name_lower = name.lower()
+        name_norm = _normalize_name(name)
+        name_bigrams = _char_bigrams(name_norm)
+        comment_norm = _normalize_name(comment)
+        comment_bigrams = _char_bigrams(comment_norm)
+
+        # ── 策略 1：表名出现在分析计划原文中 → +100 ──
+        if name_lower in plan_lower:
+            scores[name] += 100
+
+        # ── 策略 2：表名 bigram 与问题 bigram Jaccard ≥ 0.3 → 加分 ──
+        if question_bigrams and name_bigrams:
+            sim = _jaccard(question_bigrams, name_bigrams)
+            if sim >= 0.3:
+                scores[name] += int(sim * 30)
+
+        # ── 策略 3：表名 bigram 与分析计划 bigram Jaccard ≥ 0.3 → 加分 ──
+        if plan_bigrams and name_bigrams:
+            sim = _jaccard(plan_bigrams, name_bigrams)
+            if sim >= 0.3:
+                scores[name] += int(sim * 15)
+
+        # ── 策略 4：表注释中包含问题 bigram → +15/词 ──
+        if comment_bigrams and question_bigrams:
+            overlap = comment_bigrams & question_bigrams
+            scores[name] += len(overlap) * 15
+
+        # ── 策略 5：表注释 bigram 与问题 bigram Jaccard ≥ 0.3 → 加分 ──
+        if question_bigrams and comment_bigrams:
+            sim = _jaccard(question_bigrams, comment_bigrams)
+            if sim >= 0.3:
+                scores[name] += int(sim * 20)
+
+    # ── 策略 6：分析计划中的"表 xxx"或"TABLE xxx"格式 → +200 ──
     table_pattern = re.findall(
         r'(?:表\s*|TABLE\s+)([a-zA-Z_][a-zA-Z0-9_]*)',
-        analysis_plan, re.IGNORECASE
+        analysis_plan or '', re.IGNORECASE
     )
     for match in table_pattern:
-        for t in all_tables:
-            if t.lower() == match.lower():
-                scores[t] += 200
+        for name, _, _ in table_infos:
+            if name.lower() == match.lower():
+                scores[name] += 200
 
-    # ── 排序并取前 max_tables ──
-    sorted_tables = sorted(scores.items(), key=lambda x: -x[1])
-    top = [t for t, s in sorted_tables if s > 0]  # 仅保留有得分的
+    # ── 排序：按得分降序，同分时非系统表优先 ──
+    def _sort_key(item):
+        name, score = item
+        is_sys = name.lower().startswith(('ass_', 'sys_', 'test_', 'tbl_'))
+        return (-score, 1 if is_sys else 0, name.lower())
+
+    sorted_tables = sorted(scores.items(), key=_sort_key)
+    top = [name for name, s in sorted_tables if s > 0]
+
     if not top:
-        # 完全没有匹配 → 优先取非系统表
-        non_sys = [t for t in all_tables
-                   if not t.startswith("ass_") and not t.startswith("sys_")]
-        top = non_sys[:max_tables] if non_sys else all_tables[:max_tables]
+        non_sys = [name for name, _, _ in table_infos
+                   if not name.lower().startswith(('ass_', 'sys_', 'test_', 'tbl_'))]
+        top = non_sys[:max_tables] if non_sys else [name for name, _, _ in table_infos[:max_tables]]
+
     return top[:max_tables]
 
 
@@ -641,7 +707,9 @@ async def data_explore_node(state: WorkflowState, config: RunnableConfig) -> Wor
     loop = asyncio.get_event_loop()
     try:
         # 并行获取表列表和数据库类型配置（database_type 用于 SQL 方言适配）
-        tables_task = loop.run_in_executor(None, fetch_database_tables, db_id)
+        # with_comments=True 返回 list[dict]（含 tableName/tableComment），用于表选择语义匹配
+        tables_task = loop.run_in_executor(
+            None, fetch_database_tables, db_id, False, False, True)
         config_task = loop.run_in_executor(None, fetch_database_config, db_id)
         # 将同步阻塞调用放到线程池，避免阻塞事件循环
         all_tables = await asyncio.wait_for(tables_task, timeout=_DB_TIMEOUT)
@@ -797,10 +865,12 @@ async def table_select_node(state: WorkflowState, config: RunnableConfig) -> Wor
     # ── 关键词匹配筛选 ──
     relevant = _pick_relevant_tables(all_tables, analysis_plan, question)
     # 将数据集中的表也加入（若未超出限制），确保有结构定义的优先
+    # all_tables 可能是 list[dict]（含 tableName/tableComment），需提取表名比较
     for t in list(all_tables):
-        if t in dataset_table_map and t not in relevant:
+        tname = _extract_table_info(t)[0]
+        if tname in dataset_table_map and tname not in relevant:
             if len(relevant) < 6:
-                relevant.append(t)
+                relevant.append(tname)
 
     _add_step(steps, 4, "选择数据表", "completed",
               detail=f"选定 {len(relevant)} 张表: {', '.join(relevant)}")
