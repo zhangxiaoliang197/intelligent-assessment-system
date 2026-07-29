@@ -21,7 +21,7 @@ docker load -i "$IMAGE_TAR"
 
 echo "[2/6] 校验镜像内置 Skill 目录..."
 docker run --rm --entrypoint python assessment-qa:latest \
-    -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 15; print('Skill catalog OK:', len(catalog['skills']))"
+    -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 30; print('Skill catalog OK:', len(catalog['skills']))"
 
 echo "[3/6] 导出只读 Skill 目录文件..."
 mkdir -p "$DATA_DIR/qa" "$DATA_DIR/config"
@@ -100,8 +100,8 @@ if [[ "$QA_READY" -ne 1 ]]; then
 fi
 
 SKILL_RESPONSE="$(curl -fsS "http://127.0.0.1:$QA_PORT/evaluation/skills")"
-if ! echo "$SKILL_RESPONSE" | grep -Eq '"builtInTotal"[[:space:]]*:[[:space:]]*15'; then
-    echo "ERROR: Skill 目录接口未返回 15 个内置 Skill"
+if ! echo "$SKILL_RESPONSE" | grep -Eq '"builtInTotal"[[:space:]]*:[[:space:]]*30'; then
+    echo "ERROR: Skill 目录接口未返回 30 个内置 Skill"
     echo "$SKILL_RESPONSE"
     exit 1
 fi
@@ -109,4 +109,4 @@ fi
 echo "QA Skill 热修复完成"
 echo "  image=$ACTUAL_IMAGE_ID"
 echo "  catalog=/app/config/skills.json"
-echo "  builtInTotal=15"
+echo "  builtInTotal=30"

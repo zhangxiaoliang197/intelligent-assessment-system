@@ -34,12 +34,12 @@ if [[ "$QA_READY" -ne 1 ]]; then
 fi
 
 SKILL_RESPONSE="$(curl -fsS http://127.0.0.1:10253/evaluation/skills)"
-if ! echo "$SKILL_RESPONSE" | grep -Eq '"builtInTotal"[[:space:]]*:[[:space:]]*15'; then
-    echo "ERROR: Skill 目录接口未返回 15 个内置 Skill"
+if ! echo "$SKILL_RESPONSE" | grep -Eq '"builtInTotal"[[:space:]]*:[[:space:]]*30'; then
+    echo "ERROR: Skill 目录接口未返回 30 个内置 Skill"
     echo "$SKILL_RESPONSE"
     exit 1
 fi
 
-echo "Skill 目录校验通过: 15 个内置 Skill"
+echo "Skill 目录校验通过: 30 个内置 Skill"
 "${COMPOSE[@]}" ps
 echo "访问地址: http://localhost:10086"

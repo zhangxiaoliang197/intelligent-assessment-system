@@ -312,6 +312,178 @@ def _normalize_query_result(result: Dict[str, Any]) -> tuple[List[str], List[Dic
     return columns, rows
 
 
+async def _metadata_operation_rows(
+    operation: str,
+    *,
+    database_id: str,
+    database_name: str,
+    datasets: List[Dict[str, Any]],
+    question: str,
+) -> tuple[List[str], List[Dict[str, Any]]]:
+    """Build read-only database metadata results without generated SQL."""
+    physical_by_table: Dict[str, Dict[str, Any]] = {}
+    for dataset in datasets:
+        if not isinstance(dataset, dict):
+            continue
+        table_name = str(dataset.get("tableName") or "").strip()
+        if not table_name:
+            continue
+        table_key = table_name.casefold()
+        current = physical_by_table.get(table_key)
+        if current is None or (
+            current.get("source") == "live" and dataset.get("source") == "configured"
+        ):
+            physical_by_table[table_key] = dataset
+    physical_datasets = list(physical_by_table.values())
+    if operation == "database_overview":
+        profile = physical_datasets[0] if physical_datasets else {}
+        table_names = {
+            str(dataset.get("tableName") or "").strip().casefold()
+            for dataset in physical_datasets
+            if str(dataset.get("tableName") or "").strip()
+        }
+        row = {
+            "数据库名称": database_name or database_id,
+            "数据库标识": database_id,
+            "数据库类型": profile.get("databaseType", ""),
+            "产品名称": profile.get("databaseProductName", ""),
+            "产品版本": profile.get("databaseProductVersion", ""),
+            "物理表数量": len(table_names),
+            "已登记数据集数量": sum(
+                1 for dataset in physical_datasets if dataset.get("source") == "configured"
+            ),
+            "实时发现表数量": sum(
+                1 for dataset in physical_datasets if dataset.get("source") == "live"
+            ),
+        }
+        return list(row), [row]
+
+    if operation == "table_catalog":
+        columns = ["表名", "数据集名称", "来源", "Schema", "Catalog", "字段数量"]
+        rows = [
+            {
+                "表名": dataset.get("tableName", ""),
+                "数据集名称": dataset.get("name", ""),
+                "来源": "已登记数据集"
+                if dataset.get("source") == "configured"
+                else "实时物理表",
+                "Schema": dataset.get("schemaName", ""),
+                "Catalog": dataset.get("catalogName", ""),
+                "字段数量": len(dataset.get("columns", []) or []),
+            }
+            for dataset in sorted(
+                physical_datasets,
+                key=lambda item: str(item.get("tableName") or "").casefold(),
+            )
+        ]
+        return columns, rows
+
+    if operation == "table_structure":
+        normalized_question = str(question or "").casefold()
+        explicitly_named = [
+            dataset
+            for dataset in physical_datasets
+            if any(
+                value and str(value).casefold() in normalized_question
+                for value in (dataset.get("tableName"), dataset.get("name"))
+            )
+        ]
+        targets = explicitly_named or physical_datasets
+        columns = [
+            "表名",
+            "数据集名称",
+            "字段名",
+            "数据类型",
+            "可为空",
+            "主键",
+            "字段注释",
+            "业务含义",
+        ]
+        rows: List[Dict[str, Any]] = []
+        for dataset in targets:
+            raw_columns = dataset.get("columns")
+            if not isinstance(raw_columns, list) or not raw_columns:
+                structure = await _dataset_schema(database_id, dataset)
+                raw_columns = structure.get("columns", [])
+            for column in raw_columns if isinstance(raw_columns, list) else []:
+                if not isinstance(column, dict):
+                    continue
+                rows.append(
+                    {
+                        "表名": dataset.get("tableName", ""),
+                        "数据集名称": dataset.get("name", ""),
+                        "字段名": column.get("columnName") or column.get("name") or "",
+                        "数据类型": column.get("dataType") or column.get("type") or "",
+                        "可为空": column.get("isNullable", column.get("nullable", "")),
+                        "主键": column.get("isPrimaryKey", False),
+                        "字段注释": column.get("comment") or "",
+                        "业务含义": column.get("businessMeaning")
+                        or column.get("annotation")
+                        or "",
+                    }
+                )
+        return columns, rows
+
+    raise ValueError(f"不支持的 Skill 元数据操作: {operation}")
+
+
+def _numeric_value(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_skill_visualization(
+    skill: Dict[str, Any], results: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    visualization = skill.get("visualization")
+    if not isinstance(visualization, dict) or not visualization.get("enabled"):
+        return {}
+    for result in results:
+        rows = result.get("rows")
+        if result.get("status") != "completed" or not isinstance(rows, list) or len(rows) < 2:
+            continue
+        columns = [
+            str(column) for column in result.get("columns", [])
+            if str(column)
+        ] or list(rows[0])
+        numeric_columns = [
+            column
+            for column in columns
+            if any(_numeric_value(row.get(column)) is not None for row in rows)
+        ]
+        category_columns = [column for column in columns if column not in numeric_columns]
+        if not numeric_columns:
+            continue
+        x_axis = category_columns[0] if category_columns else columns[0]
+        y_axis = [column for column in numeric_columns if column != x_axis][:4]
+        if not y_axis:
+            continue
+        preferred = str(visualization.get("preferredType") or "auto")
+        if preferred == "auto":
+            compact_x = x_axis.casefold()
+            preferred = (
+                "line"
+                if any(token in compact_x for token in ("时间", "日期", "年", "月", "日", "time", "date"))
+                else "pie"
+                if len(rows) <= 8 and len(y_axis) == 1
+                else "bar"
+            )
+        return {
+            "chartConfig": {
+                "vizType": preferred,
+                "chartTitle": skill.get("name") or "Skill 数据可视化",
+                "xAxis": x_axis,
+                "yAxis": y_axis,
+            },
+            "rawResults": copy.deepcopy(rows),
+        }
+    return {}
+
+
 def _order_plan_by_dependencies(plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Return a stable topological order for dependency-mode Skills."""
     by_id = {str(item["step"].get("id") or ""): item for item in plan}
@@ -519,6 +691,7 @@ def _skill_snapshot(skill: Dict[str, Any]) -> Dict[str, Any]:
         "revision",
         "steps",
         "outputInstruction",
+        "visualization",
     )
     return {key: skill[key] for key in keys if key in skill}
 
@@ -792,12 +965,17 @@ async def _run_skill_workflow_events(
         stage_started = time.perf_counter()
         dataset_name = dataset.get("name", "")
         table_name = dataset.get("tableName", "")
+        operation = str(step.get("operation") or "dataset_query")
         generated_sql = ""
         yield _step_event(
             stage_id,
             step["name"],
             "in_progress",
-            f"第 {sequence}/{total_steps} 步：正在查询「{dataset_name}」({table_name})",
+            (
+                f"第 {sequence}/{total_steps} 步：正在读取「{dataset_name}」"
+                if operation != "dataset_query"
+                else f"第 {sequence}/{total_steps} 步：正在查询「{dataset_name}」({table_name})"
+            ),
             skill=skill,
             phase="dataset",
             progress=max(16, stage_progress - 8),
@@ -808,6 +986,56 @@ async def _run_skill_workflow_events(
         )
 
         try:
+            if operation != "dataset_query":
+                columns, rows = await _metadata_operation_rows(
+                    operation,
+                    database_id=database_id,
+                    database_name=database_name,
+                    datasets=datasets,
+                    question=effective_question,
+                )
+                display_truncated = len(rows) > _MAX_RESULT_ROWS
+                duration_ms = int((time.perf_counter() - stage_started) * 1000)
+                stage_result = {
+                    "sequence": sequence,
+                    "stepId": step["id"],
+                    "stepName": step["name"],
+                    "instruction": step["description"],
+                    "datasetId": dataset.get("id", ""),
+                    "datasetName": dataset_name,
+                    "tableName": "",
+                    "status": "completed",
+                    "sql": "",
+                    "columns": columns,
+                    "rows": rows[:_MAX_RESULT_ROWS],
+                    "totalRows": len(rows),
+                    "truncated": False,
+                    "queryTruncated": False,
+                    "displayTruncated": display_truncated,
+                    "error": "",
+                    "durationMs": duration_ms,
+                }
+                results.append(stage_result)
+                result_by_step[step["id"]] = stage_result
+                stage_event = _step_event(
+                    stage_id,
+                    step["name"],
+                    "completed",
+                    f"第 {sequence}/{total_steps} 步完成：读取 {len(rows)} 条元数据"
+                    + (f"（界面仅展示前 {_MAX_RESULT_ROWS} 行）" if display_truncated else ""),
+                    skill=skill,
+                    phase="dataset",
+                    progress=stage_progress,
+                    thinking=f"【元数据读取】\n{step['description']}",
+                    sequence=sequence,
+                    total=total_steps,
+                    dataset=dataset,
+                    duration_ms=duration_ms,
+                )
+                stage_event["stepResult"] = copy.deepcopy(stage_result)
+                yield stage_event
+                continue
+
             schema, indicators = await _dataset_runtime_context(database_id, dataset)
             schema["datasetName"] = dataset_name
             schema["description"] = dataset.get("description", "")
@@ -1140,6 +1368,7 @@ async def _run_skill_workflow_events(
             "durationMs": duration_ms,
         },
     }
+    result.update(_build_skill_visualization(skill, results))
     yield {
         "type": "result",
         "result": result,
@@ -1581,6 +1810,9 @@ async def preflight_skill_execution(
         }
         if not dataset:
             detail["issues"].append("未找到符合步骤关键词或精确绑定的数据集")
+            return detail
+        if str(step.get("operation") or "dataset_query") != "dataset_query":
+            detail["schemaReady"] = True
             return detail
         if not include_schema:
             detail["schemaReady"] = bool(dataset.get("tableName"))

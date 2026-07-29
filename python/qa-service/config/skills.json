@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "2.0.0",
   "skills": [
     {
       "id": "combat-effectiveness-overview",
@@ -210,6 +210,274 @@
         {"id": "resource-consume", "name": "查询资源趋势", "description": "统计关键资源消耗与剩余保障压力。", "datasetKeywords": ["消耗", "弹药", "燃料", "物资"]}
       ],
       "outputInstruction": "区分已发生事实与趋势推断，给出上升或下降信号、主要风险、证据和建议观察指标。"
+    },
+    {
+      "id": "database-overview-query",
+      "name": "数据库基础信息查询",
+      "description": "读取当前数据源的数据库类型、产品版本、物理表数量和数据集登记情况。",
+      "category": "数据库基础",
+      "triggers": ["数据库基础信息", "数据库概览", "数据库版本", "数据库信息", "数据源概览"],
+      "recommendedQuestions": ["查看当前数据源的数据库基础信息", "当前数据库是什么类型和版本，有多少张表"],
+      "steps": [
+        {
+          "id": "database-overview",
+          "name": "读取数据库概览",
+          "description": "通过只读 JDBC 元数据汇总数据库产品、版本、物理表和数据集数量。",
+          "datasetKeywords": ["数据库", "database", "数据源", "基础信息", "概览"],
+          "operation": "database_overview"
+        }
+      ],
+      "outputInstruction": "以清单形式输出数据库名称、类型、产品、版本、物理表数量、已登记数据集数量和实时发现表数量。"
+    },
+    {
+      "id": "table-catalog-query",
+      "name": "数据表目录查询",
+      "description": "列出当前数据源中的物理表、数据集名称、Schema、Catalog 和字段数量。",
+      "category": "元数据查询",
+      "triggers": ["有哪些表", "表目录", "表清单", "数据表列表", "所有表"],
+      "recommendedQuestions": ["列出当前数据源中的所有表", "当前数据库有哪些表及各表字段数量"],
+      "steps": [
+        {
+          "id": "table-catalog",
+          "name": "读取数据表目录",
+          "description": "通过只读 JDBC 元数据列出当前数据源中的全部可见物理表。",
+          "datasetKeywords": ["数据表", "table", "表目录", "表清单", "物理表"],
+          "operation": "table_catalog"
+        }
+      ],
+      "outputInstruction": "按表名排序输出表名、业务数据集名称、来源、Schema、Catalog 和字段数量。"
+    },
+    {
+      "id": "table-structure-query",
+      "name": "表结构查询",
+      "description": "读取指定表或当前数据源所有表的字段名、数据类型、空值约束、主键和字段说明。",
+      "category": "元数据查询",
+      "triggers": ["表结构", "字段结构", "字段类型", "列信息", "查看字段"],
+      "recommendedQuestions": ["查看当前数据源的表结构", "查询指定表有哪些字段及字段类型"],
+      "steps": [
+        {
+          "id": "table-structure",
+          "name": "读取表字段结构",
+          "description": "通过只读 JDBC 元数据读取用户点名表；未点名时汇总所有表的字段结构。",
+          "datasetKeywords": ["表结构", "字段", "column", "schema", "数据类型"],
+          "operation": "table_structure"
+        }
+      ],
+      "outputInstruction": "逐表输出字段名、数据类型、是否可空、是否主键、字段注释和业务含义；用户点名表时只展示目标表。"
+    },
+    {
+      "id": "data-volume-statistics",
+      "name": "数据量统计",
+      "description": "统计目标数据集的总记录数，并可按用户指定维度汇总各分组数量。",
+      "category": "统计分析",
+      "triggers": ["数据量", "记录数", "总条数", "多少条数据", "数量统计"],
+      "recommendedQuestions": ["统计这张表一共有多少条数据", "按主要分类统计各组记录数"],
+      "steps": [
+        {
+          "id": "volume",
+          "name": "统计记录数量",
+          "description": "查询目标数据集总记录数；问题包含分组维度时同时统计各组数量。",
+          "datasetKeywords": ["数据", "记录", "明细", "业务表", "统计"]
+        }
+      ],
+      "outputInstruction": "给出总记录数、分组数量和占比，并说明使用的数据集和统计口径。"
+    },
+    {
+      "id": "descriptive-statistics",
+      "name": "描述性统计分析",
+      "description": "对数值字段计算数量、最小值、最大值、平均值和汇总值等基础统计指标。",
+      "category": "统计分析",
+      "triggers": ["描述性统计", "基础统计", "平均值", "最大最小", "统计摘要"],
+      "recommendedQuestions": ["对主要数值字段做描述性统计", "统计指定指标的平均值、最大值和最小值"],
+      "steps": [
+        {
+          "id": "summary",
+          "name": "计算统计摘要",
+          "description": "依据用户指定字段计算记录数、最小值、最大值、平均值和总量。",
+          "datasetKeywords": ["指标", "数值", "金额", "数量", "统计"]
+        }
+      ],
+      "outputInstruction": "按字段给出有效记录数、最小值、最大值、平均值和总量，并明确空值处理口径。"
+    },
+    {
+      "id": "field-value-distribution",
+      "name": "字段取值分布",
+      "description": "统计分类字段各取值的数量、占比和集中程度，帮助快速理解数据构成。",
+      "category": "统计分析",
+      "triggers": ["取值分布", "值分布", "分类分布", "各类型占比", "频次分布"],
+      "recommendedQuestions": ["统计指定字段的取值分布和占比", "这个分类字段主要有哪些值"],
+      "steps": [
+        {
+          "id": "distribution",
+          "name": "统计字段分布",
+          "description": "按用户指定分类字段分组，统计各取值数量并按数量降序排列。",
+          "datasetKeywords": ["分类", "类型", "状态", "等级", "分布"]
+        }
+      ],
+      "outputInstruction": "输出取值、数量、占比、Top 取值和长尾情况，并单独标注空值。"
+    },
+    {
+      "id": "missing-data-audit",
+      "name": "缺失值检查",
+      "description": "检查目标数据集关键字段的空值和缺失情况，定位缺失最严重的字段或分组。",
+      "category": "数据质量",
+      "triggers": ["缺失值", "空值检查", "字段为空", "数据缺失", "null统计"],
+      "recommendedQuestions": ["检查这张表哪些字段存在缺失值", "统计关键字段的空值数量和缺失率"],
+      "steps": [
+        {
+          "id": "missing",
+          "name": "检查字段缺失",
+          "description": "统计用户点名关键字段的空值数量；未点名时优先检查核心业务字段。",
+          "datasetKeywords": ["数据", "明细", "主数据", "记录", "质量"]
+        }
+      ],
+      "outputInstruction": "按字段列出总记录数、缺失数量、缺失率和风险等级，避免把合法的零值误判为缺失。"
+    },
+    {
+      "id": "duplicate-data-audit",
+      "name": "重复数据检查",
+      "description": "基于用户指定主键或业务组合键检查重复记录，汇总重复组数和受影响记录数。",
+      "category": "数据质量",
+      "triggers": ["重复数据", "重复记录", "查重", "唯一性检查", "重复值"],
+      "recommendedQuestions": ["按业务主键检查重复数据", "统计这张表有多少重复记录"],
+      "steps": [
+        {
+          "id": "duplicate",
+          "name": "检查记录重复",
+          "description": "按用户指定的主键或业务字段组合分组，查找计数大于一的重复记录。",
+          "datasetKeywords": ["数据", "明细", "主数据", "记录", "唯一键"]
+        }
+      ],
+      "outputInstruction": "输出判重字段、重复组数、受影响记录数和典型重复样例；未明确判重字段时说明采用的候选字段。"
+    },
+    {
+      "id": "data-quality-assessment",
+      "name": "数据质量综合评估",
+      "description": "从完整性、唯一性、有效性和一致性角度综合检查目标数据集质量。",
+      "category": "数据质量",
+      "triggers": ["数据质量", "质量评估", "数据健康度", "质量检查", "脏数据"],
+      "recommendedQuestions": ["综合评估这张表的数据质量", "检查数据完整性、唯一性和有效性"],
+      "steps": [
+        {
+          "id": "quality",
+          "name": "执行质量概览",
+          "description": "围绕空值、重复、非法状态和异常范围生成可执行的质量统计。",
+          "datasetKeywords": ["数据", "质量", "明细", "主数据", "业务记录"]
+        }
+      ],
+      "outputInstruction": "按完整性、唯一性、有效性和一致性分别给出证据、问题等级及优先修复建议。"
+    },
+    {
+      "id": "time-trend-analysis",
+      "name": "时间趋势分析",
+      "description": "按日、周、月或年汇总目标指标，识别增长、下降、周期性和突变趋势。",
+      "category": "趋势分析",
+      "triggers": ["时间趋势", "趋势变化", "按月统计", "按天统计", "走势图"],
+      "recommendedQuestions": ["按月分析指定指标的变化趋势", "查看最近一段时间的数据走势"],
+      "steps": [
+        {
+          "id": "trend",
+          "name": "汇总时间序列",
+          "description": "按用户要求的时间粒度汇总目标指标并按时间升序返回。",
+          "datasetKeywords": ["时间", "日期", "记录", "历史", "趋势"]
+        }
+      ],
+      "visualization": {"enabled": true, "preferredType": "line"},
+      "outputInstruction": "输出时间序列、环比变化、主要拐点和可能异常，并生成折线图；没有足够时间跨度时明确说明。"
+    },
+    {
+      "id": "category-comparison-analysis",
+      "name": "分类对比分析",
+      "description": "按部门、地区、类型、状态等分类维度对比数量或指标差异。",
+      "category": "统计分析",
+      "triggers": ["分类对比", "分组对比", "各类别比较", "部门对比", "地区对比"],
+      "recommendedQuestions": ["按主要分类对比数量和指标", "比较各部门或地区的数据差异"],
+      "steps": [
+        {
+          "id": "comparison",
+          "name": "执行分类汇总",
+          "description": "按用户指定分类维度聚合数量或指标，并按结果降序排列。",
+          "datasetKeywords": ["分类", "部门", "地区", "类型", "状态"]
+        }
+      ],
+      "visualization": {"enabled": true, "preferredType": "bar"},
+      "outputInstruction": "输出各分类的数值、占比、差距和排序，并生成柱状图突出主要差异。"
+    },
+    {
+      "id": "top-ranking-analysis",
+      "name": "Top N 排名分析",
+      "description": "按用户指定指标生成对象排名、Top N 清单和头部集中度。",
+      "category": "统计分析",
+      "triggers": ["top n", "排行榜", "排名分析", "最高的", "前十名"],
+      "recommendedQuestions": ["按指定指标查询排名前十的对象", "生成数量最多的 Top 10 排名"],
+      "steps": [
+        {
+          "id": "ranking",
+          "name": "生成指标排名",
+          "description": "按用户指定指标降序排序并返回限定数量的对象及指标值。",
+          "datasetKeywords": ["排名", "指标", "对象", "数量", "绩效"]
+        }
+      ],
+      "visualization": {"enabled": true, "preferredType": "bar"},
+      "outputInstruction": "输出排名、对象、指标值、Top N 合计及头部集中度，并生成易读的柱状图。"
+    },
+    {
+      "id": "anomaly-detection-analysis",
+      "name": "异常值检测",
+      "description": "依据用户给出的规则、阈值或统计范围筛查异常记录并汇总异常分布。",
+      "category": "数据质量",
+      "triggers": ["异常值", "异常数据", "离群值", "超出范围", "异常检测"],
+      "recommendedQuestions": ["检查指定指标中明显异常的记录", "按阈值筛查超出正常范围的数据"],
+      "steps": [
+        {
+          "id": "anomaly",
+          "name": "筛查异常记录",
+          "description": "优先使用用户给定阈值；未给定时基于字段业务范围和分布筛查异常候选。",
+          "datasetKeywords": ["指标", "数值", "监测", "记录", "异常"]
+        }
+      ],
+      "outputInstruction": "输出异常判定规则、异常数量、占比、典型记录和分布；统计规则推断必须标注为候选而非事实。"
+    },
+    {
+      "id": "relationship-analysis",
+      "name": "跨表关联线索分析",
+      "description": "分别查询两个相关数据集，再基于共同业务键、时间或分类维度汇总关联线索。",
+      "category": "关联分析",
+      "triggers": ["跨表关联", "关联分析", "两个表对比", "数据关联", "关系分析"],
+      "recommendedQuestions": ["分析两个相关数据集之间的关联线索", "对比主表和明细表的共同业务维度"],
+      "steps": [
+        {
+          "id": "primary-data",
+          "name": "查询主数据",
+          "description": "查询主数据中的业务键、分类、时间和核心指标摘要。",
+          "datasetKeywords": ["主数据", "主表", "基础表", "master", "主体"]
+        },
+        {
+          "id": "related-data",
+          "name": "查询关联数据",
+          "description": "查询关联数据中的共同业务键、分类、时间和指标摘要。",
+          "datasetKeywords": ["明细", "关联表", "从表", "detail", "记录"]
+        }
+      ],
+      "outputInstruction": "严格基于两个单表查询结果指出共同键、覆盖差异和关联线索；没有行级连接证据时不得声称已完成精确关联。"
+    },
+    {
+      "id": "chart-visualization-query",
+      "name": "图表生成与可视化",
+      "description": "根据用户指定的分类、时间和指标生成聚合查询结果，并自动选择柱状图、折线图或饼图。",
+      "category": "数据可视化",
+      "triggers": ["生成图表", "画图", "可视化", "柱状图", "折线图", "饼图"],
+      "recommendedQuestions": ["把主要分类及数量生成图表", "按时间统计指标并生成趋势图"],
+      "steps": [
+        {
+          "id": "chart-data",
+          "name": "准备图表数据",
+          "description": "查询一个分类或时间维度及至少一个数值指标，返回适合图表展示的聚合结果。",
+          "datasetKeywords": ["数据", "统计", "指标", "分类", "时间"]
+        }
+      ],
+      "visualization": {"enabled": true, "preferredType": "auto"},
+      "outputInstruction": "输出图表、聚合数据和统计口径；时间维度优先折线图，少量分类占比优先饼图，其余使用柱状图。"
     }
   ]
 }

@@ -7,7 +7,7 @@ COPY python/qa-service/config/skills.json /app/config/skills.json
 COPY python/qa-service/ .
 ENV EVALUATION_SKILL_CATALOG_PATH=/app/config/skills.json
 RUN test -s /app/config/skills.json \
-    && python -c "from agents.skill_catalog import load_catalog; catalog = load_catalog(); assert len(catalog['skills']) == 15; print('Validated Skill catalog:', len(catalog['skills']))"
+    && python -c "from agents.skill_catalog import load_catalog; catalog = load_catalog(); assert len(catalog['skills']) == 30; print('Validated Skill catalog:', len(catalog['skills']))"
 EXPOSE 10253
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:10253/health', timeout=3)"

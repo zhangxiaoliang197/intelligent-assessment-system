@@ -88,11 +88,15 @@ const normalizeExecutionStatus = (value: unknown): SkillExecutionStatus => {
 
 const normalizeStep = (value: unknown): EvaluationSkillStep => {
   const step = asRecord(value)
+  const operation = asString(step.operation)
   return {
     id: asString(step.id),
     name: asString(step.name),
     description: asString(step.description),
     datasetKeywords: asStringArray(step.datasetKeywords ?? step.dataset_keywords),
+    operation: ['database_overview', 'table_catalog', 'table_structure'].includes(operation)
+      ? operation as EvaluationSkillStep['operation']
+      : 'dataset_query',
     allowReuse: asBoolean(step.allowReuse ?? step.allow_reuse),
     datasetId: asString(step.datasetId ?? step.dataset_id),
     datasetName: asString(step.datasetName ?? step.dataset_name),
@@ -182,6 +186,12 @@ export const normalizeEvaluationSkill = (value: unknown): EvaluationSkill => {
     recommendedQuestions: asStringArray(skill.recommendedQuestions ?? skill.recommended_questions),
     steps,
     outputInstruction: asString(skill.outputInstruction ?? skill.output_instruction),
+    visualization: {
+      enabled: asBoolean(skill.visualization?.enabled),
+      preferredType: ['bar', 'line', 'pie'].includes(asString(skill.visualization?.preferredType))
+        ? asString(skill.visualization?.preferredType) as 'bar' | 'line' | 'pie'
+        : 'auto'
+    },
     orchestration: {
       mode: asString(skill.orchestration?.mode) === 'dependency' ? 'dependency' : 'sequential',
       maxConcurrency: Number(skill.orchestration?.maxConcurrency ?? skill.orchestration?.max_concurrency) || 1,
@@ -265,6 +275,8 @@ export const recommendEvaluationSkills = async (
     query: params.query,
     limit: params.limit ?? 3,
     ...(params.dataSourceId ? { dataSourceId: params.dataSourceId } : {})
+  }, {
+    signal: params.signal
   })
   return extractSkills(response)
 }

@@ -142,7 +142,7 @@
             type="warning"
             show-icon
             :closable="false"
-            title="自定义 Skill 库暂时不可用，系统内置的 15 个 Skill 仍可正常使用"
+            title="自定义 Skill 库暂时不可用，系统内置的 30 个 Skill 仍可正常使用"
             :description="customStoreMessage"
           />
 

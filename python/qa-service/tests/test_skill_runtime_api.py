@@ -47,7 +47,7 @@ class SkillRuntimeApiSmokeTests(unittest.TestCase):
             response = main_client.get("/evaluation/schedules")
         self.assertEqual(health.status_code, 200, health.text)
         self.assertTrue(health.json()["skillCatalog"]["ready"])
-        self.assertEqual(15, health.json()["skillCatalog"]["skillCount"])
+        self.assertEqual(30, health.json()["skillCatalog"]["skillCount"])
         self.assertEqual(response.status_code, 200, response.text)
 
     def test_preflight_and_trial_contracts(self):

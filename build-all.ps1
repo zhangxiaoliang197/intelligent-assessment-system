@@ -51,7 +51,7 @@ function Build-And-Save {
     if ($ImageName -eq "qa") {
         Write-Host ">>> 校验 QA 镜像内 Skill 目录..." -ForegroundColor Yellow
         docker run --rm --entrypoint python "assessment-${ImageName}:latest" `
-            -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 15; print('Skill catalog OK:', len(catalog['skills']))"
+            -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 30; print('Skill catalog OK:', len(catalog['skills']))"
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  ERROR: QA 镜像缺少或无法加载 /app/config/skills.json，停止导出!" -ForegroundColor Red
             exit 1

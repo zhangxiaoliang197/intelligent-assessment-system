@@ -111,8 +111,9 @@
         </div>
 
         <div
-          v-if="!selectedSkillId && (recommendationLoading || skillRecommendations.length)"
+          v-if="!selectedSkillId && skillRecommendations.length"
           class="skill-recommendation-bar"
+          :aria-busy="recommendationLoading"
         >
           <div class="recommendation-heading">
             <el-icon><MagicStick /></el-icon>
@@ -221,6 +222,45 @@
                             <span v-if="msg.result.skillExecution?.durationMs" class="duration-text">
                               {{ formatDuration(msg.result.skillExecution.durationMs) }}
                             </span>
+                          </div>
+                        </div>
+
+                        <div
+                          v-if="msg.result.chartConfig && msg.result.rawResults?.length"
+                          class="chart-section skill-chart-section"
+                        >
+                          <div class="chart-header">
+                            <h6>{{ msg.result.chartConfig.chartTitle || 'Skill 数据可视化' }}</h6>
+                            <el-radio-group v-model="chartViewMode" size="small">
+                              <el-radio-button value="chart">图表</el-radio-button>
+                              <el-radio-button value="table">表格</el-radio-button>
+                            </el-radio-group>
+                          </div>
+                          <div v-show="chartViewMode === 'chart'" class="chart-container">
+                            <v-chart
+                              :option="buildChartOption(msg.result.chartConfig, msg.result.rawResults)"
+                              style="height: 360px"
+                              autoresize
+                            />
+                          </div>
+                          <div v-show="chartViewMode === 'table'" class="data-section">
+                            <el-table
+                              :data="msg.result.rawResults"
+                              style="width: 100%"
+                              size="small"
+                              max-height="400"
+                              border
+                              stripe
+                            >
+                              <el-table-column
+                                v-for="column in Object.keys(msg.result.rawResults[0] || {})"
+                                :key="column"
+                                :prop="column"
+                                :label="column"
+                                min-width="120"
+                                show-overflow-tooltip
+                              />
+                            </el-table>
                           </div>
                         </div>
 
@@ -608,7 +648,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, nextTick, watch } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -748,6 +788,7 @@ const activeRunId = ref('')
 let skillCatalogRequestSequence = 0
 let recommendationRequestSequence = 0
 let recommendationTimer: ReturnType<typeof setTimeout> | null = null
+let recommendationAbortController: AbortController | null = null
 let activeAbortController: AbortController | null = null
 let cancelRequested = false
 
@@ -977,7 +1018,7 @@ const onDataSourceChange = (val: string) => {
 
 const onSkillChange = (skillId: string) => {
   executionSteps.value = []
-  skillRecommendations.value = []
+  invalidateSkillRecommendations()
   if (skillId) {
     showExecutionPanel.value = true
     const skill = evaluationSkills.value.find(item => item.id === skillId)
@@ -985,38 +1026,81 @@ const onSkillChange = (skillId: string) => {
   }
 }
 
-const loadSkillRecommendations = async (query: string) => {
-  const normalized = query.trim()
-  if (normalized.length < 3 || selectedSkillId.value || analyzing.value) {
-    skillRecommendations.value = []
-    return
+const invalidateSkillRecommendations = (clearResults = true) => {
+  recommendationRequestSequence += 1
+  if (recommendationTimer) {
+    clearTimeout(recommendationTimer)
+    recommendationTimer = null
   }
-  const requestSequence = ++recommendationRequestSequence
+  recommendationAbortController?.abort()
+  recommendationAbortController = null
+  recommendationLoading.value = false
+  if (clearResults) skillRecommendations.value = []
+  return recommendationRequestSequence
+}
+
+const isRecommendationCancellation = (error: unknown) => {
+  const candidate = error as { code?: string; name?: string }
+  return candidate?.code === 'ERR_CANCELED'
+    || candidate?.name === 'CanceledError'
+    || candidate?.name === 'AbortError'
+}
+
+const loadSkillRecommendations = async (
+  query: string,
+  dataSourceId: string,
+  requestSequence: number
+) => {
+  const normalized = query.trim()
+  if (
+    normalized.length < 2
+    || selectedSkillId.value
+    || analyzing.value
+    || requestSequence !== recommendationRequestSequence
+  ) return
+
+  const controller = new AbortController()
+  recommendationAbortController = controller
   recommendationLoading.value = true
   try {
     const recommendations = await recommendEvaluationSkills({
       query: normalized,
       limit: 3,
-      dataSourceId: selectedDataSourceId.value || undefined
+      dataSourceId: dataSourceId || undefined,
+      signal: controller.signal
     })
-    if (requestSequence !== recommendationRequestSequence) return
+    if (
+      requestSequence !== recommendationRequestSequence
+      || controller.signal.aborted
+      || inputMessage.value.trim() !== normalized
+      || (selectedDataSourceId.value || '') !== dataSourceId
+      || selectedSkillId.value
+      || analyzing.value
+    ) return
     skillRecommendations.value = recommendations
   } catch (error) {
     if (requestSequence === recommendationRequestSequence) {
       skillRecommendations.value = []
-      console.warn('Skill recommendation failed:', error)
+      if (!isRecommendationCancellation(error)) {
+        console.warn('Skill recommendation failed:', error)
+      }
     }
   } finally {
-    if (requestSequence === recommendationRequestSequence) recommendationLoading.value = false
+    if (requestSequence === recommendationRequestSequence) {
+      recommendationLoading.value = false
+      if (recommendationAbortController === controller) {
+        recommendationAbortController = null
+      }
+    }
   }
 }
 
 const selectRecommendedSkill = (skill: EvaluationSkill) => {
+  invalidateSkillRecommendations()
   if (!evaluationSkills.value.some(item => item.id === skill.id)) {
     evaluationSkills.value.push(skill)
   }
   selectedSkillId.value = skill.id
-  skillRecommendations.value = []
   executionSteps.value = []
   showExecutionPanel.value = true
   const availability = skill.availability
@@ -1030,17 +1114,21 @@ const selectRecommendedSkill = (skill: EvaluationSkill) => {
 }
 
 watch(
-  [inputMessage, selectedDataSourceId, selectedSkillId],
-  ([query]) => {
-    if (recommendationTimer) clearTimeout(recommendationTimer)
-    if (!query.trim() || selectedSkillId.value || analyzing.value) {
-      recommendationLoading.value = false
-      skillRecommendations.value = []
-      return
-    }
-    recommendationTimer = setTimeout(() => loadSkillRecommendations(query), 450)
+  [inputMessage, selectedDataSourceId, selectedSkillId, analyzing],
+  ([query, dataSourceId, skillId, isAnalyzing]) => {
+    const requestSequence = invalidateSkillRecommendations()
+    const normalized = query.trim()
+    if (normalized.length < 2 || skillId || isAnalyzing) return
+    recommendationTimer = setTimeout(() => {
+      recommendationTimer = null
+      loadSkillRecommendations(normalized, dataSourceId || '', requestSequence)
+    }, 450)
   }
 )
+
+onBeforeUnmount(() => {
+  invalidateSkillRecommendations()
+})
 
 const openSkillLibrary = () => {
   skillLibraryVisible.value = true
@@ -1282,6 +1370,7 @@ const sendMessage = async () => {
     }
   }
 
+  invalidateSkillRecommendations()
   inputMessage.value = ''
   analyzing.value = true
   cancelRequested = false

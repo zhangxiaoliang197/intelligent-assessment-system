@@ -29,6 +29,7 @@ from agents.skill_catalog import (
     delete_custom_skill,
     get_skill,
     get_custom_catalog_warning,
+    load_catalog,
     list_skills,
     recommend_skills,
     skill_availability,
@@ -160,6 +161,10 @@ class SkillStepInput(BaseModel):
     id: Optional[str] = Field(default=None, max_length=64)
     name: str = Field(min_length=1, max_length=80)
     description: str = Field(min_length=1, max_length=500)
+    operation: str = Field(
+        default="dataset_query",
+        pattern="^(dataset_query|database_overview|table_catalog|table_structure)$",
+    )
     dataset_keywords: list[str] = Field(
         min_length=1,
         max_length=12,
@@ -182,6 +187,17 @@ class SkillOrchestrationInput(BaseModel):
     max_concurrency: int = Field(default=1, ge=1, le=6, alias="maxConcurrency")
     timeout_seconds: int = Field(default=600, ge=30, le=1800, alias="timeoutSeconds")
     failure_policy: str = Field(default="continue", pattern="^(continue|stop)$", alias="failurePolicy")
+
+
+class SkillVisualizationInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    enabled: bool = False
+    preferred_type: str = Field(
+        default="auto",
+        pattern="^(auto|bar|line|pie)$",
+        alias="preferredType",
+    )
 
 
 class SkillCreateRequest(BaseModel):
@@ -208,6 +224,7 @@ class SkillCreateRequest(BaseModel):
     status: Optional[str] = Field(default=None, pattern="^(draft|published|archived)$")
     tags: Optional[list[str]] = Field(default=None, max_length=20)
     is_template: Optional[bool] = Field(default=None, alias="isTemplate")
+    visualization: SkillVisualizationInput = Field(default_factory=SkillVisualizationInput)
     orchestration: SkillOrchestrationInput = Field(default_factory=SkillOrchestrationInput)
 
 
@@ -577,7 +594,7 @@ async def get_skills(
     template: Optional[bool] = None,
     includeArchived: bool = False,
 ):
-    """返回 15 个内置 Skill 加上所有用户创建的 Skill"""
+    """返回 30 个内置 Skill 加上所有用户创建的 Skill"""
     actor = skill_actor_from_request(request)
     try:
         skills = list_skills(
@@ -626,7 +643,7 @@ async def get_skills(
         items.append(item)
     return {
         "success": True,
-        "version": "1.1.0",
+        "version": str(load_catalog().get("version") or "2.0.0"),
         "skills": items,
         "total": len(items),
         "builtInTotal": sum(1 for item in items if item.get("source") == "builtin"),

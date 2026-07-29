@@ -53,6 +53,14 @@ _CATALOG_FILE = os.path.join(
     "config",
     "skills.json",
 )
+_STEP_OPERATIONS = {
+    "dataset_query",
+    "database_overview",
+    "table_catalog",
+    "table_structure",
+}
+_METADATA_OPERATIONS = _STEP_OPERATIONS - {"dataset_query"}
+_VISUALIZATION_TYPES = {"auto", "bar", "line", "pie"}
 
 
 class SkillCatalogError(ValueError):
@@ -211,6 +219,10 @@ def _validate_skill(skill: Dict[str, Any], seen_ids: set[str]) -> None:
             maximum_length=80,
             required=True,
         )
+        if step.get("operation", "dataset_query") not in _STEP_OPERATIONS:
+            raise SkillCatalogError(
+                f"Skill {skill_id} step {step['id']} has invalid operation"
+            )
         if "allowReuse" in step and not isinstance(step["allowReuse"], bool):
             raise SkillCatalogError(
                 f"Skill {skill_id} step {step['id']} allowReuse must be a boolean"
@@ -285,6 +297,14 @@ def _validate_skill(skill: Dict[str, Any], seen_ids: set[str]) -> None:
         raise SkillCatalogError(f"Skill {skill_id} maxConcurrency must be 1-6")
     if not isinstance(total_timeout, int) or not 30 <= total_timeout <= 1800:
         raise SkillCatalogError(f"Skill {skill_id} timeoutSeconds must be 30-1800")
+
+    visualization = skill.get("visualization", {})
+    if not isinstance(visualization, dict):
+        raise SkillCatalogError(f"Skill {skill_id} visualization must be an object")
+    if visualization.get("preferredType", "auto") not in _VISUALIZATION_TYPES:
+        raise SkillCatalogError(f"Skill {skill_id} visualization type is invalid")
+    if "enabled" in visualization and not isinstance(visualization["enabled"], bool):
+        raise SkillCatalogError(f"Skill {skill_id} visualization enabled must be a boolean")
 
 
 def get_catalog_file() -> str:
@@ -379,11 +399,13 @@ def _decorate_skill(
         },
     )
     for step in item.get("steps", []):
+        step.setdefault("operation", "dataset_query")
         step.setdefault("dependsOn", [])
         step.setdefault("runIf", "all_success")
         step.setdefault("retryCount", 0)
         step.setdefault("timeoutSeconds", 130)
         step.setdefault("onFailure", "continue")
+    item.setdefault("visualization", {"enabled": False, "preferredType": "auto"})
     item["source"] = source
     item["isBuiltIn"] = built_in
     if built_in:
@@ -596,6 +618,7 @@ def _normalize_custom_skill(
                 "name": _clean_text(raw_step.get("name")),
                 "description": _clean_text(raw_step.get("description")),
                 "datasetKeywords": _clean_string_list(raw_step.get("datasetKeywords")),
+                "operation": _clean_text(raw_step.get("operation")) or "dataset_query",
                 "allowReuse": raw_step.get("allowReuse", False),
                 "datasetId": _clean_text(raw_step.get("datasetId")) or "",
                 "datasetName": _clean_text(raw_step.get("datasetName")) or "",
@@ -622,6 +645,8 @@ def _normalize_custom_skill(
 
     raw_orchestration = payload.get("orchestration")
     raw_orchestration = raw_orchestration if isinstance(raw_orchestration, dict) else {}
+    raw_visualization = payload.get("visualization")
+    raw_visualization = raw_visualization if isinstance(raw_visualization, dict) else {}
     skill = {
         "id": skill_id,
         "name": _clean_text(payload.get("name")),
@@ -631,6 +656,10 @@ def _normalize_custom_skill(
         "recommendedQuestions": _clean_string_list(payload.get("recommendedQuestions", [])),
         "steps": steps,
         "outputInstruction": _clean_text(payload.get("outputInstruction")),
+        "visualization": {
+            "enabled": bool(raw_visualization.get("enabled", False)),
+            "preferredType": _clean_text(raw_visualization.get("preferredType")) or "auto",
+        },
         "orchestration": {
             "mode": _clean_text(raw_orchestration.get("mode")) or "sequential",
             "maxConcurrency": int(raw_orchestration.get("maxConcurrency", 1) or 1),
@@ -1318,6 +1347,39 @@ def resolve_skill_datasets(
     used_ids: set[str] = set()
 
     for sequence, step in enumerate(skill.get("steps", []), start=1):
+        operation = str(step.get("operation") or "dataset_query")
+        if operation in _METADATA_OPERATIONS:
+            profile = next((dataset for dataset in datasets if isinstance(dataset, dict)), {})
+            virtual_dataset = {
+                "id": f"metadata-{operation}",
+                "name": {
+                    "database_overview": "数据库基础信息",
+                    "table_catalog": "数据表目录",
+                    "table_structure": "表结构元数据",
+                }[operation],
+                "tableName": "",
+                "source": "metadata",
+                "isMetadata": True,
+                **{
+                    key: profile.get(key, "")
+                    for key in (
+                        "databaseType",
+                        "databaseProductName",
+                        "databaseProductVersion",
+                        "identifierQuoteString",
+                    )
+                },
+            }
+            resolved.append(
+                {
+                    "sequence": sequence,
+                    "step": copy.deepcopy(step),
+                    "dataset": virtual_dataset if datasets else None,
+                    "score": 1000 if datasets else 0,
+                    "matchedKeyword": operation if datasets else "",
+                }
+            )
+            continue
         candidates = []
         configured_dataset_id = str(step.get("datasetId") or "").strip()
         configured_dataset_exists = any(

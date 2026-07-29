@@ -62,8 +62,8 @@ class CustomSkillApiTests(unittest.TestCase):
         created = created_response.json()["skill"]
 
         catalog = self.client.get("/evaluation/skills").json()
-        self.assertEqual(16, catalog["total"])
-        self.assertEqual(15, catalog["builtInTotal"])
+        self.assertEqual(31, catalog["total"])
+        self.assertEqual(30, catalog["builtInTotal"])
         self.assertEqual(1, catalog["customTotal"])
 
         update_payload = _payload()
@@ -92,7 +92,7 @@ class CustomSkillApiTests(unittest.TestCase):
             params={"expectedRevision": updated["revision"]},
         )
         self.assertEqual(200, deleted_response.status_code)
-        self.assertEqual(15, self.client.get("/evaluation/skills").json()["total"])
+        self.assertEqual(30, self.client.get("/evaluation/skills").json()["total"])
 
     def test_client_cannot_submit_sql_or_table_name(self) -> None:
         payload = copy.deepcopy(_payload())
@@ -143,8 +143,8 @@ class CustomSkillApiTests(unittest.TestCase):
 
         self.assertEqual(200, catalog_response.status_code, catalog_response.text)
         catalog = catalog_response.json()
-        self.assertEqual(15, catalog["builtInTotal"])
-        self.assertEqual(15, catalog["total"])
+        self.assertEqual(30, catalog["builtInTotal"])
+        self.assertEqual(30, catalog["total"])
         self.assertTrue(catalog["skills"][0]["availability"]["runtimeSelectable"])
         self.assertEqual(200, datasets_response.status_code, datasets_response.text)
         self.assertEqual("INNER_TABLE_01", datasets_response.json()["datasets"][0]["tableName"])

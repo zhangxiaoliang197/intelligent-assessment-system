@@ -71,7 +71,7 @@ class CustomSkillCatalogTests(unittest.TestCase):
         self.assertEqual("custom", created["source"])
         self.assertTrue(created["editable"])
         self.assertEqual(1, created["revision"])
-        self.assertEqual(16, len(list_skills()))
+        self.assertEqual(31, len(list_skills()))
         self.assertEqual(created["id"], get_skill(created["id"])["id"])
         self.assertEqual(created["id"], recommend_skills("请做我的保障评估", 1)[0]["id"])
 
@@ -87,7 +87,7 @@ class CustomSkillCatalogTests(unittest.TestCase):
         deleted = delete_custom_skill(created["id"], updated["revision"])
         self.assertEqual(created["id"], deleted["id"])
         self.assertIsNone(get_skill(created["id"]))
-        self.assertEqual(15, len(list_skills()))
+        self.assertEqual(30, len(list_skills()))
 
     def test_built_in_skills_are_immutable(self) -> None:
         built_in = list_builtin_skills()[0]
@@ -96,7 +96,7 @@ class CustomSkillCatalogTests(unittest.TestCase):
             update_custom_skill(built_in["id"], _payload(), 1)
         with self.assertRaises(SkillReadOnlyError):
             delete_custom_skill(built_in["id"], 1)
-        self.assertEqual(15, len(list_builtin_skills()))
+        self.assertEqual(30, len(list_builtin_skills()))
 
     def test_exact_dataset_id_wins_and_stale_binding_falls_back_to_current_source(self) -> None:
         skill = _payload()
@@ -128,7 +128,7 @@ class CustomSkillCatalogTests(unittest.TestCase):
 
         skills = list_skills()
 
-        self.assertEqual(15, len(skills))
+        self.assertEqual(30, len(skills))
         self.assertTrue(all(skill["source"] == "builtin" for skill in skills))
         self.assertTrue(get_custom_catalog_warning())
 
@@ -164,7 +164,7 @@ class CustomSkillCatalogTests(unittest.TestCase):
         finally:
             connection.close()
 
-        self.assertEqual(15, len(list_skills()))
+        self.assertEqual(30, len(list_skills()))
         self.assertIn("custom-broken", get_custom_catalog_warning())
 
         deleted = delete_custom_skill("custom-broken", 1)
@@ -177,7 +177,7 @@ class CustomSkillCatalogTests(unittest.TestCase):
 
         skills = list_skills()
 
-        self.assertEqual(15, len(skills))
+        self.assertEqual(30, len(skills))
         self.assertTrue(get_custom_catalog_warning())
 
 
