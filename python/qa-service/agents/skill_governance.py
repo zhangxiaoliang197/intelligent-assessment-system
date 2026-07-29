@@ -215,6 +215,7 @@ _PORTABLE_FIELDS = (
     "steps",
     "outputInstruction",
     "orchestration",
+    "visualization",
     "teamId",
     "visibility",
     "status",
@@ -228,7 +229,7 @@ def export_skill_definition(
 ) -> Dict[str, Any]:
     """Return a portable definition with IDs and revision metadata removed."""
 
-    allowed = _PORTABLE_FIELDS if include_governance else _PORTABLE_FIELDS[:8]
+    allowed = _PORTABLE_FIELDS if include_governance else _PORTABLE_FIELDS[:9]
     definition = {
         field: copy.deepcopy(skill[field])
         for field in allowed

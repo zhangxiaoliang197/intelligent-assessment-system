@@ -93,8 +93,18 @@
                   </div>
                   {{ msg.content }}
                 </div>
+                <!-- 地图显示提示 -->
+                <div v-if="msg.role === 'assistant' && msg.showMapPrompt" class="map-prompt">
+                  <div class="map-prompt-text">
+                    <span>检测到回复中包含 {{ msg.geoPoints.length }} 个地理坐标，是否在地图上显示？</span>
+                  </div>
+                  <div class="map-prompt-actions">
+                    <el-button size="small" type="primary" @click="msg.showMap = true; msg.showMapPrompt = false">显示地图</el-button>
+                    <el-button size="small" @click="msg.showMapPrompt = false">不显示</el-button>
+                  </div>
+                </div>
                 <GeoMap
-                  v-if="msg.role === 'assistant' && msg.geoPoints && msg.geoPoints.length > 0"
+                  v-if="msg.role === 'assistant' && msg.showMap && msg.geoPoints && msg.geoPoints.length > 0"
                   :points="msg.geoPoints"
                 />
                 <div v-if="msg.references && msg.references.length > 0" class="references">
@@ -119,7 +129,7 @@
               type="textarea"
               :rows="3"
               placeholder="请输入您的问题..."
-              @keyup.enter.ctrl="sendMessage"
+              @keydown.enter.exact.prevent="sendMessage"
             />
             <div class="input-actions">
               <input
@@ -226,7 +236,7 @@ import { Search, Collection, Box, ChatLineRound, ChatDotRound, Promotion, PieCha
 import { ElMessage } from 'element-plus'
 import Layout from '@/components/Layout.vue'
 import GeoMap from '@/components/GeoMap.vue'
-import { extractCoordinates } from '@/utils/geoParser'
+import { processMapData } from '@/composables/useMapPrompt'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useAttachmentUpload } from '@/composables/useAttachmentUpload'
 import { useImageUpload } from '@/composables/useImageUpload'
@@ -395,6 +405,13 @@ const goTo = (path: string) => {
 const loadHistory = (item: any) => {
   if (sessionMessages.value[item.id]) {
     messages.value = [...sessionMessages.value[item.id]]
+    // 恢复历史消息中的地图状态
+    messages.value.forEach(msg => {
+      if (msg.geoPoints && msg.geoPoints.length > 0) {
+        msg.showMap = true
+        msg.showMapPrompt = false
+      }
+    })
     sessionId.value = item.id
     persistState()
     ElMessage.success('已加载历史记录')
@@ -505,19 +522,15 @@ const sendMessage = async () => {
             messages.value[msgIndex] = { ...messages.value[msgIndex], content: fullText }
             nextTick(() => scrollToBottom())
           } else if (data.type === 'done') {
-            const geoPoints = extractCoordinates(fullText)
-            console.log('[QAService] 坐标提取结果:', {
-              textPreview: fullText.slice(0, 200),
-              textChars: [...fullText.slice(0, 100)].map(c => `${c}(U+${c.codePointAt(0)!.toString(16).toUpperCase()})`).join(' '),
-              geoPointsCount: geoPoints.length,
-              geoPoints,
-            })
+            const mapData = processMapData(fullText, userQuestion)
             messages.value[msgIndex] = {
               ...messages.value[msgIndex],
               content: fullText,
               references: data.references || [],
               knowledgeUsed: data.knowledge_used || false,
-              geoPoints: geoPoints.length > 0 ? geoPoints : undefined,
+              geoPoints: mapData.geoPoints,
+              showMap: mapData.showMap,
+              showMapPrompt: mapData.showMapPrompt,
             }
             if (data.session_id) {
               sessionId.value = data.session_id
@@ -577,6 +590,13 @@ onMounted(() => {
   // 恢复上次会话的消息
   if (sessionId.value && sessionMessages.value[sessionId.value]) {
     messages.value = [...sessionMessages.value[sessionId.value]]
+    // 恢复历史消息中的地图状态：有坐标的直接显示，不弹提示
+    messages.value.forEach(msg => {
+      if (msg.geoPoints && msg.geoPoints.length > 0) {
+        msg.showMap = true
+        msg.showMapPrompt = false
+      }
+    })
   }
 
   // 读取 URL 参数 q，预填输入框
@@ -1095,6 +1115,34 @@ onMounted(() => {
 
 .knowledge-badge {
   margin-bottom: 8px;
+}
+
+/* ── 地图显示提示 ── */
+.map-prompt {
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: #f0f7ff;
+  border: 1px solid #d0e5ff;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.map-prompt-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #374151;
+  font-size: 14px;
+}
+
+.map-prompt-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .tools-bar .tool-item.current:hover .tool-name {

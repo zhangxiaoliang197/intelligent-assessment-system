@@ -420,7 +420,9 @@ const emit = defineEmits<{
 
 const categoryOptions = [
   '综合评估', '空中作战', '火力打击', '损伤评估',
-  '保障评估', '任务评估', '威胁研判', '自定义'
+  '保障评估', '任务评估', '威胁研判', '数据库基础',
+  '元数据查询', '数据质量', '统计分析', '趋势分析',
+  '关联分析', '数据可视化', '自定义'
 ]
 let draftKey = 0
 const newStep = (): EditableStep => {
@@ -432,6 +434,7 @@ const newStep = (): EditableStep => {
     name: '',
     description: '',
     datasetKeywords: [],
+    operation: 'dataset_query',
     allowReuse: false,
     datasetId: '',
     datasetName: '',
@@ -454,6 +457,7 @@ const form = reactive<{
   tags: string[]
   steps: EditableStep[]
   outputInstruction: string
+  visualization: EvaluationSkill['visualization']
   orchestration: SkillOrchestration
 }>({
   name: '',
@@ -466,6 +470,7 @@ const form = reactive<{
   tags: [],
   steps: [newStep()],
   outputInstruction: '',
+  visualization: { enabled: false, preferredType: 'auto' },
   orchestration: {
     mode: 'sequential',
     maxConcurrency: 1,
@@ -507,6 +512,7 @@ const toPayload = (): EvaluationSkillUpsertPayload => ({
     name: step.name.trim(),
     description: step.description.trim(),
     datasetKeywords: step.datasetKeywords.map(item => item.trim()).filter(Boolean),
+    operation: step.operation || 'dataset_query',
     allowReuse: Boolean(step.allowReuse),
     dependsOn: form.orchestration.mode === 'dependency' ? [...step.dependsOn] : [],
     runIf: step.runIf,
@@ -517,6 +523,7 @@ const toPayload = (): EvaluationSkillUpsertPayload => ({
     ...(step.datasetName ? { datasetName: step.datasetName } : {})
   })),
   outputInstruction: form.outputInstruction.trim(),
+  visualization: { ...form.visualization },
   orchestration: { ...form.orchestration }
 })
 
@@ -538,6 +545,7 @@ const resetForm = () => {
       name: step.name,
       description: step.description,
       datasetKeywords: [...step.datasetKeywords],
+      operation: step.operation || 'dataset_query',
       allowReuse: Boolean(step.allowReuse),
       datasetId: step.datasetId || '',
       datasetName: step.datasetName || '',
@@ -549,6 +557,9 @@ const resetForm = () => {
     }))
     : [newStep()]
   form.outputInstruction = skill?.outputInstruction || ''
+  form.visualization = skill?.visualization
+    ? { ...skill.visualization }
+    : { enabled: false, preferredType: 'auto' }
   form.orchestration = skill?.orchestration
     ? { ...skill.orchestration }
     : { mode: 'sequential', maxConcurrency: 1, timeoutSeconds: 600, failurePolicy: 'continue' }

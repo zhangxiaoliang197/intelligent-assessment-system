@@ -75,6 +75,9 @@ _build_docker.ps1
 CLAUDE.md
 CLAUDE.local.md
 
+读我.docx
+GeoWebCache-使用指南.md
+
 # Runtime data files (don't commit)
 **/data/sessions.json
 **/data/history.json

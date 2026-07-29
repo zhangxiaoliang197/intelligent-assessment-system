@@ -6,12 +6,14 @@ import com.assessment.admin.model.Driver;
 import com.assessment.admin.model.FieldAnnotation;
 import com.assessment.admin.model.Indicator;
 import com.assessment.admin.model.LlmConfig;
+import com.assessment.admin.model.MapServiceConfig;
 import com.assessment.admin.repository.DatabaseConfigRepository;
 import com.assessment.admin.repository.DatasetRepository;
 import com.assessment.admin.repository.DriverRepository;
 import com.assessment.admin.repository.FieldAnnotationRepository;
 import com.assessment.admin.repository.IndicatorRepository;
 import com.assessment.admin.repository.LlmConfigRepository;
+import com.assessment.admin.repository.MapServiceConfigRepository;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -59,6 +61,9 @@ public class AdminController {
 
     @Autowired
     private DriverRepository driverRepo;
+
+    @Autowired
+    private MapServiceConfigRepository mapConfigRepo;
 
     @Value("${db.type:mysql}")
     private String dbType;
@@ -1247,6 +1252,103 @@ public class AdminController {
         result.put("exportTime", java.time.LocalDateTime.now().toString());
 
         return ResponseEntity.ok(Map.of("success", true, "data", result));
+    }
+
+    // ==================== 地图服务配置管理 ====================
+
+    /** 列出所有地图服务配置 */
+    @GetMapping("/config/map/list")
+    public ResponseEntity<Map<String, Object>> listMapConfigs() {
+        List<MapServiceConfig> all = mapConfigRepo.findAll();
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (MapServiceConfig mc : all) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", mc.getId());
+            m.put("name", mc.getName());
+            m.put("type", mc.getType());
+            m.put("baseUrl", mc.getBaseUrl());
+            m.put("isActive", mc.getIsActive());
+            m.put("createTime", mc.getCreateTime() != null ? mc.getCreateTime().toString() : "");
+            list.add(m);
+        }
+        return ResponseEntity.ok(Map.of("success", true, "configs", list, "total", list.size()));
+    }
+
+    /** 创建地图服务配置 */
+    @PostMapping("/config/map")
+    public ResponseEntity<Map<String, Object>> createMapConfig(@RequestBody Map<String, Object> body) {
+        MapServiceConfig config = new MapServiceConfig();
+        config.setId("map_" + UUID.randomUUID().toString().substring(0, 8));
+        config.setName((String) body.getOrDefault("name", ""));
+        config.setType((String) body.getOrDefault("type", "geowebcache"));
+        config.setBaseUrl((String) body.getOrDefault("baseUrl", ""));
+        config.setIsActive(false);
+        mapConfigRepo.save(config);
+        return ResponseEntity.ok(Map.of("success", true, "message", "地图服务配置已保存", "id", config.getId()));
+    }
+
+    /** 更新地图服务配置 */
+    @PutMapping("/config/map/{id}")
+    public ResponseEntity<Map<String, Object>> updateMapConfig(
+            @PathVariable String id, @RequestBody Map<String, Object> body) {
+        Optional<MapServiceConfig> opt = mapConfigRepo.findById(id);
+        if (opt.isEmpty()) {
+            return ResponseEntity.badRequest().body(errorMap("配置不存在"));
+        }
+        MapServiceConfig config = opt.get();
+        if (body.containsKey("name")) config.setName((String) body.get("name"));
+        if (body.containsKey("type")) config.setType((String) body.get("type"));
+        if (body.containsKey("baseUrl")) config.setBaseUrl((String) body.get("baseUrl"));
+        mapConfigRepo.save(config);
+        return ResponseEntity.ok(Map.of("success", true, "message", "配置已更新"));
+    }
+
+    /** 删除地图服务配置 */
+    @DeleteMapping("/config/map/{id}")
+    public ResponseEntity<Map<String, Object>> deleteMapConfig(@PathVariable String id) {
+        Optional<MapServiceConfig> opt = mapConfigRepo.findById(id);
+        if (opt.isEmpty()) {
+            return ResponseEntity.badRequest().body(errorMap("配置不存在"));
+        }
+        mapConfigRepo.delete(opt.get());
+        return ResponseEntity.ok(Map.of("success", true, "message", "配置已删除"));
+    }
+
+    /** 激活某个地图服务配置（同时停用其他配置） */
+    @PutMapping("/config/map/{id}/activate")
+    public ResponseEntity<Map<String, Object>> activateMapConfig(@PathVariable String id) {
+        Optional<MapServiceConfig> opt = mapConfigRepo.findById(id);
+        if (opt.isEmpty()) {
+            return ResponseEntity.badRequest().body(errorMap("配置不存在"));
+        }
+        MapServiceConfig config = opt.get();
+        mapConfigRepo.findAll().forEach(c -> {
+            c.setIsActive(false);
+            mapConfigRepo.save(c);
+        });
+        config.setIsActive(true);
+        mapConfigRepo.save(config);
+        return ResponseEntity.ok(Map.of("success", true, "message", "已切换至: " + config.getName(), "activeId", id));
+    }
+
+    /** 获取当前活跃的地图服务配置（供前端 GeoMap 组件调用） */
+    @GetMapping("/config/map/active")
+    public ResponseEntity<Map<String, Object>> getActiveMapConfig() {
+        MapServiceConfig active = mapConfigRepo.findAll().stream()
+                .filter(c -> c.getIsActive() != null && c.getIsActive())
+                .findFirst()
+                .orElse(null);
+
+        if (active == null) {
+            return ResponseEntity.ok(Map.of("success", false, "message", "无活跃地图服务配置"));
+        }
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("id", active.getId());
+        data.put("name", active.getName());
+        data.put("type", active.getType());
+        data.put("baseUrl", active.getBaseUrl());
+        return ResponseEntity.ok(Map.of("success", true, "data", data));
     }
 
     // ==================== 辅助方法 ====================

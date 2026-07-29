@@ -9,7 +9,10 @@ if SERVICE_ROOT not in sys.path:
     sys.path.insert(0, SERVICE_ROOT)
 
 from agents.skill_runner import (  # noqa: E402
+    _build_skill_visualization,
     _is_dataset_scoped_sql,
+    _metadata_operation_rows,
+    preflight_skill_execution,
     run_skill_workflow,
 )
 
@@ -42,6 +45,146 @@ class DatasetScopeTests(unittest.TestCase):
 
 
 class SkillWorkflowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_table_structure_metadata_step_does_not_generate_or_execute_sql(self):
+        skill = {
+            "id": "test-table-structure",
+            "name": "表结构查询",
+            "description": "读取表结构",
+            "category": "元数据查询",
+            "outputInstruction": "输出字段",
+            "steps": [{
+                "id": "structure",
+                "name": "读取表结构",
+                "description": "读取目标表字段",
+                "datasetKeywords": ["表结构"],
+                "operation": "table_structure",
+            }],
+        }
+        datasets = [{
+            "id": "live-order",
+            "name": "订单",
+            "tableName": "orders",
+            "source": "live",
+            "columns": [
+                {
+                    "columnName": "order_id",
+                    "dataType": "BIGINT",
+                    "isNullable": False,
+                    "isPrimaryKey": True,
+                }
+            ],
+        }]
+
+        async def fake_llm(_system, _user):
+            return "unused"
+
+        with (
+            patch("agents.skill_runner.fetch_datasets_for_database", return_value=datasets),
+            patch("agents.skill_runner.run_text_to_sql") as text_to_sql,
+            patch("agents.skill_runner.execute_sql_on_database") as execute_sql,
+        ):
+            events = [
+                event
+                async for event in run_skill_workflow(
+                    question="查看 orders 表结构",
+                    database_id="db-1",
+                    database_name="业务库",
+                    skill=skill,
+                    llm_call_fn=fake_llm,
+                    include_synthesis=False,
+                )
+            ]
+
+        text_to_sql.assert_not_called()
+        execute_sql.assert_not_called()
+        result = next(event["result"] for event in events if event["type"] == "result")
+        self.assertEqual("completed", result["queryResults"][0]["status"])
+        self.assertEqual("", result["queryResults"][0]["sql"])
+        self.assertEqual("order_id", result["queryResults"][0]["rows"][0]["字段名"])
+        self.assertTrue(result["queryResults"][0]["rows"][0]["主键"])
+
+    async def test_metadata_step_preflight_is_ready_without_a_physical_table_binding(self):
+        skill = {
+            "id": "test-database-overview",
+            "name": "数据库概览",
+            "description": "读取数据库信息",
+            "category": "数据库基础",
+            "outputInstruction": "输出概览",
+            "steps": [{
+                "id": "overview",
+                "name": "数据库概览",
+                "description": "读取元数据",
+                "datasetKeywords": ["数据库"],
+                "operation": "database_overview",
+            }],
+        }
+        datasets = [{
+            "id": "live-order",
+            "name": "订单",
+            "tableName": "orders",
+            "source": "live",
+            "columns": [{"columnName": "order_id", "dataType": "BIGINT"}],
+        }]
+
+        with patch("agents.skill_runner.fetch_datasets_for_database", return_value=datasets):
+            result = await preflight_skill_execution(
+                database_id="db-1",
+                database_name="业务库",
+                skill=skill,
+            )
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(1, result["schemaReadySteps"])
+        self.assertTrue(result["datasetPlan"][0]["schemaReady"])
+        self.assertEqual([], result["datasetPlan"][0]["issues"])
+
+    async def test_database_overview_deduplicates_multiple_datasets_for_one_table(self):
+        columns, rows = await _metadata_operation_rows(
+            "database_overview",
+            database_id="db-1",
+            database_name="业务库",
+            question="查看数据库概览",
+            datasets=[
+                {
+                    "id": "configured-orders",
+                    "name": "订单业务数据集",
+                    "tableName": "orders",
+                    "source": "configured",
+                },
+                {
+                    "id": "legacy-orders",
+                    "name": "旧订单数据集",
+                    "tableName": "ORDERS",
+                    "source": "configured",
+                },
+            ],
+        )
+
+        self.assertIn("物理表数量", columns)
+        self.assertEqual(1, rows[0]["物理表数量"])
+        self.assertEqual(1, rows[0]["已登记数据集数量"])
+
+    def test_visualization_uses_completed_aggregate_rows(self):
+        payload = _build_skill_visualization(
+            {
+                "name": "分类对比",
+                "visualization": {"enabled": True, "preferredType": "bar"},
+            },
+            [{
+                "status": "completed",
+                "columns": ["category", "total"],
+                "rows": [
+                    {"category": "A", "total": 12},
+                    {"category": "B", "total": 8},
+                ],
+            }],
+        )
+
+        self.assertEqual("bar", payload["chartConfig"]["vizType"])
+        self.assertEqual("category", payload["chartConfig"]["xAxis"])
+        self.assertEqual(["total"], payload["chartConfig"]["yAxis"])
+        self.assertEqual(2, len(payload["rawResults"]))
+
     async def test_executes_dataset_steps_in_declaration_order(self):
         skill = {
             "id": "test-sequential-skill",

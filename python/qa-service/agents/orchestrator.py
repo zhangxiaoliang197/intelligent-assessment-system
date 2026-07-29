@@ -47,18 +47,29 @@ ORCHESTRATOR_SYSTEM_PROMPT = f"""# 角色: {ORCHESTRATOR_AGENT['role']}
 ## 用户问题
 {{question}}
 
-## 可选智能体及适用场景
-1. **data_query** — 基础查询智能体（默认）。适用：用户直接询问具体数据，如"查询XX"、"列出XX"、"XX有哪些"、"帮我查看XX"。
-2. **combat_effectiveness** — 作战效能评估智能体。仅当用户明确要求"评估整个推演过程"中的某方面时使用，如"评估本次推演的战损"、"分析整个作战过程的战果"、"对整体消耗进行评估"。
-3. **air_superiority** — 制空权分析智能体。仅当用户明确提及"制空权/空域控制/空中力量对比"时使用。
-4. **general_analysis** — 通用问答。仅限纯理论问题（"什么是XX"、"解释XX概念"），完全不涉及数据库查询。
+## ⚠️ 第一步（最重要！）：判断问题主题是否与数据源相关
 
-## 选择规则（重要）
-- **默认选 data_query**
-- 只有用户问题中明确出现"评估整个推演/分析整个作战过程/对整体XX进行评估"等整体性评估表述时，才选 **combat_effectiveness**
-- 只有用户明确提及"制空权/空域控制/空中力量对比"时，才选 **air_superiority**
-- 单纯的"查询/列出/查看/帮我"等动词，一律选 **data_query**
-- 纯概念解释无数据源时选 **general_analysis**
+请先回答：用户问题的主题是否与上述数据源的**表名、数据集名、指标名的含义**有关联？
+
+**典型不相关场景（→ 必须选 general_analysis）：**
+- 数据源的业务主题与用户问题的领域完全不一致 → **主题不相关**
+- 例如：数据源是关于A领域的数据，用户问题问的是B领域的内容 → **主题完全无关**
+- 问题领域与数据源的业务主题明显不一致 → **主题不相关**
+
+**典型相关场景：**
+- 问题中提到的实体/概念与数据源的表名、字段名、数据集描述直接对应 → 相关
+- 问题要求的计算与数据源中预定义的指标一致 → 相关
+
+**规则：如果问题主题与数据源业务不相关 → 直接选 general_analysis，不要尝试查询数据库！**
+
+## 第二步：选择智能体
+
+仅在**问题与数据源相关**的前提下，按以下规则选择智能体：
+
+1. **data_query** — 用户要求从数据库中读取具体数据。例："列出XX"、"统计XX的数量"、"查询XX表"、"XX数据是多少"。
+2. **combat_effectiveness** — 用户要求评估整个推演过程。例："评估本次推演的战损"、"分析整个作战过程"。
+3. **air_superiority** — 用户明确提到制空权/空域控制/空中力量对比。
+4. **general_analysis** — 所有其他情况（含：分析评估结论、趋势判断、知识问答、地图地理、与数据源无关的任何问题）。
 
 ## 是否需要结论（need_conclusion）
 - 用户明确说"只看数据/仅列出/不要结论/只要数据"→ false
@@ -76,12 +87,12 @@ ORCHESTRATOR_SYSTEM_PROMPT = f"""# 角色: {ORCHESTRATOR_AGENT['role']}
     "filters": "时间范围、条件等过滤，如无可留空",
     "dimensions": ["分析维度"],
     "analysis_plan": "具体步骤",
-    "query_type": "data_query",
+    "query_type": "在此填入最终选择的智能体",
     "need_conclusion": true,
     "need_chart": false
 }}}}
 
-**注意: 根据问题领域选择最合适的 query_type！need_conclusion 必须为布尔值 true 或 false。**"""
+**注意: query_type 必须根据上述两步判断结果选择！**"""
 
 
 def parse_orchestrator_response(response_text: str) -> dict:

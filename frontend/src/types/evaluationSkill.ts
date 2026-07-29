@@ -1,6 +1,12 @@
 export type EvaluationSkillSource = 'builtin' | 'custom'
 export type EvaluationSkillVisibility = 'private' | 'team' | 'public'
 export type EvaluationSkillStatus = 'draft' | 'published' | 'disabled' | 'archived'
+export type EvaluationSkillStepOperation =
+  | 'dataset_query'
+  | 'database_overview'
+  | 'table_catalog'
+  | 'table_structure'
+export type SkillVisualizationType = 'auto' | 'bar' | 'line' | 'pie'
 export type SkillExecutionStatus =
   | 'queued'
   | 'running'
@@ -17,6 +23,7 @@ export interface EvaluationSkillStep {
   name: string
   description: string
   datasetKeywords: string[]
+  operation: EvaluationSkillStepOperation
   allowReuse?: boolean
   datasetId?: string
   datasetName?: string
@@ -25,6 +32,11 @@ export interface EvaluationSkillStep {
   retryCount: number
   timeoutSeconds: number
   onFailure: 'continue' | 'stop' | 'skip_dependents'
+}
+
+export interface SkillVisualization {
+  enabled: boolean
+  preferredType: SkillVisualizationType
 }
 
 export interface SkillOrchestration {
@@ -76,6 +88,7 @@ export interface EvaluationSkill {
   recommendedQuestions: string[]
   steps: EvaluationSkillStep[]
   outputInstruction: string
+  visualization: SkillVisualization
   orchestration: SkillOrchestration
   stepCount: number
   availability?: EvaluationSkillAvailability
@@ -129,6 +142,7 @@ export interface RecommendEvaluationSkillsParams {
   query: string
   limit?: number
   dataSourceId?: string
+  signal?: AbortSignal
 }
 
 export interface EvaluationSkillStepInput {
@@ -136,6 +150,7 @@ export interface EvaluationSkillStepInput {
   name: string
   description: string
   datasetKeywords: string[]
+  operation?: EvaluationSkillStepOperation
   allowReuse?: boolean
   datasetId?: string
   datasetName?: string
@@ -153,6 +168,7 @@ export interface EvaluationSkillUpsertPayload {
   triggers: string[]
   recommendedQuestions: string[]
   steps: EvaluationSkillStepInput[]
+  visualization?: SkillVisualization
   outputInstruction: string
   orchestration?: SkillOrchestration
   visibility?: EvaluationSkillVisibility

@@ -39,6 +39,7 @@ import { ref, onMounted, watch, onUnmounted, computed } from 'vue'
 import L from 'leaflet'
 import gcoord from 'gcoord'
 import type { GeoPoint } from '@/utils/geoParser'
+import api from '@/services/api'
 
 const props = defineProps<{
   points: GeoPoint[]
@@ -49,14 +50,56 @@ const mapContainer = ref<HTMLElement | null>(null)
 let map: L.Map | null = null
 let markers: L.Marker[] = []
 let circleMarkers: L.CircleMarker[] = []
-let provincesLayer: L.TileLayer | null = null
-let citiesLayer: L.TileLayer | null = null
-let waterAreasLayer: L.TileLayer | null = null
-let waterwaysLayer: L.TileLayer | null = null
-let roadsLayer: L.TileLayer | null = null
-let railwaysLayer: L.TileLayer | null = null
+let tileLayers: { layer: L.TileLayer; config: MapLayerConfig }[] = []
+
+// ── 地图图层配置接口 ──
+interface MapLayerConfig {
+  id: string
+  name: string
+  urlTemplate: string
+  opacity: number    // 基础透明度
+  minZoom: number
+  maxZoom: number
+  tms?: boolean
+}
+
+// ── 默认硬编码配置（GeoWebCache 6层叠加，作为 API 失败时的兜底） ──
+const DEFAULT_BASE_URL = '/geowebcache/gwc'
 
 const colors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#2980b9']
+
+// ── 根据 type + baseUrl 客户端构建图层 ──
+function buildLayers(type: string, baseUrl: string): MapLayerConfig[] {
+  const url = baseUrl.replace(/\/+$/, '')
+  if (type === 'geowebcache') {
+    return [
+      { id: 'china_provinces_3857', name: '省级行政边界', urlTemplate: `${url}/service/tms/1.0.0/china:china_provinces_3857@EPSG:900913@png/{z}/{x}/{y}.png`, opacity: 0.9, minZoom: 3, maxZoom: 18, tms: true },
+      { id: 'china_cities_3857', name: '城市/区县边界', urlTemplate: `${url}/service/tms/1.0.0/china:china_cities_3857@EPSG:900913@png/{z}/{x}/{y}.png`, opacity: 0.3, minZoom: 3, maxZoom: 18, tms: true },
+      { id: 'china_osm_waterareas_3857', name: '湖泊水库', urlTemplate: `${url}/service/tms/1.0.0/china:china_osm_waterareas_3857@EPSG:900913@png/{z}/{x}/{y}.png`, opacity: 0.4, minZoom: 3, maxZoom: 18, tms: true },
+      { id: 'china_osm_waterways_3857', name: '河流水系', urlTemplate: `${url}/service/tms/1.0.0/china:china_osm_waterways_3857@EPSG:900913@png/{z}/{x}/{y}.png`, opacity: 0.3, minZoom: 3, maxZoom: 18, tms: true },
+      { id: 'china_osm_roads_3857', name: '道路网络', urlTemplate: `${url}/service/tms/1.0.0/china:china_osm_roads_3857@EPSG:900913@png/{z}/{x}/{y}.png`, opacity: 0.2, minZoom: 3, maxZoom: 18, tms: true },
+      { id: 'china_osm_railways_3857', name: '铁路地铁', urlTemplate: `${url}/service/tms/1.0.0/china:china_osm_railways_3857@EPSG:900913@png/{z}/{x}/{y}.png`, opacity: 0.1, minZoom: 3, maxZoom: 18, tms: true },
+    ]
+  }
+  // 自定义: 地址作为单层瓦片源
+  return [{ id: 'custom', name: '自定义图层', urlTemplate: baseUrl, opacity: 0.9, minZoom: 3, maxZoom: 18, tms: true }]
+}
+
+// ── 从 API 加载地图服务配置，失败则用默认配置 ──
+async function loadMapConfig(): Promise<MapLayerConfig[]> {
+  try {
+    const res = await api.get('/admin/config/map/active')
+    if (res.success && res.data && res.data.type) {
+      const layers = buildLayers(res.data.type, res.data.baseUrl || DEFAULT_BASE_URL)
+      console.log('[GeoMap] 加载动态地图配置:', res.data.name, layers.length, '层')
+      return layers
+    }
+  } catch (e) {
+    console.warn('[GeoMap] 地图配置API加载失败，使用默认配置:', e)
+  }
+  console.log('[GeoMap] 使用默认 GeoWebCache 配置')
+  return buildLayers('geowebcache', DEFAULT_BASE_URL)
+}
 
 const fitViewport = computed(() => {
   const pts = props.points
@@ -79,16 +122,41 @@ const fitViewport = computed(() => {
 })
 
 function transformCoord(lng: number, lat: number): [number, number] {
-  const result = gcoord.transform(
-    [lng, lat],
-    gcoord.WGS84,
-    gcoord.GCJ02
-  )
+  const result = gcoord.transform([lng, lat], gcoord.WGS84, gcoord.GCJ02)
   return [result[1], result[0]]
 }
 
-function initMap() {
+function buildTileLayers(layerConfigs: MapLayerConfig[]) {
+  tileLayers = layerConfigs.map(cfg => ({
+    config: cfg,
+    layer: L.tileLayer(cfg.urlTemplate, {
+      tms: cfg.tms ?? false,
+      maxZoom: cfg.maxZoom,
+      minZoom: cfg.minZoom,
+      opacity: cfg.opacity,
+      attribution: 'GeoWebCache',
+    }),
+  }))
+}
+
+function addTileLayers() {
+  tileLayers.forEach(tl => {
+    tl.layer.addTo(map!)
+    tl.layer.setOpacity(tl.config.opacity)
+  })
+}
+
+function clearTileLayers() {
+  tileLayers.forEach(tl => {
+    if (map) map.removeLayer(tl.layer)
+  })
+  tileLayers = []
+}
+
+async function initMap() {
   if (!mapContainer.value) return
+
+  const layerConfigs = await loadMapConfig()
 
   map = L.map(mapContainer.value, {
     center: fitViewport.value.center,
@@ -99,38 +167,8 @@ function initMap() {
     maxZoom: 18,
   })
 
-  const GWC = '/geowebcache/gwc/service/tms/1.0.0'
-  const tmsOpts = { tms: true, maxZoom: 18, minZoom: 3, attribution: 'GeoWebCache' }
-
-  provincesLayer = L.tileLayer(
-    GWC + '/china:china_provinces_3857@EPSG:900913@png/{z}/{x}/{y}.png',
-    Object.assign({}, tmsOpts, { opacity: 0.9 })
-  ).addTo(map)
-
-  citiesLayer = L.tileLayer(
-    GWC + '/china:china_cities_3857@EPSG:900913@png/{z}/{x}/{y}.png',
-    Object.assign({}, tmsOpts, { opacity: 0.5 })
-  ).addTo(map)
-
-  waterAreasLayer = L.tileLayer(
-    GWC + '/china:china_osm_waterareas_3857@EPSG:900913@png/{z}/{x}/{y}.png',
-    Object.assign({}, tmsOpts, { opacity: 0.8 })
-  ).addTo(map)
-
-  waterwaysLayer = L.tileLayer(
-    GWC + '/china:china_osm_waterways_3857@EPSG:900913@png/{z}/{x}/{y}.png',
-    Object.assign({}, tmsOpts, { opacity: 0.7 })
-  ).addTo(map)
-
-  roadsLayer = L.tileLayer(
-    GWC + '/china:china_osm_roads_3857@EPSG:900913@png/{z}/{x}/{y}.png',
-    Object.assign({}, tmsOpts, { opacity: 0.9 })
-  ).addTo(map)
-
-  railwaysLayer = L.tileLayer(
-    GWC + '/china:china_osm_railways_3857@EPSG:900913@png/{z}/{x}/{y}.png',
-    Object.assign({}, tmsOpts, { opacity: 0.7 })
-  ).addTo(map)
+  buildTileLayers(layerConfigs)
+  addTileLayers()
 
   map.on('zoomend', updateLayerOpacity)
   updateLayerOpacity()
@@ -138,43 +176,48 @@ function initMap() {
   addMarkers()
 }
 
+/**
+ * 根据当前缩放级别动态调整各图层透明度
+ * 使用图层 ID 识别不同图层，应用与原硬编码逻辑一致的规则
+ */
 function updateLayerOpacity() {
   if (!map) return
   const z = map.getZoom()
-  if (z >= 13) {
-    provincesLayer?.setOpacity(0.1)
-    citiesLayer?.setOpacity(0.4)
-    waterAreasLayer?.setOpacity(0.9)
-    waterwaysLayer?.setOpacity(0.8)
-    roadsLayer?.setOpacity(0.9)
-    railwaysLayer?.setOpacity(0.7)
-  } else if (z >= 10) {
-    provincesLayer?.setOpacity(0.15)
-    citiesLayer?.setOpacity(0.5)
-    waterAreasLayer?.setOpacity(0.8)
-    waterwaysLayer?.setOpacity(0.7)
-    roadsLayer?.setOpacity(0.8)
-    railwaysLayer?.setOpacity(0.6)
-  } else if (z >= 7) {
-    provincesLayer?.setOpacity(0.3)
-    citiesLayer?.setOpacity(0.5)
-    waterAreasLayer?.setOpacity(0.6)
-    waterwaysLayer?.setOpacity(0.5)
-    roadsLayer?.setOpacity(0.5)
-    railwaysLayer?.setOpacity(0.4)
-  } else {
-    provincesLayer?.setOpacity(0.9)
-    citiesLayer?.setOpacity(0.3)
-    waterAreasLayer?.setOpacity(0.4)
-    waterwaysLayer?.setOpacity(0.3)
-    roadsLayer?.setOpacity(0.2)
-    railwaysLayer?.setOpacity(0.1)
-  }
+
+  tileLayers.forEach(({ layer, config }) => {
+    let opacity = config.opacity
+
+    // 按图层 ID 应用与原来一致的缩放透明度规则
+    if (z >= 13) {
+      if (config.id.includes('provinces')) opacity = 0.1
+      else if (config.id.includes('cities')) opacity = 0.4
+      else if (config.id.includes('waterareas')) opacity = 0.9
+      else if (config.id.includes('waterways')) opacity = 0.8
+      else if (config.id.includes('roads')) opacity = 0.9
+      else if (config.id.includes('railways')) opacity = 0.7
+    } else if (z >= 10) {
+      if (config.id.includes('provinces')) opacity = 0.15
+      else if (config.id.includes('cities')) opacity = 0.5
+      else if (config.id.includes('waterareas')) opacity = 0.8
+      else if (config.id.includes('waterways')) opacity = 0.7
+      else if (config.id.includes('roads')) opacity = 0.8
+      else if (config.id.includes('railways')) opacity = 0.6
+    } else if (z >= 7) {
+      if (config.id.includes('provinces')) opacity = 0.3
+      else if (config.id.includes('cities')) opacity = 0.5
+      else if (config.id.includes('waterareas')) opacity = 0.6
+      else if (config.id.includes('waterways')) opacity = 0.5
+      else if (config.id.includes('roads')) opacity = 0.5
+      else if (config.id.includes('railways')) opacity = 0.4
+    }
+    // z < 7 使用各自的默认 opacity
+
+    layer.setOpacity(opacity)
+  })
 }
 
 function addMarkers() {
   if (!map) return
-
   clearMarkers()
 
   props.points.forEach((p, i) => {
@@ -191,11 +234,7 @@ function addMarkers() {
     }).addTo(map!)
 
     circle.bindPopup(`<strong>${p.name}</strong><br/>经度: ${p.lng.toFixed(4)}<br/>纬度: ${p.lat.toFixed(4)}<br/>原文: ${p.raw}`)
-
-    circle.on('mouseover', () => {
-      circle.openPopup()
-    })
-
+    circle.on('mouseover', () => { circle.openPopup() })
     circleMarkers.push(circle)
 
     const marker = L.marker([lat, lng], {
@@ -206,7 +245,6 @@ function addMarkers() {
         iconAnchor: [-10, -25],
       }),
     }).addTo(map!)
-
     markers.push(marker)
   })
 
@@ -220,35 +258,14 @@ function addMarkers() {
 }
 
 function clearMarkers() {
-  markers.forEach(m => {
-    if (map) map.removeLayer(m)
-  })
+  markers.forEach(m => { if (map) map.removeLayer(m) })
   markers = []
-  circleMarkers.forEach(m => {
-    if (map) map.removeLayer(m)
-  })
+  circleMarkers.forEach(m => { if (map) map.removeLayer(m) })
   circleMarkers = []
 }
 
-function clearLayers() {
-  if (provincesLayer && map) map.removeLayer(provincesLayer)
-  if (citiesLayer && map) map.removeLayer(citiesLayer)
-  if (waterAreasLayer && map) map.removeLayer(waterAreasLayer)
-  if (waterwaysLayer && map) map.removeLayer(waterwaysLayer)
-  if (roadsLayer && map) map.removeLayer(roadsLayer)
-  if (railwaysLayer && map) map.removeLayer(railwaysLayer)
-  provincesLayer = null
-  citiesLayer = null
-  waterAreasLayer = null
-  waterwaysLayer = null
-  roadsLayer = null
-  railwaysLayer = null
-}
-
 watch(() => props.points, () => {
-  if (map) {
-    addMarkers()
-  }
+  if (map) addMarkers()
 }, { deep: true })
 
 onMounted(() => {
@@ -258,7 +275,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (map) {
     map.off('zoomend', updateLayerOpacity)
-    clearLayers()
+    clearTileLayers()
     map.remove()
     map = null
   }
@@ -291,7 +308,6 @@ onUnmounted(() => {
 
 .geo-map-count {
   font-size: 12px;
-  color: var(--text-muted);
   background: var(--primary-50, #eff6ff);
   color: var(--primary-600, #3b82f6);
   padding: 2px 10px;
@@ -339,13 +355,8 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
-.geo-point-table tbody tr:hover {
-  background: #f8f9fb;
-}
-
-.geo-point-table tbody tr:last-child td {
-  border-bottom: none;
-}
+.geo-point-table tbody tr:hover { background: #f8f9fb; }
+.geo-point-table tbody tr:last-child td { border-bottom: none; }
 
 .point-dot {
   display: inline-block;
@@ -370,7 +381,6 @@ onUnmounted(() => {
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
-
 :deep(.leaflet-control-zoom a) {
   background: #fff;
   border-bottom: 1px solid #eee;
@@ -380,36 +390,17 @@ onUnmounted(() => {
   line-height: 32px;
   font-size: 18px;
 }
-
-:deep(.leaflet-control-zoom a:hover) {
-  background: #f5f5f5;
-}
-
-:deep(.leaflet-control-zoom a:first-child) {
-  border-radius: 8px 8px 0 0;
-}
-
-:deep(.leaflet-control-zoom a:last-child) {
-  border-radius: 0 0 8px 8px;
-  border-bottom: none;
-}
+:deep(.leaflet-control-zoom a:hover) { background: #f5f5f5; }
+:deep(.leaflet-control-zoom a:first-child) { border-radius: 8px 8px 0 0; }
+:deep(.leaflet-control-zoom a:last-child) { border-radius: 0 0 8px 8px; border-bottom: none; }
 
 :deep(.leaflet-popup-content) {
   padding: 12px;
   font-size: 13px;
   min-width: 180px;
 }
-
-:deep(.leaflet-popup-content strong) {
-  font-size: 14px;
-  color: #333;
-}
-
-:deep(.leaflet-popup-tip) {
-  background: #fff;
-  border: 1px solid #e0e0e0;
-}
-
+:deep(.leaflet-popup-content strong) { font-size: 14px; color: #333; }
+:deep(.leaflet-popup-tip) { background: #fff; border: 1px solid #e0e0e0; }
 :deep(.leaflet-popup-wrapper) {
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);

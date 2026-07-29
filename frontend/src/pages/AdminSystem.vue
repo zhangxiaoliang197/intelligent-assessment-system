@@ -189,6 +189,42 @@
             </div>
           </div>
         </el-tab-pane>
+        <el-tab-pane label="地图服务配置" name="map">
+          <div class="tab-content">
+            <div class="section-header">
+              <h3>地图服务配置</h3>
+              <el-button type="primary" @click="openMapDialog()">新增配置</el-button>
+            </div>
+
+            <el-table :data="mapConfigs" style="width: 100%" stripe>
+              <el-table-column type="index" label="#" width="50" />
+              <el-table-column prop="name" label="配置名称" min-width="150" />
+              <el-table-column prop="type" label="服务类型" width="130">
+                <template #default="{ row }">
+                  <el-tag size="small">{{ row.type }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="baseUrl" label="服务地址" min-width="200" show-overflow-tooltip />
+              <el-table-column label="状态" width="100" align="center">
+                <template #default="{ row }">
+                  <el-tag v-if="row.isActive" type="success" size="small">使用中</el-tag>
+                  <el-tag v-else type="info" size="small">未激活</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="270" align="center">
+                <template #default="{ row }">
+                  <el-button v-if="!row.isActive" type="success" size="small" @click="activateMapConfig(row)">启用</el-button>
+                  <el-button v-else size="small" disabled>当前</el-button>
+                  <el-button size="small" @click="openMapDialog(row)">编辑</el-button>
+                  <el-button type="danger" size="small" @click="deleteMapConfig(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div style="margin-top: 12px; color: #909399; font-size: 12px;">
+              提示：点击「启用」将切换当前地图服务，智能问答、指标分析、评估分析中的地图将使用激活的服务。
+            </div>
+          </div>
+        </el-tab-pane>
       </el-tabs>
 
       <!-- 大模型配置 新增/编辑对话框 -->
@@ -232,6 +268,32 @@
         <template #footer>
           <el-button @click="showLlmDialog = false">取消</el-button>
           <el-button type="primary" @click="saveLlmConfig">{{ editingLlmId ? '保存' : '创建' }}</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- 地图服务配置 新增/编辑对话框 -->
+      <el-dialog v-model="showMapDialog" :title="editingMapId ? '编辑地图服务' : '新增地图服务'" width="500px">
+        <el-form :model="mapForm" label-width="80px">
+          <el-form-item label="配置名称" required>
+            <el-input v-model="mapForm.name" placeholder="如：GeoWebCache 内网地图、高德瓦片服务" />
+          </el-form-item>
+          <el-form-item label="服务类型">
+            <el-select v-model="mapForm.type" placeholder="请选择服务类型" style="width: 100%">
+              <el-option label="GeoWebCache" value="geowebcache" />
+              <el-option label="自定义瓦片服务" value="custom" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="服务地址">
+            <el-input v-model="mapForm.baseUrl" :placeholder="mapForm.type === 'geowebcache' ? '如：/geowebcache 或 http://192.168.1.100:9090/geowebcache' : '如：http://192.168.1.100:9090/tiles/{z}/{x}/{y}.png'" />
+          </el-form-item>
+          <div style="color: #909399; font-size: 12px; margin-top: 8px;">
+            <template v-if="mapForm.type === 'geowebcache'">GeoWebCache 将自动叠加 6 层标准图层（省级、城市、水域、水系、道路、铁路）。</template>
+            <template v-else>自定义服务将使用地址作为单层瓦片源。</template>
+          </div>
+        </el-form>
+        <template #footer>
+          <el-button @click="showMapDialog = false">取消</el-button>
+          <el-button type="primary" @click="saveMapConfig">{{ editingMapId ? '保存' : '创建' }}</el-button>
         </template>
       </el-dialog>
 
@@ -1177,6 +1239,80 @@ async function testLlmConnection(row: any) {
   }
 }
 
+// ==================== 地图服务配置管理 ====================
+const mapConfigs = ref<any[]>([])
+const showMapDialog = ref(false)
+const editingMapId = ref('')
+const mapForm = ref({ name: '', type: 'geowebcache', baseUrl: '' })
+
+function openMapDialog(row?: any) {
+  if (row) {
+    editingMapId.value = row.id
+    mapForm.value = {
+      name: row.name || '',
+      type: row.type || 'geowebcache',
+      baseUrl: row.baseUrl || '',
+    }
+  } else {
+    editingMapId.value = ''
+    mapForm.value = { name: '', type: 'geowebcache', baseUrl: '' }
+  }
+  showMapDialog.value = true
+}
+
+async function saveMapConfig() {
+  if (!mapForm.value.name.trim()) { ElMessage.warning('请输入配置名称'); return }
+  if (!mapForm.value.baseUrl.trim()) { ElMessage.warning('请输入服务地址'); return }
+
+  const payload = {
+    name: mapForm.value.name,
+    type: mapForm.value.type,
+    baseUrl: mapForm.value.baseUrl,
+  }
+
+  try {
+    if (editingMapId.value) {
+      await api.put(`/admin/config/map/${editingMapId.value}`, payload)
+      ElMessage.success('地图配置已更新')
+    } else {
+      const res = await api.post('/admin/config/map', payload)
+      ElMessage.success(res.message || '地图配置已保存')
+    }
+    showMapDialog.value = false
+    loadMapConfigs()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '保存失败')
+  }
+}
+
+async function activateMapConfig(row: any) {
+  try {
+    await api.put(`/admin/config/map/${row.id}/activate`)
+    ElMessage.success(`已切换至: ${row.name}`)
+    loadMapConfigs()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '切换失败')
+  }
+}
+
+async function deleteMapConfig(row: any) {
+  try {
+    await ElMessageBox.confirm(`确定删除配置「${row.name}」吗？`, '确认', { type: 'warning' })
+    await api.delete(`/admin/config/map/${row.id}`)
+    ElMessage.success('配置已删除')
+    loadMapConfigs()
+  } catch { /* cancelled */ }
+}
+
+async function loadMapConfigs() {
+  try {
+    const res = await api.get('/admin/config/map/list')
+    if (res && res.success) {
+      mapConfigs.value = res.configs || []
+    }
+  } catch {}
+}
+
 // ==================== 初始化 ====================
 onMounted(() => {
   loadDatabases()
@@ -1184,6 +1320,7 @@ onMounted(() => {
   loadDatasets()
   loadIndicators()
   loadLlmConfigs()
+  loadMapConfigs()
 })
 </script>
 

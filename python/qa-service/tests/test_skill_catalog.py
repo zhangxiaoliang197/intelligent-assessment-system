@@ -45,8 +45,8 @@ class SkillCatalogTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.skills = list_builtin_skills()
 
-    def test_catalog_contains_exactly_fifteen_unique_well_formed_skills(self) -> None:
-        self.assertEqual(15, len(self.skills))
+    def test_catalog_contains_exactly_thirty_unique_well_formed_skills(self) -> None:
+        self.assertEqual(30, len(self.skills))
 
         skill_ids = [skill["id"] for skill in self.skills]
         self.assertEqual(len(skill_ids), len(set(skill_ids)), "Skill IDs must be unique")
@@ -112,7 +112,7 @@ class SkillCatalogTests(unittest.TestCase):
 
         self.assertTrue(diagnostics["ready"])
         self.assertEqual(os.path.abspath(catalog_file), diagnostics["path"])
-        self.assertEqual(15, diagnostics["skillCount"])
+        self.assertEqual(30, diagnostics["skillCount"])
         self.assertEqual(catalog["skills"], loaded["skills"])
 
     def test_missing_catalog_reports_an_actionable_deployment_error(self) -> None:
@@ -143,6 +143,43 @@ class SkillCatalogTests(unittest.TestCase):
         self.assertEqual("air-superiority-comparison", recommendations[0]["id"])
         self.assertIn("制空权", recommendations[0]["matchedTriggers"])
         self.assertGreater(recommendations[0]["recommendationScore"], 0)
+
+    def test_generic_database_and_chart_skills_are_recommended(self) -> None:
+        cases = [
+            ("查看数据库基础信息和版本", "database-overview-query"),
+            ("查询任务表的表结构", "table-structure-query"),
+            ("把各分类数量画图", "chart-visualization-query"),
+        ]
+        for query, expected_skill_id in cases:
+            with self.subTest(query=query):
+                recommendations = recommend_skills(query, limit=3)
+                self.assertTrue(recommendations)
+                self.assertEqual(expected_skill_id, recommendations[0]["id"])
+
+    def test_metadata_steps_resolve_without_guessing_a_business_table(self) -> None:
+        skill = {
+            "steps": [
+                {
+                    **_step("overview", "数据库"),
+                    "operation": "database_overview",
+                }
+            ]
+        }
+        datasets = [
+            {
+                "id": "live-orders",
+                "name": "订单",
+                "tableName": "orders",
+                "source": "live",
+                "databaseProductName": "PostgreSQL",
+            }
+        ]
+
+        plan = resolve_skill_datasets(skill, datasets)
+
+        self.assertEqual("metadata-database_overview", plan[0]["dataset"]["id"])
+        self.assertTrue(plan[0]["dataset"]["isMetadata"])
+        self.assertEqual("PostgreSQL", plan[0]["dataset"]["databaseProductName"])
 
     def test_dataset_resolution_preserves_declared_step_order(self) -> None:
         skill = {

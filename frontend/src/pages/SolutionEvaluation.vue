@@ -111,8 +111,9 @@
         </div>
 
         <div
-          v-if="!selectedSkillId && (recommendationLoading || skillRecommendations.length)"
+          v-if="!selectedSkillId && skillRecommendations.length"
           class="skill-recommendation-bar"
+          :aria-busy="recommendationLoading"
         >
           <div class="recommendation-heading">
             <el-icon><MagicStick /></el-icon>
@@ -221,6 +222,45 @@
                             <span v-if="msg.result.skillExecution?.durationMs" class="duration-text">
                               {{ formatDuration(msg.result.skillExecution.durationMs) }}
                             </span>
+                          </div>
+                        </div>
+
+                        <div
+                          v-if="msg.result.chartConfig && msg.result.rawResults?.length"
+                          class="chart-section skill-chart-section"
+                        >
+                          <div class="chart-header">
+                            <h6>{{ msg.result.chartConfig.chartTitle || 'Skill 数据可视化' }}</h6>
+                            <el-radio-group v-model="chartViewMode" size="small">
+                              <el-radio-button value="chart">图表</el-radio-button>
+                              <el-radio-button value="table">表格</el-radio-button>
+                            </el-radio-group>
+                          </div>
+                          <div v-show="chartViewMode === 'chart'" class="chart-container">
+                            <v-chart
+                              :option="buildChartOption(msg.result.chartConfig, msg.result.rawResults)"
+                              style="height: 360px"
+                              autoresize
+                            />
+                          </div>
+                          <div v-show="chartViewMode === 'table'" class="data-section">
+                            <el-table
+                              :data="msg.result.rawResults"
+                              style="width: 100%"
+                              size="small"
+                              max-height="400"
+                              border
+                              stripe
+                            >
+                              <el-table-column
+                                v-for="column in Object.keys(msg.result.rawResults[0] || {})"
+                                :key="column"
+                                :prop="column"
+                                :label="column"
+                                min-width="120"
+                                show-overflow-tooltip
+                              />
+                            </el-table>
                           </div>
                         </div>
 
@@ -437,6 +477,21 @@
                     </div>
                     <!-- 分析建议（2-3条） -->
                     <div v-if="msg.content" class="message-text" v-html="renderMarkdown(msg.content)"></div>
+
+                    <!-- 地图显示提示 -->
+                    <div v-if="msg.showMapPrompt" class="map-prompt">
+                      <div class="map-prompt-text">
+                        <span>检测到回复中包含 {{ msg.geoPoints.length }} 个地理坐标，是否在地图上显示？</span>
+                      </div>
+                      <div class="map-prompt-actions">
+                        <el-button size="small" type="primary" @click="msg.showMap = true; msg.showMapPrompt = false">显示地图</el-button>
+                        <el-button size="small" @click="msg.showMapPrompt = false">不显示</el-button>
+                      </div>
+                    </div>
+                    <GeoMap
+                      v-if="msg.showMap && msg.geoPoints && msg.geoPoints.length > 0"
+                      :points="msg.geoPoints"
+                    />
                   </div>
                 </div>
               </div>
@@ -508,7 +563,7 @@
               type="textarea"
               :rows="3"
               :placeholder="inputPlaceholder"
-              @keyup.enter.ctrl="sendMessage"
+              @keydown.enter.exact.prevent="sendMessage"
             />
             <div class="input-actions">
               <el-tooltip :content="isListening ? '停止录音' : '语音输入'" placement="top">
@@ -593,7 +648,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, nextTick, watch } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -619,6 +674,8 @@ import {
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
 import SkillsLibrary from '@/pages/SkillsLibrary.vue'
+import GeoMap from '@/components/GeoMap.vue'
+import { processMapData, extractGeoFromResults } from '@/composables/useMapPrompt'
 import api from '@/services/api'
 import {
   cancelSkillExecution,
@@ -731,6 +788,7 @@ const activeRunId = ref('')
 let skillCatalogRequestSequence = 0
 let recommendationRequestSequence = 0
 let recommendationTimer: ReturnType<typeof setTimeout> | null = null
+let recommendationAbortController: AbortController | null = null
 let activeAbortController: AbortController | null = null
 let cancelRequested = false
 
@@ -960,7 +1018,7 @@ const onDataSourceChange = (val: string) => {
 
 const onSkillChange = (skillId: string) => {
   executionSteps.value = []
-  skillRecommendations.value = []
+  invalidateSkillRecommendations()
   if (skillId) {
     showExecutionPanel.value = true
     const skill = evaluationSkills.value.find(item => item.id === skillId)
@@ -968,38 +1026,81 @@ const onSkillChange = (skillId: string) => {
   }
 }
 
-const loadSkillRecommendations = async (query: string) => {
-  const normalized = query.trim()
-  if (normalized.length < 3 || selectedSkillId.value || analyzing.value) {
-    skillRecommendations.value = []
-    return
+const invalidateSkillRecommendations = (clearResults = true) => {
+  recommendationRequestSequence += 1
+  if (recommendationTimer) {
+    clearTimeout(recommendationTimer)
+    recommendationTimer = null
   }
-  const requestSequence = ++recommendationRequestSequence
+  recommendationAbortController?.abort()
+  recommendationAbortController = null
+  recommendationLoading.value = false
+  if (clearResults) skillRecommendations.value = []
+  return recommendationRequestSequence
+}
+
+const isRecommendationCancellation = (error: unknown) => {
+  const candidate = error as { code?: string; name?: string }
+  return candidate?.code === 'ERR_CANCELED'
+    || candidate?.name === 'CanceledError'
+    || candidate?.name === 'AbortError'
+}
+
+const loadSkillRecommendations = async (
+  query: string,
+  dataSourceId: string,
+  requestSequence: number
+) => {
+  const normalized = query.trim()
+  if (
+    normalized.length < 2
+    || selectedSkillId.value
+    || analyzing.value
+    || requestSequence !== recommendationRequestSequence
+  ) return
+
+  const controller = new AbortController()
+  recommendationAbortController = controller
   recommendationLoading.value = true
   try {
     const recommendations = await recommendEvaluationSkills({
       query: normalized,
       limit: 3,
-      dataSourceId: selectedDataSourceId.value || undefined
+      dataSourceId: dataSourceId || undefined,
+      signal: controller.signal
     })
-    if (requestSequence !== recommendationRequestSequence) return
+    if (
+      requestSequence !== recommendationRequestSequence
+      || controller.signal.aborted
+      || inputMessage.value.trim() !== normalized
+      || (selectedDataSourceId.value || '') !== dataSourceId
+      || selectedSkillId.value
+      || analyzing.value
+    ) return
     skillRecommendations.value = recommendations
   } catch (error) {
     if (requestSequence === recommendationRequestSequence) {
       skillRecommendations.value = []
-      console.warn('Skill recommendation failed:', error)
+      if (!isRecommendationCancellation(error)) {
+        console.warn('Skill recommendation failed:', error)
+      }
     }
   } finally {
-    if (requestSequence === recommendationRequestSequence) recommendationLoading.value = false
+    if (requestSequence === recommendationRequestSequence) {
+      recommendationLoading.value = false
+      if (recommendationAbortController === controller) {
+        recommendationAbortController = null
+      }
+    }
   }
 }
 
 const selectRecommendedSkill = (skill: EvaluationSkill) => {
+  invalidateSkillRecommendations()
   if (!evaluationSkills.value.some(item => item.id === skill.id)) {
     evaluationSkills.value.push(skill)
   }
   selectedSkillId.value = skill.id
-  skillRecommendations.value = []
   executionSteps.value = []
   showExecutionPanel.value = true
   const availability = skill.availability
@@ -1013,17 +1114,21 @@ const selectRecommendedSkill = (skill: EvaluationSkill) => {
 }
 
 watch(
-  [inputMessage, selectedDataSourceId, selectedSkillId],
-  ([query]) => {
-    if (recommendationTimer) clearTimeout(recommendationTimer)
-    if (!query.trim() || selectedSkillId.value || analyzing.value) {
-      recommendationLoading.value = false
-      skillRecommendations.value = []
-      return
-    }
-    recommendationTimer = setTimeout(() => loadSkillRecommendations(query), 450)
+  [inputMessage, selectedDataSourceId, selectedSkillId, analyzing],
+  ([query, dataSourceId, skillId, isAnalyzing]) => {
+    const requestSequence = invalidateSkillRecommendations()
+    const normalized = query.trim()
+    if (normalized.length < 2 || skillId || isAnalyzing) return
+    recommendationTimer = setTimeout(() => {
+      recommendationTimer = null
+      loadSkillRecommendations(normalized, dataSourceId || '', requestSequence)
+    }, 450)
   }
 )
+
+onBeforeUnmount(() => {
+  invalidateSkillRecommendations()
+})
 
 const openSkillLibrary = () => {
   skillLibraryVisible.value = true
@@ -1265,6 +1370,7 @@ const sendMessage = async () => {
     }
   }
 
+  invalidateSkillRecommendations()
   inputMessage.value = ''
   analyzing.value = true
   cancelRequested = false
@@ -1362,6 +1468,35 @@ const sendMessage = async () => {
         // Skill 结果卡已经包含综合结论，正文不再重复显示。
         aiMessage.content = result.type === 'skill' || result.need_conclusion === false ? '' : answerText
         aiMessage.result = result
+        // 提取坐标并设置地图状态（来源1: final_answer 文本中的DMS格式坐标）
+        const textMapData = processMapData(answerText, query)
+        // 提取坐标（来源2: 查询结果数据中的经度/纬度数值列）
+        const resultGeoPoints = extractGeoFromResults(result)
+        // 合并去重（按 lat,lng 去重）
+        const allGeoPoints = textMapData.geoPoints.slice()
+        const existingKeys = new Set(allGeoPoints.map(p => `${p.lat},${p.lng}`))
+        for (const pt of resultGeoPoints) {
+          if (!existingKeys.has(`${pt.lat},${pt.lng}`)) {
+            allGeoPoints.push(pt)
+            existingKeys.add(`${pt.lat},${pt.lng}`)
+          }
+        }
+        // 综合判断：任一方有坐标 + 用户未明确要求 → 弹出提示
+        if (allGeoPoints.length > 0) {
+          if (textMapData.showMap) {
+            aiMessage.geoPoints = allGeoPoints
+            aiMessage.showMap = true
+            aiMessage.showMapPrompt = false
+          } else {
+            aiMessage.geoPoints = allGeoPoints
+            aiMessage.showMap = false
+            aiMessage.showMapPrompt = true
+          }
+        } else {
+          aiMessage.geoPoints = []
+          aiMessage.showMap = false
+          aiMessage.showMapPrompt = false
+        }
         if (data.session_id) persistCompletedRun(data.session_id)
         scrollToBottom()
         return
@@ -1507,6 +1642,13 @@ const loadHistory = async (item: any) => {
     }
 
     if (!restoredMessages) throw new Error('会话没有可恢复的消息内容')
+    // 恢复历史消息中的地图状态
+    restoredMessages.forEach((msg: any) => {
+      if (msg.geoPoints && msg.geoPoints.length > 0) {
+        msg.showMap = true
+        msg.showMapPrompt = false
+      }
+    })
     messages.value = [...restoredMessages]
     sessionId.value = item.id
     restoreSessionContext(item)
@@ -1622,6 +1764,13 @@ onMounted(async () => {
   // 恢复上次会话的消息
   if (sessionId.value && sessionMessages.value[sessionId.value]) {
     messages.value = [...sessionMessages.value[sessionId.value]]
+    // 恢复历史消息中的地图状态
+    messages.value.forEach((msg: any) => {
+      if (msg.geoPoints && msg.geoPoints.length > 0) {
+        msg.showMap = true
+        msg.showMapPrompt = false
+      }
+    })
     restoreSessionContext()
   }
   await initData()
@@ -2151,6 +2300,34 @@ onMounted(async () => {
   background: white;
   border: 1px solid #e2e8f0;
   color: #374151;
+}
+
+/* ── 地图显示提示 ── */
+.map-prompt {
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: #f0f7ff;
+  border: 1px solid #d0e5ff;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.map-prompt-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #374151;
+  font-size: 14px;
+}
+
+.map-prompt-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .assistant .message-text strong {

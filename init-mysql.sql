@@ -123,6 +123,18 @@ CREATE TABLE IF NOT EXISTS `ass_driver` (
     PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 2.7 地图服务配置
+CREATE TABLE IF NOT EXISTS `ass_map_service_config` (
+    `id`          VARCHAR(32)   NOT NULL,
+    `name`        VARCHAR(100)  NOT NULL,
+    `map_type`    VARCHAR(50)   NOT NULL,
+    `base_url`    VARCHAR(500)  DEFAULT NULL,
+    `is_active`   TINYINT(1)    NOT NULL DEFAULT 0,
+    `create_time` DATETIME      DEFAULT NULL,
+    `update_time` DATETIME      DEFAULT NULL,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ============================================================
 -- 3. 插入初始数据（仅当表为空时）
 -- ============================================================
@@ -140,12 +152,17 @@ VALUES
 INSERT IGNORE INTO `ass_llm_config` (`id`, `name`, `llm_type`, `api_url`, `api_key`, `model`, `temperature`, `max_tokens`, `top_p`, `is_active`, `create_time`, `update_time`)
 VALUES ('llm_001', 'DeepSeek 默认', 'deepseek', 'https://api.deepseek.com/v1', '', 'deepseek-chat', 0.7, 2000, 0.9, 1, NOW(), NOW());
 
+-- 3.3 默认地图服务配置（GeoWebCache）
+INSERT IGNORE INTO `ass_map_service_config` (`id`, `name`, `map_type`, `base_url`, `is_active`, `create_time`, `update_time`)
+VALUES ('map_001', 'GeoWebCache 内网地图（默认）', 'geowebcache', '/geowebcache/gwc', 1, NOW(), NOW());
+
 -- ============================================================
 -- 完成
 -- ============================================================
 SELECT '========================================' AS '';
 SELECT '  MySQL 初始化完成！' AS '';
 SELECT '  数据库: assessment' AS '';
-SELECT '  表: ass_database_config, ass_dataset, ass_field_annotation, ass_indicator, ass_llm_config' AS '';
+SELECT '  表: ass_database_config, ass_dataset, ass_field_annotation, ass_indicator, ass_llm_config, ass_driver, ass_map_service_config' AS '';
 SELECT '  默认 LLM: DeepSeek (llm_001, 已激活)' AS '';
+SELECT '  默认地图: GeoWebCache 6层叠加 (map_001, 已激活)' AS '';
 SELECT '========================================' AS '';

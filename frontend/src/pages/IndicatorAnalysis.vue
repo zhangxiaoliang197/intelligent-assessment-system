@@ -119,6 +119,21 @@
                       <!-- loading 提示（step1 阶段，指标卡片到达前显示） -->
                       <div v-if="msg.querying && !msg.rawResults && (!msg.indicators || msg.indicators.length === 0)" class="message-loading">分析中...</div>
 
+                      <!-- 地图显示提示 -->
+                      <div v-if="msg.showMapPrompt" class="map-prompt">
+                        <div class="map-prompt-text">
+                          <span>检测到回复中包含 {{ msg.geoPoints.length }} 个地理坐标，是否在地图上显示？</span>
+                        </div>
+                        <div class="map-prompt-actions">
+                          <el-button size="small" type="primary" @click="msg.showMap = true; msg.showMapPrompt = false">显示地图</el-button>
+                          <el-button size="small" @click="msg.showMapPrompt = false">不显示</el-button>
+                        </div>
+                      </div>
+                      <GeoMap
+                        v-if="msg.showMap && msg.geoPoints && msg.geoPoints.length > 0"
+                        :points="msg.geoPoints"
+                      />
+
                       <!-- 指标树状结构 -->
                       <div v-if="msg.tree" class="tree-section">
                         <div class="section-collapse-header" @click="toggleMsgSection(msg, 'treeCollapsed')">
@@ -357,7 +372,7 @@
               type="textarea"
               :rows="3"
               placeholder="输入指标需求，如：帮我分析火力打击任务完成度指标..."
-              @keyup.enter.ctrl="analyzeIndicator"
+              @keydown.enter.exact.prevent="analyzeIndicator"
             />
             <div class="input-actions">
               <el-tooltip :content="isListening ? '停止录音' : '语音输入'" placement="top">
@@ -432,6 +447,8 @@ import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
+import GeoMap from '@/components/GeoMap.vue'
+import { processMapData } from '@/composables/useMapPrompt'
 import api from '@/services/api'
 
 const router = useRouter()
@@ -636,6 +653,13 @@ const restoreExecutionState = (sid: string) => {
 const loadHistory = (item: any) => {
   if (sessionMessages.value[item.id]) {
     messages.value = [...sessionMessages.value[item.id]]
+    // 恢复历史消息中的地图状态
+    messages.value.forEach(msg => {
+      if (msg.geoPoints && msg.geoPoints.length > 0) {
+        msg.showMap = true
+        msg.showMapPrompt = false
+      }
+    })
     sessionId.value = item.id
     restoreExecutionState(item.id)
     persistState()
@@ -803,14 +827,19 @@ const analyzeIndicator = async () => {
             if (!showExecutionPanel.value) showExecutionPanel.value = true
             nextTick(() => scrollToBottom())
           } else if (data.type === 'result') {
+            const resultContent = fullText || data.final_answer || ''
+            const mapData = processMapData(resultContent, userQuestion)
             messages.value[currentMsgIndex] = {
               ...messages.value[currentMsgIndex],
-              content: fullText || data.final_answer || '',
+              content: resultContent,
               tree: data.tree || null,
               indicators: data.indicators || [],
               rawResults: data.rawResults || null,
               generatedSql: data.generatedSql || '',
-              querying: false
+              querying: false,
+              geoPoints: mapData.geoPoints,
+              showMap: mapData.showMap,
+              showMapPrompt: mapData.showMapPrompt,
             }
             // 更新右侧面板
             if (data.generatedSql) panelState.value.generatedSql = data.generatedSql
@@ -987,6 +1016,13 @@ onMounted(async () => {
 
   if (sessionId.value && sessionMessages.value[sessionId.value]) {
     messages.value = [...sessionMessages.value[sessionId.value]]
+    // 恢复历史消息中的地图状态
+    messages.value.forEach(msg => {
+      if (msg.geoPoints && msg.geoPoints.length > 0) {
+        msg.showMap = true
+        msg.showMapPrompt = false
+      }
+    })
     restoreExecutionState(sessionId.value)
     nextTick(() => { setTimeout(() => renderTreesForMessages(), 300) })
   }
@@ -1469,5 +1505,33 @@ onMounted(async () => {
 }
 .confirm-actions .el-button .el-icon {
   margin-right: 4px;
+}
+
+/* ── 地图显示提示 ── */
+.map-prompt {
+  margin-top: 12px;
+  padding: 12px 16px;
+  background: #f0f7ff;
+  border: 1px solid #d0e5ff;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.map-prompt-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #374151;
+  font-size: 14px;
+}
+
+.map-prompt-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 </style>

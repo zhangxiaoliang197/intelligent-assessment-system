@@ -65,7 +65,7 @@ curl -fsS http://127.0.0.1:10253/evaluation/skills
 
 > `docker compose restart` 只会重启旧容器，不会应用刚加载或刚构建的
 > 新镜像。更新后请运行 `bash scripts/start.sh`，脚本会强制重建容器并
-> 校验 15 个内置 Skill。
+> 校验 30 个内置 Skill。
 
 ## 方式二：本地开发模式
 

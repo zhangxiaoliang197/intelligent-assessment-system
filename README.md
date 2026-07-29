@@ -96,7 +96,7 @@ Windows PowerShell 构建：
 ```
 
 `scripts/start.sh` 会以当前镜像强制重建容器，并验证 QA 健康检查与
-15 个内置 Skill。更新镜像后不要使用 `docker compose restart`，该命令
+30 个内置 Skill。更新镜像后不要使用 `docker compose restart`，该命令
 仍会复用旧容器。
 
 ## 📁 项目结构
