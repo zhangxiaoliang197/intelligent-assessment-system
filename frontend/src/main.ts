@@ -6,6 +6,7 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
 import './styles/index.css'
+import './styles/markdown.css'
 import 'leaflet/dist/leaflet.css'
 import VChart from 'vue-echarts'
 

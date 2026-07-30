@@ -48,6 +48,31 @@ from config import (
     MAX_CONTEXT_ROUNDS
 )
 
+
+def _build_query_start_text(database_name: str, database_id: str,
+                            selected_indicator_names: Optional[List[str]] = None,
+                            variant: str = "confirm") -> str:
+    """构建指标查询开始的确认消息文案。
+
+    Args:
+        database_name: 数据源名称
+        database_id: 数据源 ID（名称缺省时用）
+        selected_indicator_names: 用户勾选的指标名称列表；非空时文案列出具体指标名
+        variant: "confirm" → A2 分支（用户说"查询"）；"by_name" → A3 分支（用户提供数据源名）
+
+    Returns:
+        确认消息文本（含换行）
+    """
+    db_label = database_name or database_id
+    if selected_indicator_names:
+        names_str = "、".join(selected_indicator_names)
+        if variant == "by_name":
+            return f"好的，使用数据源「{db_label}」查询指标「{names_str}」...\n\n"
+        return f"好的，正在使用数据源「{db_label}」查询指标「{names_str}」...\n\n"
+    if variant == "by_name":
+        return f"好的，使用数据源「{db_label}」开始查询指标...\n\n"
+    return f"好的，正在使用数据源「{db_label}」查询全部指标...\n\n"
+
 def _classify_query(query: str) -> str:
     """先调用 qa-service 的 LLM 分类接口，失败则用关键词兜底。
 
@@ -173,29 +198,40 @@ class AnalyzeRequest(BaseModel):
     depth: int = 3
     database_id: Optional[str] = None
     database_name: Optional[str] = None
+    # 用户在前端勾选的要查询的指标名称列表；非空时仅查询这些指标。
+    # 透传给 qa-service，由其在 admin 指标合并之后做权威过滤。
+    selected_indicator_names: Optional[List[str]] = None
 
 
 # ========== 查询管线（调用 evaluation-api） ==========
 
 def _stream_indicator_query(session_id: str, query: str, database_id: str, database_name: str,
-                            pending_indicators: dict) -> Generator[str, None, None]:
+                            pending_indicators: dict,
+                            selected_indicator_names: Optional[List[str]] = None) -> Generator[str, None, None]:
     """
     调用 qa-service 的 evaluation-api 执行指标查询管线。
 
     将指标分析结果作为 indicator_defs 传入，复用评估分析的
     数据探索 → 表选择 → SQL生成 → SQL执行 → 分析建议 管线。
 
+    Args:
+        selected_indicator_names: 用户勾选的指标名称列表；非空时透传给 qa-service，
+            由其在合并 admin 指标后过滤，仅查询这些指标。
+
     输出：
         NDJSON 行（每行以 \n 结尾），包含 step/text/result 类型事件
     """
+    payload = {
+        "question": query,
+        "database_id": database_id,
+        "database_name": database_name,
+        "indicator_defs": pending_indicators.get("indicators", []),
+        "analysis_plan": pending_indicators.get("summary", ""),
+    }
+    if selected_indicator_names:
+        payload["selected_indicator_names"] = selected_indicator_names
     try:
-        for line in http_post_stream(f"{EVALUATION_API_URL}/evaluation/indicator-query/stream", {
-            "question": query,
-            "database_id": database_id,
-            "database_name": database_name,
-            "indicator_defs": pending_indicators.get("indicators", []),
-            "analysis_plan": pending_indicators.get("summary", ""),
-        }, timeout=180):
+        for line in http_post_stream(f"{EVALUATION_API_URL}/evaluation/indicator-query/stream", payload, timeout=180):
             yield line
     except Exception as e:
         logger.error(f"Indicator query stream failed: {e}")
@@ -823,7 +859,9 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                     # 先创建助手消息，后续所有 text 事件都流入同一消息气泡
                     yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
 
-                    start_text = f"好的，正在使用数据源「{database_name or database_id}」查询这些指标...\n\n"
+                    start_text = _build_query_start_text(
+                        database_name, database_id,
+                        request.selected_indicator_names, "confirm")
                     yield json.dumps({"type": "text", "content": start_text}, ensure_ascii=False) + "\n"
 
                     # 调用 evaluation-api 执行查询管线
@@ -832,7 +870,8 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                     try:
                         for line in _stream_indicator_query(
                             session_id, original_query,
-                            database_id, database_name, pending
+                            database_id, database_name, pending,
+                            request.selected_indicator_names
                         ):
                             line_str = line if isinstance(line, str) else line
                             yield line_str
@@ -907,7 +946,9 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                 # 先创建助手消息，后续所有 text 事件都流入同一消息气泡
                 yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
 
-                start_text = f"好的，使用数据源「{database_name or database_id}」开始查询指标...\n\n"
+                start_text = _build_query_start_text(
+                    database_name, database_id,
+                    request.selected_indicator_names, "by_name")
                 yield json.dumps({"type": "text", "content": start_text}, ensure_ascii=False) + "\n"
 
                 final_answer = ""
@@ -915,7 +956,8 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                 try:
                     for line in _stream_indicator_query(
                         session_id, original_query,
-                        database_id, database_name, pending
+                        database_id, database_name, pending,
+                        request.selected_indicator_names
                     ):
                         line_str = line if isinstance(line, str) else line
                         yield line_str

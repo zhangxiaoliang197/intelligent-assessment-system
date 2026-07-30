@@ -182,7 +182,7 @@
                       </div>
 
                       <!-- 文本回答（流式分析结论，在指标树和卡片之后显示） -->
-                      <div v-if="msg.content" class="message-text">{{ msg.content }}</div>
+                      <div v-if="msg.content" class="markdown-body message-text" v-html="renderMarkdown(msg.content)"></div>
 
                       <!-- 参考来源 -->
                       <div v-if="msg.references && msg.references.length > 0" class="references-section">
@@ -372,7 +372,7 @@
               type="textarea"
               :rows="3"
               placeholder="输入指标需求，如：帮我分析火力打击任务完成度指标..."
-              @keydown.enter.exact.prevent="analyzeIndicator"
+              @keydown.enter.exact.prevent="() => analyzeIndicator()"
             />
             <div class="input-actions">
               <el-tooltip :content="isListening ? '停止录音' : '语音输入'" placement="top">
@@ -387,7 +387,7 @@
                 <el-icon><CircleClose /></el-icon>
                 取消运行
               </el-button>
-              <el-button v-else type="primary" @click="analyzeIndicator">
+              <el-button v-else type="primary" @click="() => analyzeIndicator()">
                 <el-icon><Promotion /></el-icon>
                 分析指标
               </el-button>
@@ -436,6 +436,57 @@
         <el-button type="primary" @click="confirmDataSource">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 指标选择对话框：默认不选，提供一键全选；确定后仅查询选中的指标 -->
+    <el-dialog
+      v-model="indicatorSelectDialog.visible"
+      title="选择要查询的指标"
+      width="640px"
+      :close-on-click-modal="false"
+    >
+      <div class="ind-select-toolbar">
+        <span class="ind-select-count">
+          已选 {{ selectedCount }} / 共 {{ indicatorSelectDialog.indicators.length }} 个
+        </span>
+        <el-button size="small" @click="toggleSelectAll">
+          {{ isAllSelected ? '取消全选' : '全选' }}
+        </el-button>
+      </div>
+      <div class="ind-select-list">
+        <div
+          v-for="(ind, idx) in indicatorSelectDialog.indicators"
+          :key="ind.name + idx"
+          class="ind-select-item"
+          @click="toggleIndicator(ind.name, !isSelected(ind.name))"
+        >
+          <el-checkbox
+            :model-value="isSelected(ind.name)"
+            @change="(val) => toggleIndicator(ind.name, !!val)"
+            @click.stop
+          />
+          <div class="ind-select-text">
+            <div class="ind-select-name-row">
+              <span class="ind-select-name">{{ ind.name }}</span>
+              <el-tag
+                :type="ind.type === 'admin-db' ? 'success' : ind.type === 'knowledge' ? 'primary' : 'info'"
+                size="small"
+                class="ind-select-tag"
+              >
+                {{ ind.type === 'admin-db' ? '已配置' : ind.type === 'knowledge' ? '知识库' : 'AI生成' }}
+              </el-tag>
+            </div>
+            <div v-if="ind.formula || ind.definition" class="ind-select-meta">
+              <span v-if="ind.formula">公式: {{ ind.formula }}</span>
+              <span v-if="ind.definition">{{ ind.formula ? ' | ' : '' }}定义: {{ ind.definition }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="indicatorSelectDialog.visible = false">取消</el-button>
+        <el-button type="primary" @click="confirmIndicatorSelect">确定</el-button>
+      </template>
+    </el-dialog>
   </Layout>
 </template>
 
@@ -450,6 +501,7 @@ import Layout from '@/components/Layout.vue'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData } from '@/composables/useMapPrompt'
 import api from '@/services/api'
+import { renderMarkdown } from '@/utils/markdown'
 
 const router = useRouter()
 
@@ -704,9 +756,76 @@ const selectIndicator = async (indicator: string) => {
 }
 
 // 快捷确认查询/不查询
+// 「查询」改为先弹出指标选择对话框（默认不选，提供一键全选），
+// 用户勾选后再带 selected_indicator_names 发起查询；「不查询」直接结束。
 const quickConfirm = async (action: string) => {
+  if (action === '查询') {
+    openIndicatorSelectDialog()
+    return
+  }
   inputMessage.value = action
   await analyzeIndicator()
+}
+
+// ── 指标选择对话框 ──
+const indicatorSelectDialog = ref<{ visible: boolean; indicators: any[]; selected: Set<string> }>({
+  visible: false,
+  indicators: [],
+  selected: new Set(),
+})
+const selectedCount = computed(() => indicatorSelectDialog.value.selected.size)
+const isAllSelected = computed(() => {
+  const dlg = indicatorSelectDialog.value
+  return dlg.indicators.length > 0 && dlg.selected.size === dlg.indicators.length
+})
+
+const openIndicatorSelectDialog = () => {
+  // 向后遍历找到最近一条含 indicators 的消息
+  let inds: any[] = []
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    if (messages.value[i].indicators && messages.value[i].indicators.length > 0) {
+      inds = messages.value[i].indicators
+      break
+    }
+  }
+  if (inds.length === 0) {
+    ElMessage.warning('未找到可查询的指标')
+    return
+  }
+  indicatorSelectDialog.value = {
+    visible: true,
+    indicators: inds,
+    selected: new Set(),  // 默认不选，由用户主动勾选
+  }
+}
+
+const toggleIndicator = (name: string, checked: boolean) => {
+  const selected = new Set(indicatorSelectDialog.value.selected)
+  if (checked) selected.add(name)
+  else selected.delete(name)
+  indicatorSelectDialog.value.selected = selected  // 整体替换以触发响应式
+}
+
+const toggleSelectAll = () => {
+  const dlg = indicatorSelectDialog.value
+  if (dlg.selected.size === dlg.indicators.length) {
+    dlg.selected = new Set()  // 已全选 → 取消全选
+  } else {
+    dlg.selected = new Set(dlg.indicators.map((ind: any) => ind.name))
+  }
+}
+
+const isSelected = (name: string) => indicatorSelectDialog.value.selected.has(name)
+
+const confirmIndicatorSelect = async () => {
+  const selected = Array.from(indicatorSelectDialog.value.selected)
+  if (selected.length === 0) {
+    ElMessage.warning('请至少选择一个指标')
+    return
+  }
+  indicatorSelectDialog.value.visible = false
+  inputMessage.value = '查询'
+  await analyzeIndicator(selected)
 }
 
 // 取消运行
@@ -716,7 +835,7 @@ const stopAnalysis = () => {
   activeAbortController?.abort()
 }
 
-const analyzeIndicator = async () => {
+const analyzeIndicator = async (selectedNames?: string[]) => {
   if (!inputMessage.value.trim()) {
     ElMessage.warning('请输入指标需求')
     return
@@ -768,6 +887,11 @@ const analyzeIndicator = async () => {
     if (selectedDataSourceId.value) {
       reqBody.database_id = selectedDataSourceId.value
       reqBody.database_name = selectedDataSourceName.value
+    }
+    // 指标选择弹窗勾选的指标名称；非空时后端仅查询这些指标，
+    // 数据充分性判定也只针对这些指标。为空/不传时查询全部（向后兼容）。
+    if (selectedNames && selectedNames.length > 0) {
+      reqBody.selected_indicator_names = selectedNames
     }
     const response = await fetch('/api/indicator/analyze/stream', {
       method: 'POST',
@@ -1147,6 +1271,75 @@ onMounted(async () => {
 .ds-meta {
   display: flex;
   gap: 0.5rem;
+}
+
+/* ── 指标选择对话框 ── */
+.ind-select-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.ind-select-count {
+  font-size: 0.9rem;
+  color: #64748b;
+}
+
+.ind-select-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.ind-select-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ind-select-item:hover {
+  border-color: #409eff;
+  background: #f8fbff;
+}
+
+.ind-select-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.ind-select-name {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #1e293b;
+  word-break: break-all;
+}
+
+.ind-select-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ind-select-tag {
+  flex-shrink: 0;
+}
+
+.ind-select-meta {
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+  color: #64748b;
+  word-break: break-all;
+  line-height: 1.4;
 }
 
 /* ── 内容区（左侧对话 + 右侧面板）── */

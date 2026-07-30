@@ -786,6 +786,9 @@ class IndicatorQueryRequest(BaseModel):
     database_name: str = ""
     indicator_defs: list = Field(default_factory=list)
     analysis_plan: str = ""
+    # 用户在前端勾选的要查询的指标名称列表；非空时仅查询这些指标，
+    # 数据充分性判定也只针对这些指标。为空时查询全部指标（向后兼容）。
+    selected_indicator_names: Optional[list] = None
 
 
 @evaluation_router.post("/indicator-query/stream")
@@ -799,7 +802,8 @@ async def indicator_query_stream(request: IndicatorQueryRequest):
     from agents.indicator_query import run_indicator_query
 
     logger.info(f"指标查询流: 问题={request.question[:80]}, 数据库={request.database_id}, "
-                f"指标数={len(request.indicator_defs)}")
+                f"指标数={len(request.indicator_defs)}, "
+                f"选中指标数={len(request.selected_indicator_names) if request.selected_indicator_names else 0}")
 
     async def generate():
         try:
@@ -811,6 +815,7 @@ async def indicator_query_stream(request: IndicatorQueryRequest):
                 analysis_plan=request.analysis_plan,
                 llm_call_fn=async_llm_call,
                 stream_llm_gen=async_gen_llm_stream,
+                selected_indicator_names=request.selected_indicator_names,
             ):
                 yield json.dumps(event, ensure_ascii=False, default=str) + "\n"
         except Exception as e:

@@ -976,7 +976,8 @@ async def _concept_answer_flow(question, indicator_defs, llm_call_fn,
 
 async def run_indicator_query(question, database_id, database_name,
                               indicator_defs, analysis_plan,
-                              llm_call_fn, stream_llm_gen=None):
+                              llm_call_fn, stream_llm_gen=None,
+                              selected_indicator_names=None):
     """编排完整的指标分析流水线。
 
     按顺序调用各个阶段节点。节点产出的事件直接转发给调用方；
@@ -984,6 +985,9 @@ async def run_indicator_query(question, database_id, database_name,
 
     Args:
         stream_llm_gen: 可选的异步生成器，用于在分析师阶段进行实时 token 流式输出。
+        selected_indicator_names: 可选的指标名称列表。非空时仅查询这些指标
+            （在 dataset_indicator_node 合并 admin 指标之后过滤），数据充分性
+            判定也相应只针对这些指标。为 None/空时查询全部指标（向后兼容）。
     """
 
     # ── 获取数据库类型（用于 SQL 方言适配）─────────────────────────
@@ -1013,6 +1017,23 @@ async def run_indicator_query(question, database_id, database_name,
             datasets, merged = ev["_return"]
         else:
             yield ev
+
+    # ── 按用户选择过滤指标（在 admin 指标合并之后过滤，避免未选指标被合并回来）──
+    # selected_indicator_names 非空时，仅保留用户选中的指标。过滤后整条管线
+    # （字段提示 / SQL 生成 / 充分性判定 / 分析）都只针对选中指标。
+    selection_total = len(merged)  # 过滤前的指标总数（含合并的 admin 指标）
+    if selected_indicator_names:
+        sel = {_normalize_name(n) for n in selected_indicator_names if n}
+        before = len(merged)
+        merged = [ind for ind in merged
+                  if _normalize_name(ind.get("name", "")) in sel]
+        logger.info(
+            f"[select] 用户选中 {len(selected_indicator_names)} 个，"
+            f"合并后过滤 {before}->{len(merged)} 个指标进行查询")
+        if not merged:
+            # 选中名称与解析到的指标全部未匹配（名称差异过大）→ 兜底用全部指标
+            logger.warning("[select] 选中指标均未匹配到已解析指标，回退为查询全部")
+            merged = list(indicator_defs or [])
 
     # ── 步骤 4: 表选择与结构读取 ─────────────────────────────────────
     schemas = None
@@ -1056,14 +1077,20 @@ async def run_indicator_query(question, database_id, database_name,
         technical_failure=technical_failure, error_msg=failure_msg)
     es.sufficiency_report = sufficiency_report
     es.indicator_types = build_indicator_types(enhanced_indicators)
+    # 选中指标时在步骤中标注「已选择 N/M」，便于用户确认过滤生效
+    selection_note = ""
+    if selected_indicator_names and selection_total:
+        selection_note = (f" | 已选择 {sufficiency_report['indicators_total']}/"
+                          f"{selection_total} 个指标")
     yield {"type": "step", "step": _build_step(
         Step.SUFFICIENCY, "Assess Data Sufficiency", "completed",
         detail=(f"场景判定：{sufficiency_report['scenario']} | "
-                f"{sufficiency_report['reason'][:80]}"),
+                f"{sufficiency_report['reason'][:80]}{selection_note}"),
         thinking=(f"覆盖率 {sufficiency_report['indicators_with_data']}/"
                   f"{sufficiency_report['indicators_total']} | "
                   f"意图 {sufficiency_report['intent']} | "
-                  f"行数 {sufficiency_report['total_rows']}"),
+                  f"行数 {sufficiency_report['total_rows']}"
+                  f"{selection_note}"),
         progress=100)}
 
     # ── 步骤 7: 结果预览（按场景渲染，无数据/不足/充分各有分支） ──────
