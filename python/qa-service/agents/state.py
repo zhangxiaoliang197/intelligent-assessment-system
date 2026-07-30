@@ -161,6 +161,14 @@ class EvaluationState:
     # 用于 combat_effectiveness 和 air_superiority 的多维度汇总报告
     report_sections: Dict[str, str] = field(default_factory=dict)
 
+    # 数据充分性评估报告（阶段6.5 产出，供 analyst 路由与上下文注入）
+    # 结构见 sufficiency.assess_data_sufficiency 的返回值：
+    # {scenario, total_rows, per_indicator[], coverage_ratio, reason, ...}
+    sufficiency_report: Dict[str, Any] = field(default_factory=dict)
+
+    # 指标类型映射 {指标名: "direct"|"computed"}，供 analyst Prompt 注入
+    indicator_types: Dict[str, str] = field(default_factory=dict)
+
     # ============================================================
     # 第七阶段：图表 — Chart Agent 的输出
     # ============================================================

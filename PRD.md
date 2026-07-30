@@ -58,30 +58,29 @@
 ### 2.2 技术选型
 
 #### 2.2.1 前端技术栈
-- **框架**：React 18 / Vue 3（推荐Vue 3）
-- **UI组件库**：Ant Design Vue / Element Plus
-- **状态管理**：Pinia / Vuex
-- **路由管理**：Vue Router
-- **构建工具**：Vite
+- **框架**：Vue 3 + Composition API + TypeScript
+- **UI组件库**：Element Plus + Tailwind CSS
+- **状态管理**：Pinia
+- **路由管理**：Vue Router 4（History 模式）
+- **构建工具**：Vite 5
 - **图表库**：ECharts（用于指标树状图、知识图谱展示）
 - **语音交互**：Web Speech API
 
 #### 2.2.2 后端技术栈 - AI服务层（Python）
-- **Web框架**：FastAPI
-- **RAG框架**：LangChain / RAGFlow
-- **向量数据库**：Milvus / ChromaDB
-- **大模型对接**：vLLM / 本地LLM（支持Ollama等）
-- **本体模型**：Protégé API / Neo4j
-- **知识图谱**：Neo4j图数据库
-- **语音处理**：Whisper（语音识别）/ Edge TTS（语音合成）
+- **Web框架**：FastAPI + Uvicorn
+- **RAG框架**：LangChain
+- **向量检索**：当前实现使用 sklearn TF-IDF + cosine_similarity（规划中可升级至 Milvus/ChromaDB 语义检索）
+- **大模型对接**：OpenAI 兼容 API（支持 deepseek/vllm/openai 等本地部署 LLM）
+- **本体模型**：JSON 文件持久化 + ECharts 图谱可视化（规划中可引入 Neo4j 图数据库）
+- **流式响应**：SSE (Server-Sent Events) / NDJSON
 
 #### 2.2.3 后端技术栈 - 业务服务层（Java）
-- **核心框架**：Spring Boot 3.x
+- **核心框架**：Spring Boot 3.x + Spring Data JPA
 - **ORM框架**：MyBatis-Plus
-- **数据库**：PostgreSQL / MySQL
-- **消息队列**：RabbitMQ / Kafka
-- **缓存系统**：Redis
-- **任务调度**：Quartz
+- **数据库**：MySQL（元数据库），业务数据源支持 MySQL/PostgreSQL/Oracle/达梦 V8/SQL Server
+- **消息队列**：RabbitMQ / Kafka（规划中，当前未实现）
+- **缓存系统**：Redis（规划中，当前未实现）
+- **任务调度**：Quartz（规划中，当前未实现）
 
 ### 2.3 部署架构
 
@@ -384,11 +383,11 @@
 
 | 数据类型 | 存储方案 | 特点 |
 |---------|---------|------|
-| 结构化数据 | PostgreSQL/MySQL | 事务支持，查询能力强 |
-| 向量数据 | Milvus/ChromaDB | 高效相似性检索 |
-| 图数据 | Neo4j | 关系存储和查询 |
-| 文档数据 | 文件系统+对象存储 | PDF、Word等原始文件 |
-| 缓存数据 | Redis | 高性能缓存 |
+| 元数据（数据库配置/数据集/指标/LLM配置） | MySQL | 事务支持，由 admin-service 管理 |
+| 业务数据 | 外部业务数据库（MySQL/Oracle/达梦等） | 通过 admin-service JDBC 动态连接，不在本地存储 |
+| 向量数据 | sklearn TF-IDF + JSON 文件 | 关键词级检索，零中间件依赖（规划中可升级 Milvus 语义检索） |
+| 知识库/本体模型/会话记录 | JSON 文件（原子写入 + .bak 备份） | 零依赖，内网部署无需额外数据库实例 |
+| 文档数据 | 文件系统 | PDF、Word 等原始文件 |
 
 ### 4.3 数据流转
 
@@ -405,6 +404,8 @@
 ## 五、接口设计
 
 ### 5.1 API网关
+
+> 规划中，当前未实现。当前前端通过 Nginx 反向代理直连各后端服务。
 
 统一网关管理所有服务的API入口，负责：
 - 请求路由
@@ -453,24 +454,27 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                        前端服务                              │
-│                   （Nginx + Vue SPA）                       │
+│              （Nginx + Vue SPA，端口 10086）                 │
 └────────────────────────────┬────────────────────────────────┘
-                             │ HTTPS
-┌────────────────────────────┴────────────────────────────────┐
-│                       API网关服务                            │
-│                    （Spring Cloud Gateway）                  │
-└────┬────────────────┬─────────────────┬─────────────────────┘
-     │                │                 │
-┌────┴────┐    ┌──────┴─────┐    ┌─────┴──────────┐
-│ AI服务  │    │ 业务服务   │    │  数据服务      │
-│(Python) │    │  (Java)    │    │  (数据库)      │
-└────┬────┘    └──────┬─────┘    └─────┬──────────┘
-     │                │                 │
-  ┌──┴──┐         ┌───┴───┐        ┌───┴────┐
-  │向量库│         │Postgres│        │Neo4j   │
-  │     │         │  MySQL │        │Milvus  │
-  └─────┘         └────────┘        └────────┘
+                             │ Nginx 反向代理
+     ┌──────────┬───────────┼───────────┬──────────┬──────────┐
+     ▼          ▼           ▼           ▼          ▼          ▼
+┌─────────┐┌─────────┐┌──────────┐┌─────────┐┌─────────┐┌─────────┐
+│ AI服务  ││ AI服务  ││ AI服务   ││ AI服务  ││ AI服务  ││业务服务 │
+│knowledge││   qa    ││indicator ││evaluation││ontology ││ admin   │
+│ 10252   ││ 10253   ││ 10254    ││ 10255   ││ 10256   ││ 10258   │
+│(Python) ││(Python) ││(Python)  ││(Python) ││(Python) ││ (Java)  │
+└─────────┘└─────────┘└──────────┘└─────────┘└─────────┘└────┬────┘
+                                                              │
+                                                     ┌────────┴────────┐
+                                                     │   元数据库       │
+                                                     │   MySQL         │
+                                                     │ (ass_database_  │
+                                                     │  config 等表)   │
+                                                     └─────────────────┘
 ```
+
+> 说明：当前实现未启用 API 网关，前端通过 Nginx 反向代理直连各后端服务。业务数据源（Oracle/达梦/MySQL 等）由 admin-service 通过 JDBC 动态连接，不在本地部署。
 
 ### 6.2 Docker容器化
 
@@ -484,57 +488,85 @@
 
 #### 6.2.2 Docker Compose编排
 
+以下为实际部署的 Docker Compose 服务编排（共 7 个服务）：
+
 ```yaml
-version: '3.8'
 services:
   frontend:
-    build: ./frontend
+    image: assessment-frontend:latest
     ports:
-      - "80:80"
-    
-  api-gateway:
-    build: ./gateway
-    ports:
-      - "8080:8080"
+      - "10086:80"
     
   knowledge-service:
-    build: ./python/knowledge
+    image: assessment-knowledge:latest
     ports:
-      - "8001:8001"
+      - "10252:10252"
+    volumes:
+      - knowledge-data:/app/data
     
   qa-service:
-    build: ./python/qa
+    image: assessment-qa:latest
     ports:
-      - "8002:8002"
+      - "10253:10253"
+    environment:
+      - ADMIN_SERVICE_URL=http://assessment-admin:10258
+      - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
+    volumes:
+      - qa-data:/app/data
     
   indicator-service:
-    build: ./python/indicator
+    image: assessment-indicator:latest
     ports:
-      - "8003:8003"
+      - "10254:10254"
+    environment:
+      - QA_SERVICE_URL=http://assessment-qa:10253
+      - ADMIN_SERVICE_URL=http://assessment-admin:10258
+    volumes:
+      - indicator-data:/app/data
+
+  evaluation-service:
+    image: assessment-evaluation:latest
+    ports:
+      - "10255:10255"
+    volumes:
+      - evaluation-data:/app/data
+    
+  ontology-service:
+    image: assessment-ontology:latest
+    ports:
+      - "10256:10256"
+    volumes:
+      - ontology-data:/app/data
     
   admin-service:
-    build: ./java/admin
+    image: assessment-admin:latest
     ports:
-      - "8081:8081"
-    
-  postgres:
-    image: postgres:15
+      - "10258:10258"
     environment:
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      - DB_TYPE=${DB_TYPE:-mysql}
+      - MYSQL_HOST=${MYSQL_HOST:-}
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-assessment}
+      - MYSQL_USER=${MYSQL_USER:-root}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    
-  neo4j:
-    image: neo4j:5
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    
-  milvus:
-    image: milvusdb/milvus:v2.3
-    ports:
-      - "19530:19530"
+      - drivers-data:/app/drivers
+
+networks:
+  default:
+    name: assessment-net
+    driver: bridge
+
+volumes:
+  knowledge-data:
+  qa-data:
+  indicator-data:
+  evaluation-data:
+  ontology-data:
+  drivers-data:
 ```
+
+> 说明：元数据库 MySQL 不在 Docker Compose 中部署，由外部提供（本地开发用 localhost，生产环境用远程 IP）。Python 服务的数据持久化使用命名卷挂载到 `/app/data`。
 
 ### 6.3 离线部署
 
@@ -578,17 +610,17 @@ services:
 
 ### 8.2 服务列表
 
-| 服务名称 | 技术栈 | 独立部署 | 可配置项 |
-|---------|--------|---------|---------|
-| 门户前端 | Vue 3 | ✅ | ✅ |
-| 智能问答服务 | Python/FastAPI | ✅ | ✅ |
-| 指标分析服务 | Python/FastAPI | ✅ | ✅ |
-| 评估分析服务 | Python/FastAPI | ✅ | ✅ |
-| 知识库服务 | Python/FastAPI | ✅ | ✅ |
-| 本体模型服务 | Python/FastAPI | ✅ | ✅ |
-| 基础管理系统 | Java/Spring Boot | ✅ | ✅ |
-| 数据服务 | Java/Spring Boot | ✅ | ✅ |
-| API网关 | Java/Spring Cloud | ✅ | ✅ |
+| 服务名称 | 技术栈 | 端口 | 独立部署 | 可配置项 |
+|---------|--------|------|---------|---------|
+| 门户前端 | Vue 3 + Vite + Element Plus | 10086 | ✅ | ✅ |
+| 智能问答服务 (qa-service) | Python/FastAPI | 10253 | ✅ | ✅ |
+| 指标分析服务 (indicator-service) | Python/FastAPI | 10254 | ✅ | ✅ |
+| 评估分析服务 (evaluation-service) | Python/FastAPI | 10255 | ✅ | ✅ |
+| 知识库服务 (knowledge-service) | Python/FastAPI | 10252 | ✅ | ✅ |
+| 本体模型服务 (ontology-service) | Python/FastAPI | 10256 | ✅ | ✅ |
+| 基础管理服务 (admin-service) | Java/Spring Boot 3.x | 10258 | ✅ | ✅ |
+
+> 共 7 个服务（1 前端 + 5 Python AI 服务 + 1 Java 业务服务）。当前未启用独立 API 网关，前端通过 Nginx 反向代理直连各服务。
 
 ### 8.3 阶段划分
 
@@ -660,6 +692,7 @@ services:
 |-----|------|---------|------|
 | V1.0 | 2026-05-27 | 初始版本 | - |
 | V1.1 | 2026-05-27 | 删除安全设计和运维监控章节，强调微服务架构和可配置性 | - |
+| V1.2 | 2026-07-30 | 与实际实现对齐：修正技术栈（PostgreSQL→MySQL、删除 Neo4j/Redis/RabbitMQ/Milvus 等未实现中间件）、修正服务列表（删除不存在的 API网关和数据服务，共 7 个服务）、修正 Docker Compose 端口与服务、标注规划中技术 | - |
 
 ---
 

@@ -24,6 +24,7 @@ from .tools import (
 )
 from .text_to_sql import run_text_to_sql, _validate_sql
 from .analyst import run_analyst
+from .sufficiency import assess_data_sufficiency, build_indicator_types
 
 logger = logging.getLogger(__name__)
 
@@ -209,8 +210,9 @@ class Step:
     TABLE_SELECT      = 4
     SQL_GENERATE      = 5
     SQL_EXECUTE       = 6
-    RESULT_PREVIEW    = 7
-    ANALYST           = 8
+    SUFFICIENCY       = 7
+    RESULT_PREVIEW    = 8
+    ANALYST           = 9
     SQL_GEN_THRESHOLD = 5
 
 
@@ -759,9 +761,56 @@ async def sql_execute_node(database_id, es, llm_call_fn):
 # 阶段 6 – 结果预览（步骤 7）
 # =========================================================================
 
-def result_preview_node(raw_results):
-    """步骤 7 — 渲染 5 行的表格预览。"""
-    if not raw_results or not isinstance(raw_results[0], dict):
+def result_preview_node(raw_results, sufficiency_report=None,
+                        indicator_types=None):
+    """步骤 7 — 按场景渲染结果预览。
+
+    根据数据充分性评估结果输出不同的预览内容（显示在执行面板的思考区，
+    供技术视图查看；主对话区的解读由 analyst 阶段的流式文本负责）：
+
+      - no_data      → 无数据声明 + 判定理由
+      - insufficient → 逐指标覆盖表 + 判定理由
+      - sufficient   → 5 行数据预览（含计算型指标时附简要摘要）
+
+    Args:
+        raw_results:         SQL 执行返回的行列表
+        sufficiency_report:  assess_data_sufficiency 的返回报告
+        indicator_types:     {指标名: "direct"|"computed"} 映射
+    """
+    report = sufficiency_report or {}
+    scenario = report.get("scenario", "sufficient")
+    reason = report.get("reason", "")
+
+    # ── 无数据场景 ──
+    if scenario == "no_data" or not raw_results:
+        yield {"type": "step", "step": _build_step(
+            Step.RESULT_PREVIEW, "Result Preview", "completed",
+            detail=f"无数据可预览（{reason[:60]}）" if reason else "无数据可预览",
+            thinking=f"数据充分性判定：no_data\n{reason}",
+            progress=100)}
+        return
+
+    # ── 数据不足场景：输出逐指标覆盖表 ──
+    if scenario == "insufficient":
+        per_ind = report.get("per_indicator", [])
+        lines = ["数据覆盖报告："]
+        for p in per_ind:
+            status = "✓" if p.get("has_data") else "✗"
+            miss = "、".join(p.get("missing_dimensions", [])) or "—"
+            lines.append(
+                f"  [{status}] {p.get('name', '')} "
+                f"| 可用 {p.get('row_count', 0)} 行 | 缺失: {miss}")
+        lines.append(f"\n判定理由：{reason}")
+        yield {"type": "step", "step": _build_step(
+            Step.RESULT_PREVIEW, "Result Preview", "completed",
+            detail=(f"数据不足：{report.get('indicators_with_data', 0)}/"
+                    f"{report.get('indicators_total', 0)} 个指标有数据"),
+            thinking="\n".join(lines),
+            progress=100)}
+        return
+
+    # ── 数据充分场景：5 行预览 + 计算型指标摘要 ──
+    if not isinstance(raw_results[0], dict):
         return
     cols = list(raw_results[0].keys())
     preview = (
@@ -772,9 +821,18 @@ def result_preview_node(raw_results):
     for r in raw_results[:5]:
         preview += " | ".join(str(r.get(c, ""))
                               for c in cols[:10]) + "\n"
+    detail = f"列: {', '.join(cols[:10])} | 共 {len(raw_results)} 行"
+
+    # 计算型指标简要摘要
+    types = indicator_types or {}
+    computed_names = [n for n, t in types.items() if t == "computed"]
+    if computed_names:
+        preview += f"\n计算型指标：{', '.join(computed_names[:8])}"
+        detail += f" | 计算型 {len(computed_names)} 个"
+
     yield {"type": "step", "step": _build_step(
         Step.RESULT_PREVIEW, "Result Preview", "completed",
-        detail=f"列: {', '.join(cols[:10])} | 共 {len(raw_results)} 行",
+        detail=detail,
         thinking=preview,
         progress=100)}
 
@@ -989,10 +1047,29 @@ async def run_indicator_query(question, database_id, database_name,
             else:
                 yield ev
 
-    # ── 步骤 7: 结果预览（仅当执行成功时） ───────────────────────────
-    if exec_ok:
-        for ev in result_preview_node(raw_results):
-            yield ev
+    # ── 步骤 6.5: 数据充分性评估（确定性判定，不依赖 LLM） ───────────
+    # 区分「技术失败」与「库无数据」：gen_ok/exec_ok 任一为 False 即技术失败
+    technical_failure = (not gen_ok) or (not exec_ok)
+    failure_msg = es.execution_error or ""
+    sufficiency_report = assess_data_sufficiency(
+        raw_results, enhanced_indicators, question,
+        technical_failure=technical_failure, error_msg=failure_msg)
+    es.sufficiency_report = sufficiency_report
+    es.indicator_types = build_indicator_types(enhanced_indicators)
+    yield {"type": "step", "step": _build_step(
+        Step.SUFFICIENCY, "Assess Data Sufficiency", "completed",
+        detail=(f"场景判定：{sufficiency_report['scenario']} | "
+                f"{sufficiency_report['reason'][:80]}"),
+        thinking=(f"覆盖率 {sufficiency_report['indicators_with_data']}/"
+                  f"{sufficiency_report['indicators_total']} | "
+                  f"意图 {sufficiency_report['intent']} | "
+                  f"行数 {sufficiency_report['total_rows']}"),
+        progress=100)}
+
+    # ── 步骤 7: 结果预览（按场景渲染，无数据/不足/充分各有分支） ──────
+    for ev in result_preview_node(raw_results, sufficiency_report,
+                                  es.indicator_types):
+        yield ev
 
     # ── 步骤 8: 生成分析（即使失败也始终执行） ────────────────────────
     async for ev in analyst_node(es, raw_results, stream_llm_gen):

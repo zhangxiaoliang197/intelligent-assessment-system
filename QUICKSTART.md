@@ -21,6 +21,43 @@ java -version
 mvn --version
 ```
 
+## 环境变量配置（重要）
+
+本系统通过 `.env` 文件集中管理所有配置（数据库连接、服务地址、大模型密钥等）。
+
+### 1. 创建 .env 文件
+
+项目根目录下已提供模板 `.env.example`，复制一份即可：
+
+```bash
+# Linux / macOS
+cp .env.example .env
+
+# Windows PowerShell / CMD
+copy .env.example .env
+```
+
+### 2. 填写必填项
+
+打开 `.env`，至少需要配置以下内容：
+
+| 变量 | 用途 | 是否必填 |
+|------|------|---------|
+| `MYSQL_PASSWORD` | MySQL 数据库密码 | **必填**（如无密码则保持为空） |
+| `LLM_API_KEY` | 大模型 API 密钥 | **必填** |
+| `MYSQL_HOST` | MySQL 主机地址 | 默认 `localhost`，按需修改 |
+
+如果使用远程 MySQL，还需要修改 `MYSQL_HOST`、`MYSQL_PORT` 等连接参数。
+
+### 3. 注意事项
+
+- `.env` 已被 `.gitignore` 忽略，**不会提交到 Git**，避免密码泄露
+- 修改 `.env` 后需要**重新启动**对应服务才能生效
+- 如果通过 Docker 部署，`start-docker-run.sh` 会自动读取 `.env` 并注入容器
+- 其他所有变量保持默认值即可，无需修改
+
+---
+
 ## 方式一：Docker快速启动（推荐）
 
 ### 1. 克隆项目
@@ -111,11 +148,7 @@ python main.py
 ### Java服务开发
 
 ```bash
-# 终端6: API网关
-cd java/api-gateway
-mvn spring-boot:run
-
-# 终端7: 基础管理服务
+# 终端6: 基础管理服务
 cd java/admin-service
 mvn spring-boot:run
 ```
@@ -124,7 +157,7 @@ mvn spring-boot:run
 
 ### 1. 访问前端
 
-打开浏览器访问 http://localhost:3000
+打开浏览器访问 http://localhost:10086
 
 ### 2. 配置大模型
 
@@ -154,18 +187,25 @@ mvn spring-boot:run
 A: 检查端口占用情况：
 
 ```bash
-lsof -i :8001
-lsof -i :8080
+# 检查 Python 服务端口（示例：knowledge-service 10252）
+lsof -i :10252
+# 检查 Java 服务端口（admin-service 10258）
+lsof -i :10258
+# 检查前端端口
+lsof -i :10086
 ```
 
 关闭占用端口的进程，或修改 `docker-compose.yml` 中的端口映射。
 
 ### Q: 前端无法访问API？
 
-A: 检查API网关是否正常运行：
+A: 检查后端服务是否正常运行：
 
 ```bash
-curl http://localhost:8080/api/status
+# 检查 admin-service 健康状态
+curl http://localhost:10258/actuator/health
+# 检查 qa-service 是否响应
+curl -fsS http://127.0.0.1:10253/health
 ```
 
 ### Q: 如何查看日志？

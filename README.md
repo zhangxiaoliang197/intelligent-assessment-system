@@ -40,9 +40,9 @@
 - MyBatis-Plus
 
 ### 数据存储
-- PostgreSQL - 关系型数据库
-- Neo4j - 图数据库
-- ChromaDB - 向量数据库
+- MySQL - 元数据库（数据库配置、数据集、指标、大模型配置等）
+- JSON 文件 - Python 服务的业务数据持久化（知识库、本体模型、会话记录等，原子写入 + .bak 备份）
+- 业务数据源 - 通过 admin-service 的 JDBC 动态连接，支持 MySQL/PostgreSQL/Oracle/达梦 V8/SQL Server
 
 ## 🚀 快速开始
 
@@ -118,8 +118,7 @@ intelligent-assessment-system/
 │   ├── evaluation-service/      # 评估分析服务
 │   └── ontology-service/        # 本体模型服务
 ├── java/                        # Java业务服务
-│   ├── admin-service/          # 基础管理服务
-│   └── api-gateway/            # API网关
+│   └── admin-service/          # 基础管理服务（数据库配置/数据集/指标/大模型配置/SQL执行）
 ├── docker/                      # Docker配置
 ├── scripts/                    # 部署脚本
 ├── docker-compose.yml          # Docker Compose配置
@@ -150,7 +149,7 @@ intelligent-assessment-system/
 - 算法详情
 
 ### 基础管理
-- 数据库驱动管理（支持达梦数据库V8.1）
+- 数据库驱动管理（支持 MySQL/PostgreSQL/Oracle/达梦 V8/SQL Server 多数据库动态加载驱动）
 - 数据集配置
 - 评估指标管理
 - 大模型参数配置
@@ -158,12 +157,13 @@ intelligent-assessment-system/
 ## 🔧 配置说明
 
 ### 数据库配置
-系统支持多种数据库：
-- MySQL
-- PostgreSQL
-- Oracle
-- 达梦数据库V8.1
-- SQL Server
+- **元数据库**：MySQL（存储数据库配置、数据集、指标、大模型配置等元数据，由 admin-service 管理）
+- **业务数据源**：通过 admin-service 的 JDBC 动态连接，支持以下数据库：
+  - MySQL
+  - PostgreSQL
+  - Oracle
+  - 达梦数据库 V8
+  - SQL Server
 
 ### 大模型配置
 支持本地部署的大模型：
@@ -174,10 +174,14 @@ intelligent-assessment-system/
 
 ## 📊 系统特点
 
-1. **微服务架构** - 各模块独立部署，灵活扩展
+1. **微服务架构** - 各模块独立部署，灵活扩展（共 7 个服务：1 前端 + 5 Python + 1 Java）
 2. **统一数据底座** - 知识库、本体模型、数据共享
-3. **离线部署** - 支持内网私有化部署
-4. **可配置性** - 每个服务支持独立配置
+3. **多智能体协同** - Orchestrator 编排 + 专项 Agent + 兜底降级，兼顾专业性与灵活性
+4. **Text-to-SQL 管线** - 智能选表 → LLM 生成 SQL → 安全校验 → 执行 → 分析，全链路打通
+5. **Skill 系统** - 内置可扩展的技能目录，支持自定义技能注册与运行时管理
+6. **智能选表机制** - 打分精选最多 5 张表，降低 Token 消耗与幻觉率
+7. **离线部署** - 支持内网私有化部署，无外部中间件依赖
+8. **可配置性** - 每个服务支持独立配置，通过环境变量覆盖
 
 ## 📝 开发说明
 

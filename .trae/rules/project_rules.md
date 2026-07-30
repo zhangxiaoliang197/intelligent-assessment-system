@@ -31,9 +31,9 @@
   1. `git pull` 或代码修改后，diff 中所有 Java/Python/前端文件都审查过
   2. 所有跨服务调用 URL（`os.getenv` / `@Value` / 容器名）与 `start-docker-run.sh` 的 `-e` 对照通过
   3. `vite.config.ts` 代理目标端口与 Python 服务端口一致
-  4. Gateway 控制器中的容器名与 `start-docker-run.sh` 的 `--name` 一致
+  4. nginx.conf 反向代理中的容器名与 `start-docker-run.sh` 的 `--name` 一致
   5. `.sh` / `.json` / `.py` / `.yml` 换行符为 LF（`.gitattributes` 已配置）
-  6. 所有受影响的服务 JAR/dist 都已重新编译，**然后一次性** `docker build + save` 全部 9 个镜像
+  6. 所有受影响的服务 JAR/dist 都已重新编译，**然后一次性** `docker build + save` 全部 7 个镜像
   7. **Java 服务必须 commit 之后、打包之前重新 compile**。严格顺序: 改代码→commit→编译JAR→docker build。禁止用旧JAR打包新镜像
 
 ## 本机环境
@@ -43,34 +43,33 @@
 | Maven | `C:\tools\apache-maven-3.9.9\bin\mvn` | 不在 PATH 中，需完整路径 |
 | Node.js | `D:\Program Files\nodejs` | 前端/Vite 用 |
 | Python | PATH 中的 python | 需安装 fastapi/uvicorn/sklearn/docx/lxml |
-| MySQL 5.5 | 端口 3306 | 用户 root，密码 1025 |
+| MySQL | 端口 3306 | 用户 root，密码通过 .env 或环境变量配置（application.yml 默认 root） |
 | Git | `D:\Program Files\Git\bin` | GitHub 认证 token 已配置 |
 
 ## 编译 Java 服务 (首次/代码更新后)
 ```powershell
 $env:JAVA_HOME = "C:\Program Files\Java\jdk-17"
-C:\tools\apache-maven-3.9.9\bin\mvn package -DskipTests -q  # 先后在 admin-service 和 api-gateway 目录下执行
+C:\tools\apache-maven-3.9.9\bin\mvn package -DskipTests -q  # 在 admin-service 目录下执行
 ```
 
-## 启动全部 9 个服务
+## 启动全部 7 个服务
 
-### Python 服务 (6个) - 沙箱可执行
+### Python 服务 (5个) - 沙箱可执行
 ```powershell
-$r="d:\TRAE SOLO\result\intelligent-assessment-system"
+$r="d:\code\intelligent-assessment-system"
 Start-Process python -ArgumentList "-u main.py" -WorkingDirectory "$r\python\<service>" -WindowStyle Hidden
 ```
-服务列表: knowledge(10252), qa(10253), indicator(10254), evaluation(10255), ontology(10256), solution-evaluation(10259)
+服务列表: knowledge(10252), qa(10253), indicator(10254), evaluation(10255), ontology(10256)
 
-### Java 服务 (2个) - 用户终端执行
+### Java 服务 (1个) - 用户终端执行
 ```powershell
 # 必须用 javaw + 完整绝对路径，Program Files 中的空格用反引号转义
-C:\Program` Files\Java\jdk-17\bin\javaw -jar "d:\TRAE SOLO\result\intelligent-assessment-system\java\admin-service\target\admin-service-1.0.0.jar"
-C:\Program` Files\Java\jdk-17\bin\javaw -jar "d:\TRAE SOLO\result\intelligent-assessment-system\java\api-gateway\target\api-gateway-1.0.0.jar"
+C:\Program` Files\Java\jdk-17\bin\javaw -jar "d:\code\intelligent-assessment-system\java\admin-service\target\admin-service-1.0.0.jar"
 ```
 
 ### 前端 - 沙箱可执行
 ```powershell
-Start-Process "D:\Program Files\nodejs\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "d:\TRAE SOLO\result\intelligent-assessment-system\frontend" -WindowStyle Hidden
+Start-Process "D:\Program Files\nodejs\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "d:\code\intelligent-assessment-system\frontend" -WindowStyle Hidden
 ```
 
 ## 常见问题速查
@@ -79,8 +78,8 @@ Start-Process "D:\Program Files\nodejs\npx.cmd" -ArgumentList "vite --host" -Wor
 | `无效的标记: --release` | JAVA_HOME 指向 JDK 8 | `$env:JAVA_HOME="C:\Program Files\Java\jdk-17"` |
 | `mvn 不是命令` | Maven 不在 PATH | 用 `C:\tools\apache-maven-3.9.9\bin\mvn` |
 | Java 启动后闪退 | `Start-Process java` 不兼容 / 用了 JDK 8 | 用 `javaw` + 绝对路径 |
-| `Access denied (MySQL)` | MySQL 密码错误 | 默认密码是 `1025` |
-| `application.yml` | MySQL 默认密码已改为 1025 | `${MYSQL_PASSWORD:1025}` |
+| `Access denied (MySQL)` | MySQL 密码错误 | 密码通过 .env 或环境变量配置，application.yml 默认值为 root |
+| `application.yml` | MySQL 密码配置 | `${MYSQL_PASSWORD:root}`，实际值通过 .env 或环境变量覆盖 |
 
 ## Docker 跨服务调用环境变量映射 (start-docker-run.sh)
 
@@ -94,15 +93,10 @@ Start-Process "D:\Program Files\nodejs\npx.cmd" -ArgumentList "vite --host" -Wor
 | assessment-indicator | `ADMIN_SERVICE_URL` | assessment-admin:10258 | ✅ |
 | assessment-indicator | `KNOWLEDGE_SERVICE_URL` | assessment-knowledge:10252 | ✅ |
 | assessment-indicator | `EVALUATION_API_URL` | assessment-qa:10253 | ✅ |
-| assessment-solution-evaluation | `QA_SERVICE_URL` | assessment-qa:10253 | ✅ |
-| assessment-solution-evaluation | `INDICATOR_SERVICE_URL` | assessment-indicator:10254 | ✅ |
-| assessment-solution-evaluation | `ADMIN_SERVICE_URL` | assessment-admin:10258 | ✅ |
-| assessment-solution-evaluation | `COMBAT_QUERIES_PATH` | /app/queries-custom.json (卷挂载) | ✅ |
 | assessment-knowledge | (无) | — | — |
 | assessment-evaluation | (无) | — | — |
 | assessment-ontology | (无) | — | — |
 | assessment-admin | `MYSQL_HOST/PORT/...` | 外部 MySQL | ✅ |
-| assessment-gateway | (无) | — | — |
 | assessment-frontend | (nginx 反向代理) | 容器名 | ✅ |
 
 **规则：新增跨服务调用时，必须在 start-docker-run.sh 中补上对应的 -e 环境变量。**
