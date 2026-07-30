@@ -757,11 +757,14 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
     if stage == "awaiting_confirmation":
         user_text = request.query.strip()
 
-        # ── 子分支 A0：用户输入了新问题（不是确认也不是拒绝） ──
-        if is_new_question(user_text):
+        # ── 子分支 A0：用户输入了新问题（既非确认查询，也非拒绝查询） ──
+        # 注意：is_new_question() 对长度>8的输入一律返回 True，会误伤「好的请帮我查询」
+        # 这类长确认语。此处先排除确认/拒绝，确保真正的确认/拒绝走 A1/A2 分支。
+        if is_new_question(user_text) and not is_query_confirm(user_text) and not is_query_deny(user_text):
             logger.info(f"[{session_id}] Detected new question in awaiting_confirmation stage, resetting to analyzing")
             stage = "analyzing"
             set_session_stage(session_id, "analyzing")
+            # 不清除 pending_indicators：新分析成功后会自然覆盖；保留旧值以备用户回溯
             # 不需要 yield 任何事件，继续走下面的逻辑
 
         # ── 子分支 A1：用户表示"不查询" ──
@@ -938,11 +941,44 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
 
             return create_stream_response(generate_query_by_name())
 
-        # 完全不匹配 → 可能是新问题，重置为 analyzing 走正常流程
-        logger.info(f"User text in awaiting_confirmation not matched: {user_text[:50]}, resetting to analyzing")
-        set_session_stage(session_id, "analyzing")
-        clear_pending_indicators(session_id)
-        # fall through to normal flow below
+        # ── 子分支 A4：完全不匹配 → 询问用户意图，保留已生成的指标体系 ──
+        # 旧逻辑会静默重置为 analyzing 并 clear_pending_indicators()，导致用户困惑：
+        # 刚生成的指标体系凭空消失、无任何提示。新逻辑明确告知"无法理解"，
+        # 列出可选项，并保留 pending_indicators 与 awaiting_confirmation 状态等待用户明确意图。
+        def generate_clarification():
+            now_str = datetime.now().isoformat()
+            pending = get_pending_indicators(session_id)
+            ind_count = len(pending.get("indicators", [])) if pending else 0
+            if ind_count:
+                resp_text = (
+                    f"抱歉，我没有理解您的回复。您刚才已生成 {ind_count} 个指标，请问您希望：\n\n"
+                    "1. **查询这些指标** — 回复「查询」并告知数据源名称（如：查询 MySQL）\n"
+                    "2. **暂不查询** — 回复「不查询」结束本轮\n"
+                    "3. **分析新的问题** — 直接描述新的指标分析需求"
+                )
+            else:
+                resp_text = (
+                    "抱歉，我没有理解您的输入。请问您希望：\n\n"
+                    "1. 查询指标 — 回复「查询」并告知数据源名称\n"
+                    "2. 暂不查询 — 回复「不查询」\n"
+                    "3. 分析新问题 — 直接描述需求"
+                )
+            yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
+            yield json.dumps({"type": "text", "content": resp_text}, ensure_ascii=False) + "\n"
+            yield json.dumps({
+                "type": "result",
+                "session_id": session_id,
+                "tree": None, "indicators": [],
+            }, ensure_ascii=False) + "\n"
+
+            s = ensure_session(session_id)
+            s["messages"].append({"role": "user", "content": user_text, "timestamp": now_str})
+            s["messages"].append({"role": "assistant", "content": resp_text, "timestamp": now_str})
+            # 保持 awaiting_confirmation 状态，保留 pending_indicators，等待用户明确意图
+            save_sessions()
+
+        logger.info(f"User text in awaiting_confirmation not matched: {user_text[:50]}, asking for clarification (preserving pending indicators)")
+        return create_stream_response(generate_clarification())
 
     # =====================================================================
     # 分支 B：正常指标分析流程（analyzing / 或 done 状态的新问题）
