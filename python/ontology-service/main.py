@@ -82,6 +82,9 @@ class Entity(BaseModel):
     name: str
     type: str
     properties: Dict[str, str] = Field(default_factory=dict)
+    # B 阶段数据绑定：实体绑定到具体数据字段（ass_field_annotation）
+    # 结构示例: {"field_id":"...", "dataset_id":"...", "table_name":"...", "column_name":"..."}
+    bindings: Dict[str, str] = Field(default_factory=dict)
     create_time: datetime
     update_time: datetime
 
@@ -94,6 +97,9 @@ class Relation(BaseModel):
     target_id: str
     relation_type: str
     properties: Dict[str, str] = Field(default_factory=dict)
+    # B 阶段数据绑定：关系绑定到具体指标（ass_indicator）
+    # 结构示例: {"indicator_id":"..."}
+    bindings: Dict[str, str] = Field(default_factory=dict)
     weight: float = 1.0
     create_time: datetime
 
@@ -109,6 +115,8 @@ class OntologyModel(BaseModel):
     create_time: datetime
     update_time: datetime
     status: str = "活跃"
+    # B 阶段：默认本体标志，三服务自动取默认本体的依据；同一时刻仅一个为 True
+    is_default: bool = False
 
 
 # ---------- 持久化 ----------
@@ -300,6 +308,14 @@ def _find_entity(ontology_id: str, entity_id: str) -> Optional[Entity]:
     for e in entities_db.get(ontology_id, []):
         if e.id == entity_id:
             return e
+    return None
+
+
+def _find_relation(ontology_id: str, relation_id: str) -> Optional[Relation]:
+    """在本体内查找关系。"""
+    for r in relations_db.get(ontology_id, []):
+        if r.id == relation_id:
+            return r
     return None
 
 
@@ -495,6 +511,101 @@ def _bfs_path(ontology_id: str, source_id: str, target_id: str) -> Optional[Dict
     }
 
 
+# ---------- 本体上下文（供 B2 三服务 prompt 注入消费）----------
+def _select_entities_by_question(ents: List[Entity], question: str, top_k: int) -> List[Entity]:
+    """按问题关键词筛选实体，命中优先，不超过 top_k。
+
+    简单 in 匹配（实体名/属性键值），不引入向量检索。
+    命中数为 0 时退化为取前 top_k 个，保证上下文非空。
+    """
+    if len(ents) <= top_k:
+        return list(ents)
+    if not question:
+        return ents[:top_k]
+    q_lower = question.lower()
+    hits, misses = [], []
+    for e in ents:
+        hit = (q_lower in e.name.lower()
+               or any(q_lower in str(v).lower() for v in e.properties.values())
+               or any(q_lower in str(k).lower() for k in e.properties.keys()))
+        (hits if hit else misses).append(e)
+    if not hits:
+        return ents[:top_k]
+    result = hits[:top_k]
+    if len(result) < top_k:
+        result.extend(misses[:top_k - len(result)])
+    return result
+
+
+def _build_ontology_context(ontology_id: str, question: str = "", top_k: int = 20) -> Dict[str, Any]:
+    """构建本体上下文（summary_text + 结构化数据），供 B2 三服务塞入 LLM prompt。
+
+    Args:
+        ontology_id: 本体ID
+        question:    用户问题（非空时按关键词命中筛选实体，命中优先）
+        top_k:       最大返回实体数（默认 20）
+
+    Returns:
+        {
+            "summary_text": 可直接塞 prompt 的中文文本,
+            "entities":     结构化实体列表,
+            "relations":    结构化关系列表（仅两端实体都在选中集合内的）,
+            "ontology":     本体元信息
+        }
+        本体不存在时返回空结构（summary_text 为空串，消费方据此降级）。
+    """
+    ont = ontologies_db.get(ontology_id)
+    if not ont:
+        return {"summary_text": "", "entities": [], "relations": [], "ontology": None}
+
+    ents = entities_db.get(ontology_id, [])
+    rels = relations_db.get(ontology_id, [])
+    ent_map = {e.id: e for e in ents}
+
+    selected = _select_entities_by_question(ents, question, top_k)
+    selected_ids = {e.id for e in selected}
+    # 关系：仅保留两端实体都在选中集合内的，避免 summary 出现"未知"节点
+    selected_rels = [r for r in rels
+                     if r.source_id in selected_ids and r.target_id in selected_ids]
+
+    # ── 拼接可直接塞 prompt 的中文背景文本 ──
+    lines = [f"【领域本体：{ont.name}】"]
+    if ont.description:
+        lines.append(f"说明：{ont.description}")
+    lines.append(f"概念清单（共 {len(selected)} 个）：")
+    for e in selected:
+        parts = [f"- {e.name}（类型：{e.type}）"]
+        if e.properties:
+            prop_str = "、".join(f"{k}:{v}" for k, v in e.properties.items())
+            parts.append(f"属性[{prop_str}]")
+        if e.bindings and e.bindings.get("table_name") and e.bindings.get("column_name"):
+            parts.append(f"绑定数据字段[{e.bindings['table_name']}.{e.bindings['column_name']}]")
+        lines.append(" ".join(parts))
+
+    if selected_rels:
+        lines.append(f"概念关系链路（共 {len(selected_rels)} 条）：")
+        for r in selected_rels:
+            src = ent_map.get(r.source_id)
+            tgt = ent_map.get(r.target_id)
+            src_name = src.name if src else "未知"
+            tgt_name = tgt.name if tgt else "未知"
+            line = f"- {src_name} —[{r.relation_type}]→ {tgt_name}"
+            if r.bindings.get("indicator_id"):
+                line += f"（衡量指标ID：{r.bindings['indicator_id']}）"
+            lines.append(line)
+
+    return {
+        "summary_text": "\n".join(lines),
+        "entities": [e.dict() for e in selected],
+        "relations": [r.dict() for r in selected_rels],
+        "ontology": {
+            "id": ont.id,
+            "name": ont.name,
+            "description": ont.description,
+        }
+    }
+
+
 # ---------- 接口 ----------
 @app.get("/")
 async def root():
@@ -596,6 +707,25 @@ async def get_stats():
             "avg_relations_per_entity": total_relations / total_entities if total_entities else 0
         }
     }
+
+
+@app.get("/ontology/default")
+async def get_default_ontology():
+    """获取默认本体。
+
+    优先返回 is_default=True 的本体；无则降级返回第一个；再无则 404。
+    注意：此静态路由必须声明在 /ontology/{ontology_id} 之前，否则 "default"
+    会被捕获为路径参数。
+    """
+    if not ontologies_db:
+        raise HTTPException(status_code=404, detail="尚无本体模型")
+    # 优先 is_default=True
+    for o in ontologies_db.values():
+        if o.is_default:
+            return {"success": True, "data": _ontology_summary(o)}
+    # 降级：返回第一个本体（不修改其 is_default 标志，仅作返回）
+    first = next(iter(ontologies_db.values()))
+    return {"success": True, "data": _ontology_summary(first)}
 
 
 @app.get("/ontology/{ontology_id}")
@@ -914,6 +1044,184 @@ async def get_path(
     return {"success": True, "data": result}
 
 
+# ---------- 绑定与默认本体（B 阶段数据联动）----------
+@app.post("/ontology/{ontology_id}/entity/{entity_id}/bind")
+async def bind_entity_field(
+    ontology_id: str,
+    entity_id: str,
+    field_id: str = Form(""),
+    dataset_id: str = Form(""),
+    table_name: str = Form(""),
+    column_name: str = Form("")
+):
+    """将实体绑定到具体数据字段（ass_field_annotation）。
+
+    绑定信息存入 entity.bindings，整体覆盖旧绑定。
+    结构: {"field_id":"...", "dataset_id":"...", "table_name":"...", "column_name":"..."}
+    """
+    async with db_lock:
+        _get_ontology_or_404(ontology_id)
+        entity = _find_entity(ontology_id, entity_id)
+        if not entity:
+            raise HTTPException(status_code=404, detail="实体不存在")
+        entity.bindings = {
+            "field_id": field_id,
+            "dataset_id": dataset_id,
+            "table_name": table_name,
+            "column_name": column_name,
+        }
+        entity.update_time = datetime.now()
+        ontologies_db[ontology_id].update_time = datetime.now()
+        save_ontology(ontology_id)
+        save_index()
+
+    return {"success": True, "message": "实体字段绑定成功", "data": entity.bindings}
+
+
+@app.delete("/ontology/{ontology_id}/entity/{entity_id}/bind")
+async def unbind_entity_field(ontology_id: str, entity_id: str):
+    """清除实体的数据字段绑定。"""
+    async with db_lock:
+        _get_ontology_or_404(ontology_id)
+        entity = _find_entity(ontology_id, entity_id)
+        if not entity:
+            raise HTTPException(status_code=404, detail="实体不存在")
+        entity.bindings = {}
+        entity.update_time = datetime.now()
+        ontologies_db[ontology_id].update_time = datetime.now()
+        save_ontology(ontology_id)
+        save_index()
+
+    return {"success": True, "message": "实体字段绑定已解除"}
+
+
+@app.post("/ontology/{ontology_id}/relation/{relation_id}/bind")
+async def bind_relation_indicator(
+    ontology_id: str,
+    relation_id: str,
+    indicator_id: str = Form(...)
+):
+    """将关系绑定到具体指标（ass_indicator）。
+
+    绑定信息存入 relation.bindings，整体覆盖旧绑定。
+    结构: {"indicator_id":"..."}
+    """
+    async with db_lock:
+        _get_ontology_or_404(ontology_id)
+        relation = _find_relation(ontology_id, relation_id)
+        if not relation:
+            raise HTTPException(status_code=404, detail="关系不存在")
+        relation.bindings = {"indicator_id": indicator_id}
+        ontologies_db[ontology_id].update_time = datetime.now()
+        save_ontology(ontology_id)
+        save_index()
+
+    return {"success": True, "message": "关系指标绑定成功", "data": relation.bindings}
+
+
+@app.delete("/ontology/{ontology_id}/relation/{relation_id}/bind")
+async def unbind_relation_indicator(ontology_id: str, relation_id: str):
+    """清除关系的指标绑定。"""
+    async with db_lock:
+        _get_ontology_or_404(ontology_id)
+        relation = _find_relation(ontology_id, relation_id)
+        if not relation:
+            raise HTTPException(status_code=404, detail="关系不存在")
+        relation.bindings = {}
+        ontologies_db[ontology_id].update_time = datetime.now()
+        save_ontology(ontology_id)
+        save_index()
+
+    return {"success": True, "message": "关系指标绑定已解除"}
+
+
+@app.post("/ontology/{ontology_id}/set-default")
+async def set_default_ontology(ontology_id: str):
+    """将指定本体设为默认（其余本体取消默认标志）。
+
+    同一时刻仅一个本体 is_default=True。仅持久化实际发生变更的本体。
+    """
+    async with db_lock:
+        ont = _get_ontology_or_404(ontology_id)
+        changed_ids = []
+        for oid, o in ontologies_db.items():
+            new_val = (oid == ontology_id)
+            if o.is_default != new_val:
+                o.is_default = new_val
+                o.update_time = datetime.now()
+                changed_ids.append(oid)
+        save_index()
+        for oid in changed_ids:
+            save_ontology(oid)
+
+    return {"success": True, "message": f"已将「{ont.name}」设为默认本体"}
+
+
+@app.get("/ontology/{ontology_id}/bindings")
+async def get_bindings(ontology_id: str):
+    """返回该本体所有绑定的紧凑结构（仅含已绑定的实体/关系）。
+
+    供前端 badge 展示与 B2 prompt 注入消费。
+    """
+    _get_ontology_or_404(ontology_id)
+    bound_entities = [
+        {"id": e.id, "name": e.name, "type": e.type, "bindings": e.bindings}
+        for e in entities_db.get(ontology_id, []) if e.bindings
+    ]
+    bound_relations = [
+        {
+            "id": r.id,
+            "source_id": r.source_id,
+            "target_id": r.target_id,
+            "relation_type": r.relation_type,
+            "bindings": r.bindings,
+        }
+        for r in relations_db.get(ontology_id, []) if r.bindings
+    ]
+    return {
+        "success": True,
+        "data": {
+            "ontology_id": ontology_id,
+            "entities": bound_entities,
+            "relations": bound_relations,
+        }
+    }
+
+
+# ---------- 本体上下文接口（供 B2 三服务消费）----------
+@app.get("/ontology/default/context")
+async def get_default_context(question: str = "", top_k: int = 20):
+    """默认本体的上下文快捷接口（三服务最常用）。
+
+    注意：此静态路由必须声明在 /ontology/{ontology_id}/context 之前，
+    否则 "default" 会被捕获为路径参数。
+    """
+    if not ontologies_db:
+        raise HTTPException(status_code=404, detail="尚无本体模型")
+    # 取默认本体（优先 is_default=True，否则第一个）
+    target_id = None
+    for oid, o in ontologies_db.items():
+        if o.is_default:
+            target_id = oid
+            break
+    if not target_id:
+        target_id = next(iter(ontologies_db.keys()))
+    ctx = _build_ontology_context(target_id, question, top_k)
+    return {"success": True, "data": ctx}
+
+
+@app.get("/ontology/{ontology_id}/context")
+async def get_ontology_context(
+    ontology_id: str,
+    question: str = "",
+    top_k: int = 20
+):
+    """指定本体的上下文接口（请求携带 ontology_id 时使用）。"""
+    _get_ontology_or_404(ontology_id)
+    ctx = _build_ontology_context(ontology_id, question, top_k)
+    return {"success": True, "data": ctx}
+
+
 # ---------- 导入导出 ----------
 @app.post("/ontology/import")
 async def import_ontology(file: UploadFile = File(...)):
@@ -956,6 +1264,7 @@ async def import_ontology(file: UploadFile = File(...)):
             name=ed.get("name", "未命名"),
             type=ed.get("type", "概念"),
             properties=ed.get("properties", {}),
+            bindings=ed.get("bindings", {}),
             create_time=now,
             update_time=now,
         ))
@@ -974,6 +1283,7 @@ async def import_ontology(file: UploadFile = File(...)):
             target_id=tgt,
             relation_type=rd.get("relation_type") or rd.get("type", "关联"),
             properties=rd.get("properties", {}),
+            bindings=rd.get("bindings", {}),
             weight=rd.get("weight", 1.0),
             create_time=now,
         ))

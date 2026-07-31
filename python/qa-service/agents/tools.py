@@ -55,6 +55,11 @@ _DATABASE_PROFILE_KEYS = (
 # admin-service 的基地址，支持通过环境变量覆盖（Docker 部署时设为容器名）
 ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
 
+# ontology-service 的基地址（B 阶段数据联动：三服务参考本体模型）
+# 本地开发：http://localhost:10256（本机 10256 被幽灵 socket 占用时开发期可跑 10257）
+# Docker：  http://assessment-ontology:10256
+ONTOLOGY_SERVICE_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://localhost:10256")
+
 # 创建 SSL 上下文并关闭证书校验
 # 原因：内网 Docker 环境中使用自签名证书，无需严格校验证书链
 _ssl_ctx = ssl.create_default_context()
@@ -401,6 +406,33 @@ def fetch_all_indicators() -> list:
     """
     resp = _api_get("indicator/list")
     return resp.get("indicators", []) if resp.get("success") else []
+
+
+def fetch_ontology_context(ontology_id: str = "", question: str = "", top_k: int = 20):
+    """获取本体上下文（B 阶段数据联动，供 LLM prompt 注入）。
+
+    - ontology_id 为空 → 调 GET /ontology/default/context（取默认本体）
+    - 非空 → 调 GET /ontology/{id}/context（取指定本体）
+    - 失败/超时返回 None（优雅降级，三服务 prompt 不含本体时正常工作）
+
+    Returns:
+        {"summary_text": str, "entities": list, "relations": list, "ontology": dict} 或 None
+    """
+    try:
+        params = urllib.parse.urlencode({"question": question, "top_k": top_k})
+        if ontology_id:
+            url = f"{ONTOLOGY_SERVICE_URL}/ontology/{ontology_id}/context?{params}"
+        else:
+            url = f"{ONTOLOGY_SERVICE_URL}/ontology/default/context?{params}"
+        req = urllib.request.Request(url, method="GET")
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=8, context=_ssl_ctx) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("success") and data.get("data"):
+                return data["data"]
+    except Exception as e:
+        logger.warning(f"fetch_ontology_context failed: {e}")
+    return None
 
 
 def fetch_indicators_for_datasets(dataset_ids: list) -> list:

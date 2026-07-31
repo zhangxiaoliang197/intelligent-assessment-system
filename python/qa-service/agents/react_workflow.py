@@ -80,6 +80,7 @@ class ReactWorkflowState(TypedDict, total=False):
     database_name: str
     attachment_text: str
     database_type: str
+    ontology_id: str        # B 阶段：参考的本体模型ID（空串 = 用默认本体）
 
     # ── 编排决策 ──
     # 编排者决定的执行路径类型
@@ -1412,6 +1413,7 @@ async def run_react_workflow(
     database_id: str = "",
     database_name: str = "",
     attachment_text: str = "",
+    ontology_id: str = "",
 ):
     """对外暴露的多智能体 ReAct 工作流入口。
 
@@ -1429,6 +1431,7 @@ async def run_react_workflow(
         database_id:  数据源 ID
         database_name:数据源名称
         attachment_text: 附件文本
+        ontology_id:  B 阶段：参考的本体模型ID（空串 = 用默认本体）
 
     Yields:
         dict: SSE 事件
@@ -1439,6 +1442,7 @@ async def run_react_workflow(
         "database_id": database_id,
         "database_name": database_name,
         "attachment_text": attachment_text,
+        "ontology_id": ontology_id,
         **_empty_state(),
     }
 

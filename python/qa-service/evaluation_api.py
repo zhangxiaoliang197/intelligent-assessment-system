@@ -145,6 +145,7 @@ class EvaluationRequest(BaseModel):
     attachment_id: Optional[str] = None
     skill_id: Optional[str] = Field(default=None, alias="skillId")
     timeout_seconds: Optional[int] = Field(default=None, ge=30, le=1800, alias="timeoutSeconds")
+    ontology_id: Optional[str] = Field(default=None, alias="ontologyId")  # B 阶段：参考本体ID
 
 
 class SkillRecommendRequest(BaseModel):
@@ -500,6 +501,7 @@ async def analyze_stream(request: EvaluationRequest, http_request: Request):
                     attachment_text=attachment_text,
                     actor_id=actor.user_id,
                     timeout_seconds=request.timeout_seconds,
+                    ontology_id=request.ontology_id or "",
                 )
             else:
                 workflow = run_react_workflow(
@@ -509,6 +511,7 @@ async def analyze_stream(request: EvaluationRequest, http_request: Request):
                     database_id=request.database_id,
                     database_name=request.database_name,
                     attachment_text=attachment_text,
+                    ontology_id=request.ontology_id or "",
                 )
 
             async for event in workflow:

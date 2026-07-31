@@ -91,6 +91,7 @@ class WorkflowState(TypedDict, total=False):
     database_name: str      # 用户选择的数据源名称（仅用于展示）
     attachment_text: str    # 用户上传的文档解析后的纯文本（空串 = 未上传）
     database_type: str      # 数据库类型（MySQL/Oracle/PostgreSQL/达梦等），用于 SQL 方言适配
+    ontology_id: str        # B 阶段：指定参考的本体模型ID（空串 = 用默认本体）
 
     # ── orchestrator 阶段产出（意图识别后写入）────────────────────────
     intent: str             # 大模型识别出的用户意图，如 "综合评估"
@@ -1350,6 +1351,7 @@ async def run_langgraph_workflow(
     database_id: str = "",
     database_name: str = "",
     attachment_text: str = "",
+    ontology_id: str = "",
 ):
     """
     对外暴露的 LangGraph 工作流入口 — 使用 SSE 流式输出评估全流程。
@@ -1379,6 +1381,7 @@ async def run_langgraph_workflow(
         session_id:   会话 ID（SSE 通道标识）
         database_id:  数据源 ID（空串 = 无数据源）
         database_name:数据源名称
+        ontology_id:  B 阶段：参考的本体模型ID（空串 = 用默认本体）
 
     Yields:
         dict: SSE 事件，含 type / step / result / error / session_id 等字段
@@ -1390,6 +1393,7 @@ async def run_langgraph_workflow(
         "database_id": database_id,
         "database_name": database_name,
         "attachment_text": attachment_text,
+        "ontology_id": ontology_id,
         **_empty_state(),  # 展开默认值 —— 保证所有字段有初始值
     }
 

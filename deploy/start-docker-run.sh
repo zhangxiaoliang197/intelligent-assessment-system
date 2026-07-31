@@ -150,6 +150,7 @@ docker run -d --name assessment-qa \
     -p 10253:10253 \
     -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
     -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
+    -e ONTOLOGY_SERVICE_URL="http://assessment-ontology:10256" \
     -e EVALUATION_SKILL_CATALOG_PATH="/app/config/skills.json" \
     -v "$DATA_DIR/qa:/app/data" \
     -v "$SKILLS_FILE:/app/config/skills.json:ro" \
@@ -164,6 +165,7 @@ docker run -d --name assessment-indicator \
     -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
     -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
     -e EVALUATION_API_URL="http://assessment-qa:10253" \
+    -e ONTOLOGY_SERVICE_URL="http://assessment-ontology:10256" \
     --restart always \
     assessment-indicator:latest
 

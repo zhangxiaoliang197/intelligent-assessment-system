@@ -1,5 +1,6 @@
 import urllib.request
 import urllib.error
+import urllib.parse
 import json
 import ssl
 import logging
@@ -66,6 +67,32 @@ def fetch_available_databases(admin_service_url: str) -> list:
     except Exception as e:
         logger.warning(f"Failed to fetch databases: {e}")
     return []
+
+
+def fetch_ontology_context(ontology_id: str = "", question: str = "", top_k: int = 20):
+    """获取本体上下文（B 阶段数据联动，供 LLM prompt 注入）。
+
+    - ontology_id 为空 → 调 GET /ontology/default/context（取默认本体）
+    - 非空 → 调 GET /ontology/{id}/context（取指定本体）
+    - 失败/超时返回 None（优雅降级，三服务 prompt 不含本体时正常工作）
+
+    Returns:
+        {"summary_text": str, "entities": list, "relations": list, "ontology": dict} 或 None
+    """
+    # 延迟导入避免循环依赖；ONTOLOGY_SERVICE_URL 在 config.py 中从环境变量读取
+    from config import ONTOLOGY_SERVICE_URL
+    try:
+        params = urllib.parse.urlencode({"question": question, "top_k": top_k})
+        if ontology_id:
+            url = f"{ONTOLOGY_SERVICE_URL}/ontology/{ontology_id}/context?{params}"
+        else:
+            url = f"{ONTOLOGY_SERVICE_URL}/ontology/default/context?{params}"
+        data = http_get(url, timeout=8)
+        if data and data.get("success") and data.get("data"):
+            return data["data"]
+    except Exception as e:
+        logger.warning(f"fetch_ontology_context failed: {e}")
+    return None
 
 
 def create_stream_response(generator):

@@ -47,6 +47,7 @@ services:
     environment:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
+      - ONTOLOGY_SERVICE_URL=http://assessment-ontology:10256
       - EVALUATION_SKILL_CATALOG_PATH=/app/config/skills.json
     volumes:
       - qa-data:/app/data
@@ -64,6 +65,7 @@ services:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
       - EVALUATION_API_URL=http://assessment-qa:10253
+      - ONTOLOGY_SERVICE_URL=http://assessment-ontology:10256
     volumes:
       - indicator-data:/app/data
 
