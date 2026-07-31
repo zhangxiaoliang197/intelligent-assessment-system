@@ -49,7 +49,7 @@
         </div>
       </div>
       <div class="main-content">
-        <div class="chat-area custom-scroll" ref="chatArea">
+        <div class="chat-area custom-scroll" ref="chatArea" @mouseover="onCiteHover" @mouseout="onCiteOut">
           <div v-if="messages.length === 0" class="empty-state">
             <div class="tags-section">
               <div class="suggest-cards">
@@ -91,7 +91,7 @@
                   <div v-if="msg.knowledgeUsed && msg.role === 'assistant'" class="knowledge-badge">
                     <el-tag size="small" type="primary" effect="plain">含知识库参考</el-tag>
                   </div>
-                  {{ msg.content }}
+                  <div v-html="formatMessage(msg.content, msg.references, msg.sources)"></div>
                 </div>
                 <!-- 地图显示提示 -->
                 <div v-if="msg.role === 'assistant' && msg.showMapPrompt" class="map-prompt">
@@ -108,22 +108,60 @@
                   :points="msg.geoPoints"
                 />
                 <div v-if="msg.references && msg.references.length > 0" class="references">
-                  <h5>参考来源：</h5>
-                  <ul>
-                    <li v-for="(ref, idx) in msg.references" :key="idx">
-                      {{ ref }}
-                      <el-tag v-if="ref.includes('用户上传')" size="small" type="warning" effect="plain">上传文档</el-tag>
-                      <el-tag v-else-if="ref.includes('(')" size="small" type="primary" effect="plain">知识库</el-tag>
-                      <el-tag v-else size="small" type="info" effect="plain">AI生成</el-tag>
-                    </li>
-                  </ul>
+                    <div class="ref-label">参考来源</div>
+                    <div class="ref-list">
+                      <template v-for="(ref, idx) in msg.references" :key="idx">
+                        <div v-if="!ref.includes('(相关度: 0%)')" class="ref-item" :data-ref-num="(msg.sources && msg.sources[idx]) ? msg.sources[idx].num : (idx + 1)">
+                          <el-tag
+                            v-if="ref.includes('用户上传')"
+                            size="small"
+                            type="warning"
+                            effect="plain"
+                          >上传文档</el-tag>
+                          <el-tag
+                            v-else
+                            size="small"
+                            type="primary"
+                            effect="plain"
+                          >知识库</el-tag>
+                          {{ ref }}
+                        </div>
+                      </template>
+                    </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
+        <!-- 引用 tooltip 浮层 -->
+        <div
+          ref="citeTooltipRef"
+          class="cite-tooltip"
+          v-show="citeTooltip.visible"
+          :style="{ top: citeTooltip.top + 'px', left: citeTooltip.left + 'px' }"
+        >
+          <template v-for="(item, i) in citeTooltip.items" :key="i">
+            <div class="cite-tooltip-title">[{{ item.num }}] {{ item.title }}</div>
+            <div class="cite-tooltip-snippet">{{ item.snippet }}</div>
+            <div v-if="i < citeTooltip.items.length - 1" class="cite-tooltip-divider"></div>
+          </template>
+        </div>
         <div class="input-area">
           <div class="input-wrapper">
+            <el-select
+              v-model="selectedCategory"
+              placeholder="全部分类"
+              size="small"
+              clearable
+              class="category-select"
+            >
+              <el-option
+                v-for="cat in categoryOptions"
+                :key="cat.name"
+                :label="`${cat.name} (${cat.count})`"
+                :value="cat.name"
+              />
+            </el-select>
             <el-input
               v-model="inputMessage"
               type="textarea"
@@ -329,8 +367,77 @@ const inputMessage = ref('')
 const sessionId = ref(localStorage.getItem(LS_SESSION_ID) || '')
 const messages = ref<Array<any>>([])
 const chatArea = ref<HTMLElement | null>(null)
+const citeTooltipRef = ref<HTMLElement | null>(null)
+
+// ── 引用 tooltip 状态 ──
+const citeTooltip = ref<{
+  visible: boolean
+  top: number
+  left: number
+  items: Array<{ num: number; title: string; snippet: string }>
+}>({ visible: false, top: 0, left: 0, items: [] })
+let _citeHideTimer: ReturnType<typeof setTimeout> | null = null
+
+const onCiteHover = (e: MouseEvent) => {
+  const target = (e.target as HTMLElement).closest('.citation-badge') as HTMLElement | null
+  if (!target) {
+    citeTooltip.value.visible = false
+    return
+  }
+  if (_citeHideTimer) { clearTimeout(_citeHideTimer); _citeHideTimer = null }
+
+  const titleStr = target.getAttribute('data-title') || ''
+  const snippetStr = target.getAttribute('data-snippet') || ''
+  const refsStr = target.getAttribute('data-refs') || ''
+
+  // 解析多个来源（用 | 分隔）
+  const titles = titleStr.split('|')
+  const snippets = snippetStr.split('|')
+  const refs = refsStr.split(',').map(Number)
+
+  const items = refs.map((num, i) => ({
+    num,
+    title: titles[i] || '',
+    snippet: snippets[i] || ''
+  })).filter(item => item.title)
+
+  if (items.length === 0) return
+
+  const rect = target.getBoundingClientRect()
+  citeTooltip.value = {
+    visible: true,
+    top: rect.top - 8,  // 相对于 viewport，用 fixed 定位
+    left: rect.left + rect.width / 2,
+    items
+  }
+}
+
+const onCiteOut = (e: MouseEvent) => {
+  const related = (e as any).relatedTarget as HTMLElement | null
+  if (related && related.closest('.citation-badge')) return
+  _citeHideTimer = setTimeout(() => {
+    citeTooltip.value.visible = false
+  }, 150)
+}
+
 const historyList = ref<Array<any>>(JSON.parse(localStorage.getItem(LS_HISTORY_LIST) || '[]'))
 const sessionMessages = ref<Record<string, Array<any>>>(JSON.parse(localStorage.getItem(LS_SESSION_MSGS) || '{}'))
+
+// ── 知识分类筛选 ──
+const selectedCategory = ref('')
+const categoryOptions = ref<Array<{ name: string; count: number }>>([])
+
+const fetchCategories = async () => {
+  try {
+    const res = await fetch('/api/knowledge/categories')
+    const data = await res.json()
+    if (data.success) {
+      categoryOptions.value = data.categories || []
+    }
+  } catch (e) {
+    // 获取分类失败时静默处理，不影响问答功能
+  }
+}
 
 // 持久化辅助函数
 const persistState = () => {
@@ -443,6 +550,57 @@ const selectQuestion = (question: string) => {
   sendMessage()
 }
 
+// 格式化消息：过滤 Markdown + 渲染引用标注
+const formatMessage = (content: string, refs?: string[], sources?: Array<{num: number; title: string; snippet: string}>): string => {
+  if (!content) return ''
+  let html = content
+  html = html
+    // 过滤 Markdown
+    .replace(/###+\s*/g, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/`(.+?)`/g, '$1')
+    .replace(/^- /gm, '')
+    // 转义 HTML
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+  // ── 渲染引用标注 [N] / [N,M] ──
+  if (sources && sources.length > 0) {
+    // 构建编号到来源的映射
+    const sourceMap: Record<number, {title: string; snippet: string}> = {}
+    sources.forEach(s => {
+      if (s.num) sourceMap[s.num] = { title: s.title || '', snippet: s.snippet || '' }
+    })
+    html = html.replace(/\[(\d+(?:,\d+)*)\]/g, (_match, nums: string) => {
+      const numList = nums.split(',').map((n: string) => parseInt(n.trim()))
+      // 检查是否所有编号都有对应来源
+      const validNums = numList.filter((n: number) => sourceMap[n])
+      if (validNums.length === 0) return `[${nums}]` // 无匹配来源，保留原文
+
+      const titles = validNums.map((n: number) => {
+        const src = sourceMap[n]
+        return (src.title || '').replace(/"/g, '&quot;')
+      }).join('|')
+
+      const snippets = validNums.map((n: number) => {
+        const src = sourceMap[n]
+        return (src.snippet || '')
+          .replace(/<[^>]*>/g, '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .replace(/"/g, '&quot;')
+      }).join('|')
+
+      const displayNums = validNums.join(',')
+      return `<sup class="citation-badge" data-title="${titles}" data-snippet="${snippets}" data-refs="${validNums.join(',')}" onclick="document.querySelector('.ref-item[data-ref-num=&quot;${validNums[0]}&quot;')?.scrollIntoView({behavior:'smooth',block:'center'})">[${displayNums}]</sup>`
+    })
+  }
+
+  // 换行
+  html = html.replace(/\n/g, '<br>')
+  return html
+}
+
 const scrollToBottom = () => {
   nextTick(() => {
     if (chatArea.value) {
@@ -484,6 +642,7 @@ const sendMessage = async () => {
         query: userQuestion,
         session_id: sessionId.value || undefined,
         top_k: 5,
+        category: selectedCategory.value || undefined,
         attachment_id: getAttachmentId() || undefined,
         image_id: getImageId() || undefined
       })
@@ -523,10 +682,13 @@ const sendMessage = async () => {
             nextTick(() => scrollToBottom())
           } else if (data.type === 'done') {
             const mapData = processMapData(fullText, userQuestion)
+            // 优先使用后处理注入引用后的答案，否则用原始文本
+            const finalContent = data.cited_answer || fullText
             messages.value[msgIndex] = {
               ...messages.value[msgIndex],
-              content: fullText,
+              content: finalContent,
               references: data.references || [],
+              sources: data.sources || [],
               knowledgeUsed: data.knowledge_used || false,
               geoPoints: mapData.geoPoints,
               showMap: mapData.showMap,
@@ -623,6 +785,7 @@ onMounted(() => {
   }
 
   ElMessage.info('智能问答系统加载完成')
+  fetchCategories()
 })
 </script>
 
@@ -1008,25 +1171,24 @@ onMounted(() => {
 }
 
 .references {
-  margin-top: 8px;
-  padding: 12px 16px;
+  margin-top: 12px;
+  padding: 8px 12px;
   background: var(--gray-50);
-  border-radius: 12px;
-  font-size: 13px;
+  border-radius: 8px;
   border: 1px solid var(--border-light);
 }
 
-.references h5 {
-  margin: 0 0 8px 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 600;
+.ref-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+  font-weight: 500;
 }
 
-.references ul {
-  margin: 0;
-  padding-left: 20px;
-  color: var(--text-tertiary);
+.ref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .input-area {
@@ -1117,6 +1279,92 @@ onMounted(() => {
   margin-bottom: 8px;
 }
 
+/* ── 文中引用标注 ── */
+:deep(.citation-badge) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  margin: 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 4px;
+  cursor: pointer;
+  vertical-align: super;
+  transition: all 0.15s;
+  position: relative;
+  text-decoration: none;
+}
+
+:deep(.citation-badge:hover) {
+  color: #fff;
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+/* ── JS 驱动引用 tooltip 浮层 ── */
+.cite-tooltip {
+  position: fixed;
+  transform: translate(-50%, -100%);
+  max-width: 380px;
+  min-width: 200px;
+  padding: 14px 16px;
+  background: #1e293b;
+  color: #f1f5f9;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 2000;
+  pointer-events: none;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.cite-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 7px solid transparent;
+  border-top-color: #1e293b;
+}
+
+.cite-tooltip-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 6px;
+}
+
+.cite-tooltip-snippet {
+  font-size: 12px;
+  color: #cbd5e1;
+  line-height: 1.6;
+}
+
+.cite-tooltip-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.12);
+  margin: 10px 0;
+}
+
+/* ── 参考来源滚动高亮 ── */
+.ref-item {
+  scroll-margin-top: 80px;
+  transition: background 0.3s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 /* ── 地图显示提示 ── */
 .map-prompt {
   margin-top: 12px;
@@ -1186,6 +1434,11 @@ onMounted(() => {
   gap: 8px;
   justify-content: flex-end;
   align-items: center;
+}
+
+.category-select {
+  width: 160px;
+  margin-bottom: 8px;
 }
 
 .attachment-chips {
