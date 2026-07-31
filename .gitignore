@@ -97,5 +97,6 @@ stop.ps1
 
 # IDE 本地配置（不提交）
 .trae/settings.local.json
+.trae/documents/
 
 
