@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Generator
 from datetime import datetime
+import re
 import uuid
 import json
 import os
@@ -64,6 +65,22 @@ os.makedirs(IMAGES_DIR, exist_ok=True)
 
 # 滑动窗口大小：保留最近N轮对话作为上下文
 MAX_CONTEXT = int(os.getenv("QA_CONTEXT_ROUNDS", "5"))
+
+def _smart_truncate(text: str, max_len: int = 200) -> str:
+    """按句子边界截取文本，避免半句话截断，末尾加省略号。"""
+    if len(text) <= max_len:
+        return text
+    truncated = text[:max_len]
+    # 从后往前找句子结束标点（。！？!?）
+    for i in range(len(truncated) - 1, max_len // 2, -1):
+        if truncated[i] in '。！？!?\n':
+            return truncated[:i+1] + '…'
+    # 没找到，退而求其次找逗号/分号
+    for i in range(len(truncated) - 1, max_len // 2, -1):
+        if truncated[i] in '，,；;':
+            return truncated[:i+1] + '…'
+    return truncated + '…'
+
 
 def atomic_json_write(filepath, data):
     """原子写入JSON文件，防止写入中断导致文件损坏"""
@@ -147,12 +164,15 @@ def load_llm_config():
 
 KNOWLEDGE_SERVICE_URL = os.getenv("KNOWLEDGE_SERVICE_URL", "http://localhost:10252")
 
-def search_knowledge(query, top_k=5):
+def search_knowledge(query, top_k=5, category=None):
     try:
-        body = json.dumps({"query": query, "top_k": top_k}).encode("utf-8")
+        body = {"query": query, "top_k": top_k}
+        if category:
+            body["category"] = category
+        body_bytes = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
             f"{KNOWLEDGE_SERVICE_URL}/knowledge/search",
-            data=body, method="POST"
+            data=body_bytes, method="POST"
         )
         req.add_header("Content-Type", "application/json")
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -275,12 +295,12 @@ def _get_attachment_info(attachment_id: Optional[str]) -> tuple:
         logger.warning(f"获取附件信息失败 {attachment_id}: {e}")
         return "", ""
 
-def call_llm_api(query, context="", attachment_text="", attachment_filename="", image_data_url=""):
-    api_url, api_key, model, temperature, max_tokens, messages, err = get_llm_messages(query, context, attachment_text, attachment_filename, image_data_url)
+def call_llm_api(query, context="", attachment_text="", attachment_filename="", image_data_url="", category=None):
+    api_url, api_key, model, temperature, max_tokens, messages, err = get_llm_messages(query, context, attachment_text, attachment_filename, image_data_url, category)
     if api_url is None:
         return err, [], []
 
-    references, sources = err
+    references, sources, knowledge_chunks = err
 
     body = json.dumps({
         "model": model,
@@ -318,7 +338,7 @@ def call_llm_api(query, context="", attachment_text="", attachment_filename="", 
     except Exception as e:
         return f"大模型调用失败: {str(e)[:500]}", [], []
 
-def get_llm_messages(query, context="", attachment_text="", attachment_filename="", image_data_url=""):
+def get_llm_messages(query, context="", attachment_text="", attachment_filename="", image_data_url="", category=None):
     """构建 LLM 请求消息（复用逻辑）。当 image_data_url 非空时使用多模态格式。"""
     config = load_llm_config()
     llm_type = config.get("type", "deepseek")
@@ -337,7 +357,7 @@ def get_llm_messages(query, context="", attachment_text="", attachment_filename=
         logger.info(f"跳过知识库检索（地理/坐标相关）: {query[:50]}")
         knowledge_chunks = []
     else:
-        knowledge_chunks = search_knowledge(query, top_k=5)
+        knowledge_chunks = search_knowledge(query, top_k=5, category=category)
     knowledge_context = ""
     references = []
     sources = []
@@ -358,16 +378,26 @@ def get_llm_messages(query, context="", attachment_text="", attachment_filename=
     # 知识库结果
     if knowledge_chunks:
         for i, ch in enumerate(knowledge_chunks):
-            knowledge_context += f"\n\n[知识库参考{i + 1} - {ch.get('title', '未知')}]\n{ch.get('content', '')}"
-            references.append(f"{ch.get('title', '未知')} (相关度: {ch.get('score', 0):.0%})")
+            ref_num = i + 1
+            knowledge_context += f"\n\n[参考{ref_num}] 标题: {ch.get('title', '未知')}\n内容: {ch.get('content', '')}"
+            references.append(f"[{ref_num}] {ch.get('title', '未知')} (相关度: {ch.get('score', 0):.0%})")
             sources.append({
+                "num": ref_num,
                 "title": ch.get("title", "未知"),
                 "category": ch.get("category", "知识库"),
-                "score": ch.get("score", 0)
+                "score": ch.get("score", 0),
+                "snippet": _smart_truncate(ch.get("content", "") or "", 200)
             })
 
     # ── 构建 system prompt ──
-    system_prompt = "你是一个专业的智能评估系统助手，擅长作战效能评估、指标体系分析、评估分析等领域。请用中文回答，回答要专业、准确、有条理。"
+    system_prompt = (
+        "你是一个专业的智能评估系统助手，擅长作战效能评估、指标体系分析、评估分析等领域。\n"
+        "请用中文回答，语言专业、准确、有条理。\n"
+        "禁止使用 ###、** 等 Markdown 格式标记，标题用【】，列表用数字。\n"
+        "重要：当你引用某条参考资料的内容时，必须在相关句末标注其编号，格式为 [N]（如 [1]、[2]）。"
+        "一个句子可以引用多个来源，用逗号分隔，如 [1,3]。"
+        "不要凭空编造编号，只引用确实使用了其内容的参考资料。"
+    )
 
     if has_attachment:
         # 文档优先：文档是主要来源，知识库仅作补充
@@ -375,8 +405,8 @@ def get_llm_messages(query, context="", attachment_text="", attachment_filename=
         if knowledge_context:
             system_prompt += (
                 f"\n\n此外，系统从知识库中检索到以下资料。"
-                f"如果这些资料与用户的文档或问题**明确相关**，可以作为补充参考；"
-                f"如果不相关，请忽略知识库资料，**仅基于用户上传的文档内容**回答问题："
+                f"如果这些资料与用户的文档或问题明确相关，可以作为补充参考；"
+                f"如果不相关，请忽略知识库资料，仅基于用户上传的文档内容回答问题："
                 f"{knowledge_context}"
             )
         system_prompt += "\n\n请优先基于用户上传的文档内容进行回答。如果问题超出文档范围，请如实告知。"
@@ -403,11 +433,12 @@ def get_llm_messages(query, context="", attachment_text="", attachment_filename=
         {"role": "user", "content": user_content}
     ]
 
-    return api_url, api_key, model, temperature, max_tokens, messages, (references, sources)
+    return api_url, api_key, model, temperature, max_tokens, messages, (references, sources, knowledge_chunks)
 
-def stream_llm_api(query, context="", attachment_text="", attachment_filename="", image_data_url="") -> Generator[str, None, tuple]:
+
+def stream_llm_api(query, context="", attachment_text="", attachment_filename="", image_data_url="", category=None) -> Generator[str, None, tuple]:
     """流式调用 LLM API，逐块 yield 文本，最后 return (完整文本, references, sources)"""
-    api_url, api_key, model, temperature, max_tokens, messages, refs_src = get_llm_messages(query, context, attachment_text, attachment_filename, image_data_url)
+    api_url, api_key, model, temperature, max_tokens, messages, refs_src = get_llm_messages(query, context, attachment_text, attachment_filename, image_data_url, category)
     if api_url is None:
         yield refs_src  # 这是错误信息字符串
         return refs_src, [], []
@@ -479,6 +510,7 @@ class ChatRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
     top_k: int = 5
+    category: Optional[str] = None  # 知识库分类筛选，不传则全库搜索
     attachment_id: Optional[str] = None
     image_id: Optional[str] = None
 
@@ -729,7 +761,7 @@ async def chat(request: ChatRequest):
         if not image_data_url:
             raise HTTPException(status_code=400, detail="图片不存在或已过期")
 
-    answer, references, sources = call_llm_api(request.query, context, attachment_text, attachment_filename, image_data_url)
+    answer, references, sources = call_llm_api(request.query, context, attachment_text, attachment_filename, image_data_url, request.category)
 
     now_str = datetime.now().isoformat()
     sessions[session_id].append({"role": "user", "content": request.query, "timestamp": now_str})
@@ -784,27 +816,28 @@ async def chat_stream(request: ChatRequest):
         if not image_data_url:
             raise HTTPException(status_code=400, detail="图片不存在或已过期")
 
-    _, __, ___, ____, _____, ______, refs_src = get_llm_messages(request.query, context, attachment_text, attachment_filename, image_data_url)
+    _, __, ___, ____, _____, ______, refs_src = get_llm_messages(request.query, context, attachment_text, attachment_filename, image_data_url, request.category)
     if refs_src is None:
-        refs_src = ([], [])
+        refs_src = ([], [], [])
+    references_pre, sources_pre, knowledge_chunks = refs_src
 
     def generate():
         full_answer = ""
-        gen = stream_llm_api(request.query, context, attachment_text, attachment_filename, image_data_url)
+        gen = stream_llm_api(request.query, context, attachment_text, attachment_filename, image_data_url, request.category)
         try:
             for chunk in gen:
                 full_answer += chunk
                 yield json.dumps({"type": "text", "content": chunk}, ensure_ascii=False) + "\n"
-            # 获取 references 和 sources
-            api_url, api_key, model, temp, mt, msgs, rs = get_llm_messages(request.query, context, attachment_text, attachment_filename, image_data_url)
-            references, sources = (rs if isinstance(rs, tuple) else ([], []))
-            knowledge_used = len(sources) > 0 if isinstance(sources, list) else False
+            # 引用信息
+            knowledge_used = len(sources_pre) > 0
+            cited_answer = full_answer
             yield json.dumps({
                 "type": "done",
                 "session_id": session_id,
-                "references": references,
-                "sources": sources,
-                "knowledge_used": knowledge_used
+                "references": references_pre,
+                "sources": sources_pre,
+                "knowledge_used": knowledge_used,
+                "cited_answer": cited_answer
             }, ensure_ascii=False, default=str) + "\n"
         except Exception as e:
             yield json.dumps({"type": "error", "content": str(e)[:500]}, ensure_ascii=False) + "\n"

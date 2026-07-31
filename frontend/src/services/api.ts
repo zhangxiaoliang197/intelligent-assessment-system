@@ -3,9 +3,8 @@ import axios, { type AxiosRequestConfig } from 'axios'
 const service = axios.create({
   baseURL: '/api',
   timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json'
-  }
+  // 不固定 Content-Type，让 axios 根据数据类型自动设置
+  // JSON 对象 → application/json，FormData → multipart/form-data
 })
 
 service.interceptors.request.use(
