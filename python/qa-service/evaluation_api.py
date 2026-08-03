@@ -288,7 +288,12 @@ def _sync_llm_call(system_prompt: str, user_message: str) -> str:
     try:
         with urllib.request.urlopen(req, timeout=180, context=ssl_ctx) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            return data["choices"][0]["message"]["content"]
+            content = data["choices"][0]["message"]["content"] or ""
+            if not content:
+                finish = data["choices"][0].get("finish_reason", "")
+                detail = f"maxTokens={max_tokens}, finish_reason={finish}"
+                raise RuntimeError(f"大模型返回空内容 ({detail})，可能推理 token 耗尽。请在「基础管理 → 大模型配置」中增大 maxTokens")
+            return content
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="ignore")
         try:
@@ -436,6 +441,10 @@ async def _async_stream_llm_internal(
         raise RuntimeError(f"Streaming LLM error: {error_ref[0]}")
 
     await fut  # re-raise any exception from the worker
+
+    if not full_text:
+        raise RuntimeError("大模型流式返回空内容，可能 maxTokens 不足导致推理 token 耗尽。请在「基础管理 → 大模型配置」中增大 maxTokens")
+
     return full_text
 
 

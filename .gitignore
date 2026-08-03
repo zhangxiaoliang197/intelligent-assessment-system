@@ -85,11 +85,13 @@ GeoWebCache-使用指南.md
 **/data/sessions.json
 **/data/history.json
 **/data/evaluation_sessions.json
+**/data/evaluation_history.json
+**/data/*.empty_backup
 *.bak
 
 # Local dev scripts
 logs*.bat
-data/
+sample_data/
 
 # Tile service cache (large tile files)
 python/tile-service/tiles/
