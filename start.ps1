@@ -1,4 +1,4 @@
-# ========================================
+﻿# ========================================
 # Intelligent Assessment System - Start Script
 # Usage: .\start.ps1
 # ========================================
@@ -37,7 +37,9 @@ try {
 }
 
 # 将工具加入 PATH，确保子进程可继承
-$extraPath = [string]::Join(";", @($nodeBin, $javaBin, if ($mvnHome) { "$mvnHome\bin" }) | Where-Object { $_ })
+$paths = @($nodeBin, $javaBin)
+if ($mvnHome) { $paths += "$mvnHome\bin" }
+$extraPath = ($paths | Where-Object { $_ }) -join ";"
 if ($extraPath) {
     $env:Path = "$extraPath;$env:Path"
 }
