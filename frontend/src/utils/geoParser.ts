@@ -101,12 +101,15 @@ function parseDecimal(text: string): { value: number; rest: string } | null {
  *   "39°54′24″N, 116°23′30″E"       — 英文 DMS
  */
 function normalizeText(text: string): string {
-  // 统一度符号: °(U+00B0) 各种变体 → °
+  // 统一度符号: °(U+00B0) 各种变体 → °（含中文"度"）
   return text
+    .replace(/度/g, '°')
     .replace(/[º˚]/g, '°')
-    // 统一分符号: ′(U+2032) ' ' 各种变体 → ′
+    // 统一分符号: ′(U+2032) ' ' 各种变体 → ′（含中文"分"）
+    .replace(/分/g, '\u2032')
     .replace(/['\u2018\u2019\u201B\u2035\u02B9\u0374]/g, '\u2032')
-    // 统一秒符号: ″(U+2033) " " 各种变体 → ″
+    // 统一秒符号: ″(U+2033) " " 各种变体 → ″（含中文"秒"）
+    .replace(/秒/g, '\u2033')
     .replace(/["\u201C\u201D\u2036\u02BA]/g, '\u2033')
 }
 
