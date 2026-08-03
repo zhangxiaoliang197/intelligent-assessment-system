@@ -98,6 +98,7 @@ stop.ps1
 # IDE 本地配置（不提交）
 .trae/settings.local.json
 .trae/documents/
+.trae/rules/personal_rules.md
 
 # 测评体系（本地开发质量工具，不入产品库）
 assessment-bench/
