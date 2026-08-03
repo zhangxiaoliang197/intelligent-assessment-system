@@ -1,8 +1,21 @@
 FROM python:3.11-slim
 WORKDIR /app
+
+# ── C++ 运行时依赖（sentence-transformers / PyTorch 需要 libgomp）──
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip config set global.index-url https://pypi.org/simple
+
+# ── 先安装 CPU 版 PyTorch（避免下载数 GB 的 CUDA 依赖，BGE 小模型 CPU 推理足够）──
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+# ── 再安装其余依赖（sentence-transformers 检测到 torch 已安装，不会重复拉 CUDA 版）──
 COPY python/knowledge-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# 完整复制知识库服务源码（含 models/bge-small-zh-v1.5 嵌入模型）
 COPY python/knowledge-service/ .
 EXPOSE 10252
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10252"]

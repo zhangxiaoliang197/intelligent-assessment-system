@@ -98,6 +98,18 @@ fi
 
 cat > "$DEPLOY_TARGET/docker-compose.yml" << DOCKERCOMPOSE
 services:
+  # ─── Qdrant 向量数据库 ───
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: assessment-qdrant
+    ports:
+      - "6333:6333"
+    restart: always
+    volumes:
+      - "$DEPLOY_TARGET/data/qdrant:/qdrant/storage"
+    networks:
+      - assessment-net
+
   frontend:
     image: assessment-frontend:latest
     container_name: assessment-frontend
@@ -113,6 +125,8 @@ services:
     ports:
       - "10252:10252"
     restart: always
+    environment:
+      - QDRANT_URL=http://assessment-qdrant:6333
     volumes:
       - "$DEPLOY_TARGET/data/knowledge:/app/data"
     networks:
@@ -200,7 +214,7 @@ volumes:
   drivers-data:
 DOCKERCOMPOSE
 
-mkdir -p "$DEPLOY_TARGET/data"/{knowledge,qa,ontology,evaluation,indicator,config}
+mkdir -p "$DEPLOY_TARGET/data"/{knowledge,qa,ontology,evaluation,indicator,qdrant,config}
 
 # drivers 使用命名卷 drivers-data，首次启动时自动从镜像内 /app/drivers 复制驱动。
 # 如需补充 Oracle/达梦等驱动，请通过管理后台「驱动管理」页面上传，或重新构建镜像。
@@ -254,6 +268,7 @@ SERVICE_CONTAINERS=(
     assessment-indicator
     assessment-qa
     assessment-knowledge
+    assessment-qdrant
 )
 for container_name in "${SERVICE_CONTAINERS[@]}"; do
     if docker ps -a --format '{{.Names}}' | grep -qx "$container_name"; then
@@ -335,7 +350,7 @@ chmod +x "$DEPLOY_TARGET"/*.sh
 # ---------- 防火墙 ----------
 if systemctl is-active --quiet firewalld 2>/dev/null; then
     log_info "配置防火墙..."
-    for port in 10086 10252 10253 10254 10255 10256 10258; do
+    for port in 10086 10252 10253 10254 10255 10256 10258 6333; do
         firewall-cmd --permanent --add-port=$port/tcp 2>/dev/null || true
     done
     firewall-cmd --reload 2>/dev/null || true

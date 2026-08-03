@@ -551,7 +551,7 @@ const selectQuestion = (question: string) => {
 }
 
 // 格式化消息：过滤 Markdown + 渲染引用标注
-const formatMessage = (content: string, refs?: string[], sources?: Array<{num: number; title: string; snippet: string}>): string => {
+const formatMessage = (content: string, _refs?: string[], sources?: Array<{num: number; title: string; snippet: string}>): string => {
   if (!content) return ''
   let html = content
   html = html
