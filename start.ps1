@@ -1,4 +1,4 @@
-# ========================================
+﻿# ========================================
 # Intelligent Assessment System - Start Script
 # Usage: .\start.ps1
 # ========================================
@@ -6,13 +6,43 @@
 $ErrorActionPreference = "Continue"
 $root = "$PSScriptRoot"
 
-# Must set PATH first so Start-Process inherits it
-$nodeBin = Split-Path -Parent (Get-Command node -ErrorAction Stop).Source
-$javaExe = (Get-Command java -ErrorAction Stop).Source
-$javaBin = Split-Path -Parent $javaExe
-$mvnHome = "$env:USERPROFILE\apache-maven\apache-maven-3.9.8"
-$mvnCmd = "$mvnHome\bin\mvn.cmd"
-$env:Path = "$nodeBin;$javaBin;$mvnHome\bin;$env:Path"
+# ── 工具路径检测（从 PATH / 常见安装位置自动查找）──
+
+# Node.js：从 PATH 查找
+$nodeBin = $null
+try { $nodeBin = Split-Path -Parent (Get-Command node -ErrorAction Stop).Source } catch {}
+if (-not $nodeBin) {
+    Write-Host "[WARN] Node.js 未在 PATH 中找到，前端将跳过" -ForegroundColor Yellow
+}
+
+# Java：从 PATH 查找，反推 JAVA_HOME
+$javaExe = $null
+$javaBin = $null
+try {
+    $javaExe = (Get-Command java -ErrorAction Stop).Source
+    $javaBin = Split-Path -Parent $javaExe          # e.g. D:\dev\jdk17\bin
+    $env:JAVA_HOME = Split-Path -Parent $javaBin     # 向上两级: D:\dev\jdk17
+} catch {
+    Write-Host "[WARN] Java 未在 PATH 中找到，admin-service 将跳过" -ForegroundColor Yellow
+}
+
+# Maven：从 PATH 查找，反推 Maven Home
+$mvnHome = $null
+$mvnCmd = $null
+try {
+    $mvnCmd = (Get-Command mvn.cmd -ErrorAction Stop).Source
+    $mvnHome = Split-Path -Parent (Split-Path -Parent $mvnCmd)  # bin → Maven Home
+} catch {
+    Write-Host "[WARN] Maven 未在 PATH 中找到，admin-service 将跳过编译" -ForegroundColor Yellow
+}
+
+# 将工具加入 PATH，确保子进程可继承
+$paths = @($nodeBin, $javaBin)
+if ($mvnHome) { $paths += "$mvnHome\bin" }
+$extraPath = ($paths | Where-Object { $_ }) -join ";"
+if ($extraPath) {
+    $env:Path = "$extraPath;$env:Path"
+}
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Starting all services..." -ForegroundColor Cyan
@@ -52,29 +82,38 @@ foreach ($svc in $pyServices) {
 Write-Host "" -NoNewline
 Write-Host "[2/4] Starting Java services (1)..." -ForegroundColor Yellow
 $adminJar = "$root\java\admin-service\target\admin-service-1.0.0.jar"
-Write-Host "  Building admin-service..." -ForegroundColor Yellow
-Push-Location "$root\java\admin-service"
-$env:JAVA_HOME = "C:\Program Files\Java\jdk-17"
-& "$mvnCmd" package -DskipTests -q
-Pop-Location
-if (Test-Path $adminJar) {
-    Kill-Port 10258
-    Start-Process -FilePath $javaExe -ArgumentList "-jar $adminJar" -WindowStyle Hidden
-    Write-Host "  Started Admin (10258)" -ForegroundColor Green
+if ($mvnCmd -and $javaExe) {
+    if (-not (Test-Path $adminJar)) {
+        Write-Host "  Building admin-service..." -ForegroundColor Yellow
+        Push-Location "$root\java\admin-service"
+        & "$mvnCmd" package -DskipTests -q
+        Pop-Location
+    }
+    if (Test-Path $adminJar) {
+        Kill-Port 10258
+        Start-Process -FilePath $javaExe -ArgumentList "-jar $adminJar" -WindowStyle Hidden
+        Write-Host "  Started Admin (10258)" -ForegroundColor Green
+    } else {
+        Write-Host "  [SKIP] Admin jar not found (Maven 编译可能失败)" -ForegroundColor Yellow
+    }
 } else {
-    Write-Host "  [SKIP] Admin jar not found" -ForegroundColor Yellow
+    Write-Host "  [SKIP] Java / Maven 未安装" -ForegroundColor Yellow
 }
 
 # Frontend
 Write-Host "" -NoNewline
 Write-Host "[3/4] Starting frontend..." -ForegroundColor Yellow
-if (-not (Test-Path "$root\frontend\node_modules")) {
-    Write-Host "  Installing dependencies..." -ForegroundColor Yellow
-    Push-Location "$root\frontend"; npm install; Pop-Location
+if ($nodeBin) {
+    if (-not (Test-Path "$root\frontend\node_modules")) {
+        Write-Host "  Installing dependencies..." -ForegroundColor Yellow
+        Push-Location "$root\frontend"; npm install; Pop-Location
+    }
+    Kill-Port 10086
+    Start-Process -FilePath "$nodeBin\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "$root\frontend" -WindowStyle Hidden
+    Write-Host "  Started Frontend (10086)" -ForegroundColor Green
+} else {
+    Write-Host "  [SKIP] Node.js 未安装" -ForegroundColor Yellow
 }
-Kill-Port 10086
-Start-Process -FilePath "$nodeBin\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "$root\frontend" -WindowStyle Hidden
-Write-Host "  Started Frontend (10086)" -ForegroundColor Green
 
 # Verify
 Write-Host "" -NoNewline

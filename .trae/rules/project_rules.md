@@ -36,15 +36,7 @@
   6. 所有受影响的服务 JAR/dist 都已重新编译，**然后一次性** `docker build + save` 全部 8 个镜像（含 Qdrant）
   7. **Java 服务必须 commit 之后、打包之前重新 compile**。严格顺序: 改代码→commit→编译JAR→docker build。禁止用旧JAR打包新镜像
 
-## 本机环境
-| 工具 | 路径 | 备注 |
-|------|------|------|
-| JDK 17 | `C:\Program Files\Java\jdk-17` | JAVA_HOME 必须指向此路径 |
-| Maven | `C:\tools\apache-maven-3.9.9\bin\mvn` | 不在 PATH 中，需完整路径 |
-| Node.js | `D:\Program Files\nodejs` | 前端/Vite 用 |
-| Python | PATH 中的 python | 需安装 fastapi/uvicorn/sklearn/docx/lxml |
-| MySQL | 端口 3306 | 用户 root，密码通过 .env 或环境变量配置（application.yml 默认 root） |
-| Git | `D:\Program Files\Git\bin` | GitHub 认证 token 已配置 |
+
 
 ## 编译 Java 服务 (首次/代码更新后)
 ```powershell
