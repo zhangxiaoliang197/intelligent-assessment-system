@@ -648,7 +648,7 @@ const reindexAll = async () => {
 }
 
 const openQdrantDashboard = () => {
-  window.open('http://localhost:6333/dashboard', '_blank')
+  window.open(`http://${window.location.hostname}:6333/dashboard`, '_blank')
 }
 
 const refreshData = () => {

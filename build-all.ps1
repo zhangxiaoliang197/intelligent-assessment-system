@@ -61,8 +61,10 @@ function Build-And-Save {
 
     if ($ImageName -eq "qa") {
         Write-Host ">>> 校验 QA 镜像内 Skill 目录..." -ForegroundColor Yellow
-        docker run --rm --entrypoint python "assessment-${ImageName}:latest" `
-            -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 30; print('Skill catalog OK:', len(catalog['skills']))"
+        $pyCode = @'
+from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog["skills"]) == 30; print("Skill catalog OK:", len(catalog["skills"]))
+'@
+        docker run --rm --entrypoint python "assessment-${ImageName}:latest" -c $pyCode
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  ERROR: QA 镜像缺少或无法加载 /app/config/skills.json，停止导出!" -ForegroundColor Red
             exit 1
@@ -79,7 +81,7 @@ function Build-And-Save {
 # ---- 阶段1: Python 服务 (5个) ----
 Write-Host ""
 Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host "阶段 1/3: 构建 Python 微服务 (5个)" -ForegroundColor Cyan
+Write-Host "阶段 1/4: 构建 Python 微服务 (5个)" -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 
 Build-And-Save "knowledge"             "knowledge"             "10252" "知识库服务"
@@ -91,7 +93,7 @@ Build-And-Save "ontology"              "ontology"              "10256" "本体�
 # ---- 阶段2: Java 服务 (1个) ----
 Write-Host ""
 Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host "阶段 2/3: 构建 Java 服务 (1个)" -ForegroundColor Cyan
+Write-Host "阶段 2/4: 构建 Java 服务 (1个)" -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 
 Build-And-Save "admin"       "admin"       "10258" "基础管理服务"
@@ -99,15 +101,33 @@ Build-And-Save "admin"       "admin"       "10258" "基础管理服务"
 # ---- 阶段3: 前端 ----
 Write-Host ""
 Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host "阶段 3/3: 构建前端" -ForegroundColor Cyan
+Write-Host "阶段 3/4: 构建前端" -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 
 Build-And-Save "frontend"    "frontend"    "80"   "前端界面"
 
+# ---- 阶段4: Qdrant (拉取第三方镜像) ----
+Write-Host ""
+Write-Host "=========================================" -ForegroundColor Cyan
+Write-Host "阶段 4/4: 拉取 Qdrant 向量数据库镜像" -ForegroundColor Cyan
+Write-Host "=========================================" -ForegroundColor Cyan
+
+Write-Host ">>> 拉取 qdrant/qdrant:latest ..." -ForegroundColor Blue
+docker pull qdrant/qdrant:latest
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  ERROR: 拉取 Qdrant 镜像失败!" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host ">>> 导出 assessment-qdrant.tar ..." -ForegroundColor Green
+docker save -o "$IMAGES_DIR\assessment-qdrant.tar" "qdrant/qdrant:latest"
+$size = (Get-Item "$IMAGES_DIR\assessment-qdrant.tar").Length / 1MB
+Write-Host "  [OK] assessment-qdrant.tar ($([math]::Round($size, 1)) MB)" -ForegroundColor Green
+
 # ---- 汇总 ----
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "全部 7 个镜像构建完成!" -ForegroundColor Green
+Write-Host "全部 8 个镜像构建完成!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Get-ChildItem $IMAGES_DIR | ForEach-Object {

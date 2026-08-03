@@ -22,6 +22,10 @@ MYSQL_PORT="${MYSQL_PORT:-3306}"
 MYSQL_DATABASE="${MYSQL_DATABASE:-assessment}"
 DB_TYPE="${DB_TYPE:-mysql}"
 
+# ─── Qdrant 连接参数 ───
+QDRANT_HOST="${QDRANT_HOST:-assessment-qdrant}"
+QDRANT_PORT="${QDRANT_PORT:-6333}"
+
 # 校验：MYSQL_HOST 必须显式配置
 if [ -z "$MYSQL_HOST" ]; then
     echo "ERROR: MYSQL_HOST 未配置。请通过参数或环境变量指定元数据库地址。"
@@ -39,6 +43,7 @@ echo "  MySQL: ${MYSQL_USER}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}"
 DATA_DIR="$BASE_DIR/data"
 # drivers 使用 Docker 命名卷（首次自动从镜像内 /app/drivers 复制，无需宿主机目录）
 mkdir -p "$DATA_DIR/knowledge"
+mkdir -p "$DATA_DIR/qdrant"
 mkdir -p "$DATA_DIR/qa"
 mkdir -p "$DATA_DIR/ontology"
 mkdir -p "$DATA_DIR/evaluation"
@@ -103,6 +108,7 @@ SERVICE_CONTAINERS=(
     assessment-indicator
     assessment-qa
     assessment-knowledge
+    assessment-qdrant
 )
 for container_name in "${SERVICE_CONTAINERS[@]}"; do
     if docker ps -a --format '{{.Names}}' | grep -qx "$container_name"; then
@@ -115,9 +121,24 @@ done
 docker network inspect "$NET_NAME" >/dev/null 2>&1 || \
     docker network create "$NET_NAME"
 
-# ─── 0. 等待 MySQL 就绪 ───
+# ─── 0. Qdrant 向量数据库 ───
+echo ""
 echo "========================================"
-echo "[0/9] 等待 MySQL 就绪..."
+echo "[0/9] 启动 Qdrant 向量数据库..."
+echo "========================================"
+
+echo "[启动] Qdrant (6333)..."
+docker run -d --name assessment-qdrant \
+    --network "$NET_NAME" \
+    -p 6333:6333 \
+    -v "$DATA_DIR/qdrant:/qdrant/storage" \
+    --restart always \
+    qdrant/qdrant:latest
+
+# ─── 1. 等待 MySQL 就绪 ───
+echo ""
+echo "========================================"
+echo "[1/9] 等待 MySQL 就绪..."
 echo "========================================"
 echo "  MySQL: ${MYSQL_USER}@${MYSQL_HOST}:${MYSQL_PORT}"
 
@@ -144,13 +165,14 @@ echo "  (admin 服务启动后将自动建库建表)"
 # ─── 1-6. Python 服务 ───
 echo ""
 echo "========================================"
-echo "[1/8] 启动 Python 服务..."
+echo "[2/9] 启动 Python 服务..."
 echo "========================================"
 
 echo "[启动] 知识库服务 (10252)..."
 docker run -d --name assessment-knowledge \
     --network "$NET_NAME" \
     -p 10252:10252 \
+    -e QDRANT_URL="http://${QDRANT_HOST}:${QDRANT_PORT}" \
     -e LOG_ENV="$LOG_ENV" \
     -e LOG_LEVEL="$LOG_LEVEL" \
     -e LOG_DIR="/app/logs" \
@@ -245,7 +267,7 @@ docker run -d --name assessment-ontology \
 # ─── 7. Java 服务 (需要 MySQL 环境变量) ───
 echo ""
 echo "========================================"
-echo "[2/8] 启动 Java 服务..."
+echo "[3/9] 启动 Java 服务..."
 echo "========================================"
 
 echo "[启动] 基础管理服务 (10258)..."
@@ -272,7 +294,7 @@ docker run -d --name assessment-admin \
 # ─── 9. 等待管理服务就绪后启动前端 ───
 echo ""
 echo "========================================"
-echo "[3/8] 等待管理服务就绪..."
+echo "[4/9] 等待管理服务就绪..."
 echo "========================================"
 for i in $(seq 1 90); do
     if curl -s http://127.0.0.1:10258/actuator/health >/dev/null 2>&1; then
@@ -298,7 +320,7 @@ docker run -d --name assessment-frontend \
 # ─── 4. 真实容器与 HTTP 冒烟校验 ───
 echo ""
 echo "========================================"
-echo "[4/8] 校验 QA 容器和 Skill 目录接口..."
+echo "[5/9] 校验 QA 容器和 Skill 目录接口..."
 echo "========================================"
 EXPECTED_IMAGE_ID="$(docker image inspect assessment-qa:latest --format '{{.Id}}')"
 ACTUAL_IMAGE_ID="$(docker inspect assessment-qa --format '{{.Image}}')"
@@ -344,5 +366,5 @@ IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [ -z "$IP" ] && IP="<服务器IP>"
 echo "  访问地址: http://${IP}:10086"
 echo "  MySQL:    ${MYSQL_USER}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}"
-echo "  共启动 7 个服务"
+echo "  共启动 8 个服务"
 echo "========================================"

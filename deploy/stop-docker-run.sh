@@ -14,6 +14,7 @@ SERVICES=(
     assessment-indicator
     assessment-qa
     assessment-knowledge
+    assessment-qdrant
 )
 
 for svc in "${SERVICES[@]}"; do

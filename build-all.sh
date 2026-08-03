@@ -48,7 +48,7 @@ build_and_save() {
 }
 
 echo "========================================="
-echo "阶段 1/3: 构建 Python 微服务 (5个)"
+echo "阶段 1/4: 构建 Python 微服务 (5个)"
 echo "========================================="
 echo ""
 
@@ -59,22 +59,34 @@ build_and_save "evaluation"            "evaluation"            "10255" "评估�
 build_and_save "ontology"              "ontology"              "10256" "本体模型服务"
 
 echo "========================================="
-echo "阶段 2/3: 构建 Java 服务 (1个)"
+echo "阶段 2/4: 构建 Java 服务 (1个)"
 echo "========================================="
 echo ""
 
 build_and_save "admin"       "admin"       "10258" "基础管理服务"
 
 echo "========================================="
-echo "阶段 3/3: 构建前端"
+echo "阶段 3/4: 构建前端"
 echo "========================================="
 echo ""
 
 build_and_save "frontend"    "frontend"    "80"   "前端界面"
 
 echo ""
+echo "========================================="
+echo "阶段 4/4: 拉取 Qdrant 向量数据库镜像"
+echo "========================================="
+echo ""
+
+echo ">>> 拉取 qdrant/qdrant:latest ..."
+docker pull qdrant/qdrant:latest
+echo ">>> 导出 assessment-qdrant.tar ..."
+docker save -o "$IMAGES_DIR/assessment-qdrant.tar" "qdrant/qdrant:latest"
+echo ""
+
+echo ""
 echo "========================================"
-echo -e "${GREEN}全部 7 个镜像构建完成!${NC}"
+echo -e "${GREEN}全部 8 个镜像构建完成!${NC}"
 echo "========================================"
 echo ""
 echo "镜像文件位于: $IMAGES_DIR/"
