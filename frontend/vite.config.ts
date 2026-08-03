@@ -67,11 +67,8 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')
       },
-      // 注：规范端口为 10256（与 docker-compose/Dockerfile/部署脚本一致）。
-      // 本机 10256 被 Windows 幽灵 socket 占用（进程已退出但端口未释放），
-      // 故开发期临时指向 10257 上运行的同一服务；生产容器内仍用 10256。
       '/api/ontology': {
-        target: 'http://localhost:10257',
+        target: 'http://localhost:10256',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')
       },

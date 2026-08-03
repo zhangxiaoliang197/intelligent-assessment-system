@@ -50,6 +50,9 @@ yarn-error.log*
 uploads/
 vector_db/
 
+# Models (large files, download separately)
+python/knowledge-service/models/
+
 # Database
 *.db
 *.sqlite
