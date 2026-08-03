@@ -25,11 +25,9 @@ import logging
 import tempfile
 from filelock import FileLock
 
-# ---------- 日志 ----------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+# ---------- 统一日志 ----------
+from logging_config import setup_logging
+setup_logging("ontology-service")
 logger = logging.getLogger("ontology-service")
 
 app = FastAPI(
@@ -1366,4 +1364,4 @@ async def search_ontology(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10256)
+    uvicorn.run(app, host="0.0.0.0", port=10256, log_config=None)

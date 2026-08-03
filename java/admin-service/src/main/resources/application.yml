@@ -58,3 +58,15 @@ db:
 # ─── 驱动文件存储路径 ───
 driver:
   storage-path: ${user.dir}/drivers
+
+# ─── 日志配置 ───
+# LOG_PATH 由环境变量注入（Docker 内 /app/logs，本地 ./logs）
+logging:
+  file:
+    path: ${LOG_PATH:./logs}
+  level:
+    root: ${LOG_LEVEL:INFO}
+    # 抑制框架噪音
+    org.hibernate.SQL: WARN
+    org.hibernate.type.descriptor.sql.BasicBinder: WARN
+    com.zaxxer.hikari: WARN

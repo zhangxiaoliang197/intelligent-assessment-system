@@ -18,7 +18,8 @@ import urllib.error
 import ssl
 import logging
 
-logging.basicConfig(level=logging.INFO)
+from logging_config import setup_logging
+setup_logging("qa-service")
 logger = logging.getLogger("qa-service")
 
 app = FastAPI(
@@ -1082,4 +1083,4 @@ async def classify_query(request: ChatRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10253)
+    uvicorn.run(app, host="0.0.0.0", port=10253, log_config=None)

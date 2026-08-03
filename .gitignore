@@ -99,4 +99,7 @@ stop.ps1
 .trae/settings.local.json
 .trae/documents/
 
+# 测评体系（本地开发质量工具，不入产品库）
+assessment-bench/
+
 

@@ -4,5 +4,9 @@ RUN pip config set global.index-url https://pypi.org/simple
 COPY python/evaluation-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY python/evaluation-service/ .
+ENV LOG_DIR=/app/logs \
+    LOG_ENV=prod \
+    LOG_LEVEL=INFO
+RUN mkdir -p /app/logs
 EXPOSE 10255
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10255"]

@@ -210,13 +210,78 @@ curl -fsS http://127.0.0.1:10253/health
 
 ### Q: 如何查看日志？
 
-```bash
-# Docker模式
-docker-compose logs -f <service-name>
+系统采用统一日志体系，所有服务输出 JSON 结构化日志，区分开发/生产环境。
 
-# 本地模式
-# 查看终端输出
+#### 日志环境变量
+
+在 `.env` 文件中配置（参见 `.env.example` 的"统一日志配置"部分）：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `LOG_ENV` | `dev` | `dev`=彩色控制台+DEBUG 文件；`prod`=JSON+INFO 按日轮转 |
+| `LOG_LEVEL` | `INFO` | 日志级别（DEBUG/INFO/WARN/ERROR） |
+| `LOG_RETENTION_DAYS` | `14` | 生产环境日志保留天数 |
+| `LOG_MAX_SIZE_MB` | `100` | 单文件最大体积（按大小轮转时生效） |
+
+#### 日志文件位置
+
+**本地开发**（`LOG_ENV=dev`，默认）：
+
 ```
+项目根/logs/
+├── knowledge-service/app.log
+├── qa-service/app.log
+├── indicator-service/app.log
+├── evaluation-service/app.log
+├── ontology-service/app.log
+└── admin-service/app.log
+```
+
+> qa-service 的 SQL 调试日志仍在 `python/qa-service/logs/sql_gen.log`。
+
+**Docker 生产**（`LOG_ENV=prod`）：
+
+```
+/opt/intelligent-assessment/logs/{service}/app.log
+```
+
+#### 查看日志
+
+```bash
+# Docker模式 - 实时查看容器日志（JSON 格式）
+docker compose logs -f qa-service
+
+# Docker模式 - 查看持久化日志文件
+tail -f /opt/intelligent-assessment/logs/qa-service/app.log
+
+# 本地模式 - 实时查看日志文件
+tail -f logs/qa-service/app.log
+
+# 本地开发 - 终端直接显示彩色输出（LOG_ENV=dev 时）
+
+# Java admin-service - 指定生产 profile 启动查看 JSON 日志
+$env:SPRING_PROFILES_ACTIVE="prod"; mvn spring-boot:run
+```
+
+#### 日志格式说明
+
+生产环境每行日志为 JSON 对象，字段包括：
+
+```json
+{
+  "timestamp": "2026-08-03 10:00:00,000",
+  "level": "INFO",
+  "service": "qa-service",
+  "logger": "qa-service",
+  "message": "统一日志已初始化",
+  "module": "main",
+  "line": 23,
+  "thread": "MainThread",
+  "process": 1234
+}
+```
+
+> 此 JSON 格式可直接被 ELK/Loki 等集中式日志系统解析，未来升级无需改代码。
 
 ### Q: 如何重启服务？
 

@@ -19,6 +19,11 @@ echo "智能评估系统 - Docker 镜像构建"
 echo "========================================"
 echo ""
 
+# ─── 同步公共日志配置到各 Python 服务目录 ───
+echo ">>> 同步 logging_config.py 到各 Python 服务..."
+bash "$PROJECT_DIR/scripts/sync-logging-config.sh"
+echo ""
+
 build_and_save() {
     local IMAGE_NAME=$1
     local DOCKERFILE=$2
