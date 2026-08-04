@@ -52,6 +52,8 @@ const pageTitle = computed(() => {
     'SolutionEvaluation': '评估分析',
     'KnowledgeBase': '知识库',
     'OntologyModel': '本体模型',
+    'OntologyDetail': '本体详情',
+    'OntologyBuild': '文档构建',
     'AdminSystem': '基础管理系统'
   }
   return titles[route.name as string] || ''

@@ -385,6 +385,10 @@ def assess_data_sufficiency(raw_results: list,
         "indicators_total": indicators_total,
         "intent": intent,
         "reason": reason,
+        # 是否为查询技术失败（SQL 生成/执行失败）。
+        # analyst 据此区分「技术失败」与「库无数据」两个子场景，
+        # 技术失败时不注入指标公式与表结构，避免诱导 LLM 编造数值。
+        "technical_failure": bool(technical_failure),
     }
 
 

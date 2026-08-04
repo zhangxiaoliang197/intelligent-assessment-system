@@ -341,6 +341,10 @@ public class AdminController {
         }
 
         File jarFile = new File(driver.getJarFilePath());
+        // 相对路径以 user.dir 为基准解析（跨机器可移植）
+        if (!jarFile.isAbsolute()) {
+            jarFile = new File(System.getProperty("user.dir"), driver.getJarFilePath());
+        }
         if (!jarFile.exists()) {
             throw new IOException("驱动JAR文件不存在: " + driver.getJarFilePath());
         }

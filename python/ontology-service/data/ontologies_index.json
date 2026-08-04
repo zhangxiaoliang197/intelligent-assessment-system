@@ -41,6 +41,63 @@
     ],
     "create_time": "2026-07-31 11:15:13.526260",
     "update_time": "2026-07-31 14:10:17.251933",
-    "status": "活跃"
+    "status": "活跃",
+    "is_default": false
+  },
+  {
+    "id": "ont_61daa626",
+    "name": "金融示例",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "name": "金融实体",
+        "color": "#5470c6"
+      },
+      {
+        "name": "财务指标",
+        "color": "#91cc75"
+      },
+      {
+        "name": "风险因素",
+        "color": "#fac858"
+      },
+      {
+        "name": "信贷业务",
+        "color": "#ee6666"
+      },
+      {
+        "name": "政策措施",
+        "color": "#73c0de"
+      },
+      {
+        "name": "事件活动",
+        "color": "#3ba272"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "关联"
+      },
+      {
+        "name": "影响"
+      },
+      {
+        "name": "包含"
+      },
+      {
+        "name": "衡量"
+      },
+      {
+        "name": "应对"
+      },
+      {
+        "name": "导致"
+      }
+    ],
+    "create_time": "2026-08-04 16:27:17.072121",
+    "update_time": "2026-08-04 16:27:17.072121",
+    "status": "活跃",
+    "is_default": false
   }
 ]

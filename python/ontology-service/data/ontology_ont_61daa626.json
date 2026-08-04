@@ -1,0 +1,488 @@
+{
+  "ontology": {
+    "id": "ont_61daa626",
+    "name": "金融示例",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "name": "金融实体",
+        "color": "#5470c6"
+      },
+      {
+        "name": "财务指标",
+        "color": "#91cc75"
+      },
+      {
+        "name": "风险因素",
+        "color": "#fac858"
+      },
+      {
+        "name": "信贷业务",
+        "color": "#ee6666"
+      },
+      {
+        "name": "政策措施",
+        "color": "#73c0de"
+      },
+      {
+        "name": "事件活动",
+        "color": "#3ba272"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "关联"
+      },
+      {
+        "name": "影响"
+      },
+      {
+        "name": "包含"
+      },
+      {
+        "name": "衡量"
+      },
+      {
+        "name": "应对"
+      },
+      {
+        "name": "导致"
+      }
+    ],
+    "create_time": "2026-08-04 16:27:17.072121",
+    "update_time": "2026-08-04 16:27:17.072121",
+    "status": "活跃",
+    "is_default": false
+  },
+  "entities": [
+    {
+      "id": "ent_37021a5b",
+      "ontology_id": "ont_61daa626",
+      "name": "星河智能装备集团",
+      "type": "金融实体",
+      "properties": {
+        "行业": "工业机器人",
+        "地位": "龙头企业",
+        "类别": "借款企业"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_d1464b05",
+      "ontology_id": "ont_61daa626",
+      "name": "实际控制人",
+      "type": "金融实体",
+      "properties": {
+        "姓名": "张明",
+        "持股比例": "32.5%",
+        "类别": "实际控制人"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_c9a68d90",
+      "ontology_id": "ont_61daa626",
+      "name": "华夏银行苏州分行",
+      "type": "金融实体",
+      "properties": {
+        "机构类型": "商业银行分支机构",
+        "类别": "贷款银行"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_169dc292",
+      "ontology_id": "ont_61daa626",
+      "name": "流动资金贷款",
+      "type": "信贷业务",
+      "properties": {
+        "金额": "5亿元",
+        "期限": "1年",
+        "类别": "贷款品种"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_dd8d281b",
+      "ontology_id": "ont_61daa626",
+      "name": "LPR下调",
+      "type": "事件活动",
+      "properties": {
+        "趋势": "连续下调",
+        "影响": "企业融资成本降低",
+        "类别": "宏观事件"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_25650a3d",
+      "ontology_id": "ont_61daa626",
+      "name": "组合担保",
+      "type": "信贷业务",
+      "properties": {
+        "方式": "抵押+保证",
+        "抵押物": "土地厂房",
+        "保证人": "实际控制人",
+        "类别": "担保方式"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_3b101460",
+      "ontology_id": "ont_61daa626",
+      "name": "受托支付",
+      "type": "信贷业务",
+      "properties": {
+        "比例": "90%",
+        "限额": "超过50万元",
+        "类别": "支付方式"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_6f3d510f",
+      "ontology_id": "ont_61daa626",
+      "name": "授信额度",
+      "type": "信贷业务",
+      "properties": {
+        "金额": "5亿元",
+        "可循环使用": "是",
+        "类别": "授信安排"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_56ee4f98",
+      "ontology_id": "ont_61daa626",
+      "name": "资产负债率",
+      "type": "财务指标",
+      "properties": {
+        "数值": "58.5%",
+        "类别": "偿债能力指标"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_4e9378de",
+      "ontology_id": "ont_61daa626",
+      "name": "应收账款",
+      "type": "财务指标",
+      "properties": {
+        "账面价值": "18亿元",
+        "占营业收入比重": "25%",
+        "类别": "资产质量指标"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_5baa8c42",
+      "ontology_id": "ont_61daa626",
+      "name": "净利润",
+      "type": "财务指标",
+      "properties": {
+        "金额": "6.5亿元",
+        "同比增长": "8%",
+        "类别": "盈利指标"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_a71a130e",
+      "ontology_id": "ont_61daa626",
+      "name": "综合毛利率",
+      "type": "财务指标",
+      "properties": {
+        "整体": "28%",
+        "本体业务毛利率": "35%",
+        "系统集成业务毛利率": "18%",
+        "类别": "盈利指标"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_cd8b47bf",
+      "ontology_id": "ont_61daa626",
+      "name": "经营活动现金流",
+      "type": "财务指标",
+      "properties": {
+        "净额": "4.8亿元",
+        "净利润现金含量": "73.85%",
+        "类别": "现金流指标"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_34195558",
+      "ontology_id": "ont_61daa626",
+      "name": "客户集中度",
+      "type": "风险因素",
+      "properties": {
+        "前五大客户应收账款占比": "40%",
+        "类别": "集中度风险"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_5da69250",
+      "ontology_id": "ont_61daa626",
+      "name": "流动性风险",
+      "type": "风险因素",
+      "properties": {
+        "情景": "极端",
+        "类别": "流动性风险"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_78770778",
+      "ontology_id": "ont_61daa626",
+      "name": "行业竞争风险",
+      "type": "风险因素",
+      "properties": {
+        "描述": "竞争对手增多、技术路线迭代",
+        "类别": "行业风险"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_ac53074c",
+      "ontology_id": "ont_61daa626",
+      "name": "金融支持制造业政策",
+      "type": "政策措施",
+      "properties": {
+        "文件名": "《关于金融支持制造业发展的指导意见》",
+        "发布单位": "中国人民银行联合金融监管总局",
+        "类别": "支持政策"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_5003bf55",
+      "ontology_id": "ont_61daa626",
+      "name": "风险预警机制",
+      "type": "政策措施",
+      "properties": {
+        "内容": "若出现约定情形，银行有权宣布贷款提前到期",
+        "类别": "风险控制措施"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "ent_dff43847",
+      "ontology_id": "ont_61daa626",
+      "name": "压力测试",
+      "type": "事件活动",
+      "properties": {
+        "情景": "利率上升、下游需求萎缩",
+        "类别": "风险管理活动"
+      },
+      "bindings": {},
+      "create_time": "2026-08-04 16:27:17.072121",
+      "update_time": "2026-08-04 16:27:17.072121"
+    }
+  ],
+  "relations": [
+    {
+      "id": "rel_499da9b3",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_37021a5b",
+      "target_id": "ent_c9a68d90",
+      "relation_type": "关联",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.9,
+      "create_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "rel_b5c1fc39",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_37021a5b",
+      "target_id": "ent_169dc292",
+      "relation_type": "关联",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.9,
+      "create_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "rel_e6d3c1a6",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_d1464b05",
+      "target_id": "ent_37021a5b",
+      "relation_type": "关联",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.8,
+      "create_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "rel_00835332",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_169dc292",
+      "target_id": "ent_6f3d510f",
+      "relation_type": "关联",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.8,
+      "create_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "rel_dd587dc7",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_169dc292",
+      "target_id": "ent_25650a3d",
+      "relation_type": "包含",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.7,
+      "create_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "rel_53627ffd",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_169dc292",
+      "target_id": "ent_3b101460",
+      "relation_type": "包含",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.7,
+      "create_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "rel_15704124",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_dd8d281b",
+      "target_id": "ent_169dc292",
+      "relation_type": "影响",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.8,
+      "create_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "rel_58e5660e",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_34195558",
+      "target_id": "ent_5da69250",
+      "relation_type": "导致",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.7,
+      "create_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "rel_3166677f",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_5da69250",
+      "target_id": "ent_5003bf55",
+      "relation_type": "应对",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.7,
+      "create_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "rel_0f323be6",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_dff43847",
+      "target_id": "ent_5da69250",
+      "relation_type": "应对",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.6,
+      "create_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "rel_c18a6d78",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_56ee4f98",
+      "target_id": "ent_37021a5b",
+      "relation_type": "衡量",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.6,
+      "create_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "rel_9e447679",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_5baa8c42",
+      "target_id": "ent_37021a5b",
+      "relation_type": "衡量",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.6,
+      "create_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "rel_a29aa41c",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_cd8b47bf",
+      "target_id": "ent_37021a5b",
+      "relation_type": "衡量",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.6,
+      "create_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "rel_ee520d5e",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_ac53074c",
+      "target_id": "ent_37021a5b",
+      "relation_type": "影响",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.7,
+      "create_time": "2026-08-04 16:27:17.072121"
+    },
+    {
+      "id": "rel_83e870ec",
+      "ontology_id": "ont_61daa626",
+      "source_id": "ent_78770778",
+      "target_id": "ent_37021a5b",
+      "relation_type": "影响",
+      "properties": {},
+      "bindings": {},
+      "weight": 0.6,
+      "create_time": "2026-08-04 16:27:17.072121"
+    }
+  ]
+}

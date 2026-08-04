@@ -23,7 +23,13 @@ import json
 import os
 import logging
 import tempfile
+import asyncio
 from filelock import FileLock
+
+# ---------- 分步构建模块 ----------
+from doc_parser import extract_text, truncate_for_llm
+from llm_client import call_llm_json
+import build_prompts
 
 # ---------- 统一日志 ----------
 from logging_config import setup_logging
@@ -115,6 +121,227 @@ class OntologyModel(BaseModel):
     status: str = "活跃"
     # B 阶段：默认本体标志，三服务自动取默认本体的依据；同一时刻仅一个为 True
     is_default: bool = False
+
+
+class BuildJob(BaseModel):
+    """本体分步构建任务（承载三步流程的状态机）。
+
+    支持断点续作：每步结果持久化到 data/build_jobs/job_{id}.json。
+    流程：upload → meta 推荐 → step1 概念提取 → step2 层次结构 → step3 序列化生成正式本体。
+    """
+    id: str                                    # job_xxxxxxxx
+    name: str                                  # 本体名称
+    description: str = ""
+    step: int = 0                              # 0=待开始, 1=概念提取, 2=层次结构, 3=序列化, 4=已完成
+    status: str = "draft"                      # draft | completed | abandoned
+
+    # 文档源（持久化，支持断点续作）
+    source_filename: str = ""
+    source_text: str = ""                      # 解析后的纯文本
+    char_count: int = 0                        # 文档字符数（前端展示用）
+
+    # Step 0 结果：元模型（LLM 推荐，用户确认后不可被 LLM 修改）
+    meta_entity_types: List[Dict[str, Any]] = []
+    meta_relation_types: List[Dict[str, Any]] = []
+    meta_confirmed: bool = False
+
+    # Step 1 结果：概念清单
+    step1_concepts: List[Dict[str, Any]] = []
+    step1_confirmed: bool = False
+
+    # Step 2 结果：层次结构
+    step2_entities: List[Dict[str, Any]] = []
+    step2_relations: List[Dict[str, Any]] = []
+    step2_confirmed: bool = False
+
+    # Step 3 结果：最终序列化
+    step3_entities: List[Dict[str, Any]] = []
+    step3_relations: List[Dict[str, Any]] = []
+
+    # 关联正式本体（第三步完成时生成）
+    ontology_id: Optional[str] = None
+
+    # 后台任务进度跟踪（每步 LLM 调用期间用户可离开页面）
+    running_step: int = -1                     # -1=空闲, 0=概念提取中, 1=结构构建中, 2=序列化中
+    progress: int = 0                          # 0-100
+    progress_message: str = ""                 # 当前进度描述
+    error_message: Optional[str] = None        # 后台任务失败时的错误信息
+
+    create_time: datetime
+    update_time: datetime
+
+
+# ---------- 后台任务管理 ----------
+# 存储正在运行的后台LLM任务（asyncio.Task），即使HTTP连接断开也继续执行
+_background_tasks: Dict[str, Any] = {}
+
+
+def _set_job_progress(job_id: str, running_step: int, progress: int, message: str) -> None:
+    """更新任务进度（线程安全）。"""
+    job = build_jobs_db.get(job_id)
+    if not job:
+        return
+    job.running_step = running_step
+    job.progress = progress
+    job.progress_message = message
+    job.update_time = datetime.now()
+    save_build_job(job_id)
+    save_build_jobs_index()
+
+
+async def _background_extract_concepts(job_id: str) -> None:
+    """后台任务：Step 1 概念提取（LLM调用）。"""
+    job = build_jobs_db.get(job_id)
+    if not job or job.status == "completed":
+        return
+    try:
+        _set_job_progress(job_id, 0, 10, "正在准备文档...")
+        doc_text = truncate_for_llm(job.source_text)
+        _set_job_progress(job_id, 0, 30, "正在调用AI提取概念...")
+        messages = build_prompts.build_step1_messages(doc_text, job.name, job.meta_entity_types)
+        concepts = await _llm_json_async(messages, temperature=0.3, max_tokens=8000)
+        if not isinstance(concepts, list):
+            raise ValueError("LLM 返回格式异常")
+        async with build_lock:
+            job.step1_concepts = concepts
+            job.step = max(job.step, 1)
+            job.running_step = -1
+            job.progress = 100
+            job.progress_message = f"概念提取完成，共 {len(concepts)} 个概念"
+            job.update_time = datetime.now()
+            save_build_job(job_id)
+            save_build_jobs_index()
+        logger.info(f"[{job_id}] 后台概念提取完成: {len(concepts)} 个概念")
+    except Exception as e:
+        logger.error(f"[{job_id}] 后台概念提取失败: {e}")
+        async with build_lock:
+            job.running_step = -1
+            job.progress = 0
+            job.error_message = str(e)[:200]
+            job.update_time = datetime.now()
+            save_build_job(job_id)
+    finally:
+        _background_tasks.pop(job_id, None)
+
+
+async def _background_build_structure(job_id: str) -> None:
+    """后台任务：Step 2 层次结构构建（LLM调用）。"""
+    job = build_jobs_db.get(job_id)
+    if not job or job.status == "completed":
+        return
+    try:
+        _set_job_progress(job_id, 1, 10, "正在准备概念清单...")
+        _set_job_progress(job_id, 1, 30, "正在调用AI构建层次结构...")
+        messages = build_prompts.build_step2_messages(
+            job.step1_concepts, job.meta_entity_types, job.meta_relation_types
+        )
+        result = await _llm_json_async(messages, temperature=0.3, max_tokens=8000)
+        if not isinstance(result, dict):
+            raise ValueError("LLM 返回格式异常")
+        entities = result.get("entities", [])
+        relations = result.get("relations", [])
+        async with build_lock:
+            job.step2_entities = entities
+            job.step2_relations = relations
+            job.step = max(job.step, 2)  # 结构已生成，等待用户确认（确认后才进入 step 3）
+            job.running_step = -1
+            job.progress = 100
+            job.progress_message = f"结构构建完成，共 {len(entities)} 个实体，{len(relations)} 条关系"
+            job.update_time = datetime.now()
+            save_build_job(job_id)
+            save_build_jobs_index()
+        logger.info(f"[{job_id}] 后台结构构建完成: {len(entities)} 实体, {len(relations)} 关系")
+    except Exception as e:
+        logger.error(f"[{job_id}] 后台结构构建失败: {e}")
+        async with build_lock:
+            job.running_step = -1
+            job.progress = 0
+            job.error_message = str(e)[:200]
+            job.update_time = datetime.now()
+            save_build_job(job_id)
+    finally:
+        _background_tasks.pop(job_id, None)
+
+
+async def _background_generate_ontology(job_id: str) -> None:
+    """后台任务：Step 3 最终序列化 + 生成正式本体（LLM调用）。"""
+    job = build_jobs_db.get(job_id)
+    if not job or job.status == "completed":
+        return
+    try:
+        _set_job_progress(job_id, 2, 10, "正在准备数据...")
+        _set_job_progress(job_id, 2, 30, "正在调用AI做最终序列化...")
+        messages = build_prompts.build_step3_messages(
+            job.step2_entities, job.step2_relations,
+            job.meta_entity_types, job.meta_relation_types
+        )
+        result = await _llm_json_async(messages, temperature=0.3, max_tokens=8000)
+        if not isinstance(result, dict):
+            raise ValueError("LLM 返回格式异常")
+        final_entities = result.get("entities", job.step2_entities)
+        final_relations = result.get("relations", job.step2_relations)
+
+        # 生成正式本体
+        now = datetime.now()
+        new_oid = f"ont_{uuid.uuid4().hex[:8]}"
+        ont = OntologyModel(
+            id=new_oid, name=job.name, description=job.description, version="1.0.0",
+            entity_types=[EntityType(**t) for t in job.meta_entity_types],
+            relation_types=[RelationType(**t) for t in job.meta_relation_types],
+            create_time=now, update_time=now, status="活跃",
+        )
+        ent_map: Dict[str, str] = {}
+        new_entities: List[Entity] = []
+        for ed in final_entities:
+            new_eid = f"ent_{uuid.uuid4().hex[:8]}"
+            ent_map[ed.get("name", "")] = new_eid
+            new_entities.append(Entity(
+                id=new_eid, ontology_id=new_oid, name=ed.get("name", "未命名"),
+                type=ed.get("type", "概念"), properties=ed.get("properties", {}),
+                create_time=now, update_time=now,
+            ))
+        new_relations: List[Relation] = []
+        for rd in final_relations:
+            src = ent_map.get(rd.get("source", ""))
+            tgt = ent_map.get(rd.get("target", ""))
+            if not src or not tgt:
+                continue
+            new_relations.append(Relation(
+                id=f"rel_{uuid.uuid4().hex[:8]}", ontology_id=new_oid,
+                source_id=src, target_id=tgt,
+                relation_type=rd.get("relation_type", "关联"),
+                properties=rd.get("properties", {}), weight=rd.get("weight", 1.0),
+                create_time=now,
+            ))
+
+        async with db_lock:
+            ontologies_db[new_oid] = ont
+            entities_db[new_oid] = new_entities
+            relations_db[new_oid] = new_relations
+            save_ontology(new_oid)
+            save_index()
+
+        async with build_lock:
+            job.ontology_id = new_oid
+            job.step = 4
+            job.status = "completed"
+            job.running_step = -1
+            job.progress = 100
+            job.progress_message = "本体生成成功！"
+            job.update_time = datetime.now()
+            save_build_job(job_id)
+            save_build_jobs_index()
+        logger.info(f"[{job_id}] 后台本体生成成功: {new_oid}")
+    except Exception as e:
+        logger.error(f"[{job_id}] 后台本体生成失败: {e}")
+        async with build_lock:
+            job.running_step = -1
+            job.progress = 0
+            job.error_message = str(e)[:200]
+            job.update_time = datetime.now()
+            save_build_job(job_id)
+    finally:
+        _background_tasks.pop(job_id, None)
 
 
 # ---------- 持久化 ----------
@@ -233,6 +460,79 @@ def save_index() -> None:
     data = [o.dict() for o in ontologies_db.values()]
     with FileLock(_lock_path('index')):
         atomic_write_json(INDEX_FILE, data)
+
+
+# ---------- 构建任务持久化 ----------
+BUILD_JOBS_DIR = os.path.join(DATA_DIR, 'build_jobs')
+BUILD_JOBS_INDEX = os.path.join(BUILD_JOBS_DIR, 'index.json')
+os.makedirs(BUILD_JOBS_DIR, exist_ok=True)
+
+# 内存字典：job_id -> BuildJob
+build_jobs_db: Dict[str, BuildJob] = {}
+# 协程锁：保护 build_jobs_db 并发写
+build_lock = __import__('asyncio').Lock()
+
+
+def _build_job_file(job_id: str) -> str:
+    """构建任务数据文件路径。job_id 已含 job_ 前缀。"""
+    return os.path.join(BUILD_JOBS_DIR, f'{job_id}.json')
+
+
+def save_build_job(job_id: str) -> None:
+    """持久化单个构建任务。"""
+    job = build_jobs_db.get(job_id)
+    if not job:
+        return
+    with FileLock(_lock_path(f'build_job_{job_id}')):
+        atomic_write_json(_build_job_file(job_id), job.dict())
+
+
+def save_build_jobs_index() -> None:
+    """持久化构建任务索引。"""
+    data = [j.dict() for j in build_jobs_db.values()]
+    with FileLock(_lock_path('build_jobs_index')):
+        atomic_write_json(BUILD_JOBS_INDEX, data)
+
+
+def load_build_jobs() -> None:
+    """启动时加载所有构建任务到内存，并重试卡死的后台任务。"""
+    global build_jobs_db
+    build_jobs_db = {}
+    index = load_json_with_backup(BUILD_JOBS_INDEX, [])
+    if not isinstance(index, list):
+        index = []
+    for item in index:
+        try:
+            job = BuildJob(**item)
+            build_jobs_db[job.id] = job
+        except Exception as e:
+            logger.warning(f"构建任务解析失败，跳过: {e}")
+    logger.info(f"加载完成: {len(build_jobs_db)} 个构建任务")
+
+    # 重试卡死的后台任务（服务重启前未完成的）
+    for job in list(build_jobs_db.values()):
+        if job.running_step == -1 or job.status == "completed":
+            continue
+        logger.info(f"检测到卡死任务 {job.id} (running_step={job.running_step})，将自动重试")
+        job.running_step = -1
+        job.progress = 0
+        job.error_message = "服务重启中断，已自动重试"
+        save_build_job(job.id)
+        # 根据 confirmed 状态判断该重试哪一步
+        # 延迟启动，等事件循环就绪后在 startup 事件中触发
+        _pending_retries.append(job.id)
+
+
+# 启动时待重试的任务 ID 列表（在 startup 事件中处理）
+_pending_retries: List[str] = []
+
+
+def _get_job_or_404(job_id: str) -> BuildJob:
+    """获取构建任务，不存在则抛 404。"""
+    job = build_jobs_db.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="构建任务不存在")
+    return job
 
 
 def load_db() -> None:
@@ -425,6 +725,37 @@ def seed_if_empty() -> None:
 # 启动时加载数据并按需 seed
 load_db()
 seed_if_empty()
+load_build_jobs()
+
+
+@app.on_event("startup")
+async def _retry_pending_build_jobs():
+    """服务启动时重试卡死的构建任务（事件循环就绪后执行）。"""
+    if not _pending_retries:
+        return
+    # 延迟 2 秒，确保服务完全就绪
+    await asyncio.sleep(2)
+    for job_id in _pending_retries:
+        job = build_jobs_db.get(job_id)
+        if not job or job.status == "completed":
+            continue
+        # 根据 confirmed 状态判断该重试哪一步
+        if job.step2_confirmed:
+            logger.info(f"[{job_id}] 自动重试 step3（序列化）")
+            _set_job_progress(job_id, 2, 5, "服务重启后自动重试...")
+            task = asyncio.create_task(_background_generate_ontology(job_id))
+            _background_tasks[job_id] = task
+        elif job.step1_confirmed:
+            logger.info(f"[{job_id}] 自动重试 step2（层次结构）")
+            _set_job_progress(job_id, 1, 5, "服务重启后自动重试...")
+            task = asyncio.create_task(_background_build_structure(job_id))
+            _background_tasks[job_id] = task
+        elif job.meta_confirmed:
+            logger.info(f"[{job_id}] 自动重试 step1（概念提取）")
+            _set_job_progress(job_id, 0, 5, "服务重启后自动重试...")
+            task = asyncio.create_task(_background_extract_concepts(job_id))
+            _background_tasks[job_id] = task
+    _pending_retries.clear()
 
 
 # ---------- 图谱与路径辅助 ----------
@@ -1360,6 +1691,389 @@ async def search_ontology(
             "relations": matched_relations
         }
     }
+
+
+# ---------- 分步构建：辅助函数 ----------
+async def _llm_json_async(messages: list, temperature: float = 0.3, max_tokens: int = 4000):
+    """异步调用 LLM 并解析 JSON（在线程池中执行同步 urllib 调用，避免阻塞事件循环）。"""
+    loop = __import__('asyncio').get_event_loop()
+    return await loop.run_in_executor(
+        None, lambda: call_llm_json(messages, temperature, max_tokens)
+    )
+
+
+def _gen_job_id() -> str:
+    """生成构建任务 ID。"""
+    return f"job_{uuid.uuid4().hex[:8]}"
+
+
+# ---------- 分步构建：接口 ----------
+@app.post("/ontology/build/upload")
+async def build_upload(
+    file: UploadFile = File(...),
+    name: str = Form(...),
+    description: str = Form("")
+):
+    """上传文档创建构建任务，并同步调用 LLM 推荐元模型。
+
+    流程：
+    1. 解析文档为纯文本
+    2. 创建 BuildJob（step=0）
+    3. 调用 LLM 推荐元模型（失败则用默认元模型兜底）
+    4. 持久化任务，返回 job_id + 推荐的元模型
+
+    用户后续可通过 PUT /ontology/build/{job_id}/meta 确认或编辑元模型。
+    """
+    # 1. 读取并解析文档
+    content = await file.read()
+    filename = file.filename or "unknown.txt"
+    # 写入临时文件供解析器读取
+    tmp_path = os.path.join(BUILD_JOBS_DIR, f'_tmp_{uuid.uuid4().hex[:8]}')
+    try:
+        with open(tmp_path, 'wb') as f:
+            f.write(content)
+        doc_text = extract_text(tmp_path, filename)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    if not doc_text or len(doc_text.strip()) < 20:
+        raise HTTPException(status_code=400, detail="文档内容为空或过短，无法提取概念")
+
+    # 截断文本以适应 LLM 上下文
+    doc_text_truncated = truncate_for_llm(doc_text)
+
+    # 2. 创建构建任务
+    now = datetime.now()
+    job_id = _gen_job_id()
+    job = BuildJob(
+        id=job_id,
+        name=name,
+        description=description,
+        step=0,
+        status="draft",
+        source_filename=filename,
+        source_text=doc_text,
+        char_count=len(doc_text),
+        create_time=now,
+        update_time=now,
+    )
+
+    # 3. 调用 LLM 推荐元模型（失败用默认元模型兜底，不阻塞上传）
+    try:
+        messages = build_prompts.build_meta_messages(doc_text_truncated, name)
+        meta = await _llm_json_async(messages, temperature=0.3, max_tokens=2000)
+        job.meta_entity_types = meta.get("entity_types", [])
+        job.meta_relation_types = meta.get("relation_types", [])
+        if not job.meta_entity_types:
+            job.meta_entity_types = [{"name": t["name"], "color": t.get("color", "#5470c6")}
+                                     for t in DEFAULT_ENTITY_TYPES]
+        if not job.meta_relation_types:
+            job.meta_relation_types = [{"name": t["name"]} for t in DEFAULT_RELATION_TYPES]
+        meta_source = "llm"
+    except Exception as e:
+        logger.warning(f"LLM 推荐元模型失败，使用默认元模型: {e}")
+        job.meta_entity_types = [{"name": t["name"], "color": t.get("color", "#5470c6")}
+                                 for t in DEFAULT_ENTITY_TYPES]
+        job.meta_relation_types = [{"name": t["name"]} for t in DEFAULT_RELATION_TYPES]
+        meta_source = "default（LLM 调用失败）"
+
+    # 4. 持久化
+    async with build_lock:
+        build_jobs_db[job_id] = job
+        save_build_job(job_id)
+        save_build_jobs_index()
+
+    return {
+        "success": True,
+        "message": "文档上传成功，已推荐元模型",
+        "data": {
+            "job_id": job_id,
+            "meta_source": meta_source,
+            "meta_entity_types": job.meta_entity_types,
+            "meta_relation_types": job.meta_relation_types,
+            "char_count": job.char_count,
+        }
+    }
+
+
+@app.get("/ontology/build/list")
+async def build_list():
+    """列出所有构建任务。"""
+    jobs = sorted(build_jobs_db.values(), key=lambda j: j.create_time, reverse=True)
+    return {
+        "success": True,
+        "data": [
+            {
+                "id": j.id,
+                "name": j.name,
+                "description": j.description,
+                "step": j.step,
+                "status": j.status,
+                "source_filename": j.source_filename,
+                "meta_confirmed": j.meta_confirmed,
+                "step1_confirmed": j.step1_confirmed,
+                "step2_confirmed": j.step2_confirmed,
+                "running_step": j.running_step,
+                "progress": j.progress,
+                "progress_message": j.progress_message,
+                "error_message": j.error_message,
+                "char_count": j.char_count,
+                "ontology_id": j.ontology_id,
+                "create_time": j.create_time.isoformat(),
+                "update_time": j.update_time.isoformat(),
+            }
+            for j in jobs
+        ]
+    }
+
+
+@app.get("/ontology/build/{job_id}/progress")
+async def build_progress(job_id: str):
+    """查询构建任务进度（轻量级，供前端轮询）。"""
+    job = _get_job_or_404(job_id)
+    return {
+        "success": True,
+        "data": {
+            "job_id": job.id,
+            "step": job.step,
+            "status": job.status,
+            "running_step": job.running_step,
+            "progress": job.progress,
+            "progress_message": job.progress_message,
+            "error_message": job.error_message,
+            "meta_confirmed": job.meta_confirmed,
+            "step1_confirmed": job.step1_confirmed,
+            "step2_confirmed": job.step2_confirmed,
+            "ontology_id": job.ontology_id,
+        }
+    }
+
+
+@app.get("/ontology/build/{job_id}")
+async def build_get(job_id: str):
+    """查询构建任务详情（断点续作用）。"""
+    job = _get_job_or_404(job_id)
+    return {"success": True, "data": job.dict()}
+
+
+@app.put("/ontology/build/{job_id}/meta")
+async def build_confirm_meta(
+    job_id: str,
+    entity_types: str = Form(...),
+    relation_types: str = Form(...)
+):
+    """用户确认或编辑元模型。
+
+    确认后元模型固定，后续 step1/step2 的 LLM 调用必须遵守此约束，不可修改。
+    """
+    job = _get_job_or_404(job_id)
+    if job.status == "completed":
+        raise HTTPException(status_code=400, detail="任务已完成，不可修改")
+
+    try:
+        et_list = json.loads(entity_types) if isinstance(entity_types, str) else entity_types
+        rt_list = json.loads(relation_types) if isinstance(relation_types, str) else relation_types
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"元模型 JSON 解析失败: {e}")
+
+    if not isinstance(et_list, list) or not et_list:
+        raise HTTPException(status_code=400, detail="entity_types 不能为空")
+    if not isinstance(rt_list, list) or not rt_list:
+        raise HTTPException(status_code=400, detail="relation_types 不能为空")
+
+    async with build_lock:
+        job.meta_entity_types = et_list
+        job.meta_relation_types = rt_list
+        job.meta_confirmed = True
+        job.step = max(job.step, 1)  # 确认元模型后进入 step 1
+        job.error_message = None
+        job.update_time = datetime.now()
+        save_build_job(job_id)
+        save_build_jobs_index()
+
+    return {
+        "success": True,
+        "message": "元模型已确认，可执行概念提取",
+        "data": {
+            "job_id": job_id,
+            "meta_entity_types": job.meta_entity_types,
+            "meta_relation_types": job.meta_relation_types,
+        }
+    }
+
+
+@app.post("/ontology/build/{job_id}/step1")
+async def build_step1(job_id: str):
+    """Step 1: LLM 从文档提取概念清单（后台异步执行）。
+
+    前置条件：元模型已确认（meta_confirmed=True）。
+    立即返回，LLM 调用在后台进行，前端通过 GET /progress 或 GET /build/{job_id} 轮询结果。
+    用户可在后台执行期间离开页面，稍后回来查看。
+    """
+    job = _get_job_or_404(job_id)
+    if not job.meta_confirmed:
+        raise HTTPException(status_code=400, detail="请先确认元模型（PUT /ontology/build/{job_id}/meta）")
+    if job.step1_confirmed:
+        raise HTTPException(status_code=400, detail="概念清单已确认，如需重新提取请先撤销确认")
+    if job.status == "completed":
+        raise HTTPException(status_code=400, detail="任务已完成")
+    if job.running_step != -1:
+        raise HTTPException(status_code=400, detail="当前有步骤正在后台运行中，请等待完成")
+
+    # 启动后台任务，立即返回
+    _set_job_progress(job_id, 0, 5, "正在准备提取概念...")
+    task = asyncio.create_task(_background_extract_concepts(job_id))
+    _background_tasks[job_id] = task
+
+    return {
+        "success": True,
+        "message": "概念提取已在后台开始，您可以离开页面，稍后回来查看结果",
+        "data": {"job_id": job_id, "running_step": 0}
+    }
+
+
+@app.put("/ontology/build/{job_id}/step1")
+async def build_confirm_step1(job_id: str, concepts: str = Form(...)):
+    """用户确认概念清单（可编辑后提交）。
+
+    确认后才能执行 step2。
+    """
+    job = _get_job_or_404(job_id)
+    if job.status == "completed":
+        raise HTTPException(status_code=400, detail="任务已完成")
+
+    try:
+        concepts_list = json.loads(concepts) if isinstance(concepts, str) else concepts
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"概念清单 JSON 解析失败: {e}")
+
+    if not isinstance(concepts_list, list) or not concepts_list:
+        raise HTTPException(status_code=400, detail="概念清单不能为空")
+
+    async with build_lock:
+        job.step1_concepts = concepts_list
+        job.step1_confirmed = True
+        job.error_message = None
+        job.step = max(job.step, 2)
+        job.update_time = datetime.now()
+        save_build_job(job_id)
+
+    return {
+        "success": True,
+        "message": "概念清单已确认，可执行层次结构构建",
+        "data": {"job_id": job_id, "step": job.step}
+    }
+
+
+@app.post("/ontology/build/{job_id}/step2")
+async def build_step2(job_id: str):
+    """Step 2: LLM 把概念清单整理成层次结构（后台异步执行）。
+
+    前置条件：step1 已确认。
+    立即返回，LLM 调用在后台进行，前端轮询结果。
+    """
+    job = _get_job_or_404(job_id)
+    if not job.step1_confirmed:
+        raise HTTPException(status_code=400, detail="请先确认概念清单（PUT /ontology/build/{job_id}/step1）")
+    if job.step2_confirmed:
+        raise HTTPException(status_code=400, detail="层次结构已确认，如需重新生成请先撤销确认")
+    if job.status == "completed":
+        raise HTTPException(status_code=400, detail="任务已完成")
+    if job.running_step != -1:
+        raise HTTPException(status_code=400, detail="当前有步骤正在后台运行中，请等待完成")
+
+    # 启动后台任务，立即返回
+    _set_job_progress(job_id, 1, 5, "正在准备构建层次结构...")
+    task = asyncio.create_task(_background_build_structure(job_id))
+    _background_tasks[job_id] = task
+
+    return {
+        "success": True,
+        "message": "层次结构构建已在后台开始，您可以离开页面，稍后回来查看结果",
+        "data": {"job_id": job_id, "running_step": 1}
+    }
+
+
+@app.put("/ontology/build/{job_id}/step2")
+async def build_confirm_step2(
+    job_id: str,
+    entities: str = Form(...),
+    relations: str = Form(...)
+):
+    """用户确认层次结构（可编辑后提交）。
+
+    确认后才能执行 step3。
+    """
+    job = _get_job_or_404(job_id)
+    if job.status == "completed":
+        raise HTTPException(status_code=400, detail="任务已完成")
+
+    try:
+        entities_list = json.loads(entities) if isinstance(entities, str) else entities
+        relations_list = json.loads(relations) if isinstance(relations, str) else relations
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"层次结构 JSON 解析失败: {e}")
+
+    if not isinstance(entities_list, list) or not entities_list:
+        raise HTTPException(status_code=400, detail="实体列表不能为空")
+
+    async with build_lock:
+        job.step2_entities = entities_list
+        job.step2_relations = relations_list if isinstance(relations_list, list) else []
+        job.step2_confirmed = True
+        job.error_message = None
+        job.step = max(job.step, 3)
+        job.update_time = datetime.now()
+        save_build_job(job_id)
+
+    return {
+        "success": True,
+        "message": "层次结构已确认，可执行最终序列化",
+        "data": {"job_id": job_id, "step": job.step}
+    }
+
+
+@app.post("/ontology/build/{job_id}/step3")
+async def build_step3(job_id: str):
+    """Step 3: LLM 最终序列化 + 生成正式本体（后台异步执行）。
+
+    前置条件：step2 已确认。
+    直接复用已确认的元模型（不再让 LLM 推荐元模型），LLM 仅做一致性检查和属性补充。
+    立即返回，LLM 调用 + 本体生成在后台进行，前端轮询结果。
+    """
+    job = _get_job_or_404(job_id)
+    if not job.step2_confirmed:
+        raise HTTPException(status_code=400, detail="请先确认层次结构（PUT /ontology/build/{job_id}/step2）")
+    if job.status == "completed":
+        raise HTTPException(status_code=400, detail="任务已完成")
+    if job.running_step != -1:
+        raise HTTPException(status_code=400, detail="当前有步骤正在后台运行中，请等待完成")
+
+    # 启动后台任务，立即返回
+    _set_job_progress(job_id, 2, 5, "正在准备最终序列化...")
+    task = asyncio.create_task(_background_generate_ontology(job_id))
+    _background_tasks[job_id] = task
+
+    return {
+        "success": True,
+        "message": "最终序列化已在后台开始，您可以离开页面，稍后回来查看结果",
+        "data": {"job_id": job_id, "running_step": 2}
+    }
+
+
+@app.delete("/ontology/build/{job_id}")
+async def build_delete(job_id: str):
+    """删除构建任务（不影响已生成的正式本体）。"""
+    _get_job_or_404(job_id)  # 不存在则 404
+    async with build_lock:
+        del build_jobs_db[job_id]
+        # 删除任务文件
+        job_file = _build_job_file(job_id)
+        if os.path.exists(job_file):
+            os.remove(job_file)
+        save_build_jobs_index()
+    return {"success": True, "message": "构建任务已删除"}
 
 
 if __name__ == "__main__":

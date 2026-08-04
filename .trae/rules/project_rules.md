@@ -39,12 +39,16 @@
 
 
 ## 编译 Java 服务 (首次/代码更新后)
+前提：JDK 17 与 Maven 已加入系统 PATH（start.ps1 会通过 Get-Command 自动发现，禁止硬编码绝对路径）。
 ```powershell
-$env:JAVA_HOME = "C:\Program Files\Java\jdk-17"
-C:\tools\apache-maven-3.9.9\bin\mvn package -DskipTests -q  # 在 admin-service 目录下执行
+# 在 admin-service 目录下执行；若 mvn 不在 PATH，请先将其 bin 目录加入 PATH
+mvn package -DskipTests -q
 ```
 
 ## 启动全部 7 个服务
+
+推荐直接运行 `.\start.ps1`直接启动项目，报错查看日志分析
+> 注意：start.ps1 必须保存为 UTF-8 with BOM，否则 PowerShell 5 解析中文注释会报错。
 
 ### Python 服务 (5个) - 沙箱可执行
 ```powershell
@@ -54,21 +58,26 @@ Start-Process python -ArgumentList "-u main.py" -WorkingDirectory "$r\python\<se
 服务列表: knowledge(10252), qa(10253), indicator(10254), evaluation(10255), ontology(10256)
 
 ### Java 服务 (1个) - 用户终端执行
+推荐直接运行 `.\start.ps1`（自动发现 JDK/Maven/Node/Qdrant，并按 LOG_ENV 注入 SPRING_PROFILES_ACTIVE）。
+手动启动时用 Get-Command 动态发现工具路径（禁止硬编码绝对路径）：
 ```powershell
-# 必须用 javaw + 完整绝对路径，Program Files 中的空格用反引号转义
-C:\Program` Files\Java\jdk-17\bin\javaw -jar "d:\code\intelligent-assessment-system\java\admin-service\target\admin-service-1.0.0.jar"
+$javaExe = (Get-Command java).Source      # 或用 javaw.exe：与 java.exe 同目录
+$jar = "d:\code\intelligent-assessment-system\java\admin-service\target\admin-service-1.0.0.jar"
+Start-Process -FilePath $javaExe -ArgumentList "-jar `"$jar`"" -WorkingDirectory "d:\code\intelligent-assessment-system"
 ```
+> 注意：Spring profile 由 start.ps1 从 LOG_ENV 推导注入；手动启动时需自行 `$env:SPRING_PROFILES_ACTIVE="dev"`（或 prod），否则 logback 落到 default profile 无文件日志。
 
 ### 前端 - 沙箱可执行
 ```powershell
-Start-Process "D:\Program Files\nodejs\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "d:\code\intelligent-assessment-system\frontend" -WindowStyle Hidden
+$nodeBin = Split-Path (Get-Command node).Source
+Start-Process "$nodeBin\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "d:\code\intelligent-assessment-system\frontend" -WindowStyle Hidden
 ```
 
 ## 常见问题速查
 | 问题 | 原因 | 解决 |
 |------|------|------|
-| `无效的标记: --release` | JAVA_HOME 指向 JDK 8 | `$env:JAVA_HOME="C:\Program Files\Java\jdk-17"` |
-| `mvn 不是命令` | Maven 不在 PATH | 用 `C:\tools\apache-maven-3.9.9\bin\mvn` |
+| `无效的标记: --release` | JAVA_HOME 指向 JDK 8 | 确认 `Get-Command java` 指向 JDK 17，重装或修正 PATH |
+| `mvn 不是命令` | Maven 不在 PATH | 确认 `Get-Command mvn`，未安装请装 Maven 并将 bin 加入 PATH |
 | Java 启动后闪退 | `Start-Process java` 不兼容 / 用了 JDK 8 | 用 `javaw` + 绝对路径 |
 | `Access denied (MySQL)` | MySQL 密码错误 | 密码通过 .env 或环境变量配置，application.yml 默认值为 root |
 | `application.yml` | MySQL 密码配置 | `${MYSQL_PASSWORD:root}`，实际值通过 .env 或环境变量覆盖 |

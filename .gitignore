@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Build outputs
 dist/
@@ -88,6 +87,9 @@ GeoWebCache-使用指南.md
 **/data/evaluation_history.json
 **/data/*.empty_backup
 *.bak
+
+# 本体分步构建任务的运行时状态数据（含文档原文、LLM 结果，服务自动生成，不入库）
+python/ontology-service/data/build_jobs/
 
 # Local dev scripts
 logs*.bat
