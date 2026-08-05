@@ -757,10 +757,25 @@ LOCK_DIR = os.path.join(DATA_DIR, '.locks')
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(LOCK_DIR, exist_ok=True)
 
+# 用户本体数据目录：构建/编辑生成的运行时数据统一存放于此（已 gitignore，避免误提交）
+USER_ONTOLOGIES_DIR = os.path.join(DATA_DIR, 'user_ontologies')
+os.makedirs(USER_ONTOLOGIES_DIR, exist_ok=True)
+
 
 def _ontology_file(ontology_id: str) -> str:
-    """本体数据文件路径。"""
-    return os.path.join(DATA_DIR, f'ontology_{ontology_id}.json')
+    """本体数据文件写入路径（新生成的本体统一存放在 user_ontologies 目录）。"""
+    return os.path.join(USER_ONTOLOGIES_DIR, f'ontology_{ontology_id}.json')
+
+
+def _resolve_ontology_file(ontology_id: str) -> str:
+    """定位本体数据文件用于读取/删除：优先新目录，兼容 data 根目录下已入库的历史本体文件。"""
+    new_path = _ontology_file(ontology_id)
+    if os.path.exists(new_path):
+        return new_path
+    legacy_path = os.path.join(DATA_DIR, f'ontology_{ontology_id}.json')
+    if os.path.exists(legacy_path):
+        return legacy_path
+    return new_path
 
 
 def _lock_path(name: str) -> str:
@@ -960,7 +975,7 @@ def load_db() -> None:
             continue
         ontologies_db[ont.id] = ont
         # 加载该本体的实体关系
-        data = load_json_with_backup(_ontology_file(ont.id), {'entities': [], 'relations': []})
+        data = load_json_with_backup(_resolve_ontology_file(ont.id), {'entities': [], 'relations': []})
         ents = []
         for e in data.get('entities', []):
             try:
@@ -1510,7 +1525,7 @@ async def delete_ontology(ontology_id: str):
         relations_db.pop(ontology_id, None)
         save_index()
         # 删除本体数据文件（保留 .bak 以便误删恢复）
-        path = _ontology_file(ontology_id)
+        path = _resolve_ontology_file(ontology_id)
         with FileLock(_lock_path(f'ontology_{ontology_id}')):
             if os.path.exists(path):
                 if os.path.exists(path + '.bak'):
