@@ -28,34 +28,12 @@
         </el-card>
         <el-card class="stat-card">
           <div class="stat-content">
-            <div class="stat-icon cyan">
-              <el-icon :size="36"><Collection /></el-icon>
-            </div>
-            <div class="stat-info">
-              <h3>{{ stats.total_entities }}</h3>
-              <p>实体总数</p>
-            </div>
-          </div>
-        </el-card>
-        <el-card class="stat-card">
-          <div class="stat-content">
-            <div class="stat-icon green">
-              <el-icon :size="36"><Connection /></el-icon>
-            </div>
-            <div class="stat-info">
-              <h3>{{ stats.total_relations }}</h3>
-              <p>关系总数</p>
-            </div>
-          </div>
-        </el-card>
-        <el-card class="stat-card">
-          <div class="stat-content">
-            <div class="stat-icon purple">
+            <div class="stat-icon indigo">
               <el-icon :size="36"><SetUp /></el-icon>
             </div>
             <div class="stat-info">
               <h3>{{ stats.build_tasks_count }}</h3>
-              <p>构建任务</p>
+              <p>进行中的构建任务</p>
             </div>
           </div>
         </el-card>
@@ -325,7 +303,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Box, Collection, Connection, SetUp,
+  Box, SetUp,
   Refresh, Plus, DocumentAdd, Upload, UploadFilled, ArrowDown
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -415,11 +393,12 @@ const loadStats = async () => {
     ])
 
     const statsData = (statsRes as any).data
+    const allTasks = ((buildRes as any).data || []) as any[]
     stats.value = {
       total_ontologies: statsData.total_ontologies || 0,
       total_entities: statsData.total_entities || 0,
       total_relations: statsData.total_relations || 0,
-      build_tasks_count: ((buildRes as any).data || []).length
+      build_tasks_count: allTasks.filter(t => t.status !== 'completed').length
     }
   } catch (e) {
     console.error('加载统计数据失败:', e)
@@ -434,7 +413,7 @@ const loadData = async () => {
       getBuildJobList()
     ])
     ontologies.value = (ontRes as any).items || []
-    buildTasks.value = (buildRes as any).data || []
+    buildTasks.value = ((buildRes as any).data || []).filter((t: any) => t.status !== 'completed')
     await loadStats()
   } catch (e) {
     ElMessage.error('加载数据失败')
@@ -742,9 +721,7 @@ onMounted(() => {
 }
 
 .stat-icon.blue { background: rgba(64, 158, 255, 0.12); color: #409eff; }
-.stat-icon.cyan { background: rgba(64, 211, 255, 0.12); color: #00b8d4; }
-.stat-icon.green { background: rgba(103, 194, 58, 0.12); color: #67c23a; }
-.stat-icon.purple { background: rgba(144, 147, 153, 0.12); color: #909399; }
+.stat-icon.indigo { background: rgba(99, 102, 241, 0.12); color: #6366f1; }
 
 .stat-info h3 {
   margin: 0;
@@ -771,7 +748,7 @@ onMounted(() => {
 .toolbar {
   display: flex;
   gap: 0.75rem;
-  margin-bottom: 1.25rem;
+  margin-bottom: 1.5rem;
   flex-wrap: wrap;
   align-items: center;
 }
@@ -790,7 +767,7 @@ onMounted(() => {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-lg);
-  padding: var(--space-6);
+  padding: 1.5rem;
   transition: all var(--transition-normal);
 }
 
@@ -804,11 +781,11 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--space-3);
+  margin-bottom: 0.75rem;
 }
 
 .card-header h3 {
-  font-size: var(--text-lg);
+  font-size: 1.05rem;
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
@@ -816,35 +793,35 @@ onMounted(() => {
 
 .card-desc {
   color: var(--text-tertiary);
-  font-size: var(--text-sm);
-  line-height: var(--leading-relaxed);
-  margin-bottom: var(--space-4);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  margin-bottom: 1rem;
   min-height: 36px;
 }
 
 .card-stats {
   display: flex;
-  gap: var(--space-6);
-  margin-bottom: var(--space-3);
-  font-size: var(--text-sm);
+  gap: 1.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
   color: var(--text-secondary);
 }
 
 .card-stats span {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 0.35rem;
 }
 
 .card-meta {
-  font-size: var(--text-xs);
+  font-size: 0.8rem;
   color: var(--text-muted);
-  margin-bottom: var(--space-4);
+  margin-bottom: 1rem;
 }
 
 .card-actions {
   display: flex;
-  gap: var(--space-2);
+  gap: 0.5rem;
   flex-wrap: wrap;
 }
 
@@ -852,19 +829,19 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1rem;
+  margin-bottom: 1.25rem;
 }
 
 .section-header h3 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .build-tasks-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 1rem;
 }
 
@@ -872,38 +849,48 @@ onMounted(() => {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-lg);
-  padding: var(--space-5);
+  padding: 1.25rem;
+  transition: all 0.2s;
+}
+
+.build-task-card:hover {
+  border-color: var(--primary-300);
+  box-shadow: var(--shadow-sm);
 }
 
 .task-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--space-4);
+  margin-bottom: 0.75rem;
 }
 
 .task-header h4 {
   margin: 0;
-  font-size: var(--text-base);
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .task-progress {
-  margin-bottom: var(--space-4);
+  margin-bottom: 0.75rem;
+}
+
+.task-progress :deep(.el-step__title) {
+  font-size: 0.7rem;
 }
 
 .task-meta {
   display: flex;
-  gap: var(--space-4);
-  font-size: var(--text-xs);
+  gap: 1rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
-  margin-bottom: var(--space-4);
+  margin-bottom: 0.75rem;
 }
 
 .task-actions {
   display: flex;
-  gap: var(--space-2);
+  gap: 0.5rem;
 }
 
 .type-editor {

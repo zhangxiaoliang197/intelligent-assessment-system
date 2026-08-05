@@ -30,6 +30,8 @@ from filelock import FileLock
 from doc_parser import extract_text, truncate_for_llm
 from llm_client import call_llm_json
 import build_prompts
+import config
+from text_batcher import split_into_batches
 
 # ---------- 统一日志 ----------
 from logging_config import setup_logging
@@ -158,6 +160,26 @@ class BuildJob(BaseModel):
     step3_entities: List[Dict[str, Any]] = []
     step3_relations: List[Dict[str, Any]] = []
 
+    # Step 1 分批状态（长文档分批提取概念，支持断点续作）
+    step1_batches_total: int = 0                          # 总批数；0=从未分批
+    step1_batches_done: int = 0                           # 已成功批数
+    step1_batch_results: List[List[Dict[str, Any]]] = []  # 每批概念列表，按批次顺序暂存
+    step1_failed_batch: int = -1                          # 失败批次索引；-1=无失败
+    step1_failed_reason: Optional[str] = None             # 失败原因
+
+    # Step 2 分组状态（概念过多时分组构建层次结构，支持断点续作）
+    step2_groups_total: int = 0                           # 总组数；0=从未分组
+    step2_groups_done: int = 0                            # 已成功组数
+    step2_group_results: List[Dict[str, Any]] = []        # 每组 {"entities":[...], "relations":[...]}
+    step2_failed_group: int = -1                          # 失败组索引；-1=无失败
+    step2_failed_reason: Optional[str] = None             # 失败原因
+
+    # Step 2 跨组关系补充（分组合并后由 LLM 补充跨组实体间关系）
+    step2_cross_group_done: bool = False                  # 跨组关系补充是否完成
+    step2_cross_group_relations: List[Dict[str, Any]] = []  # LLM 补充的跨组关系列表
+    step2_cross_group_failed: bool = False                # 跨组补充是否失败
+    step2_cross_group_reason: Optional[str] = None        # 跨组补充失败原因
+
     # 关联正式本体（第三步完成时生成）
     ontology_id: Optional[str] = None
 
@@ -189,35 +211,265 @@ def _set_job_progress(job_id: str, running_step: int, progress: int, message: st
     save_build_jobs_index()
 
 
+# ---------- 分批/合并辅助函数 ----------
+def _normalize_name(name: str) -> str:
+    """名称归一化：trim 空白 + 全角括号转半角，用于跨批/跨组去重比较。
+
+    防止"命中率（%）"与"命中率(%)"被误判为不同概念。
+    """
+    if not name:
+        return ""
+    s = name.strip()
+    # 全角括号转半角
+    s = s.replace("（", "(").replace("）", ")")
+    # 全角空格转半角
+    s = s.replace("\u3000", " ")
+    return s
+
+
+def _merge_concepts(all_concepts: list) -> list:
+    """合并多批提取的概念，按 name 去重。
+
+    Args:
+        all_concepts: 所有批次的概念列表（已展开为一维）
+
+    Returns:
+        去重合并后的概念列表，保持首次出现顺序
+    """
+    merged = {}
+    order = []
+    for c in all_concepts:
+        if not isinstance(c, dict):
+            continue
+        key = _normalize_name(c.get("name", ""))
+        if not key:
+            continue
+        if key not in merged:
+            merged[key] = dict(c)
+            # 归一化 name 字段本身
+            merged[key]["name"] = c.get("name", "").strip()
+            order.append(key)
+        else:
+            existing = merged[key]
+            # type 不覆盖（首次出现的已受元模型约束）
+            # description / source_snippet 取首个非空
+            if not existing.get("description") and c.get("description"):
+                existing["description"] = c["description"]
+            if not existing.get("source_snippet") and c.get("source_snippet"):
+                existing["source_snippet"] = c["source_snippet"]
+    return [merged[k] for k in order]
+
+
+def _group_concepts(concepts: list, group_size: int) -> list:
+    """按 type 聚类后再按 group_size 切分，同类型概念尽量同组。
+
+    同类型概念之间关系最密集，同组内能让 LLM 建立更完整的关系网。
+    某 type 概念过多仍切多组；某 type 概念极少单独成组。
+
+    Args:
+        concepts: 已确认的概念清单
+        group_size: 每组概念数上限
+
+    Returns:
+        概念分组列表，每个元素是该组的概念子集
+    """
+    by_type = {}
+    type_order = []  # 保持 type 首次出现顺序，避免分组顺序不稳定
+    for c in concepts:
+        t = c.get("type", "未分类")
+        if t not in by_type:
+            by_type[t] = []
+            type_order.append(t)
+        by_type[t].append(c)
+
+    groups = []
+    for t in type_order:
+        items = by_type[t]
+        for i in range(0, len(items), group_size):
+            groups.append(items[i:i + group_size])
+    return groups
+
+
+def _merge_entities(all_entities: list) -> list:
+    """合并多组构建的实体，按 name 去重。
+
+    Args:
+        all_entities: 所有组的实体列表（已展开为一维）
+
+    Returns:
+        去重合并后的实体列表，保持首次出现顺序
+    """
+    merged = {}
+    order = []
+    for e in all_entities:
+        if not isinstance(e, dict):
+            continue
+        key = _normalize_name(e.get("name", ""))
+        if not key:
+            continue
+        if key not in merged:
+            merged[key] = dict(e)
+            merged[key]["name"] = e.get("name", "").strip()
+            order.append(key)
+        else:
+            existing = merged[key]
+            # type 不覆盖
+            # parent 取首个非空
+            if not existing.get("parent") and e.get("parent"):
+                existing["parent"] = e["parent"]
+            # properties 浅合并：后者补充前者没有的 key
+            ex_props = existing.get("properties") or {}
+            new_props = e.get("properties") or {}
+            for k, v in new_props.items():
+                if k not in ex_props:
+                    ex_props[k] = v
+            existing["properties"] = ex_props
+    return [merged[k] for k in order]
+
+
+def _deduplicate_relations(relations: list) -> list:
+    """关系去重：按 (source, target, relation_type) 三元组去重，保留首次出现。
+
+    跨组补充的关系可能与组内关系重复，需去重。
+
+    Args:
+        relations: 所有关系列表（组内 + 跨组补充）
+
+    Returns:
+        去重后的关系列表
+    """
+    seen = set()
+    result = []
+    for r in relations:
+        if not isinstance(r, dict):
+            continue
+        key = (
+            _normalize_name(r.get("source", "")),
+            _normalize_name(r.get("target", "")),
+            r.get("relation_type", ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(r)
+    return result
+
+
 async def _background_extract_concepts(job_id: str) -> None:
-    """后台任务：Step 1 概念提取（LLM调用）。"""
+    """后台任务：Step 1 概念提取（LLM调用，支持长文档分批 + 断点续作）。"""
     job = build_jobs_db.get(job_id)
     if not job or job.status == "completed":
         return
     try:
-        _set_job_progress(job_id, 0, 10, "正在准备文档...")
-        doc_text = truncate_for_llm(job.source_text)
-        _set_job_progress(job_id, 0, 30, "正在调用AI提取概念...")
-        messages = build_prompts.build_step1_messages(doc_text, job.name, job.meta_entity_types)
-        concepts = await _llm_json_async(messages, temperature=0.3, max_tokens=8000)
-        if not isinstance(concepts, list):
-            raise ValueError("LLM 返回格式异常")
+        # ---- 1. 判断是首次还是续跑 ----
+        # 续跑条件：已分批过、未跑完、有失败标记
+        is_resume = (job.step1_batches_total > 0
+                     and job.step1_batches_done < job.step1_batches_total
+                     and job.step1_failed_batch >= 0)
+        # 已有完整 step1_concepts 且无失败 → 直接结束（防重复跑）
+        if not is_resume and job.step1_concepts and job.step1_failed_batch < 0:
+            _set_job_progress(job_id, -1, 100, "概念提取已完成")
+            return
+
+        # ---- 2. 重建 batches（无论首次还是续跑都重新切分，纯函数结果稳定）----
+        if len(job.source_text) <= config.STEP1_BATCH_THRESHOLD_CHARS:
+            # 短文档：单批，保持兼容
+            batches = [job.source_text]
+            total = 1
+        else:
+            batches = split_into_batches(
+                job.source_text,
+                max_chars=config.STEP1_BATCH_MAX_CHARS,
+                overlap=config.STEP1_BATCH_OVERLAP,
+            )
+            total = len(batches)
+
+        # 首次运行：记录总批数
+        if job.step1_batches_total == 0:
+            async with build_lock:
+                job.step1_batches_total = total
+                # 扩容 step1_batch_results 到 total 长度
+                while len(job.step1_batch_results) < total:
+                    job.step1_batch_results.append([])
+                job.update_time = datetime.now()
+                save_build_job(job_id)
+        elif job.step1_batches_total != total:
+            # config 参数被改导致批数变化：以新批数为准，重置 done 为已完成批次的最小值
+            logger.warning(
+                f"[{job_id}] 分批数变化 {job.step1_batches_total}→{total}，"
+                f"已成功 {job.step1_batches_done} 批结果保留，按新边界续跑"
+            )
+            async with build_lock:
+                job.step1_batches_total = total
+                while len(job.step1_batch_results) < total:
+                    job.step1_batch_results.append([])
+                save_build_job(job_id)
+
+        total = job.step1_batches_total
+        # 续跑从已成功批次数开始；首次从 0 开始
+        start_idx = job.step1_batches_done if is_resume else 0
+
+        logger.info(
+            f"[{job_id}] Step1 概念提取：共 {total} 批，"
+            f"{'续跑从第 ' + str(start_idx + 1) + ' 批' if is_resume else '首次从头'}开始"
+        )
+
+        # ---- 3. 串行跑每批 ----
+        for idx in range(start_idx, total):
+            _set_job_progress(
+                job_id, 0,
+                10 + int(85 * idx / max(total, 1)),
+                f"正在提取概念（第 {idx + 1}/{total} 批）..." if total > 1 else "正在调用AI提取概念..."
+            )
+            batch_text = batches[idx] if idx < len(batches) else ""
+            messages = build_prompts.build_step1_batch_messages(
+                batch_text, job.name, job.meta_entity_types,
+                batch_idx=idx, total_batches=total
+            )
+            batch_concepts = await _llm_json_async(messages, temperature=0.3, max_tokens=config.LLM_MAX_TOKENS)
+            if not isinstance(batch_concepts, list):
+                raise ValueError(f"第 {idx + 1}/{total} 批返回格式异常（非数组），原始类型: {type(batch_concepts).__name__}")
+
+            # 持久化本批结果 + 推进 done
+            async with build_lock:
+                while len(job.step1_batch_results) <= idx:
+                    job.step1_batch_results.append([])
+                job.step1_batch_results[idx] = batch_concepts
+                job.step1_batches_done = idx + 1
+                job.step1_failed_batch = -1
+                job.step1_failed_reason = None
+                job.update_time = datetime.now()
+                save_build_job(job_id)
+            logger.info(f"[{job_id}] Step1 第 {idx + 1}/{total} 批完成: {len(batch_concepts)} 个概念")
+
+        # ---- 4. 全部成功后合并去重 ----
+        _set_job_progress(job_id, 0, 96, "正在合并概念...")
+        all_concepts = [c for batch in job.step1_batch_results for c in batch]
+        merged = _merge_concepts(all_concepts)
         async with build_lock:
-            job.step1_concepts = concepts
+            job.step1_concepts = merged
             job.step = max(job.step, 1)
             job.running_step = -1
             job.progress = 100
-            job.progress_message = f"概念提取完成，共 {len(concepts)} 个概念"
+            job.progress_message = (
+                f"概念提取完成，共 {len(merged)} 个概念" + (f"（{total} 批合并）" if total > 1 else "")
+            )
+            job.error_message = None
             job.update_time = datetime.now()
             save_build_job(job_id)
             save_build_jobs_index()
-        logger.info(f"[{job_id}] 后台概念提取完成: {len(concepts)} 个概念")
+        logger.info(f"[{job_id}] 后台概念提取完成: {len(merged)} 个概念（{total} 批合并）")
     except Exception as e:
         logger.error(f"[{job_id}] 后台概念提取失败: {e}")
         async with build_lock:
+            # 失败批次 = 当前正在跑这批（done 未推进时即 idx）
+            failed_idx = job.step1_batches_done
             job.running_step = -1
             job.progress = 0
-            job.error_message = str(e)[:200]
+            job.step1_failed_batch = failed_idx
+            job.step1_failed_reason = str(e)[:200]
+            job.error_message = f"第 {failed_idx + 1}/{job.step1_batches_total} 批失败: {str(e)[:150]}"
+            job.progress_message = f"第 {failed_idx + 1}/{job.step1_batches_total} 批失败，可点击继续提取从该批续跑"
             job.update_time = datetime.now()
             save_build_job(job_id)
     finally:
@@ -225,38 +477,192 @@ async def _background_extract_concepts(job_id: str) -> None:
 
 
 async def _background_build_structure(job_id: str) -> None:
-    """后台任务：Step 2 层次结构构建（LLM调用）。"""
+    """后台任务：Step 2 层次结构构建（LLM调用，支持概念分组 + 跨组关系补充 + 断点续作）。"""
     job = build_jobs_db.get(job_id)
     if not job or job.status == "completed":
         return
     try:
-        _set_job_progress(job_id, 1, 10, "正在准备概念清单...")
-        _set_job_progress(job_id, 1, 30, "正在调用AI构建层次结构...")
-        messages = build_prompts.build_step2_messages(
-            job.step1_concepts, job.meta_entity_types, job.meta_relation_types
+        concepts = job.step1_concepts or []
+        if not concepts:
+            raise ValueError("概念清单为空，无法构建层次结构")
+
+        # ---- 1. 判断续跑状态 ----
+        # 分组续跑：已分组过、未跑完、有失败标记
+        is_group_resume = (job.step2_groups_total > 0
+                           and job.step2_groups_done < job.step2_groups_total
+                           and job.step2_failed_group >= 0)
+        # 跨组补充续跑：分组已全部成功、跨组补充未完成
+        # 注意：不依赖 cross_group_failed——旧数据/异常场景下该标记可能为 false，
+        # 只要分组全部完成而跨组补充未完成，就应续跑跨组，而非重跑分组
+        is_cross_resume = (job.step2_groups_total > 0
+                           and job.step2_groups_done == job.step2_groups_total
+                           and not job.step2_cross_group_done)
+        # 已有完整 step2 结果且无失败 → 直接结束（防重复跑）
+        if (not is_group_resume and not is_cross_resume
+                and job.step2_entities and job.step2_failed_group < 0
+                and (job.step2_cross_group_done or not job.step2_cross_group_failed)):
+            _set_job_progress(job_id, -1, 100, "结构构建已完成")
+            return
+
+        # ---- 2. 重建 groups（无论首次还是续跑都重新分组，纯函数结果稳定）----
+        if len(concepts) <= config.STEP2_GROUP_THRESHOLD_CONCEPTS:
+            # 概念少：单组，保持兼容
+            groups = [concepts]
+            total = 1
+        else:
+            groups = _group_concepts(concepts, config.STEP2_GROUP_SIZE)
+            total = len(groups)
+
+        # 首次运行：记录总组数
+        if job.step2_groups_total == 0:
+            async with build_lock:
+                job.step2_groups_total = total
+                while len(job.step2_group_results) < total:
+                    job.step2_group_results.append({"entities": [], "relations": []})
+                job.update_time = datetime.now()
+                save_build_job(job_id)
+        elif job.step2_groups_total != total:
+            logger.warning(
+                f"[{job_id}] 分组数变化 {job.step2_groups_total}→{total}，"
+                f"已成功 {job.step2_groups_done} 组结果保留，按新边界续跑"
+            )
+            async with build_lock:
+                job.step2_groups_total = total
+                while len(job.step2_group_results) < total:
+                    job.step2_group_results.append({"entities": [], "relations": []})
+                save_build_job(job_id)
+
+        total = job.step2_groups_total
+
+        # ---- 3. 分组续跑：从失败组开始跑剩余分组（跨组续跑跳过此循环）----
+        if not is_cross_resume:
+            start_idx = job.step2_groups_done if is_group_resume else 0
+            logger.info(
+                f"[{job_id}] Step2 结构构建：共 {total} 组，"
+                f"{'续跑从第 ' + str(start_idx + 1) + ' 组' if is_group_resume else '首次从头'}开始"
+            )
+            for idx in range(start_idx, total):
+                _set_job_progress(
+                    job_id, 1,
+                    10 + int(70 * idx / max(total, 1)),
+                    f"正在构建层次结构（第 {idx + 1}/{total} 组）..." if total > 1 else "正在调用AI构建层次结构..."
+                )
+                group_concepts = groups[idx] if idx < len(groups) else []
+                messages = build_prompts.build_step2_messages(
+                    group_concepts, job.meta_entity_types, job.meta_relation_types
+                )
+                result = await _llm_json_async(messages, temperature=0.3, max_tokens=config.LLM_MAX_TOKENS)
+                if not isinstance(result, dict):
+                    raise ValueError(f"第 {idx + 1}/{total} 组返回格式异常（非对象），原始类型: {type(result).__name__}")
+                group_entities = result.get("entities", [])
+                group_relations = result.get("relations", [])
+
+                async with build_lock:
+                    while len(job.step2_group_results) <= idx:
+                        job.step2_group_results.append({"entities": [], "relations": []})
+                    job.step2_group_results[idx] = {"entities": group_entities, "relations": group_relations}
+                    job.step2_groups_done = idx + 1
+                    job.step2_failed_group = -1
+                    job.step2_failed_reason = None
+                    job.update_time = datetime.now()
+                    save_build_job(job_id)
+                logger.info(f"[{job_id}] Step2 第 {idx + 1}/{total} 组完成: {len(group_entities)} 实体, {len(group_relations)} 关系")
+
+        # ---- 4. 合并实体 + 组内关系 ----
+        _set_job_progress(job_id, 1, 82, "正在合并结构...")
+        all_entities = [e for g in job.step2_group_results for e in g.get("entities", [])]
+        all_relations = [r for g in job.step2_group_results for r in g.get("relations", [])]
+        merged_entities = _merge_entities(all_entities)
+        logger.info(
+            f"[{job_id}] Step2 合并: {len(all_entities)}→{len(merged_entities)} 实体, "
+            f"{len(all_relations)} 组内关系（{total} 组）"
         )
-        result = await _llm_json_async(messages, temperature=0.3, max_tokens=8000)
-        if not isinstance(result, dict):
-            raise ValueError("LLM 返回格式异常")
-        entities = result.get("entities", [])
-        relations = result.get("relations", [])
+
+        # ---- 5. LLM 补充跨组关系（仅多组时执行，单组无需）----
+        # 跨组补充失败可续跑：若已完成则跳过；若失败则重跑
+        if total > 1 and not job.step2_cross_group_done:
+            _set_job_progress(job_id, 1, 88, "正在补充跨组关系...")
+            # 实体过多时取前 N 个（仅 name+type，控制 prompt 长度）
+            entities_for_prompt = merged_entities[:config.STEP2_CROSS_GROUP_ENTITY_BATCH]
+            cross_messages = build_prompts.build_step2_cross_group_messages(
+                entities_for_prompt, all_relations,
+                job.meta_entity_types, job.meta_relation_types
+            )
+            try:
+                cross_result = await _llm_json_async(cross_messages, temperature=0.3, max_tokens=config.LLM_MAX_TOKENS)
+                if not isinstance(cross_result, dict):
+                    raise ValueError(f"跨组关系补充返回格式异常（非对象），原始类型: {type(cross_result).__name__}")
+                cross_relations = cross_result.get("relations", [])
+                if not isinstance(cross_relations, list):
+                    cross_relations = []
+                logger.info(f"[{job_id}] Step2 跨组关系补充: {len(cross_relations)} 条")
+                async with build_lock:
+                    job.step2_cross_group_relations = cross_relations
+                    job.step2_cross_group_done = True
+                    job.step2_cross_group_failed = False
+                    job.step2_cross_group_reason = None
+                    job.update_time = datetime.now()
+                    save_build_job(job_id)
+            except Exception as _e:
+                # 跨组关系补充属"锦上添花"，失败不阻塞 Step 2 完成，仅标记失败供前端"继续构建"重试跨组
+                logger.warning(f"[{job_id}] Step2 跨组关系补充失败，降级为仅组内关系: {_e}")
+                async with build_lock:
+                    job.step2_cross_group_failed = True
+                    job.step2_cross_group_reason = str(_e)[:200]
+                    job.step2_cross_group_done = False
+                    job.update_time = datetime.now()
+                    save_build_job(job_id)
+        elif total <= 1:
+            # 单组无需跨组补充，直接标记完成
+            async with build_lock:
+                job.step2_cross_group_done = True
+                job.step2_cross_group_relations = []
+                save_build_job(job_id)
+
+        # ---- 6. 合并所有关系（组内 + 跨组）并去重 ----
+        final_relations = _deduplicate_relations(all_relations + job.step2_cross_group_relations)
+        cross_count = len(final_relations) - len(_deduplicate_relations(all_relations))
+
         async with build_lock:
-            job.step2_entities = entities
-            job.step2_relations = relations
+            job.step2_entities = merged_entities
+            job.step2_relations = final_relations
             job.step = max(job.step, 2)  # 结构已生成，等待用户确认（确认后才进入 step 3）
             job.running_step = -1
             job.progress = 100
-            job.progress_message = f"结构构建完成，共 {len(entities)} 个实体，{len(relations)} 条关系"
+            if total > 1:
+                job.progress_message = (
+                    f"结构构建完成，共 {len(merged_entities)} 个实体，{len(final_relations)} 条关系"
+                    f"（{total} 组合并，含 {cross_count} 条跨组关系）"
+                )
+            else:
+                job.progress_message = f"结构构建完成，共 {len(merged_entities)} 个实体，{len(final_relations)} 条关系"
+            job.error_message = None
             job.update_time = datetime.now()
             save_build_job(job_id)
             save_build_jobs_index()
-        logger.info(f"[{job_id}] 后台结构构建完成: {len(entities)} 实体, {len(relations)} 关系")
+        logger.info(
+            f"[{job_id}] 后台结构构建完成: {len(merged_entities)} 实体, {len(final_relations)} 关系"
+            f"（含 {cross_count} 跨组）" if total > 1 else f"[{job_id}] 后台结构构建完成: {len(merged_entities)} 实体, {len(final_relations)} 关系"
+        )
     except Exception as e:
         logger.error(f"[{job_id}] 后台结构构建失败: {e}")
         async with build_lock:
             job.running_step = -1
             job.progress = 0
-            job.error_message = str(e)[:200]
+            # 判断失败发生在分组阶段还是跨组补充阶段
+            if job.step2_groups_done < job.step2_groups_total:
+                # 分组阶段失败
+                failed_idx = job.step2_groups_done
+                job.step2_failed_group = failed_idx
+                job.step2_failed_reason = str(e)[:200]
+                job.error_message = f"第 {failed_idx + 1}/{job.step2_groups_total} 组失败: {str(e)[:150]}"
+                job.progress_message = f"第 {failed_idx + 1}/{job.step2_groups_total} 组失败，可点击继续构建从该组续跑"
+            else:
+                # 跨组补充阶段失败
+                job.step2_cross_group_failed = True
+                job.step2_cross_group_reason = str(e)[:200]
+                job.error_message = f"跨组关系补充失败: {str(e)[:150]}"
+                job.progress_message = "跨组关系补充失败，可点击继续构建重新补充跨组关系"
             job.update_time = datetime.now()
             save_build_job(job_id)
     finally:
@@ -1846,6 +2252,17 @@ async def build_progress(job_id: str):
             "step1_confirmed": job.step1_confirmed,
             "step2_confirmed": job.step2_confirmed,
             "ontology_id": job.ontology_id,
+            # Step 1 分批状态（前端用于显示"第 X/N 批"和"继续提取"按钮）
+            "step1_batches_total": job.step1_batches_total,
+            "step1_batches_done": job.step1_batches_done,
+            "step1_failed_batch": job.step1_failed_batch,
+            # Step 2 分组状态（前端用于显示"第 X/N 组"和"继续构建"按钮）
+            "step2_groups_total": job.step2_groups_total,
+            "step2_groups_done": job.step2_groups_done,
+            "step2_failed_group": job.step2_failed_group,
+            # Step 2 跨组关系补充状态
+            "step2_cross_group_done": job.step2_cross_group_done,
+            "step2_cross_group_failed": job.step2_cross_group_failed,
         }
     }
 
@@ -1921,15 +2338,27 @@ async def build_step1(job_id: str):
     if job.running_step != -1:
         raise HTTPException(status_code=400, detail="当前有步骤正在后台运行中，请等待完成")
 
-    # 启动后台任务，立即返回
-    _set_job_progress(job_id, 0, 5, "正在准备提取概念...")
+    # 判断是续跑（断点续作）还是首次提取
+    is_resume = (job.step1_batches_total > 0
+                 and job.step1_batches_done < job.step1_batches_total
+                 and job.step1_failed_batch >= 0)
+
+    # 启动后台任务，立即返回（清空陈旧错误，避免前端显示旧报错）
+    async with build_lock:
+        job.error_message = None
+        job.update_time = datetime.now()
+        save_build_job(job_id)
+    _set_job_progress(
+        job_id, 0, 5,
+        "继续提取概念..." if is_resume else "正在准备提取概念..."
+    )
     task = asyncio.create_task(_background_extract_concepts(job_id))
     _background_tasks[job_id] = task
 
     return {
         "success": True,
-        "message": "概念提取已在后台开始，您可以离开页面，稍后回来查看结果",
-        "data": {"job_id": job_id, "running_step": 0}
+        "message": "概念提取继续运行，从失败批次续跑..." if is_resume else "概念提取已在后台开始，您可以离开页面，稍后回来查看结果",
+        "data": {"job_id": job_id, "running_step": 0, "is_resume": is_resume}
     }
 
 
@@ -1983,15 +2412,31 @@ async def build_step2(job_id: str):
     if job.running_step != -1:
         raise HTTPException(status_code=400, detail="当前有步骤正在后台运行中，请等待完成")
 
-    # 启动后台任务，立即返回
-    _set_job_progress(job_id, 1, 5, "正在准备构建层次结构...")
+    # 判断是续跑（分组或跨组关系补充断点续作）还是首次构建
+    is_resume = ((job.step2_groups_total > 0
+                  and job.step2_groups_done < job.step2_groups_total
+                  and job.step2_failed_group >= 0)
+                 or (job.step2_groups_total > 0
+                     and job.step2_groups_done == job.step2_groups_total
+                     and not job.step2_cross_group_done
+                     and job.step2_cross_group_failed))
+
+    # 启动后台任务，立即返回（清空陈旧错误，避免前端显示旧报错）
+    async with build_lock:
+        job.error_message = None
+        job.update_time = datetime.now()
+        save_build_job(job_id)
+    _set_job_progress(
+        job_id, 1, 5,
+        "继续构建层次结构..." if is_resume else "正在准备构建层次结构..."
+    )
     task = asyncio.create_task(_background_build_structure(job_id))
     _background_tasks[job_id] = task
 
     return {
         "success": True,
-        "message": "层次结构构建已在后台开始，您可以离开页面，稍后回来查看结果",
-        "data": {"job_id": job_id, "running_step": 1}
+        "message": "层次结构构建继续运行，从断点续跑..." if is_resume else "层次结构构建已在后台开始，您可以离开页面，稍后回来查看结果",
+        "data": {"job_id": job_id, "running_step": 1, "is_resume": is_resume}
     }
 
 

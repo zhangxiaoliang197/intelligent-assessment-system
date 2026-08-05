@@ -194,7 +194,7 @@ def call_llm_json(messages: list, temperature: float = 0.3, max_tokens: int = 40
     """调用 LLM 并解析为 JSON 结构。
 
     带容错和重试机制（最多 4 次尝试）：
-    - 空响应（LLM 偶发返回空字符串或 null）直接重试原请求，不追加纠错提示
+    - 空响应：第一次追加"请返回 JSON"纠错提示重试，避免重复发相同 prompt 仍为空
     - 非空但解析失败，第一次追加"请只返回 JSON"提示重试，后续直接重试原请求
     - 仍失败抛 ValueError
 
@@ -211,23 +211,32 @@ def call_llm_json(messages: list, temperature: float = 0.3, max_tokens: int = 40
     """
     raw = ""
     correction_used = False
-    # 统一重试循环：空响应直接重发原请求，格式错误才追加纠错提示
+    # 统一重试循环：空响应与解析失败都追加一次纠错提示，避免反复发相同 prompt
     for attempt in range(4):
         try:
             current_msgs = messages
             if correction_used:
-                current_msgs = list(messages) + [
-                    {"role": "assistant", "content": raw},
-                    {"role": "user", "content": "你上一次的回复无法被解析为 JSON。请仔细检查格式，只返回纯 JSON，不要包含任何 markdown 标记、解释文字或代码块标记。确保 JSON 语法完全正确。"}
-                ]
+                if raw and raw.strip():
+                    # 非空但解析失败：附上上一次回复，要求修正格式
+                    current_msgs = list(messages) + [
+                        {"role": "assistant", "content": raw},
+                        {"role": "user", "content": "你上一次的回复无法被解析为 JSON。请仔细检查格式，只返回纯 JSON，不要包含任何 markdown 标记、解释文字或代码块标记。确保 JSON 语法完全正确。"}
+                    ]
+                else:
+                    # 空响应：不附带空 assistant 消息，直接追加提示
+                    current_msgs = list(messages) + [
+                        {"role": "user", "content": "你上一次没有返回任何内容。请直接返回符合要求的 JSON，不要输出空白或空内容。"}
+                    ]
             raw = call_llm(current_msgs, temperature, max_tokens)
         except RuntimeError as e:
             raise ValueError(str(e))
 
-        # 空响应：直接重试原请求，纠错提示对空响应无效
+        # 空响应：追加一次纠错提示后重试
         if not raw or not raw.strip():
-            logger.warning(f"LLM 返回空内容（第 {attempt + 1} 次），将重试原请求")
+            logger.warning(f"LLM 返回空内容（第 {attempt + 1} 次），将追加纠错提示重试")
             raw = ""
+            if not correction_used:
+                correction_used = True  # 空响应也追加纠错，避免重复发相同 prompt
             continue
 
         try:

@@ -12,25 +12,28 @@
         </div>
       </div>
 
-      <!-- 后台运行进度提示 -->
-      <div class="progress-section" v-if="isRunning">
-        <el-card class="progress-card">
-          <div class="progress-content">
-            <div class="progress-icon">
-              <el-icon class="is-loading" :size="24"><Loading /></el-icon>
-            </div>
-            <div class="progress-info">
-              <div class="progress-title">{{ progressMessage }}</div>
-              <el-progress
-                :percentage="job?.progress || 0"
-                :stroke-width="8"
-                :text-inside="true"
-                class="animated-progress"
-              />
-              <div class="progress-hint">后台任务运行中，您可以离开此页面，稍后回来查看结果</div>
-            </div>
-          </div>
-        </el-card>
+      <!-- 状态栏：进度 + 步骤条 合并 -->
+      <div class="status-bar" v-if="job">
+        <!-- 运行中进度指示 -->
+        <div class="status-progress" v-if="isRunning">
+          <el-icon class="is-loading" :size="16"><Loading /></el-icon>
+          <span class="status-text">{{ progressMessage }}</span>
+          <el-progress
+            :percentage="Math.round(displayProgress)"
+            :stroke-width="4"
+            class="slim-progress"
+            :show-text="false"
+          />
+          <span class="status-percent">{{ Math.round(displayProgress) }}%</span>
+          <span class="status-hint">后台运行中，可随时离开</span>
+        </div>
+        <!-- 步骤指示 -->
+        <el-steps :active="currentStep" finish-status="success" align-center class="build-steps">
+          <el-step title="上传文档" :status="getStepStatus(0)" />
+          <el-step title="提取概念" :status="getStepStatus(1)" />
+          <el-step title="构建结构" :status="getStepStatus(2)" />
+          <el-step title="生成本体" :status="getStepStatus(3)" />
+        </el-steps>
       </div>
 
       <!-- 错误提示 -->
@@ -42,16 +45,6 @@
         show-icon
         style="margin-bottom: 1rem"
       />
-
-      <!-- 步骤条 -->
-      <div class="steps-section" v-if="job">
-        <el-steps :active="currentStep" finish-status="success" align-center>
-          <el-step title="上传文档" :status="getStepStatus(0)" />
-          <el-step title="提取概念" :status="getStepStatus(1)" />
-          <el-step title="构建结构" :status="getStepStatus(2)" />
-          <el-step title="生成本体" :status="getStepStatus(3)" />
-        </el-steps>
-      </div>
 
       <!-- 步骤内容区 -->
       <div class="step-content" v-loading="loading">
@@ -149,7 +142,9 @@
             <!-- 等待后台提取中 -->
             <div v-if="isExtracting" class="waiting-section">
               <el-alert
-                title="AI 正在提取概念..."
+                :title="job?.step1_batches_total > 1
+                  ? `AI 正在提取概念（第 ${job.step1_batches_done + 1}/${job.step1_batches_total} 批）...`
+                  : 'AI 正在提取概念...'"
                 type="info"
                 :closable="false"
                 show-icon
@@ -158,6 +153,27 @@
                   <p>后台任务正在运行，请耐心等待。您可以随时离开此页面，稍后回来继续。</p>
                 </template>
               </el-alert>
+            </div>
+
+            <!-- 分批提取中途失败，可断点续作 -->
+            <div v-else-if="isStep1Resumable" class="extract-section">
+              <el-alert
+                :title="`第 ${job.step1_failed_batch + 1}/${job.step1_batches_total} 批提取失败，已成功 ${job.step1_batches_done} 批`"
+                type="warning"
+                :closable="false"
+                show-icon
+              >
+                <template #default>
+                  <p>{{ job?.error_message || '部分批次提取失败' }}</p>
+                  <p v-if="isEmptyResponseError" class="llm-hint">LLM 服务端偶发无响应，请点击"继续提取概念"重试，无需修改任何配置。</p>
+                  <p>点击"继续提取概念"从失败批次续跑，已成功批次不会重跑。</p>
+                </template>
+              </el-alert>
+              <div class="step-actions">
+                <el-button type="primary" :disabled="isRunning" @click="doExtractConcepts">
+                  继续提取概念
+                </el-button>
+              </div>
             </div>
 
             <!-- 需要点击按钮开始提取 -->
@@ -265,7 +281,9 @@
             <!-- 等待后台构建中 -->
             <div v-if="isBuilding" class="waiting-section">
               <el-alert
-                title="AI 正在构建层次结构..."
+                :title="job?.step2_groups_total > 1
+                  ? `AI 正在构建层次结构（第 ${job.step2_groups_done + 1}/${job.step2_groups_total} 组）...`
+                  : 'AI 正在构建层次结构...'"
                 type="info"
                 :closable="false"
                 show-icon
@@ -274,6 +292,29 @@
                   <p>后台任务正在运行，请耐心等待。您可以随时离开此页面，稍后回来继续。</p>
                 </template>
               </el-alert>
+            </div>
+
+            <!-- 分组构建或跨组关系补充中途失败，可断点续作 -->
+            <div v-else-if="isStep2Resumable" class="build-section">
+              <el-alert
+                :title="job.step2_groups_done < job.step2_groups_total
+                  ? `第 ${job.step2_failed_group + 1}/${job.step2_groups_total} 组构建失败，已成功 ${job.step2_groups_done} 组`
+                  : '跨组关系补充失败'"
+                type="warning"
+                :closable="false"
+                show-icon
+              >
+                <template #default>
+                  <p>{{ job?.error_message || '部分构建步骤失败' }}</p>
+                  <p v-if="isEmptyResponseError" class="llm-hint">LLM 服务端偶发无响应，请点击"继续构建结构"重试，无需修改任何配置。</p>
+                  <p>点击"继续构建结构"从断点续跑，已成功步骤不会重跑。</p>
+                </template>
+              </el-alert>
+              <div class="step-actions">
+                <el-button type="primary" :disabled="isRunning" @click="doBuildStructure">
+                  继续构建结构
+                </el-button>
+              </div>
             </div>
 
             <!-- 需要点击按钮开始构建 -->
@@ -530,6 +571,35 @@ const metaForm = ref({
 // 轮询定时器
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
+// ── 前端动画进度 ──
+// 后端仅在 10%/30%/100% 设离散值，LLM 调用期间进度卡死。
+// 前端用渐近逼近上限的方式接管显示，让进度条平滑增长。
+const displayProgress = ref(0)
+let progressTimer: ReturnType<typeof setInterval> | null = null
+const PROGRESS_CEILING = 92  // 任务未完成时的渐近上限
+
+const startProgressAnimation = () => {
+  stopProgressAnimation()
+  displayProgress.value = 8
+  progressTimer = setInterval(() => {
+    const remaining = PROGRESS_CEILING - displayProgress.value
+    // 越接近上限增速越慢，永远不会超过上限
+    if (remaining > 0.3) {
+      displayProgress.value += remaining * 0.1
+    }
+  }, 500)
+}
+
+const stopProgressAnimation = (final?: number) => {
+  if (progressTimer) {
+    clearInterval(progressTimer)
+    progressTimer = null
+  }
+  if (final !== undefined) {
+    displayProgress.value = final
+  }
+}
+
 // ── 计算属性 ──
 const currentStep = computed(() => {
   if (!job.value) return 0
@@ -547,6 +617,33 @@ const isRunning = computed(() => {
 const isExtracting = computed(() => job.value?.running_step === 0)
 const isBuilding = computed(() => job.value?.running_step === 1)
 const isGenerating = computed(() => job.value?.running_step === 2)
+
+// 空响应错误：LLM 服务端偶发无响应（非配置/代码问题），提示用户重试即可
+const isEmptyResponseError = computed(() =>
+  !!job.value?.error_message && job.value.error_message.includes('空响应')
+)
+
+// Step 1 断点续作：分批提取中途失败，可从失败批次续跑（未确认时才允许）
+const isStep1Resumable = computed(() =>
+  !!job.value
+  && job.value.step1_batches_total > 0
+  && job.value.step1_batches_done < job.value.step1_batches_total
+  && job.value.step1_failed_batch >= 0
+  && !job.value.step1_confirmed
+)
+// Step 2 断点续作：分组构建或跨组关系补充中途失败，可从断点续跑
+const isStep2Resumable = computed(() =>
+  !!job.value
+  && !job.value.step2_confirmed
+  && job.value.step2_groups_total > 0
+  && (
+    // 分组阶段失败
+    (job.value.step2_groups_done < job.value.step2_groups_total && job.value.step2_failed_group >= 0)
+    // 跨组关系补充阶段失败
+    || (job.value.step2_groups_done === job.value.step2_groups_total
+        && !job.value.step2_cross_group_done && job.value.step2_cross_group_failed)
+  )
+)
 
 const progressMessage = computed(() => {
   if (!job.value) return ''
@@ -608,6 +705,7 @@ const loadJob = async () => {
 // ── 轮询进度 ──
 const startPolling = () => {
   stopPolling()
+  startProgressAnimation()
   pollTimer = setInterval(async () => {
     try {
       const res: any = await getBuildProgress(jobId)
@@ -624,9 +722,19 @@ const startPolling = () => {
         job.value.step1_confirmed = p.step1_confirmed
         job.value.step2_confirmed = p.step2_confirmed
         job.value.ontology_id = p.ontology_id
+        // Step 1/2 分批与断点续作状态（前端用于切换"继续提取/构建"按钮文案）
+        job.value.step1_batches_total = p.step1_batches_total
+        job.value.step1_batches_done = p.step1_batches_done
+        job.value.step1_failed_batch = p.step1_failed_batch
+        job.value.step2_groups_total = p.step2_groups_total
+        job.value.step2_groups_done = p.step2_groups_done
+        job.value.step2_failed_group = p.step2_failed_group
+        job.value.step2_cross_group_done = p.step2_cross_group_done
+        job.value.step2_cross_group_failed = p.step2_cross_group_failed
 
-        // 后台任务完成（running_step 回到 -1）或出错时，重新加载完整数据并停止轮询
+        // 后台任务完成（running_step 回到 -1）或出错时，推进到 100%、重新加载并停止轮询
         if (p.running_step === -1) {
+          stopProgressAnimation(100)
           await loadJob()
           stopPolling()
         }
@@ -642,6 +750,7 @@ const stopPolling = () => {
     clearInterval(pollTimer)
     pollTimer = null
   }
+  stopProgressAnimation()
 }
 
 // ── 步骤操作 ──
@@ -665,6 +774,11 @@ const doConfirmMeta = async () => {
 const doExtractConcepts = async () => {
   try {
     await extractConceptsApi(jobId)
+    // 乐观标记运行中，让进度区立即显示，无需等首次轮询
+    if (job.value) {
+      job.value.running_step = 0
+      job.value.progress_message = '正在准备文档...'
+    }
     ElMessage.info('概念提取已在后台开始，您可以离开页面')
     startPolling()
   } catch (e: any) {
@@ -688,6 +802,11 @@ const doConfirmConcepts = async () => {
 const doBuildStructure = async () => {
   try {
     await buildStructureApi(jobId)
+    // 乐观标记运行中，让进度区立即显示
+    if (job.value) {
+      job.value.running_step = 1
+      job.value.progress_message = '正在准备概念清单...'
+    }
     ElMessage.info('层次结构构建已在后台开始，您可以离开页面')
     startPolling()
   } catch (e: any) {
@@ -723,6 +842,11 @@ const doConfirmStructure = async () => {
 const doGenerateOntology = async () => {
   try {
     await generateOntology(jobId)
+    // 乐观标记运行中，让进度区立即显示
+    if (job.value) {
+      job.value.running_step = 2
+      job.value.progress_message = '正在准备数据...'
+    }
     ElMessage.info('最终序列化已在后台开始，您可以离开页面')
     startPolling()
   } catch (e: any) {
@@ -778,7 +902,7 @@ onMounted(async () => {
   await loadJob()
   loading.value = false
 
-  // 若有后台任务在运行，自动开始轮询
+  // 若有后台任务在运行，自动开始轮询与进度动画
   if (job.value?.running_step >= 0) {
     startPolling()
   }
@@ -800,7 +924,7 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1.25rem;
+  margin-bottom: 1rem;
 }
 
 .header-left {
@@ -816,50 +940,48 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-.progress-section {
+.status-bar {
+  background: white;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  margin-bottom: 1.25rem;
+}
+
+.status-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
   margin-bottom: 1rem;
 }
 
-.progress-card {
-  border-radius: 10px;
-  border: 1px solid var(--primary-200, #b3d8ff);
-}
-
-.progress-content {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.25rem 0;
-}
-
-.progress-icon {
-  flex-shrink: 0;
-  color: var(--primary-500, #409eff);
-}
-
-.progress-info {
-  flex: 1;
-}
-
-.progress-title {
+.status-text {
   font-size: 0.9rem;
   font-weight: 500;
   color: var(--text-primary);
-  margin-bottom: 0.5rem;
 }
 
-.progress-hint {
+.slim-progress {
+  flex: 1;
+  margin: 0;
+}
+
+.status-percent {
   font-size: 0.8rem;
-  color: var(--text-secondary, #909399);
-  margin-top: 0.5rem;
+  font-weight: 600;
+  color: var(--primary-500);
+  min-width: 32px;
+  text-align: right;
 }
 
-.steps-section {
-  background: white;
-  border-radius: 10px;
-  padding: 1.25rem;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-  margin-bottom: 1.25rem;
+.status-hint {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.build-steps {
+  margin: 0;
 }
 
 .step-content {
@@ -869,11 +991,15 @@ onUnmounted(() => {
 .step-panel {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1.5rem;
 }
 
 .step-card {
   border-radius: 10px;
+}
+
+.step-card :deep(.el-card__body) {
+  padding: 1.5rem;
 }
 
 .step-header {
@@ -905,7 +1031,7 @@ onUnmounted(() => {
 .meta-column {
   background: var(--bg-secondary, #f5f7fa);
   border-radius: 8px;
-  padding: 1rem;
+  padding: 1.25rem;
   border: 1px solid var(--border-color, #e4e7ed);
 }
 
@@ -913,8 +1039,8 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 0.875rem;
-  padding-bottom: 0.625rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
   border-bottom: 2px solid var(--primary-500, #409eff);
 }
 
@@ -928,8 +1054,8 @@ onUnmounted(() => {
 .type-list {
   display: flex;
   flex-direction: column;
-  gap: 0.625rem;
-  margin-bottom: 0.875rem;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
   min-height: 80px;
 }
 
@@ -938,7 +1064,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.5rem;
   background: white;
-  padding: 0.5rem;
+  padding: 0.625rem 0.75rem;
   border-radius: 6px;
   border: 1px solid var(--border-color, #e4e7ed);
   transition: all 0.2s;
@@ -962,17 +1088,17 @@ onUnmounted(() => {
 .extract-section,
 .build-section,
 .generate-section {
-  padding: 0.75rem 0;
+  padding: 0.5rem 0;
 }
 
 .concepts-section,
 .structure-section {
-  padding: 0.75rem 0;
+  padding: 0.5rem 0;
 }
 
 .concepts-section h4,
 .structure-section h4 {
-  margin: 1.25rem 0 0.625rem 0;
+  margin: 1.5rem 0 0.75rem 0;
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--text-primary);
@@ -981,19 +1107,26 @@ onUnmounted(() => {
 .step-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 0.625rem;
-  margin-top: 1.25rem;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+/* LLM 服务端偶发无响应的专属提示：突出强调，便于用户识别为外部抖动而非配置错误 */
+.llm-hint {
+  margin: 0.25rem 0;
+  color: var(--el-color-warning);
+  font-weight: 600;
 }
 
 .complete-content {
   text-align: center;
-  padding: 1.5rem;
+  padding: 2rem 1.5rem;
 }
 
 .success-icon {
   font-size: 3.5rem;
   color: var(--success-500);
-  margin-bottom: 0.75rem;
+  margin-bottom: 1rem;
 }
 
 .complete-content h3 {

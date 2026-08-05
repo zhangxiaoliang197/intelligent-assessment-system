@@ -17,60 +17,116 @@
 
       <!-- 三栏布局 -->
       <div class="three-column-layout" v-loading="loading">
-        <!-- 左面板：实体列表 -->
+        <!-- 左面板：实体列表 + 关系列表 -->
         <div class="left-panel">
-          <el-card class="panel-card">
+          <el-card class="panel-card list-card">
             <template #header>
               <div class="panel-header">
-                <span>实体列表</span>
-                <el-button size="small" type="primary" @click="showAddEntityDialog = true">添加</el-button>
+                <div class="panel-title">
+                  <span>实体列表</span>
+                  <span class="count-badge">{{ filteredEntities.length }}</span>
+                </div>
+                <el-button size="small" type="primary" :icon="Plus" @click="showAddEntityDialog = true">添加</el-button>
               </div>
             </template>
-            <el-input
-              v-model="entitySearch"
-              placeholder="搜索实体..."
-              prefix-icon="Search"
-              clearable
-              size="small"
-              style="margin-bottom: 0.75rem"
-            />
-            <div class="entity-list">
+            <div class="list-toolbar">
+              <el-input
+                v-model="entitySearch"
+                placeholder="搜索实体"
+                :prefix-icon="Search"
+                clearable
+                size="small"
+              />
+              <el-select
+                v-model="entityTypeFilter"
+                placeholder="全部类型"
+                clearable
+                size="small"
+                class="type-filter"
+              >
+                <el-option v-for="t in entityTypeOptions" :key="t.name" :label="t.name" :value="t.name">
+                  <span class="option-dot" :style="{ background: t.color }"></span>
+                  {{ t.name }}
+                </el-option>
+              </el-select>
+            </div>
+            <div class="entity-list custom-scroll">
               <div
                 v-for="entity in filteredEntities"
                 :key="entity.id"
                 :class="['entity-item', { active: selectedEntity?.id === entity.id }]"
+                :style="{ '--entity-color': getEntityTypeColor(entity.type) }"
                 @click="selectEntity(entity)"
               >
-                <div class="entity-info">
-                  <span class="entity-name">{{ entity.name }}</span>
-                  <el-tag size="small" :style="{ color: getEntityTypeColor(entity.type), borderColor: getEntityTypeColor(entity.type) }">
-                    {{ entity.type }}
-                  </el-tag>
+                <span class="entity-dot"></span>
+                <div class="entity-main">
+                  <span class="entity-name" :title="entity.name">{{ entity.name }}</span>
+                  <span class="entity-type">{{ entity.type }}</span>
                 </div>
+                <span class="entity-degree" :title="`关联 ${degreeMap[entity.id] || 0} 条关系`">
+                  <el-icon><Connection /></el-icon>{{ degreeMap[entity.id] || 0 }}
+                </span>
               </div>
-              <el-empty v-if="!filteredEntities.length" description="暂无实体" :image-size="60" />
+              <el-empty v-if="!filteredEntities.length" description="暂无实体" :image-size="56" />
             </div>
           </el-card>
 
-          <el-card class="panel-card">
+          <el-card class="panel-card list-card relation-card">
             <template #header>
               <div class="panel-header">
-                <span>关系列表</span>
-                <el-button size="small" type="primary" @click="showAddRelationDialog = true">添加</el-button>
+                <div class="panel-title">
+                  <span>关系列表</span>
+                  <span class="count-badge">{{ filteredRelations.length }}</span>
+                </div>
+                <el-button size="small" type="primary" :icon="Plus" @click="showAddRelationDialog = true">添加</el-button>
               </div>
             </template>
-            <div class="relation-list">
-              <div v-for="relation in relations" :key="relation.id" class="relation-item">
-                <div class="relation-content">
-                  <span class="relation-source">{{ relation.source_name }}</span>
-                  <el-icon><Right /></el-icon>
-                  <span class="relation-type">{{ relation.relation_type }}</span>
-                  <el-icon><Right /></el-icon>
-                  <span class="relation-target">{{ relation.target_name }}</span>
+            <div class="list-toolbar">
+              <el-input
+                v-model="relationSearch"
+                placeholder="搜索关系"
+                :prefix-icon="Search"
+                clearable
+                size="small"
+              />
+            </div>
+            <div class="relation-list custom-scroll">
+              <div
+                v-for="relation in filteredRelations"
+                :key="relation.id"
+                class="relation-item"
+              >
+                <!-- 第一行：源实体 + 关系类型 -->
+                <div class="rel-line">
+                  <span
+                    class="rel-dot"
+                    :style="{ background: getEntityTypeColor(entityTypeMap[relation.source_id]) }"
+                  ></span>
+                  <span
+                    class="rel-name"
+                    :style="{ color: getEntityTypeColor(entityTypeMap[relation.source_id]) }"
+                    :title="relation.source_name"
+                  >{{ relation.source_name }}</span>
+                  <span class="rel-type">{{ relation.relation_type }}</span>
                 </div>
-                <el-button size="small" link type="danger" @click="deleteRelation(relation)">删除</el-button>
+                <!-- 第二行：目标实体 + 删除按钮 -->
+                <div class="rel-line rel-line-target">
+                  <span class="rel-connector">↳</span>
+                  <span
+                    class="rel-dot"
+                    :style="{ background: getEntityTypeColor(entityTypeMap[relation.target_id]) }"
+                  ></span>
+                  <span
+                    class="rel-name"
+                    :style="{ color: getEntityTypeColor(entityTypeMap[relation.target_id]) }"
+                    :title="relation.target_name"
+                  >{{ relation.target_name }}</span>
+                  <el-button size="small" link type="danger" class="relation-delete" @click="deleteRelation(relation)">
+                    <el-icon><Delete /></el-icon>
+                  </el-button>
+                </div>
               </div>
-              <el-empty v-if="!relations.length" description="暂无关系" :image-size="60" />
+              <el-empty v-if="!filteredRelations.length" description="暂无关系" :image-size="56" />
             </div>
           </el-card>
         </div>
@@ -100,11 +156,13 @@
                 </div>
               </div>
             </template>
-            <div ref="graphRef" class="graph-container"></div>
-            <div class="graph-legend">
-              <div v-for="type in entityTypeOptions" :key="type.name" class="legend-item">
-                <span class="legend-dot" :style="{ background: type.color }"></span>
-                <span>{{ type.name }}</span>
+            <div class="graph-wrapper">
+              <div ref="graphRef" class="graph-container"></div>
+              <div class="graph-legend-overlay">
+                <div v-for="type in entityTypeOptions" :key="type.name" class="legend-item">
+                  <span class="legend-dot" :style="{ background: type.color }"></span>
+                  <span>{{ type.name }}</span>
+                </div>
               </div>
             </div>
           </el-card>
@@ -299,7 +357,8 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowLeft, Refresh, Download, Edit, ZoomIn, ZoomOut, RefreshRight, Right
+  ArrowLeft, Refresh, Download, Edit, ZoomIn, ZoomOut, RefreshRight, Delete,
+  Plus, Search, Connection
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
@@ -327,6 +386,8 @@ const entities = ref<any[]>([])
 const relations = ref<any[]>([])
 const selectedEntity = ref<any>(null)
 const entitySearch = ref('')
+const entityTypeFilter = ref('')
+const relationSearch = ref('')
 const layoutType = ref('force')
 
 const graphRef = ref<HTMLElement | null>(null)
@@ -365,9 +426,38 @@ const entityTypeOptions = computed(() => ontology.value?.entity_types || [])
 const relationTypeOptions = computed(() => ontology.value?.relation_types || [])
 
 const filteredEntities = computed(() => {
-  if (!entitySearch.value) return entities.value
-  const kw = entitySearch.value.toLowerCase()
-  return entities.value.filter(e => e.name.toLowerCase().includes(kw))
+  const kw = entitySearch.value.trim().toLowerCase()
+  return entities.value.filter(e => {
+    const matchKw = !kw || (e.name || '').toLowerCase().includes(kw)
+    const matchType = !entityTypeFilter.value || e.type === entityTypeFilter.value
+    return matchKw && matchType
+  })
+})
+
+const entityTypeMap = computed(() => {
+  const map: Record<string, string> = {}
+  entities.value.forEach(e => { map[e.id] = e.type })
+  return map
+})
+
+/** 每个实体关联的关系条数（出度 + 入度），用于列表右侧显示连接数 */
+const degreeMap = computed(() => {
+  const map: Record<string, number> = {}
+  relations.value.forEach(r => {
+    map[r.source_id] = (map[r.source_id] || 0) + 1
+    map[r.target_id] = (map[r.target_id] || 0) + 1
+  })
+  return map
+})
+
+const filteredRelations = computed(() => {
+  if (!relationSearch.value) return relations.value
+  const kw = relationSearch.value.toLowerCase()
+  return relations.value.filter(r =>
+    (r.source_name || '').toLowerCase().includes(kw) ||
+    (r.target_name || '').toLowerCase().includes(kw) ||
+    (r.relation_type || '').toLowerCase().includes(kw)
+  )
 })
 
 // ── 数据加载 ──
@@ -421,19 +511,27 @@ const renderGraph = (data: { nodes: any[]; links: any[] }) => {
   if (!chartInstance) {
     chartInstance = echarts.init(graphRef.value)
   }
+  // 确保画布尺寸与容器一致，避免 flex 布局初始化时高度为 0
+  chartInstance.resize()
 
   const catIndex: Record<string, number> = {}
   const categories = entityTypeOptions.value.map((t: any, i: number) => {
     catIndex[t.name] = i
-    return { name: t.name }
+    // 用后端 entity_types.color 作为节点颜色，与图例/实例列表保持一致；
+    // 若某类型无 color 则走兜底 #409eff，避免 echarts 默认色板导致错位
+    return { name: t.name, itemStyle: { color: t.color || '#409eff' } }
   })
+  // 兜底类别：实体类型在 entity_types 中找不到时使用，颜色与 getEntityTypeColor 兜底 #409eff 一致
+  const fallbackCatIndex = categories.length
+  categories.push({ name: '[未分类]', itemStyle: { color: '#409eff' } })
 
   const idToName: Record<string, string> = {}
   const nodes = data.nodes.map((n: any) => {
     idToName[n.id] = n.name
     return {
       name: n.name,
-      category: catIndex[n.type] ?? 0,
+      // 类型找不到时指向兜底类别（[未分类]，颜色 #409eff），与列表兜底保持一致
+      category: catIndex[n.type] ?? fallbackCatIndex,
       symbolSize: 50,
       draggable: true
     }
@@ -456,7 +554,6 @@ const renderGraph = (data: { nodes: any[]; links: any[] }) => {
         return p.data.name
       }
     },
-    legend: [{ data: categories.map((c: any) => c.name) }],
     series: [{
       type: 'graph',
       layout: layoutType.value,
@@ -757,12 +854,12 @@ onUnmounted(() => {
 }
 
 .left-panel {
-  width: 280px;
+  width: 300px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  overflow-y: auto;
+  min-height: 0;
 }
 
 .center-panel {
@@ -777,12 +874,16 @@ onUnmounted(() => {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.25rem;
   overflow-y: auto;
 }
 
 .panel-card {
   flex-shrink: 0;
+}
+
+.panel-card :deep(.el-card__body) {
+  padding: 1.25rem;
 }
 
 .panel-header {
@@ -792,17 +893,90 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--text-base);
+  color: var(--text-primary);
+}
+
+/* 计数徽标：与页面其它统计数字保持同一视觉语言 */
+.count-badge {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--primary-50);
+  color: var(--primary-600);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+
+/* ── 列表卡片：等分左栏高度，列表区自身滚动 ── */
+.list-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.list-card :deep(.el-card__body) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0.875rem 1rem 1rem;
+}
+
+.list-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  flex-shrink: 0;
+}
+
+.list-toolbar .el-input {
+  flex: 1;
+}
+
+.type-filter {
+  width: 108px;
+  flex-shrink: 0;
+}
+
+.option-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+/* ── 实体列表 ── */
 .entity-list {
-  max-height: 300px;
+  flex: 1;
+  min-height: 96px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 -0.25rem;
+  padding: 0 0.25rem;
 }
 
 .entity-item {
-  padding: 0.75rem;
-  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all 0.2s;
-  margin-bottom: 0.5rem;
+  transition: all var(--transition-fast);
+  border-left: 2px solid transparent;
 }
 
 .entity-item:hover {
@@ -810,61 +984,160 @@ onUnmounted(() => {
 }
 
 .entity-item.active {
-  background: rgba(64, 158, 255, 0.1);
-  border: 1px solid var(--primary-500);
+  background: var(--bg-active);
+  border-left-color: var(--entity-color, var(--primary-500));
 }
 
-.entity-info {
+.entity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--entity-color, var(--primary-500));
+}
+
+.entity-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .entity-name {
-  font-size: 0.9rem;
-  color: var(--text-primary);
+  font-size: var(--text-base);
   font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+.entity-type {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.entity-degree {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.entity-degree .el-icon {
+  font-size: 12px;
+}
+
+/* ── 关系列表：两行结构，避免长实体名横向溢出 ── */
 .relation-list {
-  max-height: 240px;
+  flex: 1;
+  min-height: 96px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 -0.25rem;
+  padding: 0 0.25rem;
 }
 
 .relation-item {
-  padding: 0.6rem 0.2rem;
-  border-bottom: 1px solid var(--border-light);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast);
 }
 
-.relation-content {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.85rem;
+.relation-item:hover {
+  background: var(--bg-hover);
 }
 
-.relation-source,
-.relation-target {
-  color: var(--primary-500);
+.rel-line {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.rel-line-target {
+  margin-top: 2px;
+}
+
+.rel-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.rel-name {
+  min-width: 0;
+  font-size: var(--text-sm);
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.relation-type {
-  color: var(--success-500);
+/* 关系类型：中性灰色胶囊，不与实体类型色抢视觉 */
+.rel-type {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--gray-100);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.rel-connector {
+  flex-shrink: 0;
+  width: 10px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1;
+}
+
+.relation-delete {
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  margin-left: auto;
+  padding: 2px;
+  flex-shrink: 0;
+}
+
+.relation-item:hover .relation-delete {
+  opacity: 1;
 }
 
 .graph-card {
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+}
+
+.graph-card :deep(.el-card__body) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+}
+
+.graph-wrapper {
+  flex: 1;
+  position: relative;
+  min-height: 400px;
 }
 
 .graph-container {
-  flex: 1;
-  min-height: 500px;
+  width: 100%;
+  height: 100%;
 }
 
 .graph-toolbar {
@@ -872,20 +1145,26 @@ onUnmounted(() => {
   gap: 0.5rem;
 }
 
-.graph-legend {
-  display: flex;
-  gap: 1rem;
-  padding: 0.75rem;
-  flex-wrap: wrap;
-  border-top: 1px solid var(--border-light);
+.graph-legend-overlay {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
+  border-radius: 8px;
+  padding: 10px 14px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  z-index: 10;
+  max-width: 200px;
 }
 
-.legend-item {
+.graph-legend-overlay .legend-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-regular);
+  padding: 2px 0;
 }
 
 .legend-dot {
@@ -895,14 +1174,14 @@ onUnmounted(() => {
 }
 
 .entity-detail {
-  padding: 0.5rem 0;
+  padding: 0.75rem 0;
 }
 
 .property-item {
   display: flex;
   gap: 0.5rem;
-  margin: 0.25rem 0;
-  font-size: 0.9rem;
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
 }
 
 .property-key {
@@ -921,13 +1200,14 @@ onUnmounted(() => {
 }
 
 .stats-info {
-  padding: 0.5rem 0;
+  padding: 0.25rem 0;
 }
 
 .stat-item {
   display: flex;
   justify-content: space-between;
-  padding: 0.75rem 0;
+  align-items: center;
+  padding: 0.65rem 0;
   border-bottom: 1px solid var(--border-light);
 }
 
@@ -937,12 +1217,13 @@ onUnmounted(() => {
 
 .stat-label {
   color: var(--text-secondary);
+  font-size: 0.85rem;
 }
 
 .stat-value {
   font-weight: 600;
   color: var(--primary-500);
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 
 .type-editor {
