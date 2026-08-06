@@ -99,5 +99,57 @@
     "update_time": "2026-08-04 16:27:17.072121",
     "status": "活跃",
     "is_default": false
+  },
+  {
+    "id": "ont_15750e87",
+    "name": "西游记",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "name": "人物",
+        "color": "#5470c6"
+      },
+      {
+        "name": "地点",
+        "color": "#91cc75"
+      },
+      {
+        "name": "物品",
+        "color": "#fac858"
+      },
+      {
+        "name": "事件",
+        "color": "#ee6666"
+      },
+      {
+        "name": "法术",
+        "color": "#73c0de"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "参与"
+      },
+      {
+        "name": "发生于"
+      },
+      {
+        "name": "拥有"
+      },
+      {
+        "name": "使用"
+      },
+      {
+        "name": "导致"
+      },
+      {
+        "name": "关联"
+      }
+    ],
+    "create_time": "2026-08-05 16:41:02.591421",
+    "update_time": "2026-08-05 16:41:02.591421",
+    "status": "活跃",
+    "is_default": false
   }
 ]
