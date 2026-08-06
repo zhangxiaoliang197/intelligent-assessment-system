@@ -1457,6 +1457,7 @@ async def run_skill_workflow(
     record_execution: bool = True,
     include_synthesis: bool = True,
     timeout_seconds: int | None = None,
+    ontology_id: str = "",
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """Execute a Skill with a durable run id and cooperative cancellation.
 
@@ -1509,6 +1510,7 @@ async def run_skill_workflow(
                     "skill": _skill_snapshot(skill),
                     "metadata": {
                         "includeSynthesis": include_synthesis,
+                        "ontologyId": ontology_id,
                         "timeoutSeconds": effective_timeout,
                         "orchestrationMode": orchestration.get("mode", "sequential"),
                     },

@@ -239,6 +239,29 @@ def _get_llm_config():
     return main_mod.load_llm_config()
 
 
+def _open_llm_request(req, *, timeout: int, ssl_ctx):
+    """Open an LLM request without silently inheriting a machine-wide proxy.
+
+    API keys must not be sent through an unrelated proxy by default. Deployments
+    that intentionally require an HTTP(S) proxy can opt in with
+    ``LLM_TRUST_ENV=true``.
+    """
+    import urllib.request
+
+    trust_setting = os.getenv("LLM_TRUST_ENV", "false").strip().lower()
+    trust_env = trust_setting in {"1", "true", "yes", "on"}
+    proxy_handler = (
+        urllib.request.ProxyHandler()
+        if trust_env
+        else urllib.request.ProxyHandler({})
+    )
+    opener = urllib.request.build_opener(
+        proxy_handler,
+        urllib.request.HTTPSHandler(context=ssl_ctx),
+    )
+    return opener.open(req, timeout=timeout)
+
+
 def _sync_llm_call(system_prompt: str, user_message: str) -> str:
     import urllib.request
     import urllib.error
@@ -286,7 +309,7 @@ def _sync_llm_call(system_prompt: str, user_message: str) -> str:
         ssl_ctx.verify_mode = ssl.CERT_NONE
 
     try:
-        with urllib.request.urlopen(req, timeout=180, context=ssl_ctx) as resp:
+        with _open_llm_request(req, timeout=180, ssl_ctx=ssl_ctx) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return data["choices"][0]["message"]["content"]
     except urllib.error.HTTPError as e:
@@ -388,8 +411,8 @@ async def _async_stream_llm_internal(
         """线程池工作线程，读取 SSE 行并将 token 送入队列"""
         nonlocal full_text
         try:
-            with urllib.request.urlopen(req, timeout=300,
-                                        context=ssl_ctx) as resp:
+            with _open_llm_request(req, timeout=300,
+                                   ssl_ctx=ssl_ctx) as resp:
                 for raw in resp:
                     line = raw.decode("utf-8", errors="replace").strip()
                     if not line.startswith("data: "):

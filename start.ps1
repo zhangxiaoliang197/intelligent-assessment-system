@@ -8,6 +8,21 @@ $root = "$PSScriptRoot"
 
 # ── 工具路径检测（从 PATH / 常见安装位置自动查找）──
 
+# Python：优先使用项目虚拟环境，避免命中 WindowsApps 的无效应用别名。
+$pythonExe = "$root\.venv\Scripts\python.exe"
+if (-not (Test-Path $pythonExe)) {
+    $pythonExe = $null
+    try {
+        $pythonCandidate = (Get-Command python -ErrorAction Stop).Source
+        if ($pythonCandidate -and $pythonCandidate -notmatch "\\WindowsApps\\") {
+            $pythonExe = $pythonCandidate
+        }
+    } catch {}
+}
+if (-not $pythonExe) {
+    Write-Host "[WARN] Python 未找到，Python 服务将跳过" -ForegroundColor Yellow
+}
+
 # Node.js：从 PATH 查找
 $nodeBin = $null
 try { $nodeBin = Split-Path -Parent (Get-Command node -ErrorAction Stop).Source } catch {}
@@ -36,8 +51,14 @@ try {
     Write-Host "[WARN] Maven 未在 PATH 中找到，admin-service 将跳过编译" -ForegroundColor Yellow
 }
 
-# 将工具加入 PATH，确保子进程可继承
-$extraPath = [string]::Join(";", @($nodeBin, $javaBin, if ($mvnHome) { "$mvnHome\bin" }) | Where-Object { $_ })
+# 将工具加入 PATH，确保子进程可继承。
+# Windows PowerShell 5.1 不支持在数组字面量中直接使用 if 表达式，
+# 因此先逐项构建路径列表。
+$pathParts = @($nodeBin, $javaBin) | Where-Object { $_ }
+if ($mvnHome) {
+    $pathParts += "$mvnHome\bin"
+}
+$extraPath = [string]::Join(";", $pathParts)
 if ($extraPath) {
     $env:Path = "$extraPath;$env:Path"
 }
@@ -72,8 +93,12 @@ $pyServices = @(
 )
 foreach ($svc in $pyServices) {
     Kill-Port $svc.Port
-    Start-Process -FilePath python -ArgumentList "-m uvicorn main:app --host 0.0.0.0 --port $($svc.Port)" -WorkingDirectory "$root\$($svc.Dir)" -WindowStyle Hidden
-    Write-Host "  Started $($svc.Name) (:$($svc.Port))" -ForegroundColor Green
+    if ($pythonExe) {
+        Start-Process -FilePath $pythonExe -ArgumentList "-m uvicorn main:app --host 0.0.0.0 --port $($svc.Port)" -WorkingDirectory "$root\$($svc.Dir)" -WindowStyle Hidden
+        Write-Host "  Started $($svc.Name) (:$($svc.Port))" -ForegroundColor Green
+    } else {
+        Write-Host "  [SKIP] $($svc.Name) - Python 不可用" -ForegroundColor Yellow
+    }
 }
 
 # Java services

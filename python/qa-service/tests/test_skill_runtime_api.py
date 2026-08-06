@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import os
 import sys
 import tempfile
@@ -18,6 +19,7 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from agents import skill_execution_store as runtime_store  # noqa: E402
+from agents.skill_runner import run_skill_workflow  # noqa: E402
 from skill_api import skill_api_router  # noqa: E402
 
 
@@ -49,6 +51,10 @@ class SkillRuntimeApiSmokeTests(unittest.TestCase):
         self.assertTrue(health.json()["skillCatalog"]["ready"])
         self.assertEqual(30, health.json()["skillCatalog"]["skillCount"])
         self.assertEqual(response.status_code, 200, response.text)
+
+    def test_evaluation_api_skill_call_contract_accepts_ontology_id(self):
+        """Keep evaluation_api and the Skill runner keyword contract aligned."""
+        self.assertIn("ontology_id", inspect.signature(run_skill_workflow).parameters)
 
     def test_preflight_and_trial_contracts(self):
         preflight = {

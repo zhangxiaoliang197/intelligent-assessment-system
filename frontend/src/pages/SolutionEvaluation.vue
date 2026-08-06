@@ -99,8 +99,9 @@
               <el-option
                 v-for="ds in dataSources"
                 :key="ds.id"
-                :label="ds.name"
+                :label="ds.status === 'available' ? ds.name : `${ds.name}（不可用）`"
                 :value="ds.id"
+                :disabled="ds.status !== 'available'"
               />
             </el-select>
             <el-button size="small" type="primary" @click="showDataSourceDialog">
@@ -1592,9 +1593,7 @@ const restoreSessionContext = (item: any = {}) => {
   const databaseId = lastAssistantMessage?.databaseId || lastAssistantMessage?.result?.database_used || ''
   if (databaseId) {
     const source = dataSources.value.find(sourceItem => sourceItem.id === databaseId)
-    if (dataSources.value.length && !source) {
-      selectedDataSourceId.value = null
-      selectedDataSourceName.value = ''
+    if (dataSources.value.length && (!source || source.status !== 'available')) {
       return
     }
     selectedDataSourceId.value = databaseId
@@ -1732,8 +1731,13 @@ const initData = async () => {
   if (dsResp?.dataSources) {
     dataSources.value = dsResp.dataSources
     if (dataSources.value.length > 0) {
-      selectedDataSourceId.value = dataSources.value[0].id
-      selectedDataSourceName.value = dataSources.value[0].name || ''
+      const preferredSource = dataSources.value.find(
+        (source: any) => source.status === 'available' && source.dbName === 'demo_business'
+      ) || dataSources.value.find((source: any) => source.status === 'available')
+      if (preferredSource) {
+        selectedDataSourceId.value = preferredSource.id
+        selectedDataSourceName.value = preferredSource.name || ''
+      }
     }
   }
   if (skillsCatalog?.skills) evaluationSkills.value = skillsCatalog.skills
