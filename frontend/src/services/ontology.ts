@@ -39,6 +39,11 @@ export const setDefaultOntology = (id: string) => {
   return api.post(`/ontology/${id}/set-default`)
 }
 
+/** 归档本体 */
+export const archiveOntology = (id: string) => {
+  return api.post(`/ontology/${id}/archive`)
+}
+
 /** 导入本体 */
 export const importOntology = (file: File) => {
   const fd = new FormData()

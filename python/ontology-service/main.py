@@ -1907,6 +1907,24 @@ async def set_default_ontology(ontology_id: str):
     return {"success": True, "message": f"已将「{ont.name}」设为默认本体"}
 
 
+@app.post("/ontology/{ontology_id}/archive")
+async def archive_ontology(ontology_id: str):
+    """将指定本体归档（status 置为「归档」），归档后不再作为默认本体。
+
+    归档仅改变状态标记，不影响实体/关系数据；前端列表可通过「归档」筛选查看。
+    """
+    async with db_lock:
+        ont = _get_ontology_or_404(ontology_id)
+        ont.status = "归档"
+        ont.update_time = datetime.now()
+        # 归档本体不应继续作为其他服务默认取用的默认本体
+        ont.is_default = False
+        save_index()
+        save_ontology(ontology_id)
+
+    return {"success": True, "message": f"已将「{ont.name}」归档"}
+
+
 @app.get("/ontology/{ontology_id}/bindings")
 async def get_bindings(ontology_id: str):
     """返回该本体所有绑定的紧凑结构（仅含已绑定的实体/关系）。

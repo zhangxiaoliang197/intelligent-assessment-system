@@ -9,7 +9,7 @@
         </div>
         <div class="header-actions">
           <el-button @click="refreshData" :icon="Refresh">刷新</el-button>
-          <el-button type="primary" @click="showCreateDialog = true" :icon="Plus">新建本体</el-button>
+          <el-button type="primary" @click="showCreateMethodDialog = true" :icon="Plus">新建本体</el-button>
         </div>
       </div>
 
@@ -50,16 +50,11 @@
             style="width: 280px"
           />
           <el-select v-model="filterStatus" placeholder="选择状态" clearable style="width: 130px">
+            <el-option label="全部" value="all" />
             <el-option label="活跃" value="活跃" />
             <el-option label="归档" value="归档" />
           </el-select>
           <div class="toolbar-spacer" />
-          <el-button type="primary" @click="showBuildDialog = true" :icon="DocumentAdd">
-            文档构建
-          </el-button>
-          <el-upload :show-file-list="false" :before-upload="handleImportFile" accept=".json">
-            <el-button :icon="Upload">导入 JSON</el-button>
-          </el-upload>
         </div>
 
         <!-- 本体卡片网格 -->
@@ -97,7 +92,7 @@
             </div>
           </div>
           <el-empty v-if="!filteredOntologies.length && !loading" description="暂无本体模型" :image-size="120">
-            <el-button type="primary" @click="showCreateDialog = true">创建第一个本体</el-button>
+            <el-button type="primary" @click="showCreateMethodDialog = true">创建第一个本体</el-button>
           </el-empty>
         </div>
       </div>
@@ -141,6 +136,34 @@
           </div>
         </div>
       </div>
+
+      <!-- 新建方式选择对话框 -->
+      <el-dialog v-model="showCreateMethodDialog" title="选择新建方式" width="600px">
+        <p class="create-method-tip">请选择本体的创建方式：</p>
+        <div class="create-method-grid">
+          <div class="method-card" @click="handleCreateMethod('build')">
+            <div class="method-icon orange">
+              <el-icon :size="28"><Document /></el-icon>
+            </div>
+            <h4>文档构建</h4>
+            <p>上传文档，AI 自动分析提取概念与关系，生成候选本体</p>
+          </div>
+          <div class="method-card" @click="handleCreateMethod('import')">
+            <div class="method-icon green">
+              <el-icon :size="28"><Upload /></el-icon>
+            </div>
+            <h4>导入 JSON</h4>
+            <p>导入已有本体导出文件，创建新的本体模型</p>
+          </div>
+          <div class="method-card" @click="handleCreateMethod('manual')">
+            <div class="method-icon blue">
+              <el-icon :size="28"><EditPen /></el-icon>
+            </div>
+            <h4>手动构建</h4>
+            <p>自行定义本体名称、描述、实体类型与关系类型</p>
+          </div>
+        </div>
+      </el-dialog>
 
       <!-- 新建/编辑本体对话框 -->
       <el-dialog v-model="showCreateDialog" :title="editingOntology ? '编辑本体模型' : '新建本体模型'" width="700px">
@@ -304,7 +327,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Box, SetUp,
-  Refresh, Plus, DocumentAdd, Upload, UploadFilled, ArrowDown
+  Refresh, Plus, Document, Upload, UploadFilled, EditPen, ArrowDown
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import Layout from '@/components/Layout.vue'
@@ -331,7 +354,7 @@ const creatingBuild = ref(false)
 const ontologies = ref<any[]>([])
 const buildTasks = ref<any[]>([])
 const searchQuery = ref('')
-const filterStatus = ref('')
+const filterStatus = ref('all')
 
 const stats = ref({
   total_ontologies: 0,
@@ -344,6 +367,7 @@ const stats = ref({
 const showCreateDialog = ref(false)
 const showImportDialog = ref(false)
 const showBuildDialog = ref(false)
+const showCreateMethodDialog = ref(false)
 
 // 表单数据
 const editingOntology = ref<any>(null)
@@ -379,7 +403,7 @@ const filteredOntologies = computed(() => {
   return ontologies.value.filter(ont => {
     const matchSearch = !searchQuery.value || 
       ont.name.toLowerCase().includes(searchQuery.value.toLowerCase())
-    const matchStatus = !filterStatus.value || ont.status === filterStatus.value
+    const matchStatus = filterStatus.value === 'all' || !filterStatus.value || ont.status === filterStatus.value
     return matchSearch && matchStatus
   })
 })
@@ -438,6 +462,19 @@ const handleCardAction = (cmd: string, ont: any) => {
   else if (cmd === 'export') exportOntology(ont)
   else if (cmd === 'default') setDefault(ont)
   else if (cmd === 'delete') deleteOntology(ont)
+}
+
+// 新建方式选择：根据用户选择打开对应对话框
+const handleCreateMethod = (type: string) => {
+  showCreateMethodDialog.value = false
+  if (type === 'build') {
+    showBuildDialog.value = true
+  } else if (type === 'import') {
+    showImportDialog.value = true
+  } else if (type === 'manual') {
+    editingOntology.value = null
+    showCreateDialog.value = true
+  }
 }
 
 const editOntology = (ont: any) => {
@@ -525,21 +562,6 @@ const exportOntology = async (ont: any) => {
 }
 
 // ── 导入操作 ──
-const handleImportFile = (file: File) => {
-  importFile.value = file
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    try {
-      importPreview.value = JSON.parse(e.target?.result as string)
-    } catch {
-      importPreview.value = null
-    }
-  }
-  reader.readAsText(file)
-  showImportDialog.value = true
-  return false
-}
-
 const handleImportFileChange = (file: any) => {
   importFile.value = file.raw
   const reader = new FileReader()
@@ -907,5 +929,60 @@ onMounted(() => {
 
 .import-preview {
   margin-top: 1rem;
+}
+
+.create-method-tip {
+  margin: 0 0 1rem 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.create-method-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+.method-card {
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 1.25rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.method-card:hover {
+  border-color: var(--primary-300);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.method-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 0.75rem auto;
+}
+
+.method-icon.orange { background: rgba(230, 162, 60, 0.12); color: #e6a23c; }
+.method-icon.green { background: rgba(103, 194, 58, 0.12); color: #67c23a; }
+.method-icon.blue { background: rgba(64, 158, 255, 0.12); color: #409eff; }
+
+.method-card h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.method-card p {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-tertiary);
 }
 </style>

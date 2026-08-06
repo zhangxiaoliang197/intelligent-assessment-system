@@ -10,8 +10,9 @@
         </div>
         <div class="header-actions">
           <el-button @click="refreshData" :icon="Refresh">刷新</el-button>
-          <el-button @click="exportOntology" :icon="Download">导出</el-button>
           <el-button @click="showEditDialog = true" :icon="Edit">编辑</el-button>
+          <el-button @click="archiveOntology" :icon="FolderChecked">归档</el-button>
+          <el-button @click="exportOntology" :icon="Download">导出</el-button>
         </div>
       </div>
 
@@ -357,7 +358,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowLeft, Refresh, Download, Edit, ZoomIn, ZoomOut, RefreshRight, Delete,
+  ArrowLeft, Refresh, Download, Edit, FolderChecked, ZoomIn, ZoomOut, RefreshRight, Delete,
   Plus, Search, Connection
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -367,6 +368,7 @@ import {
   getOntology,
   updateOntology,
   exportOntology as exportOntologyApi,
+  archiveOntology as archiveOntologyApi,
   getEntityList,
   getRelationList,
   getGraphData
@@ -758,6 +760,23 @@ const submitEdit = async () => {
     ElMessage.error(e.serverMessage || '更新失败')
   } finally {
     submitting.value = false
+  }
+}
+
+// 归档本体：确认后调用后端归档接口，归档后返回列表页
+const archiveOntology = async () => {
+  try {
+    await ElMessageBox.confirm(`确定将本体「${ontology.value?.name || ''}」归档吗？归档后不再作为默认本体，可在列表的「归档」筛选中查看。`, '归档确认', {
+      confirmButtonText: '归档', cancelButtonText: '取消', type: 'warning'
+    })
+  } catch { return }
+
+  try {
+    await archiveOntologyApi(ontologyId)
+    ElMessage.success('归档成功')
+    goBack()
+  } catch (e: any) {
+    ElMessage.error(e.serverMessage || '归档失败')
   }
 }
 
