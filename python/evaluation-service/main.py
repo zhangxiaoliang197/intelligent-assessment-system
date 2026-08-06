@@ -9,6 +9,11 @@ from datetime import datetime
 import uuid
 import json
 import os
+import logging
+
+from logging_config import setup_logging
+setup_logging("evaluation-service")
+logger = logging.getLogger("evaluation-service")
 
 app = FastAPI(
     title="评估分析服务",
@@ -44,14 +49,21 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 def load_schemes():
     if os.path.exists(SCHEMES_FILE):
-        with open(SCHEMES_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            return [EvaluationScheme(**item) for item in data]
+        try:
+            with open(SCHEMES_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return [EvaluationScheme(**item) for item in data]
+        except Exception:
+            logger.exception("加载评估方案文件失败: %s", SCHEMES_FILE)
+            return []
     return []
 
 def save_schemes():
-    with open(SCHEMES_FILE, 'w', encoding='utf-8') as f:
-        json.dump([s.dict() for s in schemes_db], f, ensure_ascii=False, indent=2, default=str)
+    try:
+        with open(SCHEMES_FILE, 'w', encoding='utf-8') as f:
+            json.dump([s.dict() for s in schemes_db], f, ensure_ascii=False, indent=2, default=str)
+    except Exception:
+        logger.exception("保存评估方案文件失败: %s", SCHEMES_FILE)
 
 schemes_db = load_schemes()
 
@@ -117,6 +129,7 @@ async def get_scheme(scheme_id: str):
 
 @app.post("/evaluation/scheme/{scheme_id}/execute")
 async def execute_scheme(scheme_id: str):
+    logger.info("执行评估方案: id=%s", scheme_id)
     for scheme in schemes_db:
         if scheme.id == scheme_id:
             scheme.status = "评估中"
@@ -143,8 +156,10 @@ async def execute_scheme(scheme_id: str):
             scheme.update_time = datetime.now()
 
             save_schemes()
+            logger.info("评估完成: id=%s, score=%.1f, grade=%s", scheme_id, result["score"], result["grade"])
             return result
 
+    logger.warning("评估方案不存在: id=%s", scheme_id)
     raise HTTPException(status_code=404, detail="评估方案不存在")
 
 @app.delete("/evaluation/scheme/{scheme_id}")
@@ -153,10 +168,13 @@ async def delete_scheme(scheme_id: str):
         if scheme.id == scheme_id:
             schemes_db.pop(i)
             save_schemes()
+            logger.info("删除评估方案: id=%s", scheme_id)
             return {"message": "评估方案已删除"}
 
+    logger.warning("评估方案不存在: id=%s", scheme_id)
     raise HTTPException(status_code=404, detail="评估方案不存在")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10255)
+    logger.info("evaluation-service 启动于 0.0.0.0:10255")
+    uvicorn.run(app, host="0.0.0.0", port=10255, log_config=None)

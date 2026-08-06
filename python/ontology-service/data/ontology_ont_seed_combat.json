@@ -1,0 +1,322 @@
+{
+  "ontology": {
+    "id": "ont_seed_combat",
+    "name": "作战效能评估本体",
+    "description": "作战指挥场景的示例本体，包含作战效能、打击/生存/保障能力及相关指标概念",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "name": "概念",
+        "color": "#5470c6"
+      },
+      {
+        "name": "实体",
+        "color": "#91cc75"
+      },
+      {
+        "name": "属性",
+        "color": "#fac858"
+      },
+      {
+        "name": "事件",
+        "color": "#ee6666"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "包含"
+      },
+      {
+        "name": "关联"
+      },
+      {
+        "name": "影响"
+      },
+      {
+        "name": "衡量"
+      },
+      {
+        "name": "继承"
+      }
+    ],
+    "create_time": "2026-07-31 11:15:13.526260",
+    "update_time": "2026-07-31 14:10:17.251933",
+    "status": "活跃"
+  },
+  "entities": [
+    {
+      "id": "ent_seed_00",
+      "ontology_id": "ont_seed_combat",
+      "name": "作战效能",
+      "type": "概念",
+      "properties": {
+        "定义": "综合评估指标",
+        "重要性": "高"
+      },
+      "create_time": "2026-07-31 11:15:13.526260",
+      "update_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "ent_seed_01",
+      "ontology_id": "ont_seed_combat",
+      "name": "打击能力",
+      "type": "概念",
+      "properties": {
+        "定义": "武器打击效果",
+        "权重": "0.4"
+      },
+      "create_time": "2026-07-31 11:15:13.526260",
+      "update_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "ent_seed_02",
+      "ontology_id": "ont_seed_combat",
+      "name": "生存能力",
+      "type": "概念",
+      "properties": {
+        "定义": "存活概率",
+        "权重": "0.3"
+      },
+      "create_time": "2026-07-31 11:15:13.526260",
+      "update_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "ent_seed_03",
+      "ontology_id": "ont_seed_combat",
+      "name": "保障能力",
+      "type": "概念",
+      "properties": {
+        "定义": "后勤保障水平",
+        "权重": "0.3"
+      },
+      "create_time": "2026-07-31 11:15:13.526260",
+      "update_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "ent_seed_04",
+      "ontology_id": "ont_seed_combat",
+      "name": "命中率",
+      "type": "属性",
+      "properties": {
+        "公式": "命中/射击*100%",
+        "单位": "%"
+      },
+      "create_time": "2026-07-31 11:15:13.526260",
+      "update_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "ent_seed_05",
+      "ontology_id": "ont_seed_combat",
+      "name": "摧毁率",
+      "type": "属性",
+      "properties": {
+        "公式": "摧毁/命中*100%",
+        "单位": "%"
+      },
+      "create_time": "2026-07-31 11:15:13.526260",
+      "update_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "ent_seed_06",
+      "ontology_id": "ont_seed_combat",
+      "name": "战损率",
+      "type": "属性",
+      "properties": {
+        "公式": "损失/总数*100%",
+        "单位": "%"
+      },
+      "create_time": "2026-07-31 11:15:13.526260",
+      "update_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "ent_seed_07",
+      "ontology_id": "ont_seed_combat",
+      "name": "红方部队",
+      "type": "实体",
+      "properties": {
+        "阵营": "红方",
+        "类型": "合成营"
+      },
+      "create_time": "2026-07-31 11:15:13.526260",
+      "update_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "ent_seed_08",
+      "ontology_id": "ont_seed_combat",
+      "name": "蓝方部队",
+      "type": "实体",
+      "properties": {
+        "阵营": "蓝方",
+        "类型": "机步连"
+      },
+      "create_time": "2026-07-31 11:15:13.526260",
+      "update_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "ent_seed_09",
+      "ontology_id": "ont_seed_combat",
+      "name": "武器平台",
+      "type": "实体",
+      "properties": {
+        "类别": "装备",
+        "状态": "在役"
+      },
+      "create_time": "2026-07-31 11:15:13.526260",
+      "update_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "ent_seed_10",
+      "ontology_id": "ont_seed_combat",
+      "name": "弹药消耗",
+      "type": "事件",
+      "properties": {
+        "单位": "发",
+        "阶段": "全期"
+      },
+      "create_time": "2026-07-31 11:15:13.526260",
+      "update_time": "2026-07-31 11:15:13.526260"
+    }
+  ],
+  "relations": [
+    {
+      "id": "rel_seed_00",
+      "ontology_id": "ont_seed_combat",
+      "source_id": "ent_seed_00",
+      "target_id": "ent_seed_01",
+      "relation_type": "包含",
+      "properties": {},
+      "weight": 1.0,
+      "create_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "rel_seed_01",
+      "ontology_id": "ont_seed_combat",
+      "source_id": "ent_seed_00",
+      "target_id": "ent_seed_02",
+      "relation_type": "包含",
+      "properties": {},
+      "weight": 1.0,
+      "create_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "rel_seed_02",
+      "ontology_id": "ont_seed_combat",
+      "source_id": "ent_seed_00",
+      "target_id": "ent_seed_03",
+      "relation_type": "包含",
+      "properties": {},
+      "weight": 1.0,
+      "create_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "rel_seed_03",
+      "ontology_id": "ont_seed_combat",
+      "source_id": "ent_seed_01",
+      "target_id": "ent_seed_04",
+      "relation_type": "影响",
+      "properties": {},
+      "weight": 0.8,
+      "create_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "rel_seed_04",
+      "ontology_id": "ont_seed_combat",
+      "source_id": "ent_seed_01",
+      "target_id": "ent_seed_05",
+      "relation_type": "影响",
+      "properties": {},
+      "weight": 0.8,
+      "create_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "rel_seed_05",
+      "ontology_id": "ont_seed_combat",
+      "source_id": "ent_seed_02",
+      "target_id": "ent_seed_06",
+      "relation_type": "影响",
+      "properties": {},
+      "weight": 0.7,
+      "create_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "rel_seed_06",
+      "ontology_id": "ont_seed_combat",
+      "source_id": "ent_seed_03",
+      "target_id": "ent_seed_06",
+      "relation_type": "影响",
+      "properties": {},
+      "weight": 0.5,
+      "create_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "rel_seed_07",
+      "ontology_id": "ont_seed_combat",
+      "source_id": "ent_seed_07",
+      "target_id": "ent_seed_09",
+      "relation_type": "关联",
+      "properties": {},
+      "weight": 0.6,
+      "create_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "rel_seed_08",
+      "ontology_id": "ont_seed_combat",
+      "source_id": "ent_seed_08",
+      "target_id": "ent_seed_09",
+      "relation_type": "关联",
+      "properties": {},
+      "weight": 0.6,
+      "create_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "rel_seed_09",
+      "ontology_id": "ont_seed_combat",
+      "source_id": "ent_seed_07",
+      "target_id": "ent_seed_08",
+      "relation_type": "关联",
+      "properties": {},
+      "weight": 0.9,
+      "create_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "rel_seed_10",
+      "ontology_id": "ont_seed_combat",
+      "source_id": "ent_seed_09",
+      "target_id": "ent_seed_04",
+      "relation_type": "衡量",
+      "properties": {},
+      "weight": 0.7,
+      "create_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "rel_seed_11",
+      "ontology_id": "ont_seed_combat",
+      "source_id": "ent_seed_09",
+      "target_id": "ent_seed_05",
+      "relation_type": "衡量",
+      "properties": {},
+      "weight": 0.7,
+      "create_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "rel_seed_12",
+      "ontology_id": "ont_seed_combat",
+      "source_id": "ent_seed_10",
+      "target_id": "ent_seed_01",
+      "relation_type": "衡量",
+      "properties": {},
+      "weight": 0.6,
+      "create_time": "2026-07-31 11:15:13.526260"
+    },
+    {
+      "id": "rel_57226769",
+      "ontology_id": "ont_seed_combat",
+      "source_id": "ent_seed_08",
+      "target_id": "ent_seed_07",
+      "relation_type": "关联",
+      "properties": {},
+      "weight": 1.0,
+      "create_time": "2026-07-31 14:10:17.251877"
+    }
+  ]
+}

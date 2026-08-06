@@ -39,12 +39,16 @@
 
 
 ## 编译 Java 服务 (首次/代码更新后)
+前提：JDK 17 与 Maven 已加入系统 PATH（start.ps1 会通过 Get-Command 自动发现，禁止硬编码绝对路径）。
 ```powershell
-$env:JAVA_HOME = "C:\Program Files\Java\jdk-17"
-C:\tools\apache-maven-3.9.9\bin\mvn package -DskipTests -q  # 在 admin-service 目录下执行
+# 在 admin-service 目录下执行；若 mvn 不在 PATH，请先将其 bin 目录加入 PATH
+mvn package -DskipTests -q
 ```
 
 ## 启动全部 7 个服务
+
+推荐直接运行 `.\start.ps1`直接启动项目，报错查看日志分析
+> 注意：start.ps1 必须保存为 UTF-8 with BOM，否则 PowerShell 5 解析中文注释会报错。
 
 ### Python 服务 (5个) - 沙箱可执行
 ```powershell
@@ -54,21 +58,26 @@ Start-Process python -ArgumentList "-u main.py" -WorkingDirectory "$r\python\<se
 服务列表: knowledge(10252), qa(10253), indicator(10254), evaluation(10255), ontology(10256)
 
 ### Java 服务 (1个) - 用户终端执行
+推荐直接运行 `.\start.ps1`（自动发现 JDK/Maven/Node/Qdrant，并按 LOG_ENV 注入 SPRING_PROFILES_ACTIVE）。
+手动启动时用 Get-Command 动态发现工具路径（禁止硬编码绝对路径）：
 ```powershell
-# 必须用 javaw + 完整绝对路径，Program Files 中的空格用反引号转义
-C:\Program` Files\Java\jdk-17\bin\javaw -jar "d:\code\intelligent-assessment-system\java\admin-service\target\admin-service-1.0.0.jar"
+$javaExe = (Get-Command java).Source      # 或用 javaw.exe：与 java.exe 同目录
+$jar = "d:\code\intelligent-assessment-system\java\admin-service\target\admin-service-1.0.0.jar"
+Start-Process -FilePath $javaExe -ArgumentList "-jar `"$jar`"" -WorkingDirectory "d:\code\intelligent-assessment-system"
 ```
+> 注意：Spring profile 由 start.ps1 从 LOG_ENV 推导注入；手动启动时需自行 `$env:SPRING_PROFILES_ACTIVE="dev"`（或 prod），否则 logback 落到 default profile 无文件日志。
 
 ### 前端 - 沙箱可执行
 ```powershell
-Start-Process "D:\Program Files\nodejs\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "d:\code\intelligent-assessment-system\frontend" -WindowStyle Hidden
+$nodeBin = Split-Path (Get-Command node).Source
+Start-Process "$nodeBin\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "d:\code\intelligent-assessment-system\frontend" -WindowStyle Hidden
 ```
 
 ## 常见问题速查
 | 问题 | 原因 | 解决 |
 |------|------|------|
-| `无效的标记: --release` | JAVA_HOME 指向 JDK 8 | `$env:JAVA_HOME="C:\Program Files\Java\jdk-17"` |
-| `mvn 不是命令` | Maven 不在 PATH | 用 `C:\tools\apache-maven-3.9.9\bin\mvn` |
+| `无效的标记: --release` | JAVA_HOME 指向 JDK 8 | 确认 `Get-Command java` 指向 JDK 17，重装或修正 PATH |
+| `mvn 不是命令` | Maven 不在 PATH | 确认 `Get-Command mvn`，未安装请装 Maven 并将 bin 加入 PATH |
 | Java 启动后闪退 | `Start-Process java` 不兼容 / 用了 JDK 8 | 用 `javaw` + 绝对路径 |
 | `Access denied (MySQL)` | MySQL 密码错误 | 密码通过 .env 或环境变量配置，application.yml 默认值为 root |
 | `application.yml` | MySQL 密码配置 | `${MYSQL_PASSWORD:root}`，实际值通过 .env 或环境变量覆盖 |
@@ -98,62 +107,18 @@ Start-Process "D:\Program Files\nodejs\npx.cmd" -ArgumentList "vite --host" -Wor
 # 代码编写规范
 
 ## 一、注释语言规范（强制）
-
-### 1.1 核心规则
-- **所有注释、docstring、函数说明、代码注释必须使用中文**
+- 所有注释、docstring、函数说明、代码注释必须使用中文
 - 变量名、函数名、类名、文件名使用英文（驼峰命名）
-- 日志输出、错误信息、API响应消息使用中文
+- 日志输出、错误信息、API 响应消息使用中文
 
-### 1.2 正例
 ```python
-# ✅ 正确：中文注释
+# ✅ 中文注释
 def _classify_query(query: str) -> str:
-    """先调用 qa-service 的 LLM 分类接口，失败则用关键词兜底。
+    """先调用 qa-service 的 LLM 分类接口，失败则用关键词兜底。"""
 
-    Args:
-        query: 用户查询文本
-
-    Returns:
-        "concept_qa" / "indicator_analysis" / "general_chat"
-    """
-```
-
-```java
-// ✅ 正确：中文注释
-/**
- * 概念问答核心处理逻辑
- * @param sessionId 会话ID
- * @param query 用户查询
- * @return 处理结果
- */
-public String handleConceptQa(String sessionId, String query) {
-    // 调用知识库检索接口
-    ...
-}
-```
-
-```typescript
-// ✅ 正确：中文注释
-const LS_SESSION_ID = 'solution_session_id'  // localStorage 持久化 key
-
-/**
- * 发送用户消息
- * @param message 消息内容
- */
-async function sendMessage(message: string) {
-    // 构建请求参数
-    ...
-}
-```
-
-### 1.3 反例
-```python
-# ❌ 错误：英文注释
+# ❌ 英文注释
 def process_data(data):
-    """Process the input data.  # 必须用中文
-    Args:
-        data: input data
-    """
+    """Process the input data."""  # 必须用中文
 ```
 
 ## 二、Python 规范
@@ -170,7 +135,10 @@ def process_data(data):
 - 变量名：`snake_case`
 - 常量名：`UPPER_SNAKE_CASE`（在 config.py 中定义）
 
-### 2.3 日志风格
+### 2.3 日志
+- 统一使用各服务的 `logging_config.py`（JSON 结构化输出，字段与 Java logback 对齐），禁止自定义日志格式
+- 通过环境变量配置：`LOG_ENV` / `LOG_LEVEL` / `LOG_DIR`
+- message 必须中文：
 ```python
 logger.info("指标分析完成，共分析 {count} 个指标")
 logger.warning("知识库检索超时，使用本地缓存")
@@ -200,28 +168,15 @@ except Exception as e:
 - 变量名：`camelCase`
 - 常量名：`UPPER_SNAKE_CASE`（`static final`）
 
-### 3.3 注释风格
-```java
-// ── 检索知识库 ──
-List<String> results = knowledgeService.search(query);
-
-// 兜底：关键词匹配
-if (results.isEmpty()) {
-    results = keywordMatch(query);
-}
-```
-
-### 3.4 API 响应格式
+### 3.3 API 响应格式
 - 统一返回 `ResponseEntity<Map<String, Object>>`
 - 成功：`{"success": true, ...}`
 - 失败：`{"success": false, "message": "中文错误信息"}`
 
 ## 四、Vue/TypeScript 规范
 
-### 4.1 注释风格
-- `<script setup>` 中使用 `// 注释内容`
-- 复杂逻辑分段使用 `// ── 标题 ──` 分隔
-- 组件 props、emit 必须有中文注释
+### 4.1 注释约定
+- 复杂逻辑分段使用 `// ── 标题 ──` 分隔；组件 props、emit 必须有中文注释
 
 ### 4.2 命名规范
 - 组件名：`PascalCase.vue`（如 `Layout.vue`）
@@ -260,8 +215,7 @@ async function sendMessage() {
 ```
 
 ### 4.4 错误提示
-- 使用 `ElMessage` 时消息必须中文
-- API 错误提示使用中文
+- `ElMessage` / API 错误提示必须中文
 
 ## 五、通用规范
 
@@ -281,9 +235,7 @@ async function sendMessage() {
 - 常量定义在 `config.py` / `application.yml` 中
 
 ### 5.3 错误信息
-- 所有面向用户的错误信息必须中文
-- 日志中的错误信息也使用中文
-- 保留英文异常堆栈用于调试
+- 面向用户的错误信息必须中文，保留英文异常堆栈用于调试
 
 ### 5.4 接口文档
 - FastAPI 自动生成文档，title/description 使用中文

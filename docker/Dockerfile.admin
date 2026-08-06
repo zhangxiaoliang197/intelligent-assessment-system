@@ -6,5 +6,8 @@ COPY java/admin-service/pom.xml .
 COPY java/admin-service/src ./src
 RUN mvn package -DskipTests -q -B -Dmaven.wagon.http.retryHandler.count=10 -Dmaven.wagon.http.retryHandler.requestSentEnabled=true && cp target/*.jar app.jar && mvn clean && rm -rf src pom.xml
 COPY drivers/ /app/drivers/
+ENV LOG_PATH=/app/logs
+ENV SPRING_PROFILES_ACTIVE=dev
+RUN mkdir -p /app/logs
 EXPOSE 10258
 ENTRYPOINT ["java", "-jar", "app.jar"]

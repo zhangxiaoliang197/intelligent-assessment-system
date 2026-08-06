@@ -114,6 +114,50 @@ npm install
 npm run dev
 ```
 
+### 前置准备：下载 BGE 嵌入模型与安装 Qdrant（knowledge-service 必需）
+
+knowledge-service 依赖 BGE 中文嵌入模型和 Qdrant 向量数据库，两者均不入版本库，需手动准备。仅当需要运行 knowledge-service 时才需完成本节；若只跑其他服务可跳过。
+
+#### 1. 下载 BGE 嵌入模型
+
+模型路径由 `python/knowledge-service/main.py` 硬编码为 `python/knowledge-service/models/bge-small-zh-v1.5/`，务必按此路径放置（不可通过环境变量覆盖）。
+
+1. 安装下载工具：
+   ```bash
+   pip install huggingface_hub
+   ```
+2. 通过国内镜像下载（直连 huggingface.co 不可达，必须用 hf-mirror；并禁用 Xet 协议避免 401）：
+
+   Windows PowerShell：
+   ```powershell
+   $env:HF_ENDPOINT="https://hf-mirror.com"
+   $env:HF_HUB_DISABLE_XET=1
+   huggingface-cli download BAAI/bge-small-zh-v1.5 `
+     --local-dir python/knowledge-service/models/bge-small-zh-v1.5 `
+     --local-dir-use-symlinks=False
+   ```
+
+   Linux/macOS：
+   ```bash
+   HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 \
+   huggingface-cli download BAAI/bge-small-zh-v1.5 \
+     --local-dir python/knowledge-service/models/bge-small-zh-v1.5 \
+     --local-dir-use-symlinks=False
+   ```
+3. 验证：目录 `python/knowledge-service/models/bge-small-zh-v1.5/` 下应含 `pytorch_model.bin`、`config.json`、`tokenizer.json` 等文件。
+
+> 注意：huggingface_hub 1.26+ 已移除 `local_dir_use_symlinks` 与 `resume_download` 参数，若报参数错误请去掉 `--local-dir-use-symlinks=False` 后重试。
+
+#### 2. 安装 Qdrant 向量数据库
+
+knowledge-service 通过 REST API 连接 Qdrant（默认 `http://localhost:6333`）。Qdrant 二进制不入版本库，需自行下载。
+
+1. 从 [Qdrant Releases](https://github.com/qdrant/qdrant/releases) 下载 Windows 版 `qdrant.exe`。直连 GitHub 不可达时走代理：
+   `https://ghfast.top/https://github.com/qdrant/qdrant/releases/download/vX.Y.Z/qdrant-x86_64-pc-windows-msvc.zip`
+2. 解压到任意目录（如 `D:\qdrant\`）。
+3. 推荐设置环境变量 `QDRANT_HOME` 指向 `qdrant.exe` 所在目录；或将其目录加入系统 PATH。`start.ps1` 会按 `QDRANT_HOME` → PATH → 项目内兜底的顺序自动发现。
+4. 验证：`.\start.ps1` 启动时应输出 `Started Qdrant (:6333)`；也可直接 `qdrant.exe` 手动启动后访问 http://localhost:6333/dashboard。
+
 ### Python服务开发
 
 在不同的终端窗口中启动各个Python服务：
@@ -210,13 +254,78 @@ curl -fsS http://127.0.0.1:10253/health
 
 ### Q: 如何查看日志？
 
-```bash
-# Docker模式
-docker-compose logs -f <service-name>
+系统采用统一日志体系，所有服务输出 JSON 结构化日志，区分开发/生产环境。
 
-# 本地模式
-# 查看终端输出
+#### 日志环境变量
+
+在 `.env` 文件中配置（参见 `.env.example` 的"统一日志配置"部分）：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `LOG_ENV` | `dev` | `dev`=彩色控制台+DEBUG 文件；`prod`=JSON+INFO 按日轮转 |
+| `LOG_LEVEL` | `INFO` | 日志级别（DEBUG/INFO/WARN/ERROR） |
+| `LOG_RETENTION_DAYS` | `14` | 生产环境日志保留天数 |
+| `LOG_MAX_SIZE_MB` | `100` | 单文件最大体积（按大小轮转时生效） |
+
+#### 日志文件位置
+
+**本地开发**（`LOG_ENV=dev`，默认）：
+
 ```
+项目根/logs/
+├── knowledge-service/app.log
+├── qa-service/app.log
+├── indicator-service/app.log
+├── evaluation-service/app.log
+├── ontology-service/app.log
+└── admin-service/app.log
+```
+
+> qa-service 的 SQL 调试日志仍在 `python/qa-service/logs/sql_gen.log`。
+
+**Docker 生产**（`LOG_ENV=prod`）：
+
+```
+/opt/intelligent-assessment/logs/{service}/app.log
+```
+
+#### 查看日志
+
+```bash
+# Docker模式 - 实时查看容器日志（JSON 格式）
+docker compose logs -f qa-service
+
+# Docker模式 - 查看持久化日志文件
+tail -f /opt/intelligent-assessment/logs/qa-service/app.log
+
+# 本地模式 - 实时查看日志文件
+tail -f logs/qa-service/app.log
+
+# 本地开发 - 终端直接显示彩色输出（LOG_ENV=dev 时）
+
+# Java admin-service - 指定生产 profile 启动查看 JSON 日志
+$env:SPRING_PROFILES_ACTIVE="prod"; mvn spring-boot:run
+```
+
+#### 日志格式说明
+
+生产环境每行日志为 JSON 对象，字段包括：
+
+```json
+{
+  "timestamp": "2026-08-03 10:00:00,000",
+  "level": "INFO",
+  "service": "qa-service",
+  "logger": "qa-service",
+  "message": "统一日志已初始化",
+  "module": "main",
+  "line": 23,
+  "thread": "MainThread",
+  "process": 1234
+}
+```
+
+> 此 JSON 格式可直接被 ELK/Loki 等集中式日志系统解析，未来升级无需改代码。
 
 ### Q: 如何重启服务？
 

@@ -5,6 +5,8 @@ import IndicatorAnalysis from '@/pages/IndicatorAnalysis.vue'
 import SolutionEvaluation from '@/pages/SolutionEvaluation.vue'
 import KnowledgeBase from '@/pages/KnowledgeBase.vue'
 import OntologyModel from '@/pages/OntologyModel.vue'
+import OntologyDetail from '@/pages/OntologyDetail.vue'
+import OntologyBuild from '@/pages/OntologyBuild.vue'
 import AdminSystem from '@/pages/AdminSystem.vue'
 
 const routes: Array<RouteRecordRaw> = [
@@ -37,6 +39,18 @@ const routes: Array<RouteRecordRaw> = [
     path: '/ontology',
     name: 'OntologyModel',
     component: OntologyModel
+  },
+  {
+    path: '/ontology/:id',
+    name: 'OntologyDetail',
+    component: OntologyDetail,
+    meta: { title: '本体详情' }
+  },
+  {
+    path: '/ontology-build/:jobId',
+    name: 'OntologyBuild',
+    component: OntologyBuild,
+    meta: { title: '文档构建' }
   },
   {
     path: '/admin',

@@ -79,6 +79,13 @@
             <artifactId>springboot3-dotenv</artifactId>
             <version>5.1.0</version>
         </dependency>
+
+        <!-- 结构化 JSON 日志输出（生产环境） -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>7.4</version>
+        </dependency>
     </dependencies>
 
     <build>

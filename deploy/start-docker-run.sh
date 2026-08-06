@@ -49,7 +49,18 @@ mkdir -p "$DATA_DIR/ontology"
 mkdir -p "$DATA_DIR/evaluation"
 mkdir -p "$DATA_DIR/config"
 
+# ─── 日志目录（统一日志持久化）───
+LOG_DIR_HOST="$BASE_DIR/logs"
+mkdir -p "$LOG_DIR_HOST"/{knowledge,qa,indicator,evaluation,ontology,admin}
+
+# ─── 日志环境变量（可被外部环境变量覆盖）───
+LOG_ENV="${LOG_ENV:-prod}"
+LOG_LEVEL="${LOG_LEVEL:-INFO}"
+LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
+LOG_MAX_SIZE_MB="${LOG_MAX_SIZE_MB:-100}"
+
 echo "  数据目录: $DATA_DIR"
+echo "  日志目录: $LOG_DIR_HOST"
 
 # 从待启动镜像导出并校验同一份内置 Skill 目录，随后以只读单文件
 # 挂载。这样即使历史容器或错误的整目录挂载曾污染 /app/config，
@@ -162,7 +173,16 @@ docker run -d --name assessment-knowledge \
     --network "$NET_NAME" \
     -p 10252:10252 \
     -e QDRANT_URL="http://${QDRANT_HOST}:${QDRANT_PORT}" \
+    -e LOG_ENV="$LOG_ENV" \
+    -e LOG_LEVEL="$LOG_LEVEL" \
+    -e LOG_DIR="/app/logs" \
+    -e LOG_RETENTION_DAYS="$LOG_RETENTION_DAYS" \
+    -e LOG_MAX_SIZE_MB="$LOG_MAX_SIZE_MB" \
     -v "$DATA_DIR/knowledge:/app/data" \
+    -v "$LOG_DIR_HOST/knowledge:/app/logs" \
+    --log-driver json-file \
+    --log-opt max-size=50m \
+    --log-opt max-file=5 \
     --restart always \
     assessment-knowledge:latest
 
@@ -174,8 +194,18 @@ docker run -d --name assessment-qa \
     -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
     -e ONTOLOGY_SERVICE_URL="http://assessment-ontology:10256" \
     -e EVALUATION_SKILL_CATALOG_PATH="/app/config/skills.json" \
+    -e LOG_ENV="$LOG_ENV" \
+    -e LOG_LEVEL="$LOG_LEVEL" \
+    -e LOG_DIR="/app/logs" \
+    -e LOG_RETENTION_DAYS="$LOG_RETENTION_DAYS" \
+    -e LOG_MAX_SIZE_MB="$LOG_MAX_SIZE_MB" \
+    -e LOG_ROTATION_MODE="size" \
     -v "$DATA_DIR/qa:/app/data" \
     -v "$SKILLS_FILE:/app/config/skills.json:ro" \
+    -v "$LOG_DIR_HOST/qa:/app/logs" \
+    --log-driver json-file \
+    --log-opt max-size=50m \
+    --log-opt max-file=5 \
     --restart always \
     assessment-qa:latest
 
@@ -188,6 +218,15 @@ docker run -d --name assessment-indicator \
     -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
     -e EVALUATION_API_URL="http://assessment-qa:10253" \
     -e ONTOLOGY_SERVICE_URL="http://assessment-ontology:10256" \
+    -e LOG_ENV="$LOG_ENV" \
+    -e LOG_LEVEL="$LOG_LEVEL" \
+    -e LOG_DIR="/app/logs" \
+    -e LOG_RETENTION_DAYS="$LOG_RETENTION_DAYS" \
+    -e LOG_MAX_SIZE_MB="$LOG_MAX_SIZE_MB" \
+    -v "$LOG_DIR_HOST/indicator:/app/logs" \
+    --log-driver json-file \
+    --log-opt max-size=50m \
+    --log-opt max-file=5 \
     --restart always \
     assessment-indicator:latest
 
@@ -195,7 +234,16 @@ echo "[启动] 评估分析服务 (10255)..."
 docker run -d --name assessment-evaluation \
     --network "$NET_NAME" \
     -p 10255:10255 \
+    -e LOG_ENV="$LOG_ENV" \
+    -e LOG_LEVEL="$LOG_LEVEL" \
+    -e LOG_DIR="/app/logs" \
+    -e LOG_RETENTION_DAYS="$LOG_RETENTION_DAYS" \
+    -e LOG_MAX_SIZE_MB="$LOG_MAX_SIZE_MB" \
     -v "$DATA_DIR/evaluation:/app/data" \
+    -v "$LOG_DIR_HOST/evaluation:/app/logs" \
+    --log-driver json-file \
+    --log-opt max-size=50m \
+    --log-opt max-file=5 \
     --restart always \
     assessment-evaluation:latest
 
@@ -203,7 +251,16 @@ echo "[启动] 本体模型服务 (10256)..."
 docker run -d --name assessment-ontology \
     --network "$NET_NAME" \
     -p 10256:10256 \
+    -e LOG_ENV="$LOG_ENV" \
+    -e LOG_LEVEL="$LOG_LEVEL" \
+    -e LOG_DIR="/app/logs" \
+    -e LOG_RETENTION_DAYS="$LOG_RETENTION_DAYS" \
+    -e LOG_MAX_SIZE_MB="$LOG_MAX_SIZE_MB" \
     -v "$DATA_DIR/ontology:/app/data" \
+    -v "$LOG_DIR_HOST/ontology:/app/logs" \
+    --log-driver json-file \
+    --log-opt max-size=50m \
+    --log-opt max-file=5 \
     --restart always \
     assessment-ontology:latest
 
@@ -218,13 +275,20 @@ docker run -d --name assessment-admin \
     --network "$NET_NAME" \
     -p 10258:10258 \
     -v drivers-data:/app/drivers \
-    --restart always \
     -e MYSQL_HOST="$MYSQL_HOST" \
     -e MYSQL_PORT="$MYSQL_PORT" \
     -e MYSQL_DATABASE="$MYSQL_DATABASE" \
     -e MYSQL_USER="$MYSQL_USER" \
     -e MYSQL_PASSWORD="$MYSQL_PASSWORD" \
     -e DB_TYPE="$DB_TYPE" \
+    -e SPRING_PROFILES_ACTIVE="$LOG_ENV" \
+    -e LOG_PATH="/app/logs" \
+    -e LOG_LEVEL="$LOG_LEVEL" \
+    -v "$LOG_DIR_HOST/admin:/app/logs" \
+    --log-driver json-file \
+    --log-opt max-size=50m \
+    --log-opt max-file=5 \
+    --restart always \
     assessment-admin:latest
 
 # ─── 9. 等待管理服务就绪后启动前端 ───
@@ -247,6 +311,9 @@ echo "[启动] 前端界面 (10086)..."
 docker run -d --name assessment-frontend \
     --network "$NET_NAME" \
     -p 10086:80 \
+    --log-driver json-file \
+    --log-opt max-size=20m \
+    --log-opt max-file=3 \
     --restart always \
     assessment-frontend:latest
 

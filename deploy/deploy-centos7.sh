@@ -89,6 +89,12 @@ MYSQL_USER="${MYSQL_USER:-root}"
 MYSQL_PASSWORD="${MYSQL_PASSWORD:-}"
 DB_TYPE="${DB_TYPE:-mysql}"
 
+# ─── 日志环境变量（可被外部环境变量覆盖）───
+LOG_ENV="${LOG_ENV:-prod}"
+LOG_LEVEL="${LOG_LEVEL:-INFO}"
+LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
+LOG_MAX_SIZE_MB="${LOG_MAX_SIZE_MB:-100}"
+
 # 校验：MYSQL_HOST 必须显式配置（元数据库在远程，无默认值）
 if [ -z "$MYSQL_HOST" ]; then
     log_error "MYSQL_HOST 未配置。请通过环境变量指定元数据库地址。"
@@ -118,6 +124,11 @@ services:
     restart: always
     networks:
       - assessment-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
 
   knowledge-service:
     image: assessment-knowledge:latest
@@ -127,10 +138,21 @@ services:
     restart: always
     environment:
       - QDRANT_URL=http://assessment-qdrant:6333
+      - LOG_ENV=\${LOG_ENV:-prod}
+      - LOG_LEVEL=\${LOG_LEVEL:-INFO}
+      - LOG_DIR=/app/logs
+      - LOG_RETENTION_DAYS=\${LOG_RETENTION_DAYS:-14}
+      - LOG_MAX_SIZE_MB=\${LOG_MAX_SIZE_MB:-100}
     volumes:
       - "$DEPLOY_TARGET/data/knowledge:/app/data"
+      - "$DEPLOY_TARGET/logs/knowledge:/app/logs"
     networks:
       - assessment-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   qa-service:
     image: assessment-qa:latest
@@ -143,11 +165,23 @@ services:
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
       - ONTOLOGY_SERVICE_URL=http://assessment-ontology:10256
       - EVALUATION_SKILL_CATALOG_PATH=/app/config/skills.json
+      - LOG_ENV=\${LOG_ENV:-prod}
+      - LOG_LEVEL=\${LOG_LEVEL:-INFO}
+      - LOG_DIR=/app/logs
+      - LOG_RETENTION_DAYS=\${LOG_RETENTION_DAYS:-14}
+      - LOG_MAX_SIZE_MB=\${LOG_MAX_SIZE_MB:-100}
+      - LOG_ROTATION_MODE=size
     volumes:
       - "$DEPLOY_TARGET/data/qa:/app/data"
       - "$DEPLOY_TARGET/data/config/skills.json:/app/config/skills.json:ro"
+      - "$DEPLOY_TARGET/logs/qa:/app/logs"
     networks:
       - assessment-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   indicator-service:
     image: assessment-indicator:latest
@@ -161,10 +195,21 @@ services:
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
       - EVALUATION_API_URL=http://assessment-qa:10253
       - ONTOLOGY_SERVICE_URL=http://assessment-ontology:10256
+      - LOG_ENV=\${LOG_ENV:-prod}
+      - LOG_LEVEL=\${LOG_LEVEL:-INFO}
+      - LOG_DIR=/app/logs
+      - LOG_RETENTION_DAYS=\${LOG_RETENTION_DAYS:-14}
+      - LOG_MAX_SIZE_MB=\${LOG_MAX_SIZE_MB:-100}
     volumes:
       - "$DEPLOY_TARGET/data/indicator:/app/data"
+      - "$DEPLOY_TARGET/logs/indicator:/app/logs"
     networks:
       - assessment-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   evaluation-service:
     image: assessment-evaluation:latest
@@ -172,10 +217,22 @@ services:
     ports:
       - "10255:10255"
     restart: always
+    environment:
+      - LOG_ENV=\${LOG_ENV:-prod}
+      - LOG_LEVEL=\${LOG_LEVEL:-INFO}
+      - LOG_DIR=/app/logs
+      - LOG_RETENTION_DAYS=\${LOG_RETENTION_DAYS:-14}
+      - LOG_MAX_SIZE_MB=\${LOG_MAX_SIZE_MB:-100}
     volumes:
       - "$DEPLOY_TARGET/data/evaluation:/app/data"
+      - "$DEPLOY_TARGET/logs/evaluation:/app/logs"
     networks:
       - assessment-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   ontology-service:
     image: assessment-ontology:latest
@@ -183,10 +240,22 @@ services:
     ports:
       - "10256:10256"
     restart: always
+    environment:
+      - LOG_ENV=\${LOG_ENV:-prod}
+      - LOG_LEVEL=\${LOG_LEVEL:-INFO}
+      - LOG_DIR=/app/logs
+      - LOG_RETENTION_DAYS=\${LOG_RETENTION_DAYS:-14}
+      - LOG_MAX_SIZE_MB=\${LOG_MAX_SIZE_MB:-100}
     volumes:
       - "$DEPLOY_TARGET/data/ontology:/app/data"
+      - "$DEPLOY_TARGET/logs/ontology:/app/logs"
     networks:
       - assessment-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   admin-service:
     image: assessment-admin:latest
@@ -201,10 +270,19 @@ services:
       - MYSQL_USER=$MYSQL_USER
       - MYSQL_PASSWORD=$MYSQL_PASSWORD
       - DB_TYPE=$DB_TYPE
+      - SPRING_PROFILES_ACTIVE=\${LOG_ENV:-prod}
+      - LOG_PATH=/app/logs
+      - LOG_LEVEL=\${LOG_LEVEL:-INFO}
     volumes:
       - drivers-data:/app/drivers
+      - "$DEPLOY_TARGET/logs/admin:/app/logs"
     networks:
       - assessment-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
 networks:
   assessment-net:
@@ -215,6 +293,7 @@ volumes:
 DOCKERCOMPOSE
 
 mkdir -p "$DEPLOY_TARGET/data"/{knowledge,qa,ontology,evaluation,indicator,qdrant,config}
+mkdir -p "$DEPLOY_TARGET/logs"/{knowledge,qa,indicator,evaluation,ontology,admin}
 
 # drivers 使用命名卷 drivers-data，首次启动时自动从镜像内 /app/drivers 复制驱动。
 # 如需补充 Oracle/达梦等驱动，请通过管理后台「驱动管理」页面上传，或重新构建镜像。

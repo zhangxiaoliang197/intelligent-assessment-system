@@ -17,6 +17,17 @@ Write-Host "智能评估系统 - Docker 镜像构建 (Windows)" -ForegroundColor
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
+# ---- 同步公共日志配置到各 Python 服务目录 ----
+Write-Host ">>> 同步 logging_config.py 到各 Python 服务..." -ForegroundColor Yellow
+$services = @("knowledge-service","qa-service","indicator-service","evaluation-service","ontology-service")
+$srcLogConfig = "$PROJECT\python\common\logging_config.py"
+foreach ($svc in $services) {
+    $dst = "$PROJECT\python\$svc\logging_config.py"
+    Copy-Item -Path $srcLogConfig -Destination $dst -Force
+}
+Write-Host "  同步完成" -ForegroundColor Green
+Write-Host ""
+
 # ---- 检查 Docker ----
 Write-Host "[检查] Docker 环境..." -ForegroundColor Yellow
 try {

@@ -17,5 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 完整复制知识库服务源码（含 models/bge-small-zh-v1.5 嵌入模型）
 COPY python/knowledge-service/ .
+ENV LOG_DIR=/app/logs \
+    LOG_ENV=prod \
+    LOG_LEVEL=INFO
+RUN mkdir -p /app/logs
 EXPOSE 10252
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10252"]

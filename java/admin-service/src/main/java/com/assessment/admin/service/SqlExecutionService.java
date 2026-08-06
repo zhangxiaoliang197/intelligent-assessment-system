@@ -305,6 +305,10 @@ public class SqlExecutionService {
             throw new Exception("驱动 '" + driver.getName() + "' 尚未上传JAR包，请先在驱动管理中上传");
         }
         File jarFile = new File(driver.getJarFilePath());
+        // 相对路径以 user.dir 为基准解析（跨机器可移植）
+        if (!jarFile.isAbsolute()) {
+            jarFile = new File(System.getProperty("user.dir"), driver.getJarFilePath());
+        }
         if (!jarFile.exists()) throw new Exception("驱动JAR文件不存在: " + driver.getJarFilePath());
 
         URLClassLoader classLoader = new URLClassLoader(

@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
+import java.io.File;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
@@ -140,8 +141,10 @@ public class DatabaseInitializer implements CommandLineRunner {
             d.setName(name);
             d.setDriverClass(vals[0]);
             d.setUrlTemplate(vals[1]);
-            d.setJarFileName(vals[2] != null ? vals[2] : null);
-            d.setJarFilePath(vals[2] != null ? vals[2] : null);
+            // 存相对路径（跨机器可移植），运行时以 user.dir 为基准解析
+            String jarPath = vals[2];
+            d.setJarFilePath(jarPath);
+            d.setJarFileName(jarPath != null ? new File(jarPath).getName() : null);
             d.setCreateTime(LocalDateTime.now());
             d.setUpdateTime(LocalDateTime.now());
             driverRepo.save(d);

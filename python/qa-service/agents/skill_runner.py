@@ -754,6 +754,7 @@ async def _run_skill_workflow_events(
     session_id: str = "",
     attachment_text: str = "",
     include_synthesis: bool = True,
+    ontology_id: str = "",
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """Execute every dataset stage in declaration order and stream trace events."""
     started_at = time.perf_counter()
@@ -1488,6 +1489,7 @@ async def run_skill_workflow(
         session_id=session_id,
         attachment_text=attachment_text,
         include_synthesis=include_synthesis,
+        ontology_id=ontology_id,
     )
     if record_execution:
         try:

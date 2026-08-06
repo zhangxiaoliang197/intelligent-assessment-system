@@ -8,13 +8,13 @@ class Config:
     SERVICE_NAME = "knowledge-service"
     SERVICE_VERSION = "1.0.0"
     HOST = os.getenv("HOST", "0.0.0.0")
-    PORT = int(os.getenv("PORT", "8001"))
+    PORT = int(os.getenv("PORT", "10252"))
 
     UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
     MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", "104857600"))
 
-    VECTOR_DB_TYPE = os.getenv("VECTOR_DB_TYPE", "chroma")
-    VECTOR_DB_PATH = os.getenv("VECTOR_DB_PATH", "./vector_db")
+    VECTOR_DB_TYPE = os.getenv("VECTOR_DB_TYPE", "qdrant")
+    QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 
     LLM_API_URL = os.getenv("LLM_API_URL", "http://localhost:8000/v1")
     LLM_API_KEY = os.getenv("LLM_API_KEY", "")
@@ -33,7 +33,7 @@ class Config:
             "upload_dir": cls.UPLOAD_DIR,
             "vector_db": {
                 "type": cls.VECTOR_DB_TYPE,
-                "path": cls.VECTOR_DB_PATH
+                "url": cls.QDRANT_URL
             },
             "llm": {
                 "api_url": cls.LLM_API_URL,

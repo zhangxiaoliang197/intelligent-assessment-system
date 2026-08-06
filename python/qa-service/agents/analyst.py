@@ -47,38 +47,67 @@ _ROLE_HEADER = (
 # 场景 1：无相关数据（区分「库无数据」与「查询技术失败」）
 # ============================================================
 
-ANALYST_NO_DATA_PROMPT = _ROLE_HEADER + """## 场景判定
+ANALYST_NO_DATA_PROMPT = _ROLE_HEADER + """## 硬约束（最高优先级，必须遵守）
+- 数据库中未检索到任何相关数据，**禁止编造任何数值**
+- **禁止输出含数值的表格**（如指标值表、计算结果表）
+- **禁止基于指标公式推算具体数值**
+- 不使用"抱歉/失败"等情绪化措辞，保持专业语气
+
+## 场景判定
 {scenario_reason}
-（reason 文本已标注是「数据库无相关数据」还是「查询技术失败」）
+数据库中未检索到与「{question}」相关的数据。
 
 ## 用户问题
 {question}
 
-## 已检索范围（可用表结构）
-{table_context}
-
-## 指标定义
+## 涉及指标（仅名称，供理解问题背景）
 {indicator_context}
 
 ## 输出要求（严格按此结构，使用 Markdown）
 ## 分析结论
-用一句话显式声明数据状态：
-- 若为「数据库无相关数据」：当前数据库中未检索到与「{question}」相关的数据。
-- 若为「查询技术失败」：数据查询未能成功执行，暂无法获取相关数据。
-
-随后简述已检索范围（查询了哪些表、用什么条件）。
+用一句话显式声明：当前数据库中未检索到与该问题相关的数据。
+说明已尝试查询但返回 0 行，**不得呈现任何指标数值**。
 
 **可能原因**：
-- 3 条以内客观陈述，不臆测
+- 3 条以内客观陈述（如数据未录入、筛选条件不匹配、数据源不对应）
 
 ### 后续建议
-- 2-3 条可操作指引（调整筛选条件 / 换数据源 / 联系数据管理员）
+- 2-3 条可操作指引（调整筛选条件 / 更换数据源 / 联系数据管理员补录数据）
 - 每条含具体动作
+"""
 
-## 硬约束
-- 全程不编造任何数值
+
+# ============================================================
+# 场景 1b：查询技术失败（SQL 生成/执行失败，不注入公式与表结构）
+# ============================================================
+
+ANALYST_TECHNICAL_FAILURE_PROMPT = _ROLE_HEADER + """## 硬约束（最高优先级，必须遵守）
+- 查询未能成功执行，**禁止编造任何数值**
+- **禁止输出含数值的表格**
+- **禁止基于指标公式推算具体数值**
 - 不使用"抱歉/失败"等情绪化措辞，保持专业语气
-- 不输出原始 SQL 结果表
+
+## 场景判定
+查询技术失败，未能获取数据。
+{scenario_reason}
+
+## 用户问题
+{question}
+
+## 涉及指标（仅名称）
+{indicator_context}
+
+## 输出要求（严格按此结构，使用 Markdown）
+## 分析结论
+用一句话显式声明：数据查询未能成功执行，暂无法获取相关数据。
+**不得呈现任何指标数值，不得推测查询结果**。
+
+**失败原因**：
+- 基于上述场景判定客观陈述，不臆测
+
+### 后续建议
+- 2-3 条可操作排查指引（检查大模型配置 maxTokens / 检查数据库连接 / 联系管理员）
+- 每条含具体动作
 """
 
 
@@ -86,7 +115,12 @@ ANALYST_NO_DATA_PROMPT = _ROLE_HEADER + """## 场景判定
 # 场景 2：数据量不足（含逐指标覆盖表）
 # ============================================================
 
-ANALYST_INSUFFICIENT_DATA_PROMPT = _ROLE_HEADER + """## 场景判定
+ANALYST_INSUFFICIENT_DATA_PROMPT = _ROLE_HEADER + """## 硬约束（最高优先级，必须遵守）
+- **不编造未出现的数值**；对缺失指标不得基于公式推算具体数值
+- 覆盖表数据必须与数据覆盖报告一致，不得篡改
+- 不输出原始 SQL 结果表
+
+## 场景判定
 数据可用但不充分。{scenario_reason}
 
 ## 用户问题
@@ -119,11 +153,6 @@ ANALYST_INSUFFICIENT_DATA_PROMPT = _ROLE_HEADER + """## 场景判定
 ### 后续建议
 - 补齐缺失维度的具体建议（补录哪些数据/字段）
 - 调整分析目标的替代方案
-
-## 硬约束
-- 不编造未出现的数值
-- 覆盖表数据必须与数据覆盖报告一致，不得篡改
-- 不输出原始 SQL 结果表
 """
 
 
@@ -131,7 +160,13 @@ ANALYST_INSUFFICIENT_DATA_PROMPT = _ROLE_HEADER + """## 场景判定
 # 场景 3：计算类指标呈现（计算分解 + 对标 + 业务含义）
 # ============================================================
 
-ANALYST_COMPUTED_METRICS_PROMPT = _ROLE_HEADER + """## 用户问题
+ANALYST_COMPUTED_METRICS_PROMPT = _ROLE_HEADER + """## 硬约束（最高优先级，必须遵守）
+- 计算分解的各分量必须与查询结果数值一致，**不得编造结果集中未出现的数值**
+- 无内部可对比数据时，**不得编造外部基准值**
+- 百分比保留1位小数；计数取整；金额/物理量保留2位小数
+- 禁止直接粘贴 SQL 结果表作为主回答
+
+## 用户问题
 {question}
 
 ## 查询结果（前10行，含原始数值）
@@ -161,12 +196,6 @@ ANALYST_COMPUTED_METRICS_PROMPT = _ROLE_HEADER + """## 用户问题
 - 2-3 条可操作建议，每条含「发现+依据+动作」
 
 > 术语说明：对每个公式涉及的术语给出定义，如"合格率=合格人数÷总人数×100%"
-
-## 硬约束
-- 计算分解的各分量必须与查询结果数值一致
-- 百分比保留1位小数；计数取整；金额/物理量保留2位小数
-- 禁止直接粘贴 SQL 结果表作为主回答
-- 无内部可对比数据时，不得编造外部基准值
 """
 
 
@@ -295,6 +324,7 @@ async def run_analyst(state: EvaluationState, llm_call_fn,
     result_summary = "未执行SQL"
     raw_data = "无"
     indicator_context = "无"
+    indicator_names_only = "无"  # no_data 场景专用：仅指标名称，不含公式
     table_context = "无"
 
     # ── 构建数据摘要与预览 ──
@@ -312,13 +342,18 @@ async def run_analyst(state: EvaluationState, llm_call_fn,
         raw_data = f"错误: {state.execution_error}"
 
     # ── 构建指标定义上下文（最多前5个，控制 prompt 长度）──
+    # indicator_context:       含公式与说明，供 insufficient/computed/standard 场景使用
+    # indicator_names_only:    仅名称，供 no_data 场景使用（避免公式诱导 LLM 编造数值）
     if state.indicator_defs:
         parts = []
+        name_parts = []
         for ind in state.indicator_defs[:5]:
             parts.append(
                 f"- {ind.get('name', '')}: {ind.get('formula', '')} "
                 f"{ind.get('description', '')}")
+            name_parts.append(f"- {ind.get('name', '')}")
         indicator_context = "\n".join(parts)
+        indicator_names_only = "\n".join(name_parts)
 
     # ── 构建表结构上下文（无数据场景使用）──
     if hasattr(state, 'table_schemas') and state.table_schemas:
@@ -352,13 +387,23 @@ async def run_analyst(state: EvaluationState, llm_call_fn,
     has_computed = any(t == "computed" for t in indicator_types.values())
 
     if scenario == "no_data":
-        system_prompt = ANALYST_NO_DATA_PROMPT.format(
-            scenario_reason=scenario_reason,
-            question=state.question,
-            table_context=table_context,
-            indicator_context=indicator_context,
-        )
-        user_msg = "请按结构输出无数据分析结论与后续指引。"
+        # 区分「查询技术失败」与「库无数据」两个子场景：
+        # 技术失败 → TECHNICAL_FAILURE_PROMPT（不注入公式/表结构，避免诱导编造）
+        # 库无数据 → 精简版 NO_DATA_PROMPT（仅指标名称，无公式/表结构）
+        if report.get("technical_failure"):
+            system_prompt = ANALYST_TECHNICAL_FAILURE_PROMPT.format(
+                scenario_reason=scenario_reason,
+                question=state.question,
+                indicator_context=indicator_names_only,
+            )
+            user_msg = "请按结构输出查询失败说明与排查建议。"
+        else:
+            system_prompt = ANALYST_NO_DATA_PROMPT.format(
+                scenario_reason=scenario_reason,
+                question=state.question,
+                indicator_context=indicator_names_only,
+            )
+            user_msg = "请按结构输出无数据分析结论与后续指引。"
     elif scenario == "insufficient":
         system_prompt = ANALYST_INSUFFICIENT_DATA_PROMPT.format(
             scenario_reason=scenario_reason,

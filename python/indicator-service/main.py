@@ -14,6 +14,10 @@ import uuid
 import logging
 from datetime import datetime
 
+from logging_config import setup_logging
+setup_logging("indicator-service")
+logger = logging.getLogger("indicator-service")
+
 from utils import http_get, http_post, http_post_stream, fetch_available_databases, create_stream_response
 from session import (
     ensure_session, get_recent_messages, get_session_stage, set_session_stage,
@@ -25,9 +29,6 @@ from intent import (
     is_concept_query, is_new_question, is_query_confirm, is_query_deny,
     match_database
 )
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("indicator-service")
 
 app = FastAPI(
     title="指标分析服务",
@@ -1357,4 +1358,4 @@ async def list_indicators():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10254)
+    uvicorn.run(app, host="0.0.0.0", port=10254, log_config=None)

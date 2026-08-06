@@ -18,7 +18,8 @@ import time
 import jieba
 from rank_bm25 import BM25Okapi
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+from logging_config import setup_logging
+setup_logging("knowledge-service")
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
@@ -869,4 +870,4 @@ async def reindex_all():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10252)
+    uvicorn.run(app, host="0.0.0.0", port=10252, log_config=None)
