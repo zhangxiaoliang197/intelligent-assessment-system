@@ -481,7 +481,7 @@
                     <!-- 地图显示提示 -->
                     <div v-if="msg.showMapPrompt" class="map-prompt">
                       <div class="map-prompt-text">
-                        <span>检测到回复中包含 {{ msg.geoPoints.length }} 个地理坐标，是否在地图上显示？</span>
+                        <span>检测到回复中包含地理信息，是否在地图上显示？</span>
                       </div>
                       <div class="map-prompt-actions">
                         <el-button size="small" type="primary" @click="msg.showMap = true; msg.showMapPrompt = false">显示地图</el-button>
@@ -489,8 +489,10 @@
                       </div>
                     </div>
                     <GeoMap
-                      v-if="msg.showMap && msg.geoPoints && msg.geoPoints.length > 0"
-                      :points="msg.geoPoints"
+                      v-if="msg.showMap && (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0)"
+                      :points="msg.geoPoints || []"
+                      :routes="msg.routes || []"
+                      :areas="msg.areas || []"
                     />
                   </div>
                 </div>
@@ -848,7 +850,7 @@ const startResize = (e: MouseEvent) => {
 // 持久化辅助函数
 const storageReplacer = (_key: string, value: any) => {
   if (typeof value === 'string' && value.length > 4000) return value.slice(0, 4000) + '…'
-  if (Array.isArray(value) && value.length > 20) return value.slice(0, 20)
+  if (Array.isArray(value) && value.length > 500) return value.slice(0, 500)
   return value
 }
 
@@ -1470,30 +1472,33 @@ const sendMessage = async () => {
         aiMessage.result = result
         // 提取坐标并设置地图状态（来源1: final_answer 文本中的DMS格式坐标）
         const textMapData = processMapData(answerText, query)
-        // 提取坐标（来源2: 查询结果数据中的经度/纬度数值列）
+        // 提取坐标（来源2: 查询结果数据中的经度/纬度数值列，每行=一个点，不做去重）
         const resultGeoPoints = extractGeoFromResults(result)
-        // 合并去重（按 lat,lng 去重）
+        // 合并：文本提取的坐标 + 数据库查询结果（不做去重，每个学生一个点）
         const allGeoPoints = textMapData.geoPoints.slice()
-        const existingKeys = new Set(allGeoPoints.map(p => `${p.lat},${p.lng}`))
         for (const pt of resultGeoPoints) {
-          if (!existingKeys.has(`${pt.lat},${pt.lng}`)) {
-            allGeoPoints.push(pt)
-            existingKeys.add(`${pt.lat},${pt.lng}`)
-          }
+          allGeoPoints.push(pt)
         }
-        // 综合判断：任一方有坐标 + 用户未明确要求 → 弹出提示
-        if (allGeoPoints.length > 0) {
+        // 综合判断：任一方有数据 + 用户未明确要求 → 弹出提示
+        const hasData = allGeoPoints.length > 0 || textMapData.routes.length > 0 || textMapData.areas.length > 0
+        if (hasData) {
           if (textMapData.showMap) {
             aiMessage.geoPoints = allGeoPoints
+            aiMessage.routes = textMapData.routes
+            aiMessage.areas = textMapData.areas
             aiMessage.showMap = true
             aiMessage.showMapPrompt = false
           } else {
             aiMessage.geoPoints = allGeoPoints
+            aiMessage.routes = textMapData.routes
+            aiMessage.areas = textMapData.areas
             aiMessage.showMap = false
             aiMessage.showMapPrompt = true
           }
         } else {
           aiMessage.geoPoints = []
+          aiMessage.routes = []
+          aiMessage.areas = []
           aiMessage.showMap = false
           aiMessage.showMapPrompt = false
         }
@@ -1642,9 +1647,9 @@ const loadHistory = async (item: any) => {
     }
 
     if (!restoredMessages) throw new Error('会话没有可恢复的消息内容')
-    // 恢复历史消息中的地图状态
+    // 恢复历史消息中的地图状态 (第一处)
     restoredMessages.forEach((msg: any) => {
-      if (msg.geoPoints && msg.geoPoints.length > 0) {
+      if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0) {
         msg.showMap = true
         msg.showMapPrompt = false
       }
@@ -1764,9 +1769,9 @@ onMounted(async () => {
   // 恢复上次会话的消息
   if (sessionId.value && sessionMessages.value[sessionId.value]) {
     messages.value = [...sessionMessages.value[sessionId.value]]
-    // 恢复历史消息中的地图状态
+    // 恢复历史消息中的地图状态 (第二处)
     messages.value.forEach((msg: any) => {
-      if (msg.geoPoints && msg.geoPoints.length > 0) {
+      if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0) {
         msg.showMap = true
         msg.showMapPrompt = false
       }

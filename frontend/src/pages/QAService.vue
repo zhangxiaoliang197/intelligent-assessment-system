@@ -96,7 +96,7 @@
                 <!-- 地图显示提示 -->
                 <div v-if="msg.role === 'assistant' && msg.showMapPrompt" class="map-prompt">
                   <div class="map-prompt-text">
-                    <span>检测到回复中包含 {{ msg.geoPoints.length }} 个地理坐标，是否在地图上显示？</span>
+                    <span>检测到回复中包含地理信息，是否在地图上显示？</span>
                   </div>
                   <div class="map-prompt-actions">
                     <el-button size="small" type="primary" @click="msg.showMap = true; msg.showMapPrompt = false">显示地图</el-button>
@@ -104,8 +104,10 @@
                   </div>
                 </div>
                 <GeoMap
-                  v-if="msg.role === 'assistant' && msg.showMap && msg.geoPoints && msg.geoPoints.length > 0"
-                  :points="msg.geoPoints"
+                  v-if="msg.role === 'assistant' && msg.showMap && (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0)"
+                  :points="msg.geoPoints || []"
+                  :routes="msg.routes || []"
+                  :areas="msg.areas || []"
                 />
                 <div v-if="msg.references && msg.references.length > 0" class="references">
                     <div class="ref-label">参考来源</div>
@@ -514,7 +516,7 @@ const loadHistory = (item: any) => {
     messages.value = [...sessionMessages.value[item.id]]
     // 恢复历史消息中的地图状态
     messages.value.forEach(msg => {
-      if (msg.geoPoints && msg.geoPoints.length > 0) {
+      if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0) {
         msg.showMap = true
         msg.showMapPrompt = false
       }
@@ -691,6 +693,8 @@ const sendMessage = async () => {
               sources: data.sources || [],
               knowledgeUsed: data.knowledge_used || false,
               geoPoints: mapData.geoPoints,
+              routes: mapData.routes,
+              areas: mapData.areas,
               showMap: mapData.showMap,
               showMapPrompt: mapData.showMapPrompt,
             }
@@ -754,7 +758,7 @@ onMounted(() => {
     messages.value = [...sessionMessages.value[sessionId.value]]
     // 恢复历史消息中的地图状态：有坐标的直接显示，不弹提示
     messages.value.forEach(msg => {
-      if (msg.geoPoints && msg.geoPoints.length > 0) {
+      if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0) {
         msg.showMap = true
         msg.showMapPrompt = false
       }

@@ -1,6 +1,416 @@
 {
-  "knowledge_db": [],
-  "chunks_db": [],
-  "categories_db": {},
-  "tags_db": {}
+  "knowledge_db": [
+    {
+      "id": "kb_29ab7e48",
+      "title": "GB+26396-2026",
+      "filename": "GB+26396-2026.pdf",
+      "file_path": "C:\\Users\\Administrator\\Desktop\\t\\intelligent-assessment-system\\python\\knowledge-service\\uploads\\kb_29ab7e48_GB+26396-2026.pdf",
+      "file_size": 363142,
+      "file_type": "PDF文档",
+      "category": "评估标准",
+      "tags": [],
+      "status": "已完成",
+      "upload_time": "2026-08-05T14:53:30.741540",
+      "content_length": 9253,
+      "chunk_count": 43
+    }
+  ],
+  "chunks_db": [
+    {
+      "chunk_id": "kb_29ab7e48_c0",
+      "doc_id": "kb_29ab7e48",
+      "text": "ICS71.100.40\nCCSY43\n中华人民共和国国家标准\nGB26396—2026\n代替GB/T26396—2011\n洗涤用品安全技术规范\nSafetytechnicalspecificationforcleaningproducts\n2026-04-30发布 2027-05-01实施\n国家市场监督管理总局\n国家标准化管理委员会发布\n前  言\n  本文件按照GB/T1.1—2020《标准化工作导则 第1部分:标准化文件的结构和起草规则》的规定",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c1",
+      "doc_id": "kb_29ab7e48",
+      "text": "起草。\n本文件由GB/T26396—2011《洗涤用品安全技术规范》转化为强制性国家标准。与GB/T26396—\n2011相比,除结构调整和编辑性改动外,主要技术变化如下:\na) 更改了范围(见第1章,2011年版的第1章);\nb) 增加了表面活性剂、制造商、有害物质的术语和定义(见3.2、3.5、3.6);\nc) 删除了产品分类(见2011年版的第4章);\nd) 将“总则”更改为“一般要求”,并更改了要求内容(见4.2.1,2011年版的5.2.1);",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c2",
+      "doc_id": "kb_29ab7e48",
+      "text": "e) 更改了对香精的要求[见4.2.1c),2011年版的5.2.5];\nf) 更改了对表面活性剂的要求(见4.2.2,2011年版的5.2.2.1);\ng) 更改了对有害物质的要求(见4.2.3,2011年版的5.2.2.2);\nh) 删除了原料中对防腐剂的要求(见2011年版的5.2.3);\ni) 删除了原料中对着色剂的要求(见2011年版的5.2.4);\nj) 更改了产品(洗涤用品)要求(见4.3,2011年版的5.3);",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c3",
+      "doc_id": "kb_29ab7e48",
+      "text": "k)增加了磷酸盐限值和测定方法(见4.3.2、5.4);\nl) 增加了最终生物降解度测定方法的选择(见5.2,2011年版的6.2);\nm) 增加了对毒理学测试的通则(见5.3.1);\nn) 增加了皮肤刺激性或腐蚀性测定方法的选择(见5.3.2,2011年版的6.3.1);\no) 增加了皮肤致敏性测定方法的选择(见5.3.3,2011年版的6.3.2);\np) 增加了眼刺激性或腐蚀性的测定方法(见5.3.4);",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c4",
+      "doc_id": "kb_29ab7e48",
+      "text": "q)增加了风险控制措施(见第6章);\nr)将产品标识和包装要求修改为标识要求,并更改了要求内容(见第7章,2011年版的5.4);\ns)增加了标准的实施(见第8章);\nt)增加了附录A洗涤用品中禁限用物质(见附录A);\nu)删除了检验规则(见2011年版的第7章)。\n请注意本文件的某些内容可能涉及专利。本文件的发布机构不承担识别专利的责任。\n本文件由中华人民共和国工业和信息化部提出并归口。\n本文件及其所代替文件的历次版本发布情况为:",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c5",
+      "doc_id": "kb_29ab7e48",
+      "text": "———2011年首次发布为GB/T26396—2011;\n———本次转化为强制性国家标准。\nⅠGB26396—2026\n洗涤用品安全技术规范\n1 范围\n本文件界定了洗涤用品的术语和定义,规定了要求、风险控制措施、标识要求和标准的实施,描述了\n相应的试验方法。\n本文件适用于洗涤用品的研发、生产和销售。\n本文件不适用于归类于化妆品和消毒剂的洗涤产品,以及食品用洗涤剂、医疗及工业清洗用洗\n涤剂。\n本文件不适用于以有机溶剂为清洗成分的干洗剂。",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c6",
+      "doc_id": "kb_29ab7e48",
+      "text": "2 规范性引用文件\n下列文件中的内容通过文中的规范性引用而构成本文件必不可少的条款。其中,注日期的引用文\n件,仅该日期对应的版本适用于本文件;不注日期的引用文件,其最新版本(包括所有的修改单)适用于\n本文件。\nGB/T13173 表面活性剂 洗涤剂试验方法\nGB14930.1 食品安全国家标准 洗涤剂\nGB/T15818 表面活性剂生物降解度试验方法\nGB/T21604 化学品 急性皮肤刺激性/腐蚀性试验方法",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c7",
+      "doc_id": "kb_29ab7e48",
+      "text": "GB/T21608 化学品 皮肤致敏试验方法\nGB/T21609 化学品 急性眼刺激性/腐蚀性试验方法\nGB/T21801 化学品 快速生物降解性 呼吸计量法试验\nGB/T21802 化学品 快速生物降解性 改进的MITI试验(I)\nGB/T21803 化学品 快速生物降解性 DOC消减试验\nGB/T21827 化学品 皮肤变态反应试验 局部淋巴结方法\nGB/T21831 化学品 快速生物降解性 密闭瓶法试验",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c8",
+      "doc_id": "kb_29ab7e48",
+      "text": "GB/T21856 化学品 快速生物降解性 二氧化碳产生试验\nGB/T21857 化学品 快速生物降解性 改进的OECD筛选试验\nGB/T22731 日用香精\nGB/T27828 化学品 体外皮肤腐蚀 经皮电阻试验方法\nGB/T27829 化学品 体外皮肤腐蚀 膜屏障试验方法\nGB/T27830 化学品 体外皮肤腐蚀 人体皮肤模型试验方法\nGB/T36970 消费品使用说明 洗涤用品标签\nGB/T41828 洗涤用品原料健康风险评估导则",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c9",
+      "doc_id": "kb_29ab7e48",
+      "text": "QB/T2953 洗涤剂用荧光增白剂\nWS/T10009 消毒产品检测方法\n化妆品安全技术规范(2015年版) 国家食品药品监督管理总局\n消毒技术规范(2002年版) 中华人民共和国卫生部\n1GB26396—2026\n3 术语和定义\n下列术语和定义适用于本文件。\n3.1\n洗涤用品 cleaningproducts\n为了达到洗涤和清洁的作用而含有肥皂或/和表面活性剂的制备产品。\n  注:洗涤用品是任何一种形态(液体、颗粒、粉末、糊状、条状、块状、片状等),其在GB/T4754—2017中归属于“肥",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c10",
+      "doc_id": "kb_29ab7e48",
+      "text": "皂及合成洗涤剂制造”,编号为2681。\n3.2\n表面活性剂 surfaceactiveagent;surfactant;tenside\n一种具有表面活性的化合物,溶于液体特别是水中,由于在液/气表面或其他界面的优先吸附,使表\n面张力或界面张力显著降低。\n  注:表面活性剂是指在其分子中至少含有一个对显著极性表面具有亲和性的基团(以保证它在大多数情况下的水\n溶性)和一个对水几乎没有亲和性的非极性基团的化合物。",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c11",
+      "doc_id": "kb_29ab7e48",
+      "text": "[来源:GB/T5327—2008,第2章,1,有修改]\n3.3\n初级生物降解 primarybiodegradation\n受试物在生物作用下化学结构发生变化致使特性丧失的过程。\n[来源:GB/T21801—2008,2.2]\n3.4\n最终生物降解 ultimatebiodegradation\n化合物或有机物被微生物降解成二氧化碳(CO2)、水(H2O)和元素形态的矿物盐,并同化成微生物\n一部分的过程。",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c12",
+      "doc_id": "kb_29ab7e48",
+      "text": "3.5\n制造商 manufacturer\n负责将某种洗涤用品投入市场的自然人或法人。\n注1:自营业性质的生产商、进口商、分装商,或改变某种洗涤用品特性的任何人士,或创建或改变其标识的任何人\n士,均视为制造商。\n注2:不改变某种洗涤用品特性、标识或包装的经销商不视为制造商,除非该经销商还具有进口商的身份。\n[来源:欧洲议会和理事会(EC)第648/2004号条例,第1章10,有修改]\n3.6\n有害物质 harmfulsubstance",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c13",
+      "doc_id": "kb_29ab7e48",
+      "text": "由洗涤用品原料、包装材料、生产加工、运输和储存过程中产生或带入,暴露于人体可能对人体健康\n造成潜在危害的物质。\n4 要求\n4.1 基本要求\n在正常以及合理的、可预见的使用条件下,洗涤用品不应对人体健康、动植物安全产生危害,洗涤用\n品及使用后的排放对环境的影响应在可接受的范围内。\n2GB26396—2026\n4.2 原料要求\n4.2.1 一般要求\n配制洗涤用品的物质(成分)应符合以下要求。\na) 不应用持久性有机污染物目录中的物质。",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c14",
+      "doc_id": "kb_29ab7e48",
+      "text": "注1:持久性有机污染物名单见《关于持久性有机污染物的斯德哥尔摩公约》。\nb) 用于配制洗涤用品的物质应满足下列条件之一:\n1) 列入GB14930.1准许使用的物质;\n2) 经政府相关公告列入化妆品原料已用名录的物质;\n3) 经制造商、原料供应商、专业机构按照GB/T41828对物质进行安全评估,确认为以下\n物质:\n● 危害分级属于低危害的物质;\n● 危害分级属于中高危害物质,需要进一步进行以暴露量为基础的安全评估,确认为风",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c15",
+      "doc_id": "kb_29ab7e48",
+      "text": "险可接受;当危害分级属于生殖细胞致突变性、生殖毒性、致癌性的物质,在安全评估\n为风险可接受的基础上,对于高危害物质用量应低于或等于0.1%(质量分数)(例外\n情形需有行政机关、权威机构针对特定材料特定用法的规定支持)。\nc) 香精使用应符合GB/T22731中相关类别的限制规定。\nd) 洗涤用品中禁限用物质使用应满足附录A的规定。\n注2:附录B列出了可参考的洗涤用品中禁限用物质的检测方法标准。\n4.2.2 表面活性剂",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c16",
+      "doc_id": "kb_29ab7e48",
+      "text": "洗涤用品中所用表面活性剂应能够降解,其本身及降解产物对动植物和环境的影响在可接受的范\n围内。即表面活性剂的初级生物降解度应不低于90%或表面活性剂最终生物降解度应不低于60%。\n4.2.3 有害物质\n洗涤用品中所用原料残留的有害物质应符合相关国家标准或行业标准的规定。无相关标准时,按\n4.2.1b)3)评估确认在可接受的安全水平之下。\n4.3 产品(洗涤用品)要求\n4.3.1 产品上市前,基于产品提供的使用方法或标签说明正常使用下,产品的安全性满足以下要求:",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c17",
+      "doc_id": "kb_29ab7e48",
+      "text": "a) 会接触人体肌肤的产品,应有产品在作用浓度下对皮肤刺激性或腐蚀性、致敏性的安全性资料\n或数据;\nb) 会接触眼睛的产品,应有产品在作用浓度下对眼睛无严重眼损伤的安全性资料或数据。\n产品的安全性资料或数据应为以下任一内容。\n———产品的安全性评估报告。\n    注:参照《化妆品安全评估技术导则(2021年版)》、GB/T41828—2022的示例编制评估报告。\n———配方成分的安全性评估报告或安全性资料。",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c18",
+      "doc_id": "kb_29ab7e48",
+      "text": "资料数据可来源于安全评估机构的结论,原料供\n应商提供的原料安全数据、安全评估报告、化学品安全技术说明书,已有的相似结构化学品的\n数据等非试验方法和预测性数据,或按5.3方法所测的毒理学数据。\n———产品按5.3方法所测的与产品应用场景相匹配的毒理学试验数据,如接触人体肌肤产品对皮\n3GB26396—2026\n肤刺激性或腐蚀性、致敏性数据,接触眼睛产品对眼睛无严重眼损伤的数据。\n———对配方体系近似的产品和已有过往使用经验的配方成分等,可遵循证据权重原则,基于已有产",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c19",
+      "doc_id": "kb_29ab7e48",
+      "text": "品的安全评估资料或安全使用历史等进行评估。\n4.3.2 在国内法规禁限磷地区使用的无磷洗涤用品,产品中总五氧化二磷质量分数应不大于0.5%。\n5 试验方法\n5.1 初级生物降解度\n按GB/T15818的规定测定。\n5.2 最终生物降解度\n按GB/T21801、GB/T21802、GB/T21803、GB/T21831、GB/T21856、GB/T21857中任一适合\n的方法测定。\n5.3 毒理学测试",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c20",
+      "doc_id": "kb_29ab7e48",
+      "text": "5.3.1 通则\n毒理学测试优先采用国内法规和标准确定的方法。但是,对于动物替代试验也可采用国外政府或\n权威机构(例如欧盟、ISO和OECD指南等)发布或收录的相关方法,附录C列举出可选的典型方法。\n对洗涤用品进行毒理学测试所采用的样品试验浓度,采用制造商推荐的使用浓度,无推荐的使用浓\n度时参考所采用标准或法规规定的使用浓度。\n5.3.2 皮肤刺激性或腐蚀性\n按GB/T21604、GB/T27828、GB/T27829、GB/T27830、WS/T10009、《化妆品安全技术规范",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c21",
+      "doc_id": "kb_29ab7e48",
+      "text": "(2015年版)》及《消毒技术规范(2002年版)》中任一适合的方法测定。\n5.3.3 皮肤致敏性\n按GB/T21608、GB/T21827、WS/T10009、《化妆品安全技术规范(2015年版)》及《消毒技术规范\n(2002年版)》中任一适合的方法测定。\n5.3.4 眼刺激性或腐蚀性\n按GB/T21609、WS/T10009、《化妆品安全技术规范(2015年版)》及《消毒技术规范(2002年版)》",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c22",
+      "doc_id": "kb_29ab7e48",
+      "text": "中任一适合的方法测定。\n5.4 总五氧化二磷\n按GB/T13173中规定的方法测定。\n6 风险控制措施\n当产品使用中存在危险或潜在危险(包括由意外暴露等导致的危险或潜在危险),制造商应评估其\n风险,对产品的使用条件、方式方法、注意事项、避免的情况、可预见意外发生时的应急处理等予以明确\n4GB26396—2026\n说明,以便于理解的方式告知产品应用方(如洗衣凝珠,存在婴幼儿误食风险,QB/T5658—2021对包",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c23",
+      "doc_id": "kb_29ab7e48",
+      "text": "装、标签给出了针对性特别要求),必要时应采取相应的预防措施。\n7 标识要求\n产品中如果主动添加了次氮基三乙酸及其盐类、酶制剂、防腐剂、杀菌剂、香精,应在标签上说明。\n具体说明方式按照GB/T36970执行。\n产品涉及使用安全或环境要求时,按照GB/T36970标注产品使用指南、警示说明。\n8 标准的实施\n本文件发布之日前生产或进口的、符合GB/T26396—2011要求的产品可销售至保质期或/和有效",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c24",
+      "doc_id": "kb_29ab7e48",
+      "text": "期结束。\n5GB26396—2026\n附 录 A\n(规范性)\n洗涤用品中禁限用物质\n  表A.1为洗涤用品配方中已知的禁限用物质。\n表A.1 洗涤用品中禁限用物质\n序号 物质类别 CAS号a说明\n1烷基\n酚和\n烷基\n酚聚\n氧乙\n烯醚壬基酚 25154-52-3\n辛基酚 140-66-9\n壬基酚聚氧乙烯醚 9016-45-9\n辛基酚聚氧乙烯醚 9002-93-1\n十二烷基酚聚氧乙烯醚 —\n二壬基酚聚氧乙烯醚 —产品中这些物质(总量及其中任何一",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c25",
+      "doc_id": "kb_29ab7e48",
+      "text": "个化合物)的质量分数应小于或等于\n0.1%\n2四聚丙烯烷基苯磺酸盐 —\n3二牛脂基二甲基氯化铵 68783-78-8\n4过硼酸钠 10486-00-7\n5二甘醇 111-46-6\n6乙二醇 107-21-1\n7二乙二醇单甲醚 111-77-3产品中这些物质的质量分数应小于或\n等于0.1%\n8二乙二醇丁醚 112-34-5在气雾剂产品中物质的质量分数应小\n于或等于3%\n9卤\n代\n烃三氯甲烷(氯仿) 67-66-3",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c26",
+      "doc_id": "kb_29ab7e48",
+      "text": "四氯化碳 56-23-5\n1,1,2-三氯乙烷 79-00-5\n1,1,2,2-四氯乙烷 79-34-5\n1,1,1,2-四氯乙烷 630-20-6\n氯代戊烷 —\n1,1-二氯乙烯 75-35-4\n1,1,1-三氯乙烷 71-55-6产品中这些物质(总量及其中任何一\n个化合物)的质量分数应小于或等于\n0.1%\n10 1-氯-乙烯 75-01-4 不应在喷雾产品中用作推进剂\n11 聚合微塑料b —产品中该物质的质量分数应小于或等",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c27",
+      "doc_id": "kb_29ab7e48",
+      "text": "于0.01%\n12 荧光增白剂 —不应使用QB/T2953规定范围以外\n的品种\n  a表中某些物质可能存在多个CAS号的情况,此时以中文名称为准,CAS号供参考。\nb指不可降解、不可溶解(溶解度小于或等于2g/L),且粒径在5mm~100nm的颗粒质量占比不低于1%的合\n成有机物或化学改性天然聚合物颗粒,以及用作表面涂层的固体颗粒。对于以塑料包裹的微胶囊香精,允许使\n用至2028年12月31日。",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c28",
+      "doc_id": "kb_29ab7e48",
+      "text": "6GB26396—2026\n附 录 B\n(资料性)\n洗涤用品中禁限用物质的检测方法标准\n  已发布可参考的洗涤用品中禁限用物质的检测方法标准如下:\nGB/T4615—2013 聚氯乙烯 残留聚氯乙烯单体的测定 气相色谱法\nGB/T13173—2021 表面活性剂 洗涤剂试验方法\nGB/T23986.2—2023 色漆和清漆 挥发性有机化合物(VOC)和或半挥发性有机化合物\n(SVOC)含量的测定 第2部分:气相色谱法",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c29",
+      "doc_id": "kb_29ab7e48",
+      "text": "GB/T32115—2015 口腔护理产品中乙二醇与二甘醇的测定方法\nGB/T47545—2026 洗涤剂中氯仿等多种卤代烃的测定 气相色谱质谱法\nISO6835:1981 表面活性剂洗衣粉 总硼含量的测定 滴定法(Surfaceactiveagents—Washing\npowders—Determinationoftotalboroncontent—Titrimetricmethod)\n欧盟条例(EU)2023/2055《修订欧洲议会和理事会关于化学品注册、评估、授权和限制的(EC)No",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c30",
+      "doc_id": "kb_29ab7e48",
+      "text": "1907/2006法规(REACH法规)的附录XVII》[COMMISSIONREGULATION(EU)2023/2055of25\nSeptember2023“amendingAnnexXVIItoRegulation(EC)No1907/2006oftheEuropeanParliament\nandoftheCouncilconcerningtheRegistration,Evaluation,AuthorisationandRestrictionof",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c31",
+      "doc_id": "kb_29ab7e48",
+      "text": "Chemicals(REACH)asregardssyntheticpolymermicroparticles”]\n7GB26396—2026\n附 录 C\n(资料性)\n国外政府或权威机构发布的动物替代试验方法\nC.1 OECD接受的动物替代试验(TG)的方法\nOECD接受的动物替代试验(TG)的方法如下:\na) 皮肤腐蚀与刺激(SkinCorrosion&Irritation)\n● TG428:SkinAbsorption:InvitroMethod",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c32",
+      "doc_id": "kb_29ab7e48",
+      "text": "● TG430:InVitroSkinCorrosion:TranscutaneousElectricalResistance(TER)TestMethod\n● TG431:InVitroSkinCorrosion:ReconstructedHumanEpidermis(RhE)TestMethod\n● TG435:InVitroMembraneBarrierTestMethodforSkinCorrosion(Corrositex􀆿)",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c33",
+      "doc_id": "kb_29ab7e48",
+      "text": "● TG439:InVitroSkinIrritation:ReconstructedHumanEpidermis(RhE)TestMethod\nb) 眼睛腐蚀与刺激(EyeCorrosion&Irritation)\n● TG437:BovineCornealOpacityandPermeability(BCOP)TestMethod\n● TG438:IsolatedChickenEye(ICE)TestMethod",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c34",
+      "doc_id": "kb_29ab7e48",
+      "text": "● TG460:FluoresceinLeakage(FL)TestMethod\n● TG491:ShortTimeExposure(STE)InVitroTestMethod\n● TG492:ReconstructedHumanCornea-likeEpithelium(RhCE)TestMethod\n● TG492B:ReconstructedHumanCornea-likeEpithelium(RhCE)TestMethodforEye",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c35",
+      "doc_id": "kb_29ab7e48",
+      "text": "HazardIdentification\n● TG494:Vitrige-EyeIrritancyTestMethod\nc) 光毒性(Phototoxicity)\n● TG432:InVitro3T3NeutralRedUptake(NRU)PhototoxicityTest\n● TG495:ROS(ReactiveOxygenSpecies)AssayforPhotoreactivity\nd) 皮肤致敏性(SkinSensitization)",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c36",
+      "doc_id": "kb_29ab7e48",
+      "text": "● TG442C:InChemicoSkinSensitization\n● TG442D:InVitroSkinSensitization\n● TG442E:InVitroSkinSensitization\ne) 遗传毒性(体外)Genotoxicity(InVitro)\n● TG471:BacterialReverseMutationTest\n● TG473:InVitroMammalianChromosomeAberrationTest",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c37",
+      "doc_id": "kb_29ab7e48",
+      "text": "● TG476:InVitroMammalianCellGeneMutationTest\nC.2 欧盟替代方法验证中心(ECVAM/EURLECVAM)认可的方法\n具体方法见网站:Validatedtestmethods-healtheffects-JointResearchCentre\n8GB26396—2026\n参 考 文 献\n  [1] GB/T4615—2013 聚氯乙烯 残留氯乙烯单体的测定 气相色谱法",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c38",
+      "doc_id": "kb_29ab7e48",
+      "text": "[2] GB/T4754—2017 国民经济行业分类\n[3] GB/T5327—2008 表面活性剂术语\n[4] GB/T13173—2021 表面活性剂 洗涤剂试验方法\n[5] GB/T21801—2008 化学品 快速生物降解性 呼吸计量法试验\n[6] GB/T23986.2—2023 色漆和清漆 挥发性有机化合物(VOC)和/或半挥发性有机化合物\n(SVOC)含量的测定 第2部分:气相色谱法",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c39",
+      "doc_id": "kb_29ab7e48",
+      "text": "[7] GB/T32115—2015 口腔护理产品中乙二醇与二甘醇的测定方法\n[8] GB/T41828—2022 洗涤用品原料健康风险评估导则\n[9] GB/T47545—2026 洗涤剂中氯仿等多种卤代烃的测定 气相色谱质谱法\n[10] QB/T5658—2021 洗衣凝珠\n[11] ISO6835:1981 Surfaceactiveagents—Washingpowders—Determinationoftotalboron",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c40",
+      "doc_id": "kb_29ab7e48",
+      "text": "content—Titrimetricmethod\n[12] 化妆品安全评估技术导则(2021年版)(国家药监局公告2021年第51号)\n[13] 关于持久性有机污染物的斯德哥尔摩公约\n[14] 欧洲议会和理事会(EC)第648/2004号条例(REGULATION(EC)No648/2004OFTHE\nEUROPEANPARLIAMENTANDOFTHECOUNCIL)\n[15] 欧盟条例(EU)2023/2055修订欧洲议会和理事会关于化学品注册、评估、授权和限制的",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c41",
+      "doc_id": "kb_29ab7e48",
+      "text": "(EC)No1907/2006法规(REACH法规)的附录XVII[COMMISSIONREGULATION(EU)\n2023/2055of25September2023“amendingAnnexXVIItoRegulation(EC)No1907/2006ofthe\nEuropeanParliamentandoftheCouncilconcerningtheRegistration,Evaluation,Authorisationand",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    },
+    {
+      "chunk_id": "kb_29ab7e48_c42",
+      "doc_id": "kb_29ab7e48",
+      "text": "RestrictionofChemicals(REACH)asregardssyntheticpolymermicroparticles”]\n9GB26396—2026",
+      "title": "GB+26396-2026",
+      "category": "评估标准",
+      "tags": [],
+      "source_file": "GB+26396-2026.pdf"
+    }
+  ],
+  "categories_db": {
+    "测试分类": [],
+    "评估标准": [
+      "kb_29ab7e48"
+    ]
+  },
+  "tags_db": {
+    "测试": []
+  }
 }
