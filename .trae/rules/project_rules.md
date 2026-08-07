@@ -33,7 +33,7 @@
   3. `vite.config.ts` 代理目标端口与 Python 服务端口一致
   4. nginx.conf 反向代理中的容器名与 `start-docker-run.sh` 的 `--name` 一致
   5. `.sh` / `.json` / `.py` / `.yml` 换行符为 LF（`.gitattributes` 已配置）
-  6. 所有受影响的服务 JAR/dist 都已重新编译，**然后一次性** `docker build + save` 全部 8 个镜像（含 Qdrant）
+  6. 所有受影响的服务 JAR/dist 都已重新编译，**然后一次性** `docker build + save` 全部 8 个镜像（7 应用 + Qdrant，Qdrant 使用官方镜像无需构建）
   7. **Java 服务必须 commit 之后、打包之前重新 compile**。严格顺序: 改代码→commit→编译JAR→docker build。禁止用旧JAR打包新镜像
 
 
@@ -45,10 +45,16 @@
 mvn package -DskipTests -q
 ```
 
-## 启动全部 7 个服务
+## 启动全部 8 个服务（7 应用 + Qdrant）
 
 推荐直接运行 `.\start.ps1`直接启动项目，报错查看日志分析
 > 注意：start.ps1 必须保存为 UTF-8 with BOM，否则 PowerShell 5 解析中文注释会报错。
+
+### Qdrant 向量数据库 - 必须先启动
+```powershell
+# Qdrant 从 D:\qdrant 目录启动以访问 config.yaml 和 storage
+Start-Process qdrant -WorkingDirectory "D:\qdrant" -WindowStyle Hidden
+```
 
 ### Python 服务 (5个) - 沙箱可执行
 ```powershell
@@ -56,6 +62,8 @@ $r="d:\code\intelligent-assessment-system"
 Start-Process python -ArgumentList "-u main.py" -WorkingDirectory "$r\python\<service>" -WindowStyle Hidden
 ```
 服务列表: knowledge(10252), qa(10253), indicator(10254), evaluation(10255), ontology(10256)
+
+> knowledge-service 需要其专用 venv（含 sentence-transformers/BGE 模型），详见 `python/knowledge-service/环境配置指南.md`
 
 ### Java 服务 (1个) - 用户终端执行
 推荐直接运行 `.\start.ps1`（自动发现 JDK/Maven/Node/Qdrant，并按 LOG_ENV 注入 SPRING_PROFILES_ACTIVE）。
@@ -81,6 +89,39 @@ Start-Process "$nodeBin\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "
 | Java 启动后闪退 | `Start-Process java` 不兼容 / 用了 JDK 8 | 用 `javaw` + 绝对路径 |
 | `Access denied (MySQL)` | MySQL 密码错误 | 密码通过 .env 或环境变量配置，application.yml 默认值为 root |
 | `application.yml` | MySQL 密码配置 | `${MYSQL_PASSWORD:root}`，实际值通过 .env 或环境变量覆盖 |
+| Qdrant 无法启动 | Qdrant 未安装或目录不对 | 确认 Qdrant 在 PATH 中且从 `D:\qdrant` 启动 |
+| knowledge-service 报 sentence-transformers 错误 | venv 未安装 BGE 模型依赖 | 进入 `python/knowledge-service/`，使用专用 venv 安装依赖 |
+
+## Vite 开发代理配置 (vite.config.ts)
+
+前端开发服务器端口 **10086**，代理规则如下：
+
+| 前端路径 | 代理目标 | 实际服务 |
+|----------|----------|----------|
+| `/api/qa` | localhost:10253 | QA Service |
+| `/api/config` | localhost:10253 | QA Service（LLM 配置代理） |
+| `/api/evaluation` | localhost:10253 | QA Service（评估+Skill） |
+| `/api/attachment` | localhost:10253 | QA Service（附件） |
+| `/api/image` | localhost:10253 | QA Service（图片） |
+| `/api/model` | localhost:10253 | QA Service（模型检测） |
+| `/api/knowledge` | localhost:10252 | Knowledge Service |
+| `/api/indicator` | localhost:10254 | Indicator Service |
+| `/api/ontology` | localhost:10256 | Ontology Service |
+| `/api/admin` | localhost:10258（不重写路径） | Admin Service |
+| `/tiles`, `/geowebcache` | localhost:9090 | 外部地图服务 |
+
+**规则：新增 API 路径时，必须在 vite.config.ts 和 nginx.conf 中同步更新代理配置。**
+
+## Nginx 反向代理 (nginx.conf) — Docker 部署
+
+| 路径 | 目标容器 |
+|------|----------|
+| `/api/qa/*`, `/api/config/*`, `/api/evaluation/*`, `/api/attachment/*`, `/api/image/*`, `/api/model/*` | assessment-qa:10253 |
+| `/api/knowledge/*` | assessment-knowledge:10252 |
+| `/api/indicator/*` | assessment-indicator:10254 |
+| `/api/ontology/*` | assessment-ontology:10256 |
+| `/api/admin/*` | assessment-admin:10258（不重写路径） |
+| `/tiles`, `/geowebcache` | 外部地图服务:9090 |
 
 ## Docker 跨服务调用环境变量映射 (start-docker-run.sh)
 
@@ -90,13 +131,15 @@ Start-Process "$nodeBin\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "
 |------|---------------|----------|--------------------------|
 | assessment-qa | `ADMIN_SERVICE_URL` | assessment-admin:10258 | ✅ |
 | assessment-qa | `KNOWLEDGE_SERVICE_URL` | assessment-knowledge:10252 | ✅ |
+| assessment-qa | `ONTOLOGY_SERVICE_URL` | assessment-ontology:10256 | ✅ |
 | assessment-indicator | `QA_SERVICE_URL` | assessment-qa:10253 | ✅ |
 | assessment-indicator | `ADMIN_SERVICE_URL` | assessment-admin:10258 | ✅ |
 | assessment-indicator | `KNOWLEDGE_SERVICE_URL` | assessment-knowledge:10252 | ✅ |
 | assessment-indicator | `EVALUATION_API_URL` | assessment-qa:10253 | ✅ |
-| assessment-knowledge | (无) | — | — |
+| assessment-indicator | `ONTOLOGY_SERVICE_URL` | assessment-ontology:10256 | ✅ |
+| assessment-knowledge | `QDRANT_URL` | assessment-qdrant:6333 | ✅ |
+| assessment-ontology | `ADMIN_SERVICE_URL`（LLM 配置） | assessment-admin:10258 | ✅ |
 | assessment-evaluation | (无) | — | — |
-| assessment-ontology | (无) | — | — |
 | assessment-admin | `MYSQL_HOST/PORT/...` | 外部 MySQL | ✅ |
 | assessment-frontend | (nginx 反向代理) | 容器名 | ✅ |
 
