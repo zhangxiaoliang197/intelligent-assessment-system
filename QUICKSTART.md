@@ -158,6 +158,22 @@ knowledge-service 通过 REST API 连接 Qdrant（默认 `http://localhost:6333`
 3. 推荐设置环境变量 `QDRANT_HOME` 指向 `qdrant.exe` 所在目录；或将其目录加入系统 PATH。`start.ps1` 会按 `QDRANT_HOME` → PATH → 项目内兜底的顺序自动发现。
 4. 验证：`.\start.ps1` 启动时应输出 `Started Qdrant (:6333)`；也可直接 `qdrant.exe` 手动启动后访问 http://localhost:6333/dashboard。
 
+#### 3. 安装 GeoServer 地图服务（地图底图，可选）
+
+前端地图底图由 GeoServer 提供（端口 9090，6 个中国地图图层：省界/市界/道路/水系/湖泊/铁路），不入版本库，需单独分发安装。未安装时其他服务正常运行，仅地图底图不可用。
+
+1. 获取 `geo.zip`（含 GeoServer 2.27 + 完整数据与瓦片缓存，约 5.3GB，由同事分发）。
+2. 解压到任意目录（如 `D:\geo\`），确保存在 `bin\startup.bat`、`start.jar`、`data_dir`。
+3. 推荐设置环境变量 `GEOSERVER_HOME` 指向解压目录；`start.ps1` 会按 `GEOSERVER_HOME` → 项目内 `geo` → 项目同级 `geo` 的顺序自动发现。
+4. 首次启动前请确认解压完整；`data_dir` 数据源已使用 `${GEOSERVER_DATA_DIR}` 占位符，任何机器解压即可用，无需修改配置。
+5. 验证：`.\start.ps1` 启动时应输出 `Started GeoServer (:9090)`；也可手动运行 `bin\startup.bat` 后访问 http://localhost:9090/geowebcache/web/（admin/geoserver）。
+6. 单独启动/停止本机地图服务：
+   ```powershell
+   $env:GEOSERVER_HOME = "D:\geo"        # 指向你的解压目录
+   & "$env:GEOSERVER_HOME\bin\startup.bat"   # 启动（保持窗口运行）
+   # 停止：Ctrl+C 或关闭该窗口
+   ```
+
 ### Python服务开发
 
 在不同的终端窗口中启动各个Python服务：

@@ -1,4 +1,4 @@
-# ========================================
+﻿# ========================================
 # Intelligent Assessment System - Stop Script
 # Usage: .\stop.ps1
 # ========================================
@@ -10,8 +10,8 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Stopping all services..." -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
-$ports = @(10086, 10252, 10253, 10254, 10255, 10256, 10258)
-$names = @("Frontend","Knowledge","QA","Indicator","Evaluation","Ontology","Admin")
+$ports = @(10086, 10252, 10253, 10254, 10255, 10256, 10258, 9090)
+$names = @("Frontend","Knowledge","QA","Indicator","Evaluation","Ontology","Admin","GeoServer")
 
 # ── 第 1 步：按端口杀进程树 ──
 $stopped = 0
