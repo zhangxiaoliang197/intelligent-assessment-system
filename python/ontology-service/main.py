@@ -14,6 +14,7 @@ load_dotenv(find_dotenv(usecwd=True))
 
 from fastapi import FastAPI, HTTPException, Form, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -196,6 +197,40 @@ class BuildJob(BaseModel):
 # ---------- 后台任务管理 ----------
 # 存储正在运行的后台LLM任务（asyncio.Task），即使HTTP连接断开也继续执行
 _background_tasks: Dict[str, Any] = {}
+
+
+# ---------- SSE 事件订阅 ----------
+# 每个 job 维护一组订阅者队列，后台任务产出增量时广播给所有订阅者
+# 支持同一 job 多浏览器标签同时订阅；队列满则丢事件，保证慢消费者不阻塞后台任务
+_stream_subscribers: Dict[str, set] = defaultdict(set)
+# 单个订阅者队列上限：超出则丢弃新事件（后台任务不阻塞，前端断线重连时靠回放补全）
+_SSE_QUEUE_MAXSIZE = 50
+# SSE 空闲心跳间隔（秒）：防止 nginx/浏览器因空闲超时掐断连接
+_SSE_HEARTBEAT_TIMEOUT = 15
+
+
+def _emit_event(job_id: str, event_type: str, data: Any) -> None:
+    """向某 job 的所有 SSE 订阅者广播事件（非阻塞）。
+
+    Args:
+        job_id: 构建任务 ID
+        event_type: 事件类型（batch_done / group_done / cross_group_done / step_done / error / progress）
+        data: 事件数据（将被 JSON 序列化）
+
+    说明：
+        - 用 put_nowait 非阻塞写入，队列满则丢弃并告警，保证后台 LLM 任务不被慢消费者拖住
+        - 前端断线重连时通过 SSE 端点的"回放已完成批次"机制补全丢失事件
+    """
+    for queue in list(_stream_subscribers.get(job_id, [])):
+        try:
+            queue.put_nowait({"type": event_type, "data": data})
+        except asyncio.QueueFull:
+            logger.warning(f"[{job_id}] SSE 订阅队列已满，丢弃事件: {event_type}")
+
+
+def _sse_format(event_type: str, data: Any) -> str:
+    """格式化为 SSE 数据帧（event + data 两行，空行结尾）。"""
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def _set_job_progress(job_id: str, running_step: int, progress: int, message: str) -> None:
@@ -441,6 +476,13 @@ async def _background_extract_concepts(job_id: str) -> None:
                 job.update_time = datetime.now()
                 save_build_job(job_id)
             logger.info(f"[{job_id}] Step1 第 {idx + 1}/{total} 批完成: {len(batch_concepts)} 个概念")
+            # 实时推送本批概念给前端（SSE 订阅者），前端按名称去重后追加
+            _emit_event(job_id, "batch_done", {
+                "batch_idx": idx,
+                "batches_done": idx + 1,
+                "batches_total": total,
+                "concepts": batch_concepts
+            })
 
         # ---- 4. 全部成功后合并去重 ----
         _set_job_progress(job_id, 0, 96, "正在合并概念...")
@@ -459,6 +501,12 @@ async def _background_extract_concepts(job_id: str) -> None:
             save_build_job(job_id)
             save_build_jobs_index()
         logger.info(f"[{job_id}] 后台概念提取完成: {len(merged)} 个概念（{total} 批合并）")
+        # 推送 Step1 完成事件，前端据此启用"确认概念清单"按钮
+        _emit_event(job_id, "step_done", {
+            "step": 1,
+            "concepts": merged,
+            "total": len(merged)
+        })
     except Exception as e:
         logger.error(f"[{job_id}] 后台概念提取失败: {e}")
         async with build_lock:
@@ -472,6 +520,8 @@ async def _background_extract_concepts(job_id: str) -> None:
             job.progress_message = f"第 {failed_idx + 1}/{job.step1_batches_total} 批失败，可点击继续提取从该批续跑"
             job.update_time = datetime.now()
             save_build_job(job_id)
+        # 推送失败事件，前端展示错误并显示"继续提取概念"断点续作按钮
+        _emit_event(job_id, "error", {"step": 1, "message": job.error_message})
     finally:
         _background_tasks.pop(job_id, None)
 
@@ -567,6 +617,14 @@ async def _background_build_structure(job_id: str) -> None:
                     job.update_time = datetime.now()
                     save_build_job(job_id)
                 logger.info(f"[{job_id}] Step2 第 {idx + 1}/{total} 组完成: {len(group_entities)} 实体, {len(group_relations)} 关系")
+                # 实时推送本组实体+关系给前端（SSE 订阅者），前端按名称去重后追加
+                _emit_event(job_id, "group_done", {
+                    "group_idx": idx,
+                    "groups_done": idx + 1,
+                    "groups_total": total,
+                    "entities": group_entities,
+                    "relations": group_relations
+                })
 
         # ---- 4. 合并实体 + 组内关系 ----
         _set_job_progress(job_id, 1, 82, "正在合并结构...")
@@ -603,6 +661,8 @@ async def _background_build_structure(job_id: str) -> None:
                     job.step2_cross_group_reason = None
                     job.update_time = datetime.now()
                     save_build_job(job_id)
+                # 推送跨组关系补充结果给前端实时展示
+                _emit_event(job_id, "cross_group_done", {"relations": cross_relations})
             except Exception as _e:
                 # 跨组关系补充属"锦上添花"，失败不阻塞 Step 2 完成，仅标记失败供前端"继续构建"重试跨组
                 logger.warning(f"[{job_id}] Step2 跨组关系补充失败，降级为仅组内关系: {_e}")
@@ -644,6 +704,12 @@ async def _background_build_structure(job_id: str) -> None:
             f"[{job_id}] 后台结构构建完成: {len(merged_entities)} 实体, {len(final_relations)} 关系"
             f"（含 {cross_count} 跨组）" if total > 1 else f"[{job_id}] 后台结构构建完成: {len(merged_entities)} 实体, {len(final_relations)} 关系"
         )
+        # 推送 Step2 完成事件，前端据此启用"确认层次结构"按钮
+        _emit_event(job_id, "step_done", {
+            "step": 2,
+            "entities": merged_entities,
+            "relations": final_relations
+        })
     except Exception as e:
         logger.error(f"[{job_id}] 后台结构构建失败: {e}")
         async with build_lock:
@@ -665,6 +731,8 @@ async def _background_build_structure(job_id: str) -> None:
                 job.progress_message = "跨组关系补充失败，可点击继续构建重新补充跨组关系"
             job.update_time = datetime.now()
             save_build_job(job_id)
+        # 推送失败事件，前端展示错误并显示"继续构建结构"断点续作按钮
+        _emit_event(job_id, "error", {"step": 2, "message": job.error_message})
     finally:
         _background_tasks.pop(job_id, None)
 
@@ -681,7 +749,7 @@ async def _background_generate_ontology(job_id: str) -> None:
             job.step2_entities, job.step2_relations,
             job.meta_entity_types, job.meta_relation_types
         )
-        result = await _llm_json_async(messages, temperature=0.3, max_tokens=8000)
+        result = await _llm_json_async(messages, temperature=0.3, max_tokens=config.LLM_MAX_TOKENS)
         if not isinstance(result, dict):
             raise ValueError("LLM 返回格式异常")
         final_entities = result.get("entities", job.step2_entities)
@@ -2201,7 +2269,7 @@ async def build_upload(
     # 3. 调用 LLM 推荐元模型（失败用默认元模型兜底，不阻塞上传）
     try:
         messages = build_prompts.build_meta_messages(doc_text_truncated, name)
-        meta = await _llm_json_async(messages, temperature=0.3, max_tokens=2000)
+        meta = await _llm_json_async(messages, temperature=0.3, max_tokens=config.LLM_MAX_TOKENS)
         job.meta_entity_types = meta.get("entity_types", [])
         job.meta_relation_types = meta.get("relation_types", [])
         if not job.meta_entity_types:
@@ -2298,6 +2366,106 @@ async def build_progress(job_id: str):
             "step2_cross_group_failed": job.step2_cross_group_failed,
         }
     }
+
+
+@app.get("/ontology/build/{job_id}/stream")
+async def build_stream(job_id: str):
+    """SSE 端点：实时推送 Step1/Step2 的批次/分组增量结果。
+
+    连接建立时：
+    1. 先回放该 job 已完成的批次/分组结果（断线重连不丢数据，事件带 replayed=True）
+    2. 若任务已结束（running_step=-1）补发终态事件（step_done/error）后关闭
+    3. 否则订阅 queue 等待后续事件，15 秒无事件发心跳保活
+
+    前端用 fetch + ReadableStream 订阅（复用 Authorization header，不用 EventSource）。
+    """
+    job = _get_job_or_404(job_id)
+
+    async def event_generator():
+        queue: asyncio.Queue = asyncio.Queue(maxsize=_SSE_QUEUE_MAXSIZE)
+        _stream_subscribers[job_id].add(queue)
+        try:
+            # ── 1. 回放已完成批次/分组（断线重连续传，前端按名称去重天然幂等）──
+            # Step1 回放：step1 未确认且有分批结果
+            if not job.step1_confirmed and job.step1_batches_total > 0:
+                for idx, batch in enumerate(job.step1_batch_results):
+                    if batch:
+                        yield _sse_format("batch_done", {
+                            "batch_idx": idx,
+                            "batches_done": idx + 1,
+                            "batches_total": job.step1_batches_total,
+                            "concepts": batch,
+                            "replayed": True
+                        })
+            # Step2 回放：step1 已确认、step2 未确认、有分组结果
+            if job.step1_confirmed and not job.step2_confirmed and job.step2_groups_total > 0:
+                for idx, grp in enumerate(job.step2_group_results):
+                    if grp and (grp.get("entities") or grp.get("relations")):
+                        yield _sse_format("group_done", {
+                            "group_idx": idx,
+                            "groups_done": idx + 1,
+                            "groups_total": job.step2_groups_total,
+                            "entities": grp.get("entities", []),
+                            "relations": grp.get("relations", []),
+                            "replayed": True
+                        })
+                if job.step2_cross_group_done and job.step2_cross_group_relations:
+                    yield _sse_format("cross_group_done", {
+                        "relations": job.step2_cross_group_relations,
+                        "replayed": True
+                    })
+
+            # ── 2. 终态判断：任务已结束则补发终态事件并关闭 ──
+            if job.running_step == -1:
+                if job.error_message:
+                    # 判断错误归属步骤：step1 失败标记优先，否则看 step2
+                    err_step = 1 if job.step1_failed_batch >= 0 else (
+                        2 if (job.step2_failed_group >= 0 or job.step2_cross_group_failed) else 0
+                    )
+                    yield _sse_format("error", {"step": err_step, "message": job.error_message})
+                    return
+                # step1 已完成（有 concepts）未确认 → 补发 step1 完成事件
+                if job.step1_concepts and not job.step1_confirmed:
+                    yield _sse_format("step_done", {
+                        "step": 1,
+                        "concepts": job.step1_concepts,
+                        "total": len(job.step1_concepts)
+                    })
+                    return
+                # step2 已完成（有 entities）未确认 → 补发 step2 完成事件
+                if job.step2_entities and not job.step2_confirmed:
+                    yield _sse_format("step_done", {
+                        "step": 2,
+                        "entities": job.step2_entities,
+                        "relations": job.step2_relations
+                    })
+                    return
+                # 任务未开始或已确认等下一阶段：不发终态，继续订阅等新事件
+
+            # ── 3. 订阅 queue 等新事件（任务运行中）──
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=_SSE_HEARTBEAT_TIMEOUT)
+                except asyncio.TimeoutError:
+                    # 发心跳（SSE 注释行），防止 nginx/浏览器因空闲超时掐断连接
+                    yield ": heartbeat\n\n"
+                    continue
+                yield _sse_format(event["type"], event["data"])
+                # 终态事件后关闭连接
+                if event["type"] in ("step_done", "error"):
+                    break
+        finally:
+            _stream_subscribers[job_id].discard(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            # 禁用 nginx 缓冲，保证事件实时推送（非缓冲累积后批量发）
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 @app.get("/ontology/build/{job_id}")

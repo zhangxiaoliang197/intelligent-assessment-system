@@ -25,5 +25,10 @@ STEP2_CROSS_GROUP_ENTITY_THRESHOLD = int(os.getenv("STEP2_CROSS_GROUP_ENTITY_THR
 # 跨组关系补充时每批实体数上限
 STEP2_CROSS_GROUP_ENTITY_BATCH = int(os.getenv("STEP2_CROSS_GROUP_ENTITY_BATCH", "60"))
 
-# ── LLM 调用参数（复用现有 max_tokens=8000，不新增）──
-LLM_MAX_TOKENS = 8000
+# ── LLM 调用参数 ──
+# reasoning 模型（如 deepseek-v4-flash / deepseek-reasoner）会优先消耗 token 做思考链
+# （reasoning_content），再输出正式 content。max_tokens 需同时容纳 reasoning + content，
+# 否则 reasoning 耗尽上限后 content 会被截断为空（finish_reason=length）。
+# 复杂文学/叙事文档的 reasoning 可达 6K-15K token，8000 明显不足，提到 24000。
+# 可通过环境变量 LLM_MAX_TOKENS 覆盖。
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "24000"))

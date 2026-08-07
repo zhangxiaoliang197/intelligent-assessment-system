@@ -1,50 +1,5 @@
 [
   {
-    "id": "ont_seed_combat",
-    "name": "作战效能评估本体",
-    "description": "作战指挥场景的示例本体，包含作战效能、打击/生存/保障能力及相关指标概念",
-    "version": "1.0.0",
-    "entity_types": [
-      {
-        "name": "概念",
-        "color": "#5470c6"
-      },
-      {
-        "name": "实体",
-        "color": "#91cc75"
-      },
-      {
-        "name": "属性",
-        "color": "#fac858"
-      },
-      {
-        "name": "事件",
-        "color": "#ee6666"
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "包含"
-      },
-      {
-        "name": "关联"
-      },
-      {
-        "name": "影响"
-      },
-      {
-        "name": "衡量"
-      },
-      {
-        "name": "继承"
-      }
-    ],
-    "create_time": "2026-07-31 11:15:13.526260",
-    "update_time": "2026-07-31 14:10:17.251933",
-    "status": "活跃",
-    "is_default": false
-  },
-  {
     "id": "ont_61daa626",
     "name": "金融示例",
     "description": "",
@@ -101,54 +56,201 @@
     "is_default": false
   },
   {
-    "id": "ont_15750e87",
-    "name": "西游记",
+    "id": "ont_c1fb7689",
+    "name": "示例2",
     "description": "",
     "version": "1.0.0",
     "entity_types": [
       {
-        "name": "人物",
+        "name": "企业",
         "color": "#5470c6"
       },
       {
-        "name": "地点",
+        "name": "人物",
         "color": "#91cc75"
       },
       {
-        "name": "物品",
+        "name": "财务指标",
         "color": "#fac858"
       },
       {
-        "name": "事件",
+        "name": "风险事件",
         "color": "#ee6666"
       },
       {
-        "name": "法术",
+        "name": "融资工具",
         "color": "#73c0de"
       }
     ],
     "relation_types": [
       {
-        "name": "参与"
-      },
-      {
-        "name": "发生于"
-      },
-      {
         "name": "拥有"
       },
       {
-        "name": "使用"
+        "name": "申请"
       },
       {
-        "name": "导致"
+        "name": "面临"
+      },
+      {
+        "name": "影响"
+      },
+      {
+        "name": "担保"
+      }
+    ],
+    "create_time": "2026-08-06 14:50:28.189079",
+    "update_time": "2026-08-06 18:11:44.124346",
+    "status": "活跃",
+    "is_default": false
+  },
+  {
+    "id": "ont_84fd1dc8",
+    "name": "示例",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "name": "企业",
+        "color": "#5470c6"
+      },
+      {
+        "name": "人物",
+        "color": "#91cc75"
+      },
+      {
+        "name": "财务指标",
+        "color": "#fac858"
+      },
+      {
+        "name": "融资方案",
+        "color": "#ee6666"
+      },
+      {
+        "name": "风险事件",
+        "color": "#73c0de"
+      },
+      {
+        "name": "抵押物",
+        "color": "#fc8452"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "提出"
+      },
+      {
+        "name": "评估"
+      },
+      {
+        "name": "影响"
+      },
+      {
+        "name": "担保"
+      },
+      {
+        "name": "衡量"
       },
       {
         "name": "关联"
       }
     ],
-    "create_time": "2026-08-05 16:41:02.591421",
-    "update_time": "2026-08-05 16:41:02.591421",
+    "create_time": "2026-08-06 15:17:18.426741",
+    "update_time": "2026-08-06 15:17:18.426741",
+    "status": "活跃",
+    "is_default": false
+  },
+  {
+    "id": "ont_079690ef",
+    "name": "西游记",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "name": "概念",
+        "color": "#5470c6"
+      },
+      {
+        "name": "实体",
+        "color": "#91cc75"
+      },
+      {
+        "name": "属性",
+        "color": "#fac858"
+      },
+      {
+        "name": "事件",
+        "color": "#ee6666"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "包含"
+      },
+      {
+        "name": "关联"
+      },
+      {
+        "name": "影响"
+      },
+      {
+        "name": "衡量"
+      },
+      {
+        "name": "继承"
+      }
+    ],
+    "create_time": "2026-08-06 16:32:20.288710",
+    "update_time": "2026-08-06 16:32:20.288710",
+    "status": "活跃",
+    "is_default": false
+  },
+  {
+    "id": "ont_a7c3079c",
+    "name": "示例3",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "name": "分类维度",
+        "color": "#5470c6"
+      },
+      {
+        "name": "机器人类别",
+        "color": "#91cc75"
+      },
+      {
+        "name": "术语概念",
+        "color": "#fac858"
+      },
+      {
+        "name": "标准规范",
+        "color": "#ee6666"
+      },
+      {
+        "name": "示例实例",
+        "color": "#73c0de"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "包含"
+      },
+      {
+        "name": "分类依据"
+      },
+      {
+        "name": "定义"
+      },
+      {
+        "name": "引用"
+      },
+      {
+        "name": "实例化"
+      }
+    ],
+    "create_time": "2026-08-06 17:40:11.283864",
+    "update_time": "2026-08-06 18:12:09.287602",
     "status": "活跃",
     "is_default": false
   }

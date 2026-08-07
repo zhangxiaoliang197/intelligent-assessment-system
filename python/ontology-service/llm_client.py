@@ -126,9 +126,28 @@ def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000) -
     try:
         with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            content = data["choices"][0]["message"]["content"]
+            choice = data["choices"][0]
+            content = choice["message"]["content"]
+            finish_reason = choice.get("finish_reason")
             # DeepSeek 偶发返回 content 为 null，统一转为空字符串处理
-            return content if content is not None else ""
+            if content is None:
+                content = ""
+
+            # reasoning 模型（deepseek-v4-flash / deepseek-reasoner）会优先消耗 token 做思考链
+            # （reasoning_content），当 max_tokens 不足时 reasoning 耗尽上限，content 被截断为空
+            # 且 finish_reason=length。此种情况下重试必然失败（配置不变），直接抛错避免
+            # call_llm_json 无意义重试 4 次，并记录 reasoning_tokens 便于诊断。
+            if not content.strip() and finish_reason == "length":
+                usage = data.get("usage", {}) or {}
+                comp_detail = usage.get("completion_tokens_details", {}) or {}
+                reasoning_tokens = comp_detail.get("reasoning_tokens", "未知")
+                comp_tokens = usage.get("completion_tokens", "未知")
+                raise RuntimeError(
+                    f"大模型思考链耗尽 max_tokens 上限（reasoning_tokens={reasoning_tokens}, "
+                    f"completion_tokens={comp_tokens}, max_tokens={max_tokens}），未输出正式内容。"
+                    f"请增大 LLM_MAX_TOKENS 或换用非 reasoning 模型（如 deepseek-chat）。"
+                )
+            return content
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="ignore")
         try:
@@ -138,6 +157,10 @@ def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000) -
             msg = err_body
         raise RuntimeError(f"大模型调用失败 (HTTP {e.code}): {msg[:500]}")
     except Exception as e:
+        # 本函数内主动抛出的 RuntimeError（如 reasoning 耗尽 max_tokens）原样向上抛，
+        # 不被重新包装或截断，保证 call_llm_json 能拿到原始错误信息并跳过无意义重试
+        if isinstance(e, RuntimeError):
+            raise
         raise RuntimeError(f"大模型调用失败: {str(e)[:500]}")
 
 

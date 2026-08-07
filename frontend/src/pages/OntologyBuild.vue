@@ -135,28 +135,14 @@
             <template #header>
               <div class="step-header">
                 <h3>提取概念</h3>
-                <el-tag type="info" size="small">AI 已从文档中提取以下概念，您可以编辑确认</el-tag>
+                <el-tag type="info" size="small">
+                  {{ isExtracting ? 'AI 正在提取，可实时编辑已提取部分' : 'AI 已提取以下概念，可编辑确认' }}
+                </el-tag>
               </div>
             </template>
 
-            <!-- 等待后台提取中 -->
-            <div v-if="isExtracting" class="waiting-section">
-              <el-alert
-                :title="job?.step1_batches_total > 1
-                  ? `AI 正在提取概念（第 ${job.step1_batches_done + 1}/${job.step1_batches_total} 批）...`
-                  : 'AI 正在提取概念...'"
-                type="info"
-                :closable="false"
-                show-icon
-              >
-                <template #default>
-                  <p>后台任务正在运行，请耐心等待。您可以随时离开此页面，稍后回来继续。</p>
-                </template>
-              </el-alert>
-            </div>
-
             <!-- 分批提取中途失败，可断点续作 -->
-            <div v-else-if="isStep1Resumable" class="extract-section">
+            <div v-if="isStep1Resumable" class="extract-section">
               <el-alert
                 :title="`第 ${job.step1_failed_batch + 1}/${job.step1_batches_total} 批提取失败，已成功 ${job.step1_batches_done} 批`"
                 type="warning"
@@ -176,8 +162,8 @@
               </div>
             </div>
 
-            <!-- 需要点击按钮开始提取 -->
-            <div v-else-if="!job?.step1_concepts?.length" class="extract-section">
+            <!-- 未开始提取（非提取中、无概念） -->
+            <div v-else-if="!isExtracting && !concepts.length" class="extract-section">
               <el-alert
                 title="点击按钮开始提取概念"
                 type="info"
@@ -186,6 +172,7 @@
               >
                 <template #default>
                   <p>AI 将根据已确认的元模型，从文档内容中提取概念。每个概念会标注原文出处，方便您核对。</p>
+                  <p>长文档会分批提取，每批完成后实时显示在下方表格中，您可边提取边编辑。</p>
                 </template>
               </el-alert>
               <div class="step-actions">
@@ -195,9 +182,18 @@
               </div>
             </div>
 
-            <!-- 概念清单已就绪，等待用户审核 -->
+            <!-- 提取中（实时追加）或已完成审核：实时表格，始终可编辑 -->
             <div v-else class="concepts-section">
               <el-alert
+                v-if="isExtracting"
+                :title="batch1ProgressText"
+                type="info"
+                :closable="false"
+                show-icon
+                style="margin-bottom: 1rem"
+              />
+              <el-alert
+                v-else
                 title="概念提取完成，请审核确认"
                 type="success"
                 :closable="false"
@@ -258,10 +254,10 @@
                 <el-button
                   type="primary"
                   :loading="submitting"
-                  :disabled="job?.step1_confirmed"
+                  :disabled="!aiStep1Done || job?.step1_confirmed"
                   @click="doConfirmConcepts"
                 >
-                  {{ job?.step1_confirmed ? '已确认' : '确认概念清单' }}
+                  {{ job?.step1_confirmed ? '已确认' : (aiStep1Done ? '确认概念清单' : 'AI 提取中（可先编辑已提取部分）...') }}
                 </el-button>
               </div>
             </div>
@@ -274,28 +270,14 @@
             <template #header>
               <div class="step-header">
                 <h3>构建层次结构</h3>
-                <el-tag type="info" size="small">AI 已根据概念清单构建以下层次结构</el-tag>
+                <el-tag type="info" size="small">
+                  {{ isBuilding ? 'AI 正在构建，可实时编辑已生成部分' : 'AI 已构建以下层次结构，可编辑确认' }}
+                </el-tag>
               </div>
             </template>
 
-            <!-- 等待后台构建中 -->
-            <div v-if="isBuilding" class="waiting-section">
-              <el-alert
-                :title="job?.step2_groups_total > 1
-                  ? `AI 正在构建层次结构（第 ${job.step2_groups_done + 1}/${job.step2_groups_total} 组）...`
-                  : 'AI 正在构建层次结构...'"
-                type="info"
-                :closable="false"
-                show-icon
-              >
-                <template #default>
-                  <p>后台任务正在运行，请耐心等待。您可以随时离开此页面，稍后回来继续。</p>
-                </template>
-              </el-alert>
-            </div>
-
             <!-- 分组构建或跨组关系补充中途失败，可断点续作 -->
-            <div v-else-if="isStep2Resumable" class="build-section">
+            <div v-if="isStep2Resumable" class="build-section">
               <el-alert
                 :title="job.step2_groups_done < job.step2_groups_total
                   ? `第 ${job.step2_failed_group + 1}/${job.step2_groups_total} 组构建失败，已成功 ${job.step2_groups_done} 组`
@@ -317,8 +299,8 @@
               </div>
             </div>
 
-            <!-- 需要点击按钮开始构建 -->
-            <div v-else-if="!job?.step2_entities?.length" class="build-section">
+            <!-- 未开始构建（非构建中、无实体） -->
+            <div v-else-if="!isBuilding && !entities.length" class="build-section">
               <el-alert
                 title="点击按钮开始构建层次结构"
                 type="info"
@@ -327,6 +309,7 @@
               >
                 <template #default>
                   <p>AI 将根据概念清单构建实体和关系。</p>
+                  <p>概念较多时分组构建，每组完成后实时显示在下方表格中，您可边构建边编辑。</p>
                 </template>
               </el-alert>
               <div class="step-actions">
@@ -336,9 +319,18 @@
               </div>
             </div>
 
-            <!-- 结构已就绪，等待用户审核 -->
+            <!-- 构建中（实时追加）或已完成审核：实时表格，始终可编辑 -->
             <div v-else class="structure-section">
               <el-alert
+                v-if="isBuilding"
+                :title="batch2ProgressText"
+                type="info"
+                :closable="false"
+                show-icon
+                style="margin-bottom: 1rem"
+              />
+              <el-alert
+                v-else
                 title="层次结构构建完成，请审核确认"
                 type="success"
                 :closable="false"
@@ -463,10 +455,10 @@
                 <el-button
                   type="primary"
                   :loading="submitting"
-                  :disabled="job?.step2_confirmed"
+                  :disabled="!aiStep2Done || job?.step2_confirmed"
                   @click="doConfirmStructure"
                 >
-                  {{ job?.step2_confirmed ? '已确认' : '确认层次结构' }}
+                  {{ job?.step2_confirmed ? '已确认' : (aiStep2Done ? '确认层次结构' : 'AI 构建中（可先编辑已生成部分）...') }}
                 </el-button>
               </div>
             </div>
@@ -547,7 +539,8 @@ import {
   confirmConcepts as confirmConceptsApi,
   buildStructure as buildStructureApi,
   confirmStructure as confirmStructureApi,
-  generateOntology
+  generateOntology,
+  streamBuildJob
 } from '@/services/ontologyBuild'
 
 const route = useRoute()
@@ -568,8 +561,17 @@ const metaForm = ref({
   relationTypes: [] as any[]
 })
 
-// 轮询定时器
+// AI 提取/构建完成标记（收到 SSE step_done 后置 true，启用"确认"按钮）
+// 提取/构建进行中按钮禁用，但用户可先编辑已到达的行
+const aiStep1Done = ref(false)
+const aiStep2Done = ref(false)
+
+// 轮询定时器（SSE 不可用时的降级方案）
 let pollTimer: ReturnType<typeof setInterval> | null = null
+// SSE 订阅 abort 函数 + 断线重试计数
+let sseAbort: (() => void) | null = null
+let streamRetryCount = 0
+const STREAM_MAX_RETRY = 3
 
 // ── 前端动画进度 ──
 // 后端仅在 10%/30%/100% 设离散值，LLM 调用期间进度卡死。
@@ -653,6 +655,26 @@ const progressMessage = computed(() => {
     2: job.value.progress_message || '正在生成最终本体...'
   }
   return msgs[job.value.running_step] || ''
+})
+
+// ── Step1/Step2 实时进度文案（提取/构建进行中显示在表格顶部）──
+const batch1ProgressText = computed(() => {
+  const j = job.value
+  if (!j) return 'AI 正在提取概念...'
+  const done = concepts.value.length
+  if (j.step1_batches_total > 1) {
+    return `AI 正在提取概念（第 ${j.step1_batches_done + 1}/${j.step1_batches_total} 批），已提取 ${done} 个`
+  }
+  return `AI 正在提取概念，已提取 ${done} 个`
+})
+
+const batch2ProgressText = computed(() => {
+  const j = job.value
+  if (!j) return 'AI 正在构建层次结构...'
+  if (j.step2_groups_total > 1) {
+    return `AI 正在构建层次结构（第 ${j.step2_groups_done + 1}/${j.step2_groups_total} 组），已生成 ${entities.value.length} 实体、${relations.value.length} 关系`
+  }
+  return `AI 正在构建层次结构，已生成 ${entities.value.length} 实体、${relations.value.length} 关系`
 })
 
 // ── 步骤条状态 ──
@@ -753,6 +775,131 @@ const stopPolling = () => {
   stopProgressAnimation()
 }
 
+// ── SSE 实时订阅（Step1/Step2 批次级增量推送，替代轮询）──
+// 每批概念/每组实体关系完成后即时推送到前端，用户可边看边改
+// 断线自动重连（最多 3 次），仍失败回退轮询
+
+/** 名称归一化（与后端 _normalize_name 一致）：用于按名称去重，避免全角/空格差异导致重复 */
+const _normName = (name: string) =>
+  (name || '').trim().replace(/（/g, '(').replace(/）/g, ')').replace(/\u3000/g, ' ')
+
+/** 关系三元组去重 key */
+const _relKey = (r: any) => `${_normName(r.source)}|${r.relation_type}|${_normName(r.target)}`
+
+/** 启动 SSE 订阅：接收 Step1/Step2 的实时增量 */
+const startStream = () => {
+  console.log('[Stream] startStream 调用, jobId=', jobId, '当前 entities=', entities.value.length, 'concepts=', concepts.value.length)
+  stopStream()
+  stopPolling()  // 确保轮询已停，避免 SSE 与轮询双重更新
+  streamRetryCount = 0
+  sseAbort = streamBuildJob(jobId, {
+    onBatchDone: (d) => {
+      // 只追加不覆盖：按归一化名称去重，已存在于前端的跳过（保留用户编辑/手动添加）
+      const existing = new Set(concepts.value.map(c => _normName(c.name)).filter(Boolean))
+      const fresh = (d.concepts || []).filter((c: any) => {
+        const n = _normName(c.name)
+        if (!n || existing.has(n)) return false
+        existing.add(n)
+        return true
+      })
+      concepts.value.push(...fresh)
+      if (job.value) {
+        job.value.step1_batches_done = d.batches_done
+        job.value.step1_batches_total = d.batches_total
+      }
+    },
+    onGroupDone: (d) => {
+      // 实体按名称去重追加（补充 propertiesStr 供表格编辑）
+      const existEnt = new Set(entities.value.map(e => _normName(e.name)).filter(Boolean))
+      const freshEnt = (d.entities || []).filter((e: any) => {
+        const n = _normName(e.name)
+        if (!n || existEnt.has(n)) return false
+        existEnt.add(n)
+        return true
+      }).map((e: any) => ({ ...e, propertiesStr: JSON.stringify(e.properties || {}) }))
+      console.log('[Stream] onGroupDone: +' + freshEnt.length + ' 实体, 总计=' + (entities.value.length + freshEnt.length))
+      entities.value.push(...freshEnt)
+      // 关系按三元组去重追加
+      const existRel = new Set(relations.value.map(_relKey))
+      const freshRel = (d.relations || []).filter((r: any) => {
+        const k = _relKey(r)
+        if (existRel.has(k)) return false
+        existRel.add(k)
+        return true
+      })
+      relations.value.push(...freshRel)
+      if (job.value) {
+        job.value.step2_groups_done = d.groups_done
+        job.value.step2_groups_total = d.groups_total
+      }
+    },
+    onCrossGroupDone: (d) => {
+      // 跨组关系补充：按三元组去重追加
+      const existRel = new Set(relations.value.map(_relKey))
+      const freshRel = (d.relations || []).filter((r: any) => {
+        const k = _relKey(r)
+        if (existRel.has(k)) return false
+        existRel.add(k)
+        return true
+      })
+      relations.value.push(...freshRel)
+    },
+    onStepDone: (d) => {
+      // AI 全部完成，启用"确认"按钮
+      if (d.step === 1) {
+        aiStep1Done.value = true
+        if (job.value) job.value.running_step = -1
+        ElMessage.success(`概念提取完成，共 ${d.total ?? concepts.value.length} 个`)
+      } else if (d.step === 2) {
+        aiStep2Done.value = true
+        if (job.value) job.value.running_step = -1
+        ElMessage.success(`层次结构构建完成，共 ${entities.value.length} 实体、${relations.value.length} 关系`)
+      }
+      stopProgressAnimation(100)
+    },
+    onError: (d) => {
+      if (d.reconnect) {
+        // 连接异常断开：尝试重连
+        console.log('[Stream] onError reconnect, retryCount=', streamRetryCount)
+        retryStream()
+      } else {
+        // 真实业务错误：展示错误，回退轮询拉取完整状态（断点续作等）
+        if (d.message) ElMessage.error(d.message)
+        if (job.value) {
+          job.value.error_message = d.message
+          job.value.running_step = -1
+        }
+        startPolling()
+      }
+    },
+    onState: (s) => {
+      // 连接成功打开后重置重试计数
+      if (s === 'open') streamRetryCount = 0
+    }
+  })
+}
+
+/** 停止 SSE 订阅（离开页面/确认提交时调用） */
+const stopStream = () => {
+  if (sseAbort) {
+    sseAbort()
+    sseAbort = null
+  }
+}
+
+/** 断线重连：最多 3 次，仍失败回退轮询 */
+const retryStream = () => {
+  if (streamRetryCount >= STREAM_MAX_RETRY) {
+    ElMessage.warning('实时连接不稳定，已切换到轮询模式')
+    startPolling()
+    return
+  }
+  streamRetryCount++
+  setTimeout(() => {
+    startStream()  // startStream 内部会先 stopStream；已有数据保留，靠后端回放 + 前端去重补全
+  }, 3000)
+}
+
 // ── 步骤操作 ──
 const doConfirmMeta = async () => {
   submitting.value = true
@@ -774,13 +921,15 @@ const doConfirmMeta = async () => {
 const doExtractConcepts = async () => {
   try {
     await extractConceptsApi(jobId)
-    // 乐观标记运行中，让进度区立即显示，无需等首次轮询
+    // 乐观标记运行中，让进度区立即显示，无需等首次 SSE 事件
     if (job.value) {
       job.value.running_step = 0
       job.value.progress_message = '正在准备文档...'
     }
-    ElMessage.info('概念提取已在后台开始，您可以离开页面')
-    startPolling()
+    aiStep1Done.value = false
+    ElMessage.info('概念提取已在后台开始，可实时查看提取结果')
+    startProgressAnimation()
+    startStream()
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '启动提取失败')
   }
@@ -791,6 +940,8 @@ const doConfirmConcepts = async () => {
   try {
     await confirmConceptsApi(jobId, concepts.value)
     ElMessage.success('概念清单已确认，可执行层次结构构建')
+    stopStream()
+    stopProgressAnimation(100)
     await loadJob()
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '确认失败')
@@ -802,13 +953,15 @@ const doConfirmConcepts = async () => {
 const doBuildStructure = async () => {
   try {
     await buildStructureApi(jobId)
-    // 乐观标记运行中，让进度区立即显示
+    // 乐观标记运行中，让进度区立即显示，无需等首次 SSE 事件
     if (job.value) {
       job.value.running_step = 1
       job.value.progress_message = '正在准备概念清单...'
     }
-    ElMessage.info('层次结构构建已在后台开始，您可以离开页面')
-    startPolling()
+    aiStep2Done.value = false
+    ElMessage.info('层次结构构建已在后台开始，可实时查看构建结果')
+    startProgressAnimation()
+    startStream()
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '启动构建失败')
   }
@@ -831,6 +984,8 @@ const doConfirmStructure = async () => {
 
     await confirmStructureApi(jobId, parsedEntities, relations.value)
     ElMessage.success('层次结构已确认，可生成最终本体')
+    stopStream()
+    stopProgressAnimation(100)
     await loadJob()
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '确认失败')
@@ -902,13 +1057,26 @@ onMounted(async () => {
   await loadJob()
   loading.value = false
 
-  // 若有后台任务在运行，自动开始轮询与进度动画
-  if (job.value?.running_step >= 0) {
+  // 恢复 AI 完成标记（断线重连/刷新页面恢复场景：step1/step2 已完成但未确认）
+  if (job.value?.step1_concepts?.length && !job.value?.step1_confirmed) {
+    aiStep1Done.value = true
+  }
+  if (job.value?.step2_entities?.length && !job.value?.step2_confirmed) {
+    aiStep2Done.value = true
+  }
+
+  // 若有后台任务在运行：Step1/Step2 用 SSE 实时推送，Step3（序列化）用轮询
+  const rs = job.value?.running_step
+  if (rs === 0 || rs === 1) {
+    startProgressAnimation()
+    startStream()
+  } else if (rs === 2) {
     startPolling()
   }
 })
 
 onUnmounted(() => {
+  stopStream()
   stopPolling()
 })
 </script>
