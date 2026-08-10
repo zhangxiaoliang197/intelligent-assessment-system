@@ -94,6 +94,9 @@ GeoWebCache-使用指南.md
 # 本体分步构建任务的运行时状态数据（含文档原文、LLM 结果，服务自动生成，不入库）
 python/ontology-service/data/build_jobs/
 
+# 本体数据备份目录（服务自动生成，不入库）
+**/data_backup_*/
+
 # 用户本体构建/编辑生成的运行时数据（服务自动生成，不入库）
 python/ontology-service/data/user_ontologies/
 
