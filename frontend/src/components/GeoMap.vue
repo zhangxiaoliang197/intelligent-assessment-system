@@ -10,6 +10,9 @@
         <span v-if="areas && areas.length > 0" class="geo-map-count geo-map-area-count">
           {{ areas.length }} 个区域
         </span>
+        <span v-if="circles && circles.length > 0" class="geo-map-count geo-map-circle-count">
+          {{ circles.length }} 个圆形区域
+        </span>
         <span v-if="drawnCount > 0" class="geo-map-count geo-map-drawn-count">
           {{ drawnCount }} 个手绘元素
         </span>
@@ -51,14 +54,16 @@ import L from 'leaflet'
 import 'leaflet-draw'
 import 'leaflet-draw/dist/leaflet.draw.css'
 import gcoord from 'gcoord'
-import type { GeoPoint } from '@/utils/geoParser'
-import type { GeoRoute, GeoArea } from '@/utils/geoAnnotation'
+import { type GeoPoint } from '@/utils/geoParser'
+import { type GeoRoute, type GeoArea } from '@/utils/geoAnnotation'
+import { type CircleArea } from '@/utils/mapAnnotationParser'
 import api from '@/services/api'
 
 const props = defineProps<{
   points: GeoPoint[]
   routes?: GeoRoute[]
   areas?: GeoArea[]
+  circles?: CircleArea[]
   title?: string
 }>()
 
@@ -69,6 +74,7 @@ let circleMarkers: L.CircleMarker[] = []
 let spiderLineLayer: L.FeatureGroup | null = null
 let routeLayers: L.Polyline[] = []
 let areaLayers: L.Polygon[] = []
+let circleLayers: L.Circle[] = []
 let tileLayers: { layer: L.TileLayer; config: MapLayerConfig }[] = []
 
 // ── 用户手绘图层 ──
@@ -428,6 +434,7 @@ async function initMap() {
   addMarkers()
   addRoutes()
   addAreas()
+  addCircles()
 }
 
 /**
@@ -621,6 +628,30 @@ function clearAreas() {
   areaLayers = []
 }
 
+function addCircles() {
+  if (!map || !props.circles) return
+  clearCircles()
+  props.circles.forEach((c, ci) => {
+    const [lat, lng] = transformCoord(c.center.lng, c.center.lat)
+    const radiusMeters = c.radiusKm * 1000
+    const color = routeColors[ci % routeColors.length]
+    const circle = L.circle([lat, lng], {
+      radius: radiusMeters,
+      color,
+      weight: 2,
+      fillOpacity: 0.12,
+      fillColor: color,
+    }).addTo(map!)
+    circle.bindPopup(`<strong>圆形区域: ${c.name}</strong><br/>半径: ${c.radiusKm}km<br/>圆心: ${c.center.lng.toFixed(4)}°, ${c.center.lat.toFixed(4)}°`)
+    circleLayers.push(circle)
+  })
+}
+
+function clearCircles() {
+  circleLayers.forEach(l => { if (map) map.removeLayer(l) })
+  circleLayers = []
+}
+
 watch(() => props.points, () => {
   if (map) addMarkers()
 }, { deep: true })
@@ -631,6 +662,10 @@ watch(() => props.routes, () => {
 
 watch(() => props.areas, () => {
   if (map) addAreas()
+}, { deep: true })
+
+watch(() => props.circles, () => {
+  if (map) addCircles()
 }, { deep: true })
 
 onMounted(() => {

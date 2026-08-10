@@ -104,10 +104,11 @@
                   </div>
                 </div>
                 <GeoMap
-                  v-if="msg.role === 'assistant' && msg.showMap && (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0)"
+                  v-if="msg.role === 'assistant' && msg.showMap && (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0)"
                   :points="msg.geoPoints || []"
                   :routes="msg.routes || []"
                   :areas="msg.areas || []"
+                  :circles="msg.circles || []"
                 />
                 <div v-if="msg.references && msg.references.length > 0" class="references">
                     <div class="ref-label">参考来源</div>
@@ -277,6 +278,7 @@ import { ElMessage } from 'element-plus'
 import Layout from '@/components/Layout.vue'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData } from '@/composables/useMapPrompt'
+import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useAttachmentUpload } from '@/composables/useAttachmentUpload'
 import { useImageUpload } from '@/composables/useImageUpload'
@@ -516,7 +518,7 @@ const loadHistory = (item: any) => {
     messages.value = [...sessionMessages.value[item.id]]
     // 恢复历史消息中的地图状态
     messages.value.forEach(msg => {
-      if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0) {
+      if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0) {
         msg.showMap = true
         msg.showMapPrompt = false
       }
@@ -688,13 +690,14 @@ const sendMessage = async () => {
             const finalContent = data.cited_answer || fullText
             messages.value[msgIndex] = {
               ...messages.value[msgIndex],
-              content: finalContent,
+              content: stripMapAnnotationBlock(finalContent),
               references: data.references || [],
               sources: data.sources || [],
               knowledgeUsed: data.knowledge_used || false,
               geoPoints: mapData.geoPoints,
               routes: mapData.routes,
               areas: mapData.areas,
+              circles: mapData.circles,
               showMap: mapData.showMap,
               showMapPrompt: mapData.showMapPrompt,
             }
@@ -758,7 +761,7 @@ onMounted(() => {
     messages.value = [...sessionMessages.value[sessionId.value]]
     // 恢复历史消息中的地图状态：有坐标的直接显示，不弹提示
     messages.value.forEach(msg => {
-      if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0) {
+      if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0) {
         msg.showMap = true
         msg.showMapPrompt = false
       }

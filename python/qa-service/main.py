@@ -211,6 +211,203 @@ def search_knowledge(query, top_k=5, category=None):
         return []
 
 
+# ── 地图标注 Skill 定义 ──
+# Skill 文件放在 skill/ 目录下，以 .md 扩展名命名
+# 加载策略：先从 .md 提取轻量摘要给 LLM，LLM 选择的 skill 再按需加载全文
+_SKILL_DIR = os.path.join(os.path.dirname(__file__), "skill")
+
+# 缓存：{filepath: (mtime, content)}，mtime 变化时自动重读
+_skill_cache: dict = {}
+
+def _load_skill_text(path: str) -> str:
+    """加载单个 skill 定义文件，返回压缩后的纯文本。
+    基于文件 mtime 缓存，仅在文件变化时重新读取。
+    """
+    if not os.path.exists(path):
+        _skill_cache.pop(path, None)
+        return ""
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = 0
+
+    cached = _skill_cache.get(path)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    # 去除 markdown 格式标记，保留核心内容
+    lines = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped in ("", "---", "|------|------|------|------|") or stripped.startswith("```"):
+            continue
+        if stripped.startswith("#"):
+            level = len(stripped) - len(stripped.lstrip("#"))
+            stripped = stripped[level:].strip()
+        lines.append(stripped)
+
+    content = "\n".join(lines)
+    _skill_cache[path] = (mtime, content)
+    return content
+
+def _parse_skill_summary(path: str) -> dict | None:
+    """从 .md 文件中提取技能摘要：名称、描述、触发条件、输出格式模板。
+    只提取必要的结构信息，不加载完整示例。
+    """
+    if not os.path.exists(path):
+        return None
+
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+
+    cached = _skill_cache.get(path)
+    if cached and cached[0] == mtime and len(cached) > 2:
+        return cached[2]  # 已缓存的摘要
+
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    summary = {"formats": [], "triggers": []}
+    current_section = ""
+    in_code_block = False
+    code_lines = []
+
+    for line in text.split("\n"):
+        stripped = line.strip()
+
+        # 跟踪代码块
+        if stripped.startswith("```"):
+            if in_code_block:
+                in_code_block = False
+                # 收集所有 JSON 代码块（支持多种格式变体，如 polygon + circle）
+                if code_lines:
+                    code_str = "\n".join(code_lines)
+                    if code_str not in summary["formats"]:
+                        summary["formats"].append(code_str)
+                code_lines = []
+            else:
+                in_code_block = True
+            continue
+
+        if in_code_block:
+            code_lines.append(line)
+            continue
+
+        # 提取技能名称（第一个 # 标题）
+        if stripped.startswith("# ") and "name" not in summary:
+            summary["name"] = stripped[2:].strip()
+
+        # 提取描述（## 技能描述 下的第一段非空文本）
+        if stripped == "## 技能描述":
+            current_section = "description"
+            continue
+        if stripped.startswith("## ") and stripped != "## 技能描述":
+            current_section = ""
+
+        if current_section == "description" and stripped and not summary.get("description"):
+            summary["description"] = stripped
+
+        # 提取触发条件
+        if stripped == "## 触发条件":
+            current_section = "triggers"
+            continue
+        if current_section == "triggers" and stripped.startswith("- "):
+            summary["triggers"].append(stripped[2:].strip())
+
+    # 合并缓存（在原缓存的元组中追加 summary）
+    old_cached = _skill_cache.get(path)
+    if old_cached:
+        _skill_cache[path] = (old_cached[0], old_cached[1], summary)
+
+    return summary
+
+# 地图相关关键词
+_MAP_RELATED_KEYWORDS = [
+    "地图", "坐标", "经纬度", "北纬", "东经", "标注", "在地图上",
+    "地理", "位置", "绘制", "画出", "路线", "范围", "区域", "边界",
+    "轮廓", "航线", "路径", "连线", "标点",
+]
+
+def _is_map_related(query: str) -> bool:
+    """判断用户问题是否涉及地图。"""
+    return any(kw in query for kw in _MAP_RELATED_KEYWORDS)
+
+def _get_skill_catalog() -> str:
+    """扫描 skill/ 目录，为每个 .md 提取摘要，生成轻量技能目录。
+
+    只包含：技能名 + 一句话描述 + 触发条件 + JSON 格式模板。
+    不含完整示例和渲染规则等冗余内容。
+    """
+    if not os.path.isdir(_SKILL_DIR):
+        return ""
+
+    entries = []
+    try:
+        for filename in sorted(os.listdir(_SKILL_DIR)):
+            if not filename.endswith(".md"):
+                continue
+            path = os.path.join(_SKILL_DIR, filename)
+            s = _parse_skill_summary(path)
+            if not s or not s.get("formats"):
+                continue
+
+            name = s.get("name", filename[:-3])
+            desc = s.get("description", "")
+            triggers = "、".join(s["triggers"][:3]) if s["triggers"] else ""
+
+            entry = f"### {name}\n"
+            if desc:
+                entry += f"描述：{desc}\n"
+            if triggers:
+                entry += f"适用场景：{triggers}\n"
+
+            # 输出所有格式变体（如 polygon + circle）
+            for fmt in s["formats"]:
+                entry += f"输出格式：\n```map_annotations\n{fmt}\n```\n"
+
+            entries.append(entry)
+    except OSError:
+        return ""
+
+    return "\n".join(entries)
+
+def _build_base_prompt(query: str = "") -> str:
+    """构建 system prompt。
+
+    地图 skill 采用轻量目录模式：
+    1. 只将技能摘要（名称+描述+JSON格式模板）注入 prompt
+    2. 不加载完整 .md 示例和渲染规则
+    3. 摘要足以让 LLM 生成正确的 map_annotations JSON
+    """
+    prompt = (
+        "你是一个专业的智能评估系统助手，擅长作战效能评估、指标体系分析、评估分析等领域。\n"
+        "请用中文回答，语言专业、准确、有条理。\n"
+        "禁止使用 ###、** 等 Markdown 格式标记，标题用【】，列表用数字。\n"
+        "重要：当你引用某条参考资料的内容时，必须在相关句末标注其编号，格式为 [N]（如 [1]、[2]）。"
+        "一个句子可以引用多个来源，用逗号分隔，如 [1,3]。"
+        "不要凭空编造编号，只引用确实使用了其内容的参考资料。\n"
+    )
+
+    # 按需注入地图 Skill 轻量目录
+    if query and _is_map_related(query):
+        catalog = _get_skill_catalog()
+        if catalog:
+            prompt += (
+                "\n## 可用地图标注技能\n"
+                "根据用户需求选择合适的技能，在正文末尾输出 map_annotations JSON 代码块。\n"
+                "三种技能可组合使用（同一个 map_annotations 块中可同时包含 markers、routes、areas）。\n"
+                "正文中正常描述地理信息，不要提到「标注代码块」或「JSON」。\n\n"
+                + catalog + "\n\n"
+                "通用约束：不编造坐标，不确定时在正文中说明；坐标精度到小数点后4位。"
+            )
+
+    return prompt
+
 # ── 知识库检索跳过判断 ──
 # 某些问题类型不需要知识库上下文（如地理坐标、地图可视化、纯分析等）
 _SKIP_KNOWLEDGE_KEYWORDS = [
@@ -390,25 +587,8 @@ def get_llm_messages(query, context="", attachment_text="", attachment_filename=
                 "snippet": _smart_truncate(ch.get("content", "") or "", 200)
             })
 
-    # ── 构建 system prompt ──
-    system_prompt = (
-        "你是一个专业的智能评估系统助手，擅长作战效能评估、指标体系分析、评估分析等领域。\n"
-        "请用中文回答，语言专业、准确、有条理。\n"
-        "禁止使用 ###、** 等 Markdown 格式标记，标题用【】，列表用数字。\n"
-        "重要：当你引用某条参考资料的内容时，必须在相关句末标注其编号，格式为 [N]（如 [1]、[2]）。"
-        "一个句子可以引用多个来源，用逗号分隔，如 [1,3]。"
-        "不要凭空编造编号，只引用确实使用了其内容的参考资料。\n"
-        "当用户要求地图、标注、路线、位置相关的内容时，直接提供经纬度坐标（格式如：东经116.40°，北纬39.90°），不要提地图工具或系统能力。\n"
-        "重要规则：\n"
-        "- 用户说「绘制XX范围/区域/边界/轮廓」时，必须用【区域标注:名称】开头，然后每行一个边界顶点坐标（至少4个点首尾闭合）。示例：\n"
-        "  【区域标注:北京市行政区域范围】\n"
-        "  东经115.42°，北纬39.44°\n"
-        "  东经117.50°，北纬39.44°\n"
-        "  东经117.50°，北纬41.06°\n"
-        "  东经115.42°，北纬41.06°\n"
-        "- 用户说「绘制XX路线/路径/航线/线路」时，必须用【路线标注:名称】开头，然后每行一个途经坐标点。\n"
-        "- 用户只说位置/地点（没有「绘制」「路线」「范围」等词）时，在正文中给出坐标即可，不需要用标注格式。"
-    )
+    # ── 构建 system prompt（按需注入地图 Skill）──
+    system_prompt = _build_base_prompt(query)
 
     if has_attachment:
         # 文档优先：文档是主要来源，知识库仅作补充

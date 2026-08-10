@@ -3,9 +3,11 @@
  * - 检测用户是否明确要求地图显示
  * - 综合处理坐标提取与地图显示意图
  * - 从查询结果数据（rawResults）中提取坐标列
+ * - 优先使用新格式 map_annotations JSON，回退到旧文本标注格式
  */
-import { extractCoordinates, type GeoPoint } from '@/utils/geoParser'
-import { parseAnnotations, filterOverlapPoints, type GeoRoute, type GeoArea } from '@/utils/geoAnnotation'
+import type { GeoPoint } from '@/utils/geoParser'
+import type { GeoRoute, GeoArea } from '@/utils/geoAnnotation'
+import { extractMapAnnotations, type CircleArea } from '@/utils/mapAnnotationParser'
 
 /** 地图意图关键词 */
 const MAP_KEYWORDS = ['地图', '标注', '坐标可视化', '显示地图', '地图显示', '在地图上', '绘制', '画出', '展示地图', '画地图']
@@ -19,6 +21,7 @@ export interface MapDataResult {
   geoPoints: GeoPoint[]
   routes: GeoRoute[]
   areas: GeoArea[]
+  circles: CircleArea[]
   showMap: boolean
   showMapPrompt: boolean
 }
@@ -130,6 +133,9 @@ export function extractGeoFromResults(result: any): GeoPoint[] {
 /**
  * 综合处理：提取坐标 + 判断地图显示策略
  *
+ * 优先使用新的 map_annotations JSON 格式（LLM skill 输出），
+ * 自动回退到旧的【区域标注】【路线标注】文本格式。
+ *
  * @param fullText   AI 回复全文
  * @param userQuery  用户原始输入
  * @returns {geoPoints, showMap, showMapPrompt}
@@ -137,23 +143,30 @@ export function extractGeoFromResults(result: any): GeoPoint[] {
  *   - showMap=true：直接显示地图（用户明确要求）
  */
 export function processMapData(fullText: string, userQuery: string): MapDataResult {
-  let geoPoints = extractCoordinates(fullText)
-  const { routes, areas } = parseAnnotations(fullText)
+  // ── 统一解析：优先新格式 JSON，回退旧文本格式 ──
+  const result = extractMapAnnotations(fullText)
 
-  // 剔除与 route/area 顶点重叠的独立坐标点，避免重复渲染
-  geoPoints = filterOverlapPoints(geoPoints, routes, areas)
+  const geoPoints = result.markers
+  const routes = result.routes
+  const areas = result.areas
+  const circles = result.circles
 
-  const hasData = geoPoints.length > 0 || routes.length > 0 || areas.length > 0
+  const hasData = geoPoints.length > 0 || routes.length > 0 || areas.length > 0 || circles.length > 0
 
   if (!hasData) {
-    return { geoPoints: [], routes: [], areas: [], showMap: false, showMapPrompt: false }
+    return { geoPoints: [], routes: [], areas: [], circles: [], showMap: false, showMapPrompt: false }
   }
 
+  // 新 JSON 格式由 LLM 主动输出 → 直接显示，不弹提示
+  if (result.source === 'json') {
+    return { geoPoints, routes, areas, circles, showMap: true, showMapPrompt: false }
+  }
+
+  // 旧文本格式：根据用户是否明确要求决定
   if (detectMapIntent(userQuery)) {
-    // 用户明确要求 → 直接显示地图
-    return { geoPoints, routes, areas, showMap: true, showMapPrompt: false }
+    return { geoPoints, routes, areas, circles, showMap: true, showMapPrompt: false }
   }
 
   // 有坐标但未明确要求 → 弹出提示
-  return { geoPoints, routes, areas, showMap: false, showMapPrompt: true }
+  return { geoPoints, routes, areas, circles, showMap: false, showMapPrompt: true }
 }

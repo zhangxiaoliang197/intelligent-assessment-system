@@ -130,8 +130,11 @@
                         </div>
                       </div>
                       <GeoMap
-                        v-if="msg.showMap && msg.geoPoints && msg.geoPoints.length > 0"
+                        v-if="msg.showMap && (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0)"
                         :points="msg.geoPoints"
+                        :routes="msg.routes"
+                        :areas="msg.areas"
+                        :circles="msg.circles"
                       />
 
                       <!-- 指标树状结构 -->
@@ -500,6 +503,7 @@ import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData } from '@/composables/useMapPrompt'
+import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
 import api from '@/services/api'
 import { renderMarkdown } from '@/utils/markdown'
 
@@ -955,13 +959,16 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
             const mapData = processMapData(resultContent, userQuestion)
             messages.value[currentMsgIndex] = {
               ...messages.value[currentMsgIndex],
-              content: resultContent,
+              content: stripMapAnnotationBlock(resultContent),
               tree: data.tree || null,
               indicators: data.indicators || [],
               rawResults: data.rawResults || null,
               generatedSql: data.generatedSql || '',
               querying: false,
               geoPoints: mapData.geoPoints,
+              routes: mapData.routes,
+              areas: mapData.areas,
+              circles: mapData.circles,
               showMap: mapData.showMap,
               showMapPrompt: mapData.showMapPrompt,
             }

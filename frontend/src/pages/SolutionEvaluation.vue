@@ -490,10 +490,11 @@
                       </div>
                     </div>
                     <GeoMap
-                      v-if="msg.showMap && (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0)"
+                      v-if="msg.showMap && (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0)"
                       :points="msg.geoPoints || []"
                       :routes="msg.routes || []"
                       :areas="msg.areas || []"
+                      :circles="msg.circles || []"
                     />
                   </div>
                 </div>
@@ -679,6 +680,7 @@ import Layout from '@/components/Layout.vue'
 import SkillsLibrary from '@/pages/SkillsLibrary.vue'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData, extractGeoFromResults } from '@/composables/useMapPrompt'
+import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
 import api from '@/services/api'
 import {
   cancelSkillExecution,
@@ -1469,7 +1471,7 @@ const sendMessage = async () => {
         const result = data.result || {}
         const answerText = result.final_answer || result.summary || result.answer || '分析完成'
         // Skill 结果卡已经包含综合结论，正文不再重复显示。
-        aiMessage.content = result.type === 'skill' || result.need_conclusion === false ? '' : answerText
+        aiMessage.content = result.type === 'skill' || result.need_conclusion === false ? '' : stripMapAnnotationBlock(answerText)
         aiMessage.result = result
         // 提取坐标并设置地图状态（来源1: final_answer 文本中的DMS格式坐标）
         const textMapData = processMapData(answerText, query)
@@ -1481,18 +1483,20 @@ const sendMessage = async () => {
           allGeoPoints.push(pt)
         }
         // 综合判断：任一方有数据 + 用户未明确要求 → 弹出提示
-        const hasData = allGeoPoints.length > 0 || textMapData.routes.length > 0 || textMapData.areas.length > 0
+        const hasData = allGeoPoints.length > 0 || textMapData.routes.length > 0 || textMapData.areas.length > 0 || textMapData.circles.length > 0
         if (hasData) {
           if (textMapData.showMap) {
             aiMessage.geoPoints = allGeoPoints
             aiMessage.routes = textMapData.routes
             aiMessage.areas = textMapData.areas
+            aiMessage.circles = textMapData.circles
             aiMessage.showMap = true
             aiMessage.showMapPrompt = false
           } else {
             aiMessage.geoPoints = allGeoPoints
             aiMessage.routes = textMapData.routes
             aiMessage.areas = textMapData.areas
+            aiMessage.circles = textMapData.circles
             aiMessage.showMap = false
             aiMessage.showMapPrompt = true
           }
@@ -1500,6 +1504,7 @@ const sendMessage = async () => {
           aiMessage.geoPoints = []
           aiMessage.routes = []
           aiMessage.areas = []
+          aiMessage.circles = []
           aiMessage.showMap = false
           aiMessage.showMapPrompt = false
         }
@@ -1648,7 +1653,7 @@ const loadHistory = async (item: any) => {
     if (!restoredMessages) throw new Error('会话没有可恢复的消息内容')
     // 恢复历史消息中的地图状态 (第一处)
     restoredMessages.forEach((msg: any) => {
-      if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0) {
+      if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0) {
         msg.showMap = true
         msg.showMapPrompt = false
       }
@@ -1775,7 +1780,7 @@ onMounted(async () => {
     messages.value = [...sessionMessages.value[sessionId.value]]
     // 恢复历史消息中的地图状态 (第二处)
     messages.value.forEach((msg: any) => {
-      if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0) {
+      if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0) {
         msg.showMap = true
         msg.showMapPrompt = false
       }
