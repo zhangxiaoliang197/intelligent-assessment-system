@@ -10,8 +10,8 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Stopping all services..." -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
-$ports = @(10086, 10252, 10253, 10254, 10255, 10256, 10258, 9090)
-$names = @("Frontend","Knowledge","QA","Indicator","Evaluation","Ontology","Admin","GeoServer")
+$ports = @(10086, 10252, 10253, 10254, 10255, 10256, 10257, 10258, 9090)
+$names = @("Frontend","Knowledge","QA","Indicator","Evaluation","Ontology","Situation","Admin","GeoServer")
 
 # ── 第 1 步：按端口杀进程树 ──
 $stopped = 0
@@ -44,7 +44,7 @@ foreach ($pn in $procNames) {
             try {
                 $cmd = (Get-WmiObject Win32_Process -Filter "ProcessId=$($p.Id)" -ErrorAction SilentlyContinue).CommandLine -as [string]
                 # 只杀项目相关的 python/node 进程
-                if ($cmd -match "uvicorn|vite|npx|knowledge-service|qa-service|indicator-service|evaluation-service|ontology-service|frontend") {
+                if ($cmd -match "uvicorn|vite|npx|knowledge-service|qa-service|indicator-service|evaluation-service|ontology-service|situation-service|frontend") {
                     Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
                     Start-Sleep -Milliseconds 200
                     taskkill.exe /F /PID $p.Id /T 2>$null

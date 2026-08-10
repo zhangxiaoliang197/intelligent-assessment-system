@@ -51,7 +51,7 @@ mkdir -p "$DATA_DIR/config"
 
 # ─── 日志目录（统一日志持久化）───
 LOG_DIR_HOST="$BASE_DIR/logs"
-mkdir -p "$LOG_DIR_HOST"/{knowledge,qa,indicator,evaluation,ontology,admin}
+mkdir -p "$LOG_DIR_HOST"/{knowledge,qa,indicator,evaluation,ontology,situation,admin}
 
 # ─── 日志环境变量（可被外部环境变量覆盖）───
 LOG_ENV="${LOG_ENV:-prod}"
@@ -268,6 +268,27 @@ docker run -d --name assessment-ontology \
     --log-opt max-file=5 \
     --restart always \
     assessment-ontology:latest
+
+echo "[启动] 态势图服务 (10257)..."
+docker run -d --name assessment-situation \
+    --network "$NET_NAME" \
+    -p 10257:10257 \
+    -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
+    -e QA_SERVICE_URL="http://assessment-qa:10253" \
+    -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
+    -e INDICATOR_SERVICE_URL="http://assessment-indicator:10254" \
+    -e LLM_MAX_TOKENS="24000" \
+    -e LOG_ENV="$LOG_ENV" \
+    -e LOG_LEVEL="$LOG_LEVEL" \
+    -e LOG_DIR="/app/logs" \
+    -e LOG_RETENTION_DAYS="$LOG_RETENTION_DAYS" \
+    -e LOG_MAX_SIZE_MB="$LOG_MAX_SIZE_MB" \
+    -v "$LOG_DIR_HOST/situation:/app/logs" \
+    --log-driver json-file \
+    --log-opt max-size=50m \
+    --log-opt max-file=5 \
+    --restart always \
+    assessment-situation:latest
 
 # ─── 7. Java 服务 (需要 MySQL 环境变量) ───
 echo ""

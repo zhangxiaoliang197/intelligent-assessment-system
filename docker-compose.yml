@@ -168,6 +168,36 @@ services:
         max-size: "50m"
         max-file: "5"
 
+  situation-service:
+    image: assessment-situation:latest
+    container_name: assessment-situation
+    ports:
+      - "10257:10257"
+    restart: always
+    networks:
+      - assessment-net
+    # 独立于本体/向量库：不配置 ONTOLOGY_SERVICE_URL / QDRANT_URL（ADR-01/05）
+    environment:
+      - ADMIN_SERVICE_URL=http://assessment-admin:10258
+      - QA_SERVICE_URL=http://assessment-qa:10253
+      - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
+      - INDICATOR_SERVICE_URL=http://assessment-indicator:10254
+      - LLM_MAX_TOKENS=24000
+      - LOG_ENV=${LOG_ENV:-prod}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_DIR=/app/logs
+      - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-14}
+      - LOG_MAX_SIZE_MB=${LOG_MAX_SIZE_MB:-100}
+    volumes:
+      - ./logs/situation-service:/app/logs
+    depends_on:
+      - admin-service
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
   admin-service:
     image: assessment-admin:latest
     container_name: assessment-admin

@@ -72,6 +72,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')
       },
+      '/api/situation': {
+        target: 'http://localhost:10257',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      },
       '/api/admin': {
         target: 'http://localhost:10258',
         changeOrigin: true

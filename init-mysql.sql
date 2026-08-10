@@ -135,6 +135,25 @@ CREATE TABLE IF NOT EXISTS `ass_map_service_config` (
     PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 2.8 态势图产物（situation-service 经 admin-service CRUD，ADR-11；表结构见 docs/situation-map/07 §2.1）
+CREATE TABLE IF NOT EXISTS `situation_report` (
+    `id`            VARCHAR(40)   NOT NULL,
+    `title`         VARCHAR(200)  NOT NULL,
+    `query`         TEXT          DEFAULT NULL,
+    `source`        VARCHAR(20)   DEFAULT NULL,
+    `user_id`       VARCHAR(64)   DEFAULT NULL,
+    `team_ids`      VARCHAR(255)  DEFAULT NULL,
+    `status`        VARCHAR(20)   NOT NULL DEFAULT 'generating',
+    `snapshot_json` LONGTEXT      DEFAULT NULL,
+    `share_token`   VARCHAR(64)   DEFAULT NULL,
+    `created_at`    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    INDEX `idx_user` (`user_id`),
+    INDEX `idx_team` (`team_ids`),
+    INDEX `idx_share` (`share_token`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='态势图产物';
+
 -- ============================================================
 -- 3. 插入初始数据（仅当表为空时）
 -- ============================================================
@@ -162,7 +181,7 @@ VALUES ('map_001', 'GeoWebCache 内网地图（默认）', 'geowebcache', '/geow
 SELECT '========================================' AS '';
 SELECT '  MySQL 初始化完成！' AS '';
 SELECT '  数据库: assessment' AS '';
-SELECT '  表: ass_database_config, ass_dataset, ass_field_annotation, ass_indicator, ass_llm_config, ass_driver, ass_map_service_config' AS '';
+SELECT '  表: ass_database_config, ass_dataset, ass_field_annotation, ass_indicator, ass_llm_config, ass_driver, ass_map_service_config, situation_report' AS '';
 SELECT '  默认 LLM: DeepSeek (llm_001, 已激活)' AS '';
 SELECT '  默认地图: GeoWebCache 6层叠加 (map_001, 已激活)' AS '';
 SELECT '========================================' AS '';

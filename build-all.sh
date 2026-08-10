@@ -48,7 +48,7 @@ build_and_save() {
 }
 
 echo "========================================="
-echo "阶段 1/4: 构建 Python 微服务 (5个)"
+echo "阶段 1/4: 构建 Python 微服务 (6个)"
 echo "========================================="
 echo ""
 
@@ -57,6 +57,7 @@ build_and_save "qa"                    "qa"                    "10253" "智能�
 build_and_save "indicator"             "indicator"             "10254" "指标分析服务"
 build_and_save "evaluation"            "evaluation"            "10255" "评估分析服务"
 build_and_save "ontology"              "ontology"              "10256" "本体模型服务"
+build_and_save "situation"             "situation"             "10257" "态势图服务"
 
 echo "========================================="
 echo "阶段 2/4: 构建 Java 服务 (1个)"
@@ -86,7 +87,7 @@ echo ""
 
 echo ""
 echo "========================================"
-echo -e "${GREEN}全部 8 个镜像构建完成!${NC}"
+echo -e "${GREEN}全部 9 个镜像构建完成!${NC}"
 echo "========================================"
 echo ""
 echo "镜像文件位于: $IMAGES_DIR/"

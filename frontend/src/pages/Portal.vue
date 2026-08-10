@@ -148,7 +148,8 @@ import {
   DataAnalysis,
   Aim,
   Box,
-  Loading
+  Loading,
+  MapLocation
 } from '@element-plus/icons-vue'
 import FloatingSidebar from '@/components/FloatingSidebar.vue'
 import { ElMessage } from 'element-plus'
@@ -184,6 +185,13 @@ const tools = [
     icon: Document,
     color: '#f59e0b',
     path: '/evaluation'
+  },
+  {
+    id: 4,
+    name: '态势图',
+    icon: MapLocation,
+    color: '#8b5cf6',
+    path: '/situation'
   }
 ]
 

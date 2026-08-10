@@ -8,6 +8,9 @@ import OntologyModel from '@/pages/OntologyModel.vue'
 import OntologyDetail from '@/pages/OntologyDetail.vue'
 import OntologyBuild from '@/pages/OntologyBuild.vue'
 import AdminSystem from '@/pages/AdminSystem.vue'
+import SituationMap from '@/pages/SituationMap.vue'
+import SituationList from '@/pages/SituationList.vue'
+import SituationShare from '@/pages/SituationShare.vue'
 
 const routes: Array<RouteRecordRaw> = [
   {
@@ -56,6 +59,24 @@ const routes: Array<RouteRecordRaw> = [
     path: '/admin',
     name: 'AdminSystem',
     component: AdminSystem
+  },
+  {
+    path: '/situation',
+    name: 'SituationMap',
+    component: SituationMap,
+    meta: { title: '态势图' }
+  },
+  {
+    path: '/situation/list',
+    name: 'SituationList',
+    component: SituationList,
+    meta: { title: '态势图历史' }
+  },
+  {
+    path: '/situation/share/:token',
+    name: 'SituationShare',
+    component: SituationShare,
+    meta: { title: '态势图分享' }
   }
 ]
 
