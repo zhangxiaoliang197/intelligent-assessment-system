@@ -53,7 +53,8 @@
     "create_time": "2026-08-04 16:27:17.072121",
     "update_time": "2026-08-04 16:27:17.072121",
     "status": "活跃",
-    "is_default": false
+    "is_default": false,
+    "schema_version": 2
   },
   {
     "id": "ont_c1fb7689",
@@ -102,7 +103,8 @@
     "create_time": "2026-08-06 14:50:28.189079",
     "update_time": "2026-08-06 18:11:44.124346",
     "status": "活跃",
-    "is_default": false
+    "is_default": false,
+    "schema_version": 2
   },
   {
     "id": "ont_84fd1dc8",
@@ -158,7 +160,8 @@
     "create_time": "2026-08-06 15:17:18.426741",
     "update_time": "2026-08-06 15:17:18.426741",
     "status": "活跃",
-    "is_default": false
+    "is_default": false,
+    "schema_version": 2
   },
   {
     "id": "ont_079690ef",
@@ -203,7 +206,8 @@
     "create_time": "2026-08-06 16:32:20.288710",
     "update_time": "2026-08-06 16:32:20.288710",
     "status": "活跃",
-    "is_default": false
+    "is_default": false,
+    "schema_version": 2
   },
   {
     "id": "ont_a7c3079c",
@@ -252,6 +256,7 @@
     "create_time": "2026-08-06 17:40:11.283864",
     "update_time": "2026-08-06 18:12:09.287602",
     "status": "活跃",
-    "is_default": false
+    "is_default": false,
+    "schema_version": 2
   }
 ]

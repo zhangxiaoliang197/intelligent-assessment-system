@@ -22,19 +22,20 @@ export const createBuildJob = (data: FormData) => {
   })
 }
 
-/** 确认元模型 */
+/** 确认元模型（Step 0：元模型 + 粒度 + 阶段提示词） */
 export const confirmMeta = (jobId: string, data: FormData) => {
   return api.put(`/ontology/build/${jobId}/meta`, data, {
     headers: { 'Content-Type': 'multipart/form-data' }
   })
 }
 
-/** 提取概念（Step 1） */
+// ── Step 1：概念提取（类型层）──
+/** 启动概念提取（Step 1） */
 export const extractConcepts = (jobId: string) => {
   return api.post(`/ontology/build/${jobId}/step1`)
 }
 
-/** 确认概念清单 */
+/** 确认概念清单（Step 1） */
 export const confirmConcepts = (jobId: string, concepts: any[]) => {
   const fd = new FormData()
   fd.append('concepts', JSON.stringify(concepts))
@@ -43,24 +44,46 @@ export const confirmConcepts = (jobId: string, concepts: any[]) => {
   })
 }
 
-/** 构建层次结构（Step 2） */
-export const buildStructure = (jobId: string) => {
+// ── Step 2：实体+属性提取（实例层）──
+/** 启动实体+属性提取（Step 2） */
+export const extractEntities = (jobId: string) => {
   return api.post(`/ontology/build/${jobId}/step2`)
 }
 
-/** 确认层次结构 */
-export const confirmStructure = (jobId: string, entities: any[], relations: any[]) => {
+/** 确认实体清单（Step 2），可选传主要实体勾选结果 */
+export const confirmEntities = (jobId: string, entities: any[], primaryEntitySelected: string[] = []) => {
   const fd = new FormData()
   fd.append('entities', JSON.stringify(entities))
-  fd.append('relations', JSON.stringify(relations))
+  fd.append('primary_entity_selected', JSON.stringify(primaryEntitySelected))
   return api.put(`/ontology/build/${jobId}/step2`, fd, {
     headers: { 'Content-Type': 'multipart/form-data' }
   })
 }
 
-/** 生成最终本体（Step 3） */
-export const generateOntology = (jobId: string) => {
+// ── Step 3：关系建模 ──
+/** 启动关系建模（Step 3） */
+export const buildRelations = (jobId: string) => {
   return api.post(`/ontology/build/${jobId}/step3`)
+}
+
+/** 确认关系清单（Step 3） */
+export const confirmRelations = (jobId: string, relations: any[]) => {
+  const fd = new FormData()
+  fd.append('relations', JSON.stringify(relations))
+  return api.put(`/ontology/build/${jobId}/step3`, fd, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+
+// ── Step 4：验证 + 报告 ──
+/** 启动 LLM 自检验证（Step 4） */
+export const verifyOntology = (jobId: string) => {
+  return api.post(`/ontology/build/${jobId}/step4`)
+}
+
+/** 确认验证结果，触发生成正式本体（Step 4） */
+export const confirmVerification = (jobId: string) => {
+  return api.put(`/ontology/build/${jobId}/step4`)
 }
 
 /** 删除构建任务 */
@@ -74,11 +97,11 @@ export const deleteBuildJob = (jobId: string) => {
 
 /** SSE 事件回调集合 */
 export interface BuildStreamHandlers {
-  /** Step1 每批概念完成 */
+  /** Step1 每批概念完成 / Step2 每批实体完成（同事件名，按 data 字段区分） */
   onBatchDone?: (d: any) => void
-  /** Step2 每组实体关系完成 */
+  /** Step3 每组关系完成 */
   onGroupDone?: (d: any) => void
-  /** Step2 跨组关系补充完成 */
+  /** Step3 跨组关系补充完成 */
   onCrossGroupDone?: (d: any) => void
   /** 整个步骤完成（AI 全部提取/构建完毕，可确认） */
   onStepDone?: (d: any) => void
@@ -132,9 +155,9 @@ export const streamBuildJob = (jobId: string, handlers: BuildStreamHandlers): ((
         for (const frame of frames) {
           const event = _parseSseFrame(frame)
           if (!event) continue
-          console.log('[SSE] 收到事件:', event.type, event.data?.replayed ? '(回放)' : '', 
-            event.type === 'group_done' ? `+${event.data.entities?.length || 0}实体` : '',
-            event.type === 'batch_done' ? `+${event.data.concepts?.length || 0}概念` : '')
+          console.log('[SSE] 收到事件:', event.type, event.data?.replayed ? '(回放)' : '',
+            event.type === 'group_done' ? `+${event.data.relations?.length || 0}关系` : '',
+            event.type === 'batch_done' ? `+${event.data.concepts?.length || 0}概念/+${event.data.entities?.length || 0}实体` : '')
           switch (event.type) {
             case 'batch_done': handlers.onBatchDone?.(event.data); break
             case 'group_done': handlers.onGroupDone?.(event.data); break

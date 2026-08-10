@@ -1,23 +1,53 @@
-"""本体分步构建的 Prompt 模板。
+"""本体分步构建的 Prompt 模板（五阶段）。
 
-集中管理四步 LLM 调用的 prompt，便于迭代调优：
+集中管理五步 LLM 调用的 prompt，便于迭代调优：
 - Step 0 (meta): 根据文档推荐元模型（实体类型 + 关系类型）
-- Step 1: 从文档提取概念清单（约束于已确认的元模型）
-- Step 2: 把概念清单整理成层次结构（实体 + 关系）
-- Step 3: 最终序列化（直接复用已确认的元模型，不再调 LLM 推荐元模型）
+- Step 1: 从文档提取概念清单（类型层，含属性骨架 property_schema）
+- Step 2: 从文档提取实体+属性（实例层，instance_of 指向 step1 概念）
+- Step 3: 在已确认实体间建立关系（分组 + 跨组补充）
+- Step 4: LLM 自检验证 + 生成简报
 
 设计原则：
 - 每步输出严格 JSON，便于程序解析
-- Step 1 每个概念必须带原文出处 source_snippet，防幻觉
-- Step 2 实体名和关系类型必须受元模型约束
+- 每个概念/实体/属性/关系必须带原文出处 source_snippet，防幻觉
+- 实体名、关系类型必须受元模型约束
+- 三档粒度（coarse/medium/fine）通过数量区间软约束提取数量
+- 阶段提示词 stage_hints 注入到对应步骤 prompt 末尾
 - temperature=0.3，提升结构化输出稳定性
+
+注：字符串内的中文强调一律使用角引号「」，避免与 Python 字符串分隔符 " 冲突。
 """
 import json
+import config
 
 SYSTEM_BASE = "你是本体工程专家，擅长从领域文档中构建结构化本体模型。请严格按照要求输出 JSON，不要包含任何解释文字或 markdown 标记。"
 
 # 默认调色板（元模型推荐时分配颜色）
 DEFAULT_COLORS = ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de", "#3ba272", "#fc8452", "#9a60b4"]
+
+
+def _granularity_hint(granularity: str, kind: str) -> str:
+    """根据粒度预设生成数量区间提示文本。
+
+    Args:
+        granularity: coarse | medium | fine
+        kind: "concepts"（step1）| "entities"（step2）
+
+    Returns:
+        如「通常提取 10-20 个」，未知粒度返回空串（不约束）
+    """
+    ranges = config.GRANULARITY_RANGES.get(granularity, {})
+    rng = ranges.get(kind)
+    if not rng:
+        return ""
+    return f"通常提取 {rng[0]}-{rng[1]} 个"
+
+
+def _stage_hint_text(stage_hint: str) -> str:
+    """格式化阶段提示词追加段（无提示词则返回空串）。"""
+    if not stage_hint or not stage_hint.strip():
+        return ""
+    return f"\n\n【用户特别提示】{stage_hint.strip()}"
 
 
 def build_meta_messages(doc_text: str, name: str) -> list:
@@ -59,137 +89,60 @@ def build_meta_messages(doc_text: str, name: str) -> list:
     ]
 
 
-def build_step1_messages(doc_text: str, name: str, entity_types: list) -> list:
-    """Step 1: 从文档提取概念清单。
+def build_step1_messages(
+    doc_text: str, name: str, entity_types: list,
+    granularity: str = "medium", stage_hint: str = ""
+) -> list:
+    """Step 1: 概念提取（类型层）。
 
-    约束于 Step 0 已确认的 entity_types，每个概念必须带原文出处。
+    从文档提取「概念」（抽象类型定义，如「公司」「人」「城市」），不提取具体实例。
+    每个概念归属元模型的某个 entity_type，并携带 property_schema（属性骨架）。
+    实例化时（step2）LLM 按此骨架填充属性。
 
     Args:
         doc_text: 文档纯文本（已截断）
         name: 本体名称
-        entity_types: 已确认的实体类型列表 [{"name":"...","color":"..."}]
+        entity_types: 已确认的元模型实体类型 [{"name","color"}]
+        granularity: 粒度预设，控制概念数量区间
+        stage_hint: 用户为该阶段注入的提示词
 
     Returns:
         OpenAI 格式的 messages 列表
     """
     type_names = [t["name"] for t in entity_types]
     types_str = "、".join(type_names)
+    count_hint = _granularity_hint(granularity, "concepts")
 
     system_prompt = (
         SYSTEM_BASE
-        + "\n\n你的任务是从文档中提取概念清单，为本体「" + name + "」构建概念基础。"
+        + "\n\n你的任务是从文档中提取【概念】（类型层），为本体「" + name + "」构建概念基础。"
+        + "\n概念是抽象的类型定义（如「公司」「人」「城市」「事件」），不是具体实例（如「A公司」「张三」留到下一步）。"
     )
 
     user_prompt = (
-        f"请从以下文档中提取核心概念清单。\n\n"
+        f"请从以下文档中提取核心【概念】（类型定义，非具体实例）。\n\n"
         f"文档内容：\n---\n{doc_text}\n---\n\n"
-        f"允许的实体类型（必须从中选择，不可自创）: {types_str}\n\n"
+        f"允许的元模型类型（概念的 entity_type 必须从中选择，不可自创）: {types_str}\n\n"
         f"请返回 JSON 数组，每个元素格式如下：\n"
-        f'{{"name": "概念名", "type": "类型（必须从允许的类型中选择）", '
-        f'"description": "概念的简要释义", "source_snippet": "从原文摘录的支撑句子"}}\n\n'
+        f'{{"name": "概念名", "entity_type": "元模型类型名", '
+        f'"description": "概念的简要释义", '
+        f'"property_schema": [{{"name": "属性名", "category": "descriptive|metric", '
+        f'"data_type": "string|number|date|enum", "unit": "单位（如%万元，无则空）", '
+        f'"required": false, "description": "属性说明"}}], '
+        f'"source_snippet": "从原文摘录的支撑句子"}}\n\n'
         f"要求：\n"
-        f"1. 提取文档中的核心概念、实体、属性、事件等，不要遗漏重要概念\n"
+        f"1. 提取文档中的核心概念/类型（如「公司」「人物」「财务指标」这类抽象类别），不要提取具体实例\n"
         f"2. 每个概念必须从原文摘录 source_snippet（原文中的原话），用于核实，防止编造\n"
         f"3. name 简洁规范，2-8 个字，避免重复\n"
-        f"4. type 必须从允许的类型中选择，不可自创\n"
+        f"4. entity_type 必须从允许的元模型类型中选择，不可自创\n"
         f"5. description 用一句话解释该概念的含义\n"
-        f"6. 通常提取 8-20 个概念\n"
-        f"7. 只返回 JSON 数组，不要任何解释"
-    )
-
-    return [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt}
-    ]
-
-
-def build_step2_messages(concepts: list, entity_types: list, relation_types: list) -> list:
-    """Step 2: 把概念清单整理成层次结构（实体 + 关系）。
-
-    约束于 Step 0 已确认的 relation_types。
-
-    Args:
-        concepts: Step 1 已确认的概念清单 [{"name","type","description","source_snippet"}]
-        entity_types: 已确认的实体类型
-        relation_types: 已确认的关系类型 [{"name":"..."}]
-
-    Returns:
-        OpenAI 格式的 messages 列表
-    """
-    type_names = [t["name"] for t in entity_types]
-    rel_names = [t["name"] for t in relation_types]
-    concepts_str = json.dumps(concepts, ensure_ascii=False, indent=2)
-
-    system_prompt = (
-        SYSTEM_BASE
-        + "\n\n你的任务是把已确认的概念清单整理成有上下级关系的层次结构，"
-        + "建立实体之间的语义关系。"
-    )
-
-    user_prompt = (
-        f"已确认的概念清单如下：\n{concepts_str}\n\n"
-        f"允许的实体类型: {'、'.join(type_names)}\n"
-        f"允许的关系类型（必须从中选择，不可自创）: {'、'.join(rel_names)}\n\n"
-        f"请返回 JSON，格式如下：\n"
-        f'{{"entities": [{{"name": "实体名", "type": "类型", "properties": {{"key": "value"}}, "parent": "父实体名（无则空字符串）"}}], '
-        f'"relations": [{{"source": "源实体名", "target": "目标实体名", "relation_type": "关系类型", "weight": 1.0}}]}}\n\n'
-        f"要求：\n"
-        f"1. entities 的 name 必须来自上述概念清单，不可新增或改名\n"
-        f"2. entities 的 type 必须从允许的实体类型中选择\n"
-        f"3. parent 表示上下级包含关系，指向另一个实体的 name；顶层概念的 parent 为空字符串\n"
-        f"4. relations 的 source 和 target 必须是 entities 中已定义的实体名\n"
-        f"5. relation_type 必须从允许的关系类型中选择，不可自创\n"
-        f"6. weight 表示关系的紧密程度，0-1 之间的小数\n"
-        f"7. properties 可包含从概念 description 和 source_snippet 中提取的关键属性\n"
-        f"8. 关系应体现层级包含、影响、关联等语义，通常 5-15 条关系\n"
-        f"9. 只返回 JSON，不要任何解释"
-    )
-
-    return [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt}
-    ]
-
-
-def build_step3_messages(entities: list, relations: list, entity_types: list, relation_types: list) -> list:
-    """Step 3: 最终序列化。
-
-    直接复用已确认的元模型，不调 LLM 推荐元模型。
-    LLM 的职责仅限于：检查实体/关系与元模型的一致性，补充缺失的 properties，输出最终格式。
-
-    Args:
-        entities: Step 2 已确认的实体列表
-        relations: Step 2 已确认的关系列表
-        entity_types: 已确认的实体类型
-        relation_types: 已确认的关系类型
-
-    Returns:
-        OpenAI 格式的 messages 列表
-    """
-    entities_str = json.dumps(entities, ensure_ascii=False, indent=2)
-    relations_str = json.dumps(relations, ensure_ascii=False, indent=2)
-
-    system_prompt = (
-        SYSTEM_BASE
-        + "\n\n你的任务是对已确认的层次结构做最终序列化，检查一致性并补充属性。"
-    )
-
-    user_prompt = (
-        f"已确认的实体列表：\n{entities_str}\n\n"
-        f"已确认的关系列表：\n{relations_str}\n\n"
-        f"已确认的元模型：\n"
-        f"实体类型: {json.dumps(entity_types, ensure_ascii=False)}\n"
-        f"关系类型: {json.dumps(relation_types, ensure_ascii=False)}\n\n"
-        f"请返回 JSON，格式如下：\n"
-        f'{{"entities": [{{"name": "...", "type": "...", "properties": {{"key": "value"}}}}], '
-        f'"relations": [{{"source": "...", "target": "...", "relation_type": "...", "weight": 1.0}}]}}\n\n'
-        f"要求：\n"
-        f"1. 保持已确认的实体和关系不变，不可新增、删除或改名\n"
-        f"2. 检查每个实体的 type 是否在元模型范围内，如有不一致则修正为最接近的类型\n"
-        f"3. 检查每个关系的 relation_type 是否在元模型范围内，如有不一致则修正为最接近的类型\n"
-        f"4. 为每个实体补充或完善 properties（从概念描述中提取关键属性）\n"
-        f"5. 保持 relations 的 weight 值不变\n"
-        f"6. 只返回 JSON，不要任何解释"
+        f"6. property_schema 列出该类概念应具备的关键属性骨架：\n"
+        f"   - 指标型（category=metric）属性如「资产负债率」「营收」，需带 unit\n"
+        f"   - 描述型（category=descriptive）属性如「主营业务」「成立日期」\n"
+        f"   - 通常每个概念 2-5 个属性\n"
+        + (f"7. {count_hint}概念\n" if count_hint else "7. 通常提取 10-20 个概念\n")
+        + f"8. 只返回 JSON 数组，不要任何解释"
+        + _stage_hint_text(stage_hint)
     )
 
     return [
@@ -200,22 +153,25 @@ def build_step3_messages(entities: list, relations: list, entity_types: list, re
 
 def build_step1_batch_messages(
     doc_text: str, name: str, entity_types: list,
-    batch_idx: int, total_batches: int
+    batch_idx: int, total_batches: int,
+    granularity: str = "medium", stage_hint: str = ""
 ) -> list:
     """Step 1 分批版本：明确告知 LLM 这是第 X/N 批，只提取本批内概念。
 
     与 build_step1_messages 的差异：
     1. user_prompt 顶部增加批次提示，防止 LLM 跨批脑补或遗漏本批概念
-    2. 去掉"通常提取 8-20 个概念"的硬性数量约束（改为按本批内容自然提取），
-       避免长文档单批被强制压到 20 个
-    3. 保留 source_snippet 要求，强调必须来自本批原文
+    2. 去掉硬性数量约束（改为按本批内容自然提取），避免长文档单批被强制压到固定数
+    3. 保留 source_snippet + property_schema 要求，强调必须来自本批原文
+    4. 粒度区间作为整体参考（跨批去重后的总数），不限制单批
 
     Args:
         doc_text: 本批文档纯文本
         name: 本体名称
-        entity_types: 已确认的实体类型列表
+        entity_types: 已确认的元模型实体类型列表
         batch_idx: 当前批次索引（0-based）
         total_batches: 总批数
+        granularity: 粒度预设（作为整体参考，不限制单批）
+        stage_hint: 用户为该阶段注入的提示词
 
     Returns:
         OpenAI 格式的 messages 列表
@@ -225,7 +181,8 @@ def build_step1_batch_messages(
 
     system_prompt = (
         SYSTEM_BASE
-        + "\n\n你的任务是从文档中提取概念清单，为本体「" + name + "」构建概念基础。"
+        + "\n\n你的任务是从文档中提取【概念】（类型层），为本体「" + name + "」构建概念基础。"
+        + "\n概念是抽象的类型定义（如「公司」「人」「城市」「事件」），不是具体实例。"
     )
 
     batch_hint = (
@@ -238,20 +195,26 @@ def build_step1_batch_messages(
 
     user_prompt = (
         f"{batch_hint}"
-        f"请从以下文档中提取核心概念清单。\n\n"
+        f"请从以下文档中提取核心【概念】（类型定义，非具体实例）。\n\n"
         f"文档内容（第 {batch_idx + 1}/{total_batches} 批）：\n---\n{doc_text}\n---\n\n"
-        f"允许的实体类型（必须从中选择，不可自创）: {types_str}\n\n"
+        f"允许的元模型类型（概念的 entity_type 必须从中选择）: {types_str}\n\n"
         f"请返回 JSON 数组，每个元素格式如下：\n"
-        f'{{"name": "概念名", "type": "类型（必须从允许的类型中选择）", '
-        f'"description": "概念的简要释义", "source_snippet": "从本批原文摘录的支撑句子"}}\n\n'
+        f'{{"name": "概念名", "entity_type": "元模型类型名", '
+        f'"description": "概念的简要释义", '
+        f'"property_schema": [{{"name": "属性名", "category": "descriptive|metric", '
+        f'"data_type": "string|number|date|enum", "unit": "单位（无则空）", '
+        f'"required": false, "description": "属性说明"}}], '
+        f'"source_snippet": "从本批原文摘录的支撑句子"}}\n\n'
         f"要求：\n"
-        f"1. 提取本批文档中的核心概念、实体、属性、事件等，不要遗漏重要概念\n"
-        f"2. 每个概念必须从本批原文摘录 source_snippet（原文中的原话），用于核实，防止编造\n"
+        f"1. 提取本批文档中的核心概念/类型（抽象类别），不要提取具体实例\n"
+        f"2. 每个概念必须从本批原文摘录 source_snippet，用于核实防编造\n"
         f"3. name 简洁规范，2-8 个字，避免与本批内其他概念重复\n"
-        f"4. type 必须从允许的类型中选择，不可自创\n"
+        f"4. entity_type 必须从允许的元模型类型中选择\n"
         f"5. description 用一句话解释该概念的含义\n"
-        f"6. 按本批内容自然提取，数量不限（跨批去重由系统自动完成）\n"
-        f"7. 只返回 JSON 数组，不要任何解释"
+        f"6. property_schema 列出该类概念的关键属性骨架（指标型带 unit，描述型无单位）\n"
+        f"7. 按本批内容自然提取，数量不限（跨批去重由系统自动完成）\n"
+        f"8. 只返回 JSON 数组，不要任何解释"
+        + _stage_hint_text(stage_hint)
     )
 
     return [
@@ -260,32 +223,299 @@ def build_step1_batch_messages(
     ]
 
 
-def build_step2_cross_group_messages(
-    entities: list, existing_relations: list,
-    entity_types: list, relation_types: list
+def build_step2_messages(
+    doc_text: str, name: str, concepts: list, entity_types: list,
+    granularity: str = "medium", stage_hint: str = ""
 ) -> list:
-    """Step 2 跨组关系补充：分组合并后，由 LLM 补充跨组实体间的关系。
+    """Step 2: 实体+属性提取（实例层）。
+
+    从文档提取具体实例（如「A公司」「张三」「上海」），每个实体 instance_of 一个 step1 概念，
+    并按概念的 property_schema 填充属性。指标型属性（如「资产负债率=75%」）作为 Property 填入实体，
+    不作为独立实体。
+
+    Args:
+        doc_text: 文档纯文本（已截断）
+        name: 本体名称
+        concepts: step1 已确认的概念清单（含 property_schema）
+        entity_types: 已确认的元模型实体类型
+        granularity: 粒度预设，控制实体数量区间
+        stage_hint: 用户为该阶段注入的提示词
+
+    Returns:
+        OpenAI 格式的 messages 列表
+    """
+    count_hint = _granularity_hint(granularity, "entities")
+    # 概念清单精简：只传 name + entity_type + property_schema，避免 description/source_snippet 撑爆 prompt
+    concepts_compact = [
+        {
+            "name": c.get("name", ""),
+            "entity_type": c.get("entity_type", ""),
+            "property_schema": c.get("property_schema", []) or [],
+        }
+        for c in concepts
+    ]
+    concepts_str = json.dumps(concepts_compact, ensure_ascii=False, indent=2)
+
+    system_prompt = (
+        SYSTEM_BASE
+        + "\n\n你的任务是从文档中提取【实体】（实例层），为本体「" + name + "」填充具体实例。"
+        + "\n实体是具体的人/物/事（如「A公司」「张三」「上海」），每个实体归属一个已确认的概念（类型）。"
+        + "\n指标型数据（如「资产负债率=75%」）必须作为属性填入实体，不可作为独立实体。"
+    )
+
+    user_prompt = (
+        f"已确认的概念清单（实体必须 instance_of 其中一个概念）：\n{concepts_str}\n\n"
+        f"文档内容：\n---\n{doc_text}\n---\n\n"
+        f"请返回 JSON 数组，每个元素格式如下：\n"
+        f'{{"name": "实体名", "instance_of": "概念名（必须来自上述清单）", '
+        f'"is_primary_candidate": false, '
+        f'"properties": [{{"name": "属性名", "value": "属性值", '
+        f'"category": "descriptive|metric", "unit": "单位（无则空）", '
+        f'"source_snippet": "该属性值的原文出处"}}], '
+        f'"source_snippet": "实体出现的原文句子"}}\n\n'
+        f"要求：\n"
+        f"1. 提取文档中的具体实例（人名、公司名、地名、事件名等），不要提取抽象类型\n"
+        f"2. instance_of 必须是上述概念清单中已定义的概念名，不可自创\n"
+        f"3. 每个实体按其 instance_of 概念的 property_schema 填充 properties：\n"
+        f"   - 属性值必须从原文摘录或基于原文推导，带 source_snippet\n"
+        f"   - 指标型属性（category=metric）必须有 value 和 unit\n"
+        f"   - 文档未提及的属性可省略，不要编造\n"
+        f"4. is_primary_candidate 标注该实体是否为主要实体（出现频次高、被其他实体依赖、是核心主体），通常文档主体为核心\n"
+        f"5. name 简洁规范，2-15 个字，避免重复\n"
+        f"6. source_snippet 必须是原文原话，用于核实\n"
+        + (f"7. {count_hint}实体\n" if count_hint else "7. 通常提取 20-40 个实体\n")
+        + f"8. 只返回 JSON 数组，不要任何解释"
+        + _stage_hint_text(stage_hint)
+    )
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+
+def build_step2_batch_messages(
+    doc_text: str, name: str, concepts: list, entity_types: list,
+    batch_idx: int, total_batches: int,
+    granularity: str = "medium", stage_hint: str = ""
+) -> list:
+    """Step 2 分批版本：从本批文档提取实体+属性。
+
+    与 build_step2_messages 的差异：
+    1. 顶部增加批次提示，防止跨批脑补
+    2. 去掉硬性数量约束，按本批内容自然提取
+    3. 粒度区间作为整体参考，不限制单批
+
+    Args:
+        doc_text: 本批文档纯文本
+        name: 本体名称
+        concepts: step1 已确认的概念清单
+        entity_types: 已确认的元模型实体类型
+        batch_idx: 当前批次索引（0-based）
+        total_batches: 总批数
+        granularity: 粒度预设（整体参考）
+        stage_hint: 用户为该阶段注入的提示词
+
+    Returns:
+        OpenAI 格式的 messages 列表
+    """
+    concepts_compact = [
+        {
+            "name": c.get("name", ""),
+            "entity_type": c.get("entity_type", ""),
+            "property_schema": c.get("property_schema", []) or [],
+        }
+        for c in concepts
+    ]
+    concepts_str = json.dumps(concepts_compact, ensure_ascii=False, indent=2)
+
+    system_prompt = (
+        SYSTEM_BASE
+        + "\n\n你的任务是从文档中提取【实体】（实例层），为本体「" + name + "」填充具体实例。"
+        + "\n实体是具体的人/物/事，指标型数据必须作为属性填入实体，不可作为独立实体。"
+    )
+
+    batch_hint = (
+        f"【分批提示】本文档较长，已分为 {total_batches} 批处理。"
+        f"当前是第 {batch_idx + 1}/{total_batches} 批。"
+        f"请只从本批文本中提取实体，不要补提其他批次可能存在的实体，也不要遗漏本批内的实体。\n\n"
+        if total_batches > 1
+        else ""
+    )
+
+    user_prompt = (
+        f"{batch_hint}"
+        f"已确认的概念清单（实体必须 instance_of 其中一个概念）：\n{concepts_str}\n\n"
+        f"文档内容（第 {batch_idx + 1}/{total_batches} 批）：\n---\n{doc_text}\n---\n\n"
+        f"请返回 JSON 数组，每个元素格式如下：\n"
+        f'{{"name": "实体名", "instance_of": "概念名", '
+        f'"is_primary_candidate": false, '
+        f'"properties": [{{"name": "属性名", "value": "属性值", '
+        f'"category": "descriptive|metric", "unit": "单位（无则空）", '
+        f'"source_snippet": "该属性值的原文出处"}}], '
+        f'"source_snippet": "实体出现的原文句子"}}\n\n'
+        f"要求：\n"
+        f"1. 提取本批文档中的具体实例，不要提取抽象类型\n"
+        f"2. instance_of 必须是概念清单中已定义的概念名\n"
+        f"3. 每个实体按其概念的 property_schema 填充 properties（值带 source_snippet，未提及可省略）\n"
+        f"4. is_primary_candidate 标注是否主要实体（核心主体、高频出现、被依赖）\n"
+        f"5. name 简洁规范，避免与本批内其他实体重复\n"
+        f"6. source_snippet 必须是本批原文原话\n"
+        f"7. 按本批内容自然提取，数量不限（跨批去重由系统自动完成）\n"
+        f"8. 只返回 JSON 数组，不要任何解释"
+        + _stage_hint_text(stage_hint)
+    )
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+
+def build_step3_messages(
+    entities: list, relation_types: list, stage_hint: str = ""
+) -> list:
+    """Step 3: 关系建模（单组/整体版本）。
+
+    在已确认的实体间建立关系。实体名和关系类型必须受元模型约束。
+    每条关系带 source_snippet 防幻觉。
+
+    Args:
+        entities: step2 已确认的实体清单（仅用 name + instance_of）
+        relation_types: 已确认的关系类型 [{"name":"..."}]
+        stage_hint: 用户为该阶段注入的提示词
+
+    Returns:
+        OpenAI 格式的 messages 列表
+    """
+    rel_names = [t["name"] for t in relation_types]
+    # 实体清单精简：仅 name + instance_of，避免 properties 撑爆 prompt
+    entities_compact = [
+        {"name": e.get("name", ""), "instance_of": e.get("instance_of", "")}
+        for e in entities
+    ]
+    entities_str = json.dumps(entities_compact, ensure_ascii=False, indent=2)
+
+    system_prompt = (
+        SYSTEM_BASE
+        + "\n\n你的任务是在已确认的实体间建立语义关系。"
+        + "关系应有明确的原文依据，不要强行凑数。"
+    )
+
+    user_prompt = (
+        f"以下是本体中的实体清单：\n{entities_str}\n\n"
+        f"允许的关系类型（必须从中选择，不可自创）: {'、'.join(rel_names)}\n\n"
+        f"请返回 JSON，格式如下：\n"
+        f'{{"relations": [{{"source": "源实体名", "target": "目标实体名", '
+        f'"relation_type": "关系类型", "weight": 0.5, '
+        f'"source_snippet": "支撑该关系的原文句子"}}]}}\n\n'
+        f"要求：\n"
+        f"1. source 和 target 必须是上述实体清单中已定义的实体名\n"
+        f"2. relation_type 必须从允许的关系类型中选择，不可自创\n"
+        f"3. weight 表示关系紧密程度，0-1 之间的小数\n"
+        f"4. source_snippet 必须是原文原话，支撑该关系的成立（若无明确依据则不要建立该关系）\n"
+        f"5. 关系应体现层级包含、影响、关联等语义，不要强行凑数\n"
+        f"6. 只返回 JSON，不要任何解释"
+        + _stage_hint_text(stage_hint)
+    )
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+
+def build_step3_group_messages(
+    entities: list, relation_types: list,
+    group_idx: int, total_groups: int, stage_hint: str = ""
+) -> list:
+    """Step 3 分组版本：明确告知 LLM 这是第 X/N 组，只建立组内实体间的关系。
+
+    分组构建时同组内关系已完整，跨组关系由 build_step3_cross_group_messages 补充。
+
+    Args:
+        entities: 本组实体清单（仅 name + instance_of）
+        relation_types: 已确认的关系类型
+        group_idx: 当前组索引（0-based）
+        total_groups: 总组数
+        stage_hint: 用户为该阶段注入的提示词
+
+    Returns:
+        OpenAI 格式的 messages 列表
+    """
+    rel_names = [t["name"] for t in relation_types]
+    entities_compact = [
+        {"name": e.get("name", ""), "instance_of": e.get("instance_of", "")}
+        for e in entities
+    ]
+    entities_str = json.dumps(entities_compact, ensure_ascii=False, indent=2)
+
+    system_prompt = (
+        SYSTEM_BASE
+        + "\n\n你的任务是在已确认的实体间建立语义关系。"
+        + "同组实体间的关系已完成一部分，你现在只需建立本组内实体间的关系。"
+    )
+
+    group_hint = (
+        f"【分组提示】实体较多，已分为 {total_groups} 组处理。"
+        f"当前是第 {group_idx + 1}/{total_groups} 组。"
+        f"请只建立本组内实体间的关系，跨组关系由系统单独补充。\n\n"
+        if total_groups > 1
+        else ""
+    )
+
+    user_prompt = (
+        f"{group_hint}"
+        f"以下是本组实体清单：\n{entities_str}\n\n"
+        f"允许的关系类型（必须从中选择）: {'、'.join(rel_names)}\n\n"
+        f"请返回 JSON，格式如下：\n"
+        f'{{"relations": [{{"source": "源实体名", "target": "目标实体名", '
+        f'"relation_type": "关系类型", "weight": 0.5, '
+        f'"source_snippet": "支撑该关系的原文句子"}}]}}\n\n'
+        f"要求：\n"
+        f"1. source 和 target 必须是本组实体清单中已定义的实体名\n"
+        f"2. relation_type 必须从允许的关系类型中选择\n"
+        f"3. weight 表示关系紧密程度，0-1 之间的小数\n"
+        f"4. source_snippet 必须是原文原话，支撑该关系\n"
+        f"5. 只建立本组内实体间的关系，跨组关系由系统单独补充\n"
+        f"6. 关系应有明确依据，不要强行凑数；若组内确无关系，返回空数组\n"
+        f"7. 只返回 JSON，不要任何解释"
+        + _stage_hint_text(stage_hint)
+    )
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+
+def build_step3_cross_group_messages(
+    entities: list, existing_relations: list, relation_types: list,
+    stage_hint: str = ""
+) -> list:
+    """Step 3 跨组关系补充：分组合并后，由 LLM 补充跨组实体间的关系。
 
     分组构建时同组内关系已完整，但跨组实体间的关系会丢失。本函数发起一次额外 LLM 调用，
-    输入合并后的实体清单（仅 name+type，控制长度）+ 已有组内关系 + 关系类型，
+    输入合并后的实体清单（仅 name+instance_of）+ 已有组内关系 + 关系类型，
     LLM 输出补充的跨组关系。
 
     Args:
-        entities: 合并去重后的所有实体 [{"name","type",...}]（仅用 name+type 字段）
-        existing_relations: 已有组内关系 [{"source","target","relation_type","weight"}]
-        entity_types: 已确认的实体类型
+        entities: 合并去重后的所有实体（仅用 name+instance_of）
+        existing_relations: 已有组内关系
         relation_types: 已确认的关系类型
+        stage_hint: 用户为该阶段注入的提示词
 
     Returns:
         OpenAI 格式的 messages 列表
     """
     rel_names = [t["name"] for t in relation_types]
 
-    # 实体清单：仅 name+type，避免 properties 撑爆 prompt；用 JSON 结构化输出
-    entities_compact = [{"name": e.get("name", ""), "type": e.get("type", "")} for e in entities]
+    entities_compact = [
+        {"name": e.get("name", ""), "instance_of": e.get("instance_of", "")}
+        for e in entities
+    ]
     entities_str = json.dumps(entities_compact, ensure_ascii=False, indent=2)
 
-    # 已有关系：用 JSON 结构化，避免特殊符号触发模型异常
     existing_signature = [
         {"source": r.get("source", ""), "target": r.get("target", ""), "relation_type": r.get("relation_type", "")}
         for r in existing_relations
@@ -294,25 +524,111 @@ def build_step2_cross_group_messages(
 
     system_prompt = (
         SYSTEM_BASE
-        + "\n\n你的任务是为已构建层次结构的本体补充跨组实体之间的关系。"
+        + "\n\n你的任务是为已构建关系的本体补充跨组实体之间的关系。"
         + "同组实体间的关系已完成，你现在只需补充不同组实体之间可能存在的语义关系。"
     )
 
     user_prompt = (
         f"以下是本体中的全部实体清单：\n{entities_str}\n\n"
-        f"允许的关系类型（必须从中选择，不可自创）: {'、'.join(rel_names)}\n\n"
+        f"允许的关系类型（必须从中选择）: {'、'.join(rel_names)}\n\n"
         f"已有的组内关系（不要重复这些）：\n{existing_str}\n\n"
         f"请补充跨组实体之间的关系，返回 JSON：\n"
         f'{{"relations": [{{"source": "实体名", "target": "实体名", '
-        f'"relation_type": "关系类型", "weight": 0.5}}]}}\n\n'
+        f'"relation_type": "关系类型", "weight": 0.5, '
+        f'"source_snippet": "支撑该关系的原文句子"}}]}}\n\n'
         f"要求：\n"
         f"1. source 和 target 必须是上述实体清单中已定义的实体名\n"
-        f"2. relation_type 必须从允许的关系类型中选择，不可自创\n"
-        f"3. 只补充跨组关系（不同类型/不同分组的实体间关系），不要重复已有组内关系\n"
-        f"4. 关系应有明确的语义依据，不要强行凑数；若实体间确无跨组关系，返回空数组\n"
-        f"5. weight 表示关系紧密程度，0-1 之间的小数\n"
-        f"6. 通常补充 3-15 条跨组关系\n"
+        f"2. relation_type 必须从允许的关系类型中选择\n"
+        f"3. 只补充跨组关系（不同分组的实体间关系），不要重复已有组内关系\n"
+        f"4. source_snippet 必须是原文原话，支撑该关系\n"
+        f"5. 关系应有明确的语义依据，不要强行凑数；若实体间确无跨组关系，返回空数组\n"
+        f"6. weight 表示关系紧密程度，0-1 之间的小数\n"
         f"7. 只返回 JSON，不要任何解释"
+        + _stage_hint_text(stage_hint)
+    )
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+
+def build_step4_verification_messages(
+    concepts: list, entities: list, relations: list, doc_text: str,
+    stage_hint: str = ""
+) -> list:
+    """Step 4: 验证 + 报告生成（LLM 自检）。
+
+    LLM 逐项检查实体/属性/关系是否可溯源，标记存疑项，并生成一份结构化简报。
+
+    Args:
+        concepts: step1 已确认的概念清单
+        entities: step2 已确认的实体清单（含属性）
+        relations: step3 已确认的关系清单
+        doc_text: 原文（已截断至 VERIFICATION_MAX_DOC_CHARS）
+        stage_hint: 用户为该阶段注入的提示词
+
+    Returns:
+        OpenAI 格式的 messages 列表
+    """
+    # 精简输入：截断过长的 source_snippet，保留关键字段
+    concepts_compact = [
+        {"name": c.get("name", ""), "entity_type": c.get("entity_type", ""),
+         "property_schema": c.get("property_schema", []) or []}
+        for c in concepts
+    ]
+    entities_compact = []
+    for e in entities:
+        props = []
+        for p in (e.get("properties") or []):
+            if isinstance(p, dict):
+                props.append({"name": p.get("name", ""), "value": p.get("value"),
+                              "category": p.get("category", "descriptive"),
+                              "source_snippet": (p.get("source_snippet", "") or "")[:80]})
+            else:
+                props.append({"name": str(p)})
+        entities_compact.append({
+            "name": e.get("name", ""), "instance_of": e.get("instance_of", ""),
+            "source_snippet": (e.get("source_snippet", "") or "")[:80],
+            "properties": props,
+        })
+    relations_compact = [
+        {"source": r.get("source", ""), "target": r.get("target", ""),
+         "relation_type": r.get("relation_type", ""),
+         "source_snippet": (r.get("source_snippet", "") or "")[:80]}
+        for r in relations
+    ]
+
+    system_prompt = (
+        SYSTEM_BASE
+        + "\n\n你的任务是对已构建的本体做自检验证，并生成一份简报。"
+        + "\n逐项检查实体/属性/关系是否可溯源到原文，标记存疑项；"
+        + "然后基于全部提取结果生成一份结构化简报。"
+    )
+
+    user_prompt = (
+        f"已确认的概念清单：\n{json.dumps(concepts_compact, ensure_ascii=False)}\n\n"
+        f"已确认的实体清单（含属性）：\n{json.dumps(entities_compact, ensure_ascii=False)}\n\n"
+        f"已确认的关系清单：\n{json.dumps(relations_compact, ensure_ascii=False)}\n\n"
+        f"原文（用于核实溯源）：\n---\n{doc_text}\n---\n\n"
+        f"请返回 JSON，格式如下：\n"
+        f'{{"verified_count": 整数, "suspect_count": 整数, '
+        f'"suspects": [{{"item_type": "entity|property|relation|concept", '
+        f'"item_name": "项名称", "reason": "存疑原因"}}], '
+        f'"report": "简报 markdown 文本"}}\n\n'
+        f"验证要求：\n"
+        f"1. 检查每个实体的 source_snippet 是否真实出现在原文（字符串匹配）\n"
+        f"2. 检查每个属性值是否可溯源（source_snippet 是否支撑该值）\n"
+        f"3. 检查每条关系是否有原文依据\n"
+        f"4. 检查概念的 property_schema 是否覆盖文档中该类实体的关键属性\n"
+        f"5. 存疑项给出具体原因（如「source_snippet 在原文中未找到」「属性值75%与原文72%不符」）\n"
+        f"6. verified_count 为通过验证的项数，suspect_count 为存疑项数\n\n"
+        f"简报要求：\n"
+        f"1. report 为 markdown 格式文本（用 \\n 转义换行）\n"
+        f"2. 按主要实体组织，包含：实体概况、关键指标、核心关系、存疑提示\n"
+        f"3. 简洁明了，不超过 800 字\n"
+        f"4. 只返回 JSON，不要任何解释"
+        + _stage_hint_text(stage_hint)
     )
 
     return [
