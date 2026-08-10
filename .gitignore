@@ -49,6 +49,9 @@ yarn-error.log*
 uploads/
 vector_db/
 
+# Qdrant 本地向量库运行时数据（服务自动生成，不入库）
+qdrant/
+
 # Models (large files, download separately)
 python/knowledge-service/models/
 
