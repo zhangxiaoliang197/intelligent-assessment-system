@@ -78,7 +78,7 @@ services:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
       - ONTOLOGY_SERVICE_URL=http://assessment-ontology:10256
-      - EVALUATION_SKILL_CATALOG_PATH=/app/config/skills.json
+      - EVALUATION_SKILLS_DIR=/app/config/skills
       - LOG_ENV=${LOG_ENV:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs

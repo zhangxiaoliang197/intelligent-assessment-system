@@ -23,21 +23,26 @@ echo "[2/6] 校验镜像内置 Skill 目录..."
 docker run --rm --entrypoint python assessment-qa:latest \
     -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 30; print('Skill catalog OK:', len(catalog['skills']))"
 
-echo "[3/6] 导出只读 Skill 目录文件..."
+echo "[3/6] 导出只读 Skill Markdown 目录..."
 mkdir -p "$DATA_DIR/qa" "$DATA_DIR/config"
-SKILLS_FILE="$DATA_DIR/config/skills.json"
+SKILLS_DIR="$DATA_DIR/config/skills"
+SKILLS_TMP_DIR="$DATA_DIR/config/skills.tmp.$$"
 EXPORT_CONTAINER="assessment-qa-catalog-export-$$"
 docker rm -f "$EXPORT_CONTAINER" >/dev/null 2>&1 || true
 docker create --name "$EXPORT_CONTAINER" assessment-qa:latest >/dev/null
-if ! docker cp "$EXPORT_CONTAINER:/app/config/skills.json" "$SKILLS_FILE.tmp"; then
+rm -rf "$SKILLS_TMP_DIR"
+mkdir -p "$SKILLS_TMP_DIR"
+if ! docker cp "$EXPORT_CONTAINER:/app/config/skills/." "$SKILLS_TMP_DIR"; then
     docker rm -f "$EXPORT_CONTAINER" >/dev/null 2>&1 || true
-    rm -f "$SKILLS_FILE.tmp"
-    echo "ERROR: 无法导出 /app/config/skills.json"
+    rm -rf "$SKILLS_TMP_DIR"
+    echo "ERROR: 无法导出 /app/config/skills"
     exit 1
 fi
 docker rm "$EXPORT_CONTAINER" >/dev/null
-mv -f "$SKILLS_FILE.tmp" "$SKILLS_FILE"
-test -s "$SKILLS_FILE"
+rm -rf "$SKILLS_DIR"
+mv "$SKILLS_TMP_DIR" "$SKILLS_DIR"
+test -s "$SKILLS_DIR/README.md"
+test "$(find "$SKILLS_DIR" -mindepth 2 -maxdepth 2 -name SKILL.md -type f | wc -l)" -eq 30
 
 echo "[4/6] 强制替换旧 QA 容器..."
 # Compose 通常会给网络名加项目名前缀。优先沿用旧 QA 容器（其次是
@@ -67,9 +72,9 @@ docker run -d --name assessment-qa \
     -p "$QA_PORT:10253" \
     -e ADMIN_SERVICE_URL="${ADMIN_SERVICE_URL:-http://assessment-admin:10258}" \
     -e KNOWLEDGE_SERVICE_URL="${KNOWLEDGE_SERVICE_URL:-http://assessment-knowledge:10252}" \
-    -e EVALUATION_SKILL_CATALOG_PATH="/app/config/skills.json" \
+    -e EVALUATION_SKILLS_DIR="/app/config/skills" \
     -v "$DATA_DIR/qa:/app/data" \
-    -v "$SKILLS_FILE:/app/config/skills.json:ro" \
+    -v "$SKILLS_DIR:/app/config/skills:ro" \
     --restart always \
     assessment-qa:latest >/dev/null
 
@@ -82,7 +87,7 @@ if [[ "$EXPECTED_IMAGE_ID" != "$ACTUAL_IMAGE_ID" ]]; then
     echo "  actual=$ACTUAL_IMAGE_ID"
     exit 1
 fi
-docker exec assessment-qa test -s /app/config/skills.json
+docker exec assessment-qa test -s /app/config/skills/README.md
 
 echo "[6/6] 验证健康检查和 Skill 目录接口..."
 QA_READY=0
@@ -108,5 +113,5 @@ fi
 
 echo "QA Skill 热修复完成"
 echo "  image=$ACTUAL_IMAGE_ID"
-echo "  catalog=/app/config/skills.json"
+echo "  catalog=/app/config/skills"
 echo "  builtInTotal=30"

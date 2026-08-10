@@ -164,7 +164,7 @@ services:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
       - ONTOLOGY_SERVICE_URL=http://assessment-ontology:10256
-      - EVALUATION_SKILL_CATALOG_PATH=/app/config/skills.json
+      - EVALUATION_SKILLS_DIR=/app/config/skills
       - LOG_ENV=\${LOG_ENV:-prod}
       - LOG_LEVEL=\${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -173,7 +173,7 @@ services:
       - LOG_ROTATION_MODE=size
     volumes:
       - "$DEPLOY_TARGET/data/qa:/app/data"
-      - "$DEPLOY_TARGET/data/config/skills.json:/app/config/skills.json:ro"
+      - "$DEPLOY_TARGET/data/config/skills:/app/config/skills:ro"
       - "$DEPLOY_TARGET/logs/qa:/app/logs"
     networks:
       - assessment-net
@@ -300,21 +300,26 @@ mkdir -p "$DEPLOY_TARGET/logs"/{knowledge,qa,indicator,evaluation,ontology,admin
 
 cp "$DEPLOY_DIR/queries.json" "$DEPLOY_TARGET/data/config/queries.json" 2>/dev/null || echo '[]' > "$DEPLOY_TARGET/data/config/queries.json"
 
-# 导出经过镜像构建闸门校验的目录文件，运行时以只读单文件挂载，
+# 导出经过镜像构建闸门校验的 Markdown 目录，运行时以只读目录挂载，
 # 避免历史遗留的 /app/config 整目录挂载遮蔽镜像内容。
-SKILLS_FILE="$DEPLOY_TARGET/data/config/skills.json"
+SKILLS_DIR="$DEPLOY_TARGET/data/config/skills"
+SKILLS_TMP_DIR="$DEPLOY_TARGET/data/config/skills.tmp.$$"
 CATALOG_EXPORT_CONTAINER="assessment-qa-catalog-export-$$"
 docker rm -f "$CATALOG_EXPORT_CONTAINER" >/dev/null 2>&1 || true
 docker create --name "$CATALOG_EXPORT_CONTAINER" assessment-qa:latest >/dev/null
-if ! docker cp "$CATALOG_EXPORT_CONTAINER:/app/config/skills.json" "$SKILLS_FILE.tmp"; then
+rm -rf "$SKILLS_TMP_DIR"
+mkdir -p "$SKILLS_TMP_DIR"
+if ! docker cp "$CATALOG_EXPORT_CONTAINER:/app/config/skills/." "$SKILLS_TMP_DIR"; then
     docker rm -f "$CATALOG_EXPORT_CONTAINER" >/dev/null 2>&1 || true
-    rm -f "$SKILLS_FILE.tmp"
-    log_error "无法从 assessment-qa:latest 导出 /app/config/skills.json"
+    rm -rf "$SKILLS_TMP_DIR"
+    log_error "无法从 assessment-qa:latest 导出 /app/config/skills"
     exit 1
 fi
 docker rm "$CATALOG_EXPORT_CONTAINER" >/dev/null
-mv -f "$SKILLS_FILE.tmp" "$SKILLS_FILE"
-test -s "$SKILLS_FILE"
+rm -rf "$SKILLS_DIR"
+mv "$SKILLS_TMP_DIR" "$SKILLS_DIR"
+test -s "$SKILLS_DIR/README.md"
+test "$(find "$SKILLS_DIR" -mindepth 2 -maxdepth 2 -name SKILL.md -type f | wc -l)" -eq 30
 
 log_info "docker-compose.yml 已部署"
 
@@ -367,7 +372,7 @@ if [[ "$EXPECTED_IMAGE_ID" != "$ACTUAL_IMAGE_ID" ]]; then
     echo "  actual=$ACTUAL_IMAGE_ID"
     exit 1
 fi
-docker exec assessment-qa test -s /app/config/skills.json
+docker exec assessment-qa test -s /app/config/skills/README.md
 
 QA_READY=0
 for i in $(seq 1 60); do

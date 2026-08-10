@@ -66,7 +66,7 @@ from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert le
 '@
         docker run --rm --entrypoint python "assessment-${ImageName}:latest" -c $pyCode
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "  ERROR: QA 镜像缺少或无法加载 /app/config/skills.json，停止导出!" -ForegroundColor Red
+            Write-Host "  ERROR: QA 镜像缺少或无法加载 /app/config/skills 目录，停止导出!" -ForegroundColor Red
             exit 1
         }
     }

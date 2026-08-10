@@ -7,3 +7,4 @@ langgraph>=1.2.0
 langchain-core>=1.4.0
 python-dotenv>=1.0.0
 python-json-logger>=2.0.8
+PyYAML>=6.0.0

@@ -11,7 +11,10 @@ import secrets
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+
+import yaml
 
 from .custom_skill_store import (
     CustomSkillStoreConflict,
@@ -47,12 +50,15 @@ logger = logging.getLogger("evaluation.skill_catalog")
 _custom_catalog_warning = ""
 
 
-_CATALOG_ENV_VAR = "EVALUATION_SKILL_CATALOG_PATH"
-_CATALOG_FILE = os.path.join(
+_CATALOG_ENV_VAR = "EVALUATION_SKILLS_DIR"
+_LEGACY_CATALOG_ENV_VAR = "EVALUATION_SKILL_CATALOG_PATH"
+_CATALOG_DIRECTORY = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "config",
-    "skills.json",
+    "skills",
 )
+_CATALOG_INDEX_FILE = "README.md"
+_SKILL_FILE = "SKILL.md"
 _STEP_OPERATIONS = {
     "dataset_query",
     "database_overview",
@@ -307,74 +313,146 @@ def _validate_skill(skill: Dict[str, Any], seen_ids: set[str]) -> None:
         raise SkillCatalogError(f"Skill {skill_id} visualization enabled must be a boolean")
 
 
-def get_catalog_file() -> str:
-    """Return the configured catalog path as an absolute path.
+def get_catalog_directory() -> str:
+    """Return the configured Markdown Skill directory as an absolute path.
 
     The module-relative default works for source checkouts and the Docker
     image. Deployments may mount the catalog elsewhere and opt in through an
-    explicit environment variable.
+    explicit environment variable. The former environment variable is still
+    accepted as a directory-path alias so existing deployment configuration
+    fails gracefully during a rolling upgrade.
     """
 
-    configured = os.getenv(_CATALOG_ENV_VAR, "").strip() or _CATALOG_FILE
+    configured = (
+        os.getenv(_CATALOG_ENV_VAR, "").strip()
+        or os.getenv(_LEGACY_CATALOG_ENV_VAR, "").strip()
+        or _CATALOG_DIRECTORY
+    )
     return os.path.abspath(os.path.expanduser(configured))
 
 
-@lru_cache(maxsize=4)
-def _load_catalog_cached(catalog_file: str) -> Dict[str, Any]:
+def _read_markdown_front_matter(markdown_file: Path) -> tuple[Dict[str, Any], str]:
+    """Read YAML front matter and the human-readable body from a Markdown file."""
+
     try:
-        with open(catalog_file, "r", encoding="utf-8") as file:
-            catalog = json.load(file)
+        content = markdown_file.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise SkillCatalogError(
-            f"Skill catalog file is missing: {catalog_file}. "
+            f"Skill Markdown file is missing: {markdown_file}. "
             "Rebuild or redeploy the QA image and recreate the QA container."
         ) from exc
     except PermissionError as exc:
         raise SkillCatalogError(
-            f"Skill catalog file is not readable: {catalog_file}: {exc}"
+            f"Skill Markdown file is not readable: {markdown_file}: {exc}"
         ) from exc
     except OSError as exc:
         raise SkillCatalogError(
-            f"Unable to read Skill catalog {catalog_file}: {exc}"
+            f"Unable to read Skill Markdown file {markdown_file}: {exc}"
         ) from exc
-    except json.JSONDecodeError as exc:
+
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
         raise SkillCatalogError(
-            f"Skill catalog is not valid JSON: {catalog_file}: {exc}"
+            f"Skill Markdown file must start with YAML front matter: {markdown_file}"
+        )
+    try:
+        closing_index = next(
+            index for index, line in enumerate(lines[1:], start=1) if line.strip() == "---"
+        )
+    except StopIteration as exc:
+        raise SkillCatalogError(
+            f"Skill Markdown front matter is not closed: {markdown_file}"
         ) from exc
 
-    skills = catalog.get("skills")
-    if not isinstance(skills, list) or not skills:
-        raise SkillCatalogError("Skill catalog must contain a non-empty skills list")
+    try:
+        metadata = yaml.safe_load("\n".join(lines[1:closing_index]))
+    except yaml.YAMLError as exc:
+        raise SkillCatalogError(
+            f"Skill Markdown front matter is not valid YAML: {markdown_file}: {exc}"
+        ) from exc
+    if not isinstance(metadata, dict):
+        raise SkillCatalogError(
+            f"Skill Markdown front matter must be an object: {markdown_file}"
+        )
+    return metadata, "\n".join(lines[closing_index + 1 :]).strip()
 
+
+@lru_cache(maxsize=4)
+def _load_catalog_cached(catalog_directory: str) -> Dict[str, Any]:
+    catalog_path = Path(catalog_directory)
+    if not catalog_path.exists():
+        raise SkillCatalogError(
+            f"Skill catalog directory is missing: {catalog_directory}. "
+            "Rebuild or redeploy the QA image and recreate the QA container."
+        )
+    if not catalog_path.is_dir():
+        raise SkillCatalogError(
+            f"Skill catalog path is not a directory: {catalog_directory}. "
+            "Built-in Skills must use one folder and SKILL.md file per Skill."
+        )
+
+    index_metadata, index_body = _read_markdown_front_matter(
+        catalog_path / _CATALOG_INDEX_FILE
+    )
+    version = index_metadata.get("version")
+    _validate_text(version, "Skill catalog version", maximum=32)
+    if not index_body.startswith("# "):
+        raise SkillCatalogError("Skill catalog README.md must contain a level-one heading")
+
+    skill_files = sorted(catalog_path.glob(f"*/{_SKILL_FILE}"))
+    if not skill_files:
+        raise SkillCatalogError(
+            "Skill catalog directory must contain at least one <skill-id>/SKILL.md file"
+        )
+
+    ordered_skills: List[tuple[int, Dict[str, Any]]] = []
+    seen_orders: set[int] = set()
     seen_ids: set[str] = set()
-    for skill in skills:
-        if not isinstance(skill, dict):
-            raise SkillCatalogError("Every Skill must be an object")
+    for skill_file in skill_files:
+        skill, body = _read_markdown_front_matter(skill_file)
+        order = skill.pop("order", None)
+        if not isinstance(order, int) or isinstance(order, bool) or order < 1:
+            raise SkillCatalogError(f"Skill {skill_file} order must be a positive integer")
+        if order in seen_orders:
+            raise SkillCatalogError(f"Duplicate Skill order: {order}")
+        seen_orders.add(order)
+
         _validate_skill(skill, seen_ids)
-    return catalog
+        if skill_file.parent.name != skill["id"]:
+            raise SkillCatalogError(
+                f"Skill folder {skill_file.parent.name} does not match id {skill['id']}"
+            )
+        if not body.startswith(f"# {skill['name']}"):
+            raise SkillCatalogError(
+                f"Skill Markdown body must start with '# {skill['name']}': {skill_file}"
+            )
+        ordered_skills.append((order, skill))
+
+    ordered_skills.sort(key=lambda item: item[0])
+    return {"version": version, "skills": [skill for _, skill in ordered_skills]}
 
 
 def load_catalog() -> Dict[str, Any]:
     """Return a defensive copy of the validated built-in Skill catalog."""
-    return copy.deepcopy(_load_catalog_cached(get_catalog_file()))
+    return copy.deepcopy(_load_catalog_cached(get_catalog_directory()))
 
 
 def get_catalog_diagnostics() -> Dict[str, Any]:
     """Return deployment-safe readiness information for health checks."""
 
-    catalog_file = get_catalog_file()
+    catalog_directory = get_catalog_directory()
     try:
-        catalog = _load_catalog_cached(catalog_file)
+        catalog = _load_catalog_cached(catalog_directory)
     except SkillCatalogError as exc:
         return {
             "ready": False,
-            "path": catalog_file,
+            "path": catalog_directory,
             "skillCount": 0,
             "error": str(exc),
         }
     return {
         "ready": True,
-        "path": catalog_file,
+        "path": catalog_directory,
         "skillCount": len(catalog["skills"]),
         "error": "",
     }

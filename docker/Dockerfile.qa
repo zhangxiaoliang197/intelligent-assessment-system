@@ -3,14 +3,15 @@ WORKDIR /app
 RUN pip config set global.index-url https://pypi.org/simple
 COPY python/qa-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY python/qa-service/config/skills.json /app/config/skills.json
+COPY python/qa-service/config/skills /app/config/skills
 COPY python/qa-service/ .
-ENV EVALUATION_SKILL_CATALOG_PATH=/app/config/skills.json \
+ENV EVALUATION_SKILLS_DIR=/app/config/skills \
     LOG_DIR=/app/logs \
     LOG_ENV=prod \
     LOG_LEVEL=INFO \
     LOG_ROTATION_MODE=size
-RUN test -s /app/config/skills.json \
+RUN test -s /app/config/skills/README.md \
+    && test "$(find /app/config/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f | wc -l)" -eq 30 \
     && python -c "from agents.skill_catalog import load_catalog; catalog = load_catalog(); assert len(catalog['skills']) == 30; print('Validated Skill catalog:', len(catalog['skills']))"
 RUN mkdir -p /app/logs
 EXPOSE 10253

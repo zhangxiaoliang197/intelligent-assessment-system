@@ -6,8 +6,8 @@ in an offline deployment without installing a separate test framework.
 
 from __future__ import annotations
 
-import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -96,31 +96,31 @@ class SkillCatalogTests(unittest.TestCase):
                     step_ids.append(step["id"])
                 self.assertEqual(len(step_ids), len(set(step_ids)), "Step IDs must be unique per Skill")
 
-    def test_catalog_path_can_be_overridden_for_a_read_only_deployment_mount(self) -> None:
+    def test_catalog_directory_can_be_overridden_for_a_read_only_deployment_mount(self) -> None:
         catalog = load_catalog()
         with tempfile.TemporaryDirectory() as temp_dir:
-            catalog_file = os.path.join(temp_dir, "mounted-skills.json")
-            with open(catalog_file, "w", encoding="utf-8") as file:
-                json.dump(catalog, file, ensure_ascii=False)
+            source_directory = QA_SERVICE_ROOT / "config" / "skills"
+            catalog_directory = os.path.join(temp_dir, "mounted-skills")
+            shutil.copytree(source_directory, catalog_directory)
 
             with patch.dict(
                 os.environ,
-                {"EVALUATION_SKILL_CATALOG_PATH": catalog_file},
+                {"EVALUATION_SKILLS_DIR": catalog_directory},
             ):
                 diagnostics = get_catalog_diagnostics()
                 loaded = load_catalog()
 
         self.assertTrue(diagnostics["ready"])
-        self.assertEqual(os.path.abspath(catalog_file), diagnostics["path"])
+        self.assertEqual(os.path.abspath(catalog_directory), diagnostics["path"])
         self.assertEqual(30, diagnostics["skillCount"])
         self.assertEqual(catalog["skills"], loaded["skills"])
 
     def test_missing_catalog_reports_an_actionable_deployment_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            missing_file = os.path.join(temp_dir, "missing-skills.json")
+            missing_directory = os.path.join(temp_dir, "missing-skills")
             with patch.dict(
                 os.environ,
-                {"EVALUATION_SKILL_CATALOG_PATH": missing_file},
+                {"EVALUATION_SKILLS_DIR": missing_directory},
             ):
                 diagnostics = get_catalog_diagnostics()
                 with self.assertRaisesRegex(
@@ -130,8 +130,21 @@ class SkillCatalogTests(unittest.TestCase):
                     load_catalog()
 
         self.assertFalse(diagnostics["ready"])
-        self.assertEqual(os.path.abspath(missing_file), diagnostics["path"])
-        self.assertIn("Skill catalog file is missing", diagnostics["error"])
+        self.assertEqual(os.path.abspath(missing_directory), diagnostics["path"])
+        self.assertIn("Skill catalog directory is missing", diagnostics["error"])
+
+    def test_each_builtin_skill_has_a_well_formed_markdown_file(self) -> None:
+        skills_directory = QA_SERVICE_ROOT / "config" / "skills"
+        skill_files = sorted(skills_directory.glob("*/SKILL.md"))
+
+        self.assertEqual(30, len(skill_files))
+        for skill_file in skill_files:
+            with self.subTest(skill=skill_file.parent.name):
+                content = skill_file.read_text(encoding="utf-8")
+                self.assertTrue(content.startswith("---\n"))
+                self.assertIn("\n---\n\n# ", content)
+                self.assertIn("\n## 执行步骤\n", content)
+                self.assertIn("\n## 输出要求\n", content)
 
     def test_recommendation_for_air_superiority_selects_the_matching_skill(self) -> None:
         recommendations = recommend_skills(

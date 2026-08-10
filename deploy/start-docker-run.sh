@@ -62,25 +62,30 @@ LOG_MAX_SIZE_MB="${LOG_MAX_SIZE_MB:-100}"
 echo "  数据目录: $DATA_DIR"
 echo "  日志目录: $LOG_DIR_HOST"
 
-# 从待启动镜像导出并校验同一份内置 Skill 目录，随后以只读单文件
+# 从待启动镜像导出并校验同一份内置 Skill 目录，随后以只读目录
 # 挂载。这样即使历史容器或错误的整目录挂载曾污染 /app/config，
-# 新容器也会得到确定、可审计的目录文件。
-SKILLS_FILE="$DATA_DIR/config/skills.json"
+# 新容器也会得到确定、可审计的 Markdown 文件。
+SKILLS_DIR="$DATA_DIR/config/skills"
+SKILLS_TMP_DIR="$DATA_DIR/config/skills.tmp.$$"
 CATALOG_EXPORT_CONTAINER="assessment-qa-catalog-export-$$"
 echo "  校验 QA 镜像内置 Skill 目录..."
 docker run --rm --entrypoint python assessment-qa:latest \
     -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 30; print('  Skill catalog OK:', len(catalog['skills']))"
 docker rm -f "$CATALOG_EXPORT_CONTAINER" >/dev/null 2>&1 || true
 docker create --name "$CATALOG_EXPORT_CONTAINER" assessment-qa:latest >/dev/null
-if ! docker cp "$CATALOG_EXPORT_CONTAINER:/app/config/skills.json" "$SKILLS_FILE.tmp"; then
+rm -rf "$SKILLS_TMP_DIR"
+mkdir -p "$SKILLS_TMP_DIR"
+if ! docker cp "$CATALOG_EXPORT_CONTAINER:/app/config/skills/." "$SKILLS_TMP_DIR"; then
     docker rm -f "$CATALOG_EXPORT_CONTAINER" >/dev/null 2>&1 || true
-    rm -f "$SKILLS_FILE.tmp"
-    echo "ERROR: 无法从 assessment-qa:latest 导出 /app/config/skills.json"
+    rm -rf "$SKILLS_TMP_DIR"
+    echo "ERROR: 无法从 assessment-qa:latest 导出 /app/config/skills"
     exit 1
 fi
 docker rm "$CATALOG_EXPORT_CONTAINER" >/dev/null
-mv -f "$SKILLS_FILE.tmp" "$SKILLS_FILE"
-test -s "$SKILLS_FILE"
+rm -rf "$SKILLS_DIR"
+mv "$SKILLS_TMP_DIR" "$SKILLS_DIR"
+test -s "$SKILLS_DIR/README.md"
+test "$(find "$SKILLS_DIR" -mindepth 2 -maxdepth 2 -name SKILL.md -type f | wc -l)" -eq 30
 
 QUERIES_FILE="$DATA_DIR/config/queries.json"
 if [ ! -f "$QUERIES_FILE" ]; then
@@ -193,7 +198,7 @@ docker run -d --name assessment-qa \
     -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
     -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
     -e ONTOLOGY_SERVICE_URL="http://assessment-ontology:10256" \
-    -e EVALUATION_SKILL_CATALOG_PATH="/app/config/skills.json" \
+    -e EVALUATION_SKILLS_DIR="/app/config/skills" \
     -e LOG_ENV="$LOG_ENV" \
     -e LOG_LEVEL="$LOG_LEVEL" \
     -e LOG_DIR="/app/logs" \
@@ -201,7 +206,7 @@ docker run -d --name assessment-qa \
     -e LOG_MAX_SIZE_MB="$LOG_MAX_SIZE_MB" \
     -e LOG_ROTATION_MODE="size" \
     -v "$DATA_DIR/qa:/app/data" \
-    -v "$SKILLS_FILE:/app/config/skills.json:ro" \
+    -v "$SKILLS_DIR:/app/config/skills:ro" \
     -v "$LOG_DIR_HOST/qa:/app/logs" \
     --log-driver json-file \
     --log-opt max-size=50m \
@@ -330,7 +335,7 @@ if [ "$EXPECTED_IMAGE_ID" != "$ACTUAL_IMAGE_ID" ]; then
     echo "  actual=$ACTUAL_IMAGE_ID"
     exit 1
 fi
-docker exec assessment-qa test -s /app/config/skills.json
+docker exec assessment-qa test -s /app/config/skills/README.md
 
 QA_READY=0
 for i in $(seq 1 60); do
