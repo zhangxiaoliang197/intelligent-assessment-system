@@ -69,7 +69,7 @@ ORCHESTRATOR_SYSTEM_PROMPT = f"""# 角色: {ORCHESTRATOR_AGENT['role']}
 1. **data_query** — 用户要求从数据库中读取具体数据。例："列出XX"、"统计XX的数量"、"查询XX表"、"XX数据是多少"。
 2. **combat_effectiveness** — 用户要求评估整个推演过程。例："评估本次推演的战损"、"分析整个作战过程"。
 3. **air_superiority** — 用户明确提到制空权/空域控制/空中力量对比。
-4. **general_analysis** — 所有其他情况（含：分析评估结论、趋势判断、知识问答、地图地理、与数据源无关的任何问题）。
+4. **general_analysis** — 所有其他情况（含：分析评估结论、趋势判断、知识问答、与数据源无关的任何问题）。
 
 ## 是否需要结论（need_conclusion）
 - 用户明确说"只看数据/仅列出/不要结论/只要数据"→ false
@@ -184,6 +184,11 @@ def build_data_source_context(state: EvaluationState) -> str:
 
         # 第二步：关联数据集（含预定义描述），帮助 LLM 理解表的作用
         datasets = fetch_datasets_for_database(state.database_id)
+        # 如果用户指定了数据集，只保留选中的
+        if state.dataset_ids and datasets:
+            selected_ids = set(state.dataset_ids)
+            datasets = [ds for ds in datasets if ds.get('id') in selected_ids]
+
         if datasets:
             parts.append(f"\n数据集描述 ({len(datasets)} 个):")
             for ds in datasets[:5]:
@@ -191,8 +196,9 @@ def build_data_source_context(state: EvaluationState) -> str:
                 parts.append(f"  - {ds.get('name', '')}" + (f": {desc}" if desc else ""))
 
         # 第三步：关联指标（含预定义公式），帮助 LLM 理解可计算的指标
+        # 只获取选中数据集的指标，避免不相关指标干扰 LLM 判断
         linked_ds_ids = [ds.get("id") for ds in datasets]
-        indicators = fetch_indicators_for_datasets(linked_ds_ids)
+        indicators = fetch_indicators_for_datasets(linked_ds_ids) if linked_ds_ids else []
         if indicators:
             parts.append(f"\n指标定义 ({len(indicators)} 个):")
             for ind in indicators[:5]:

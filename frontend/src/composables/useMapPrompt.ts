@@ -5,9 +5,10 @@
  * - 从查询结果数据（rawResults）中提取坐标列
  */
 import { extractCoordinates, type GeoPoint } from '@/utils/geoParser'
+import { parseAnnotations, filterOverlapPoints, type GeoRoute, type GeoArea } from '@/utils/geoAnnotation'
 
 /** 地图意图关键词 */
-const MAP_KEYWORDS = ['地图', '标注', '坐标可视化', '显示地图', '地图显示', '在地图上']
+const MAP_KEYWORDS = ['地图', '标注', '坐标可视化', '显示地图', '地图显示', '在地图上', '绘制', '画出', '展示地图', '画地图']
 
 /** 检测用户文本中是否包含地图显示意图 */
 export function detectMapIntent(text: string): boolean {
@@ -16,15 +17,17 @@ export function detectMapIntent(text: string): boolean {
 
 export interface MapDataResult {
   geoPoints: GeoPoint[]
+  routes: GeoRoute[]
+  areas: GeoArea[]
   showMap: boolean
   showMapPrompt: boolean
 }
 
 // ── 坐标列名模式 ──
-/** 经度列名关键词 */
-const LNG_PATTERNS = /^(?:经度|lng|longitude|lon|lng_|lon_|x_coord|coord_x|坐标x)$/i
+/** 经度列名关键词（支持 hometown_longitude, lng, longitude, 经度 等） */
+const LNG_PATTERNS = /^(?:.*_)?(?:经度|lng|longitude|lon)(?:_|$)/i
 /** 纬度列名关键词 */
-const LAT_PATTERNS = /^(?:纬度|lat|latitude|lat_|y_coord|coord_y|坐标y)$/i
+const LAT_PATTERNS = /^(?:.*_)?(?:纬度|lat|latitude)(?:_|$)/i
 /** 地点/名称列名关键词 */
 const NAME_PATTERNS = /^(?:名称|地点|位置|区域|地区|城市|地名|name|location|place|region|city|site)$/i
 
@@ -55,6 +58,15 @@ export function extractGeoFromResults(result: any): GeoPoint[] {
   // 提取 combat_effectiveness / air_superiority / indicator_calculation 的 results
   if (Array.isArray(result.results)) {
     for (const r of result.results) {
+      if (r.columns && Array.isArray(r.columns) && Array.isArray(r.rows)) {
+        dataSlices.push({ columns: r.columns, rows: r.rows })
+      }
+    }
+  }
+
+  // 提取 skill 类型的 queryResults
+  if (Array.isArray(result.queryResults)) {
+    for (const r of result.queryResults) {
       if (r.columns && Array.isArray(r.columns) && Array.isArray(r.rows)) {
         dataSlices.push({ columns: r.columns, rows: r.rows })
       }
@@ -125,17 +137,23 @@ export function extractGeoFromResults(result: any): GeoPoint[] {
  *   - showMap=true：直接显示地图（用户明确要求）
  */
 export function processMapData(fullText: string, userQuery: string): MapDataResult {
-  const geoPoints = extractCoordinates(fullText)
+  let geoPoints = extractCoordinates(fullText)
+  const { routes, areas } = parseAnnotations(fullText)
 
-  if (geoPoints.length === 0) {
-    return { geoPoints: [], showMap: false, showMapPrompt: false }
+  // 剔除与 route/area 顶点重叠的独立坐标点，避免重复渲染
+  geoPoints = filterOverlapPoints(geoPoints, routes, areas)
+
+  const hasData = geoPoints.length > 0 || routes.length > 0 || areas.length > 0
+
+  if (!hasData) {
+    return { geoPoints: [], routes: [], areas: [], showMap: false, showMapPrompt: false }
   }
 
   if (detectMapIntent(userQuery)) {
     // 用户明确要求 → 直接显示地图
-    return { geoPoints, showMap: true, showMapPrompt: false }
+    return { geoPoints, routes, areas, showMap: true, showMapPrompt: false }
   }
 
   // 有坐标但未明确要求 → 弹出提示
-  return { geoPoints, showMap: false, showMapPrompt: true }
+  return { geoPoints, routes, areas, showMap: false, showMapPrompt: true }
 }

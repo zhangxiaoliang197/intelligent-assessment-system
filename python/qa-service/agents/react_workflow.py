@@ -714,9 +714,7 @@ async def orchestrator_node(state: ReactWorkflowState, config: RunnableConfig) -
     # 第一层：前置关键词兜底（不依赖 LLM，确保可靠性）
     # ══════════════════════════════════════════════════════════════════
     _NON_DATA_KEYWORDS = [
-        "地理位置", "位置信息", "在哪儿", "在哪里", "坐标", "经纬度",
-        "北纬", "东经", "南纬", "西经", "经度", "纬度",
-        "地图", "标注", "属于哪个", "哪个省", "哪个市", "哪个国家",
+        "属于哪个", "哪个省", "哪个市", "哪个国家",
         "今天天气", "天气预报", "多少度", "天气如何", "今天几号",
         "星期几", "现在几点", "当前时间",
         "你是谁", "你能做什么", "你会什么", "介绍一下自己",
@@ -748,6 +746,8 @@ async def orchestrator_node(state: ReactWorkflowState, config: RunnableConfig) -
     )
     es.steps = []
     es.attachment_text = attachment_text
+    # 如果用户通过 skill 选中了特定数据集，传递 dataset_ids 以过滤上下文
+    es.dataset_ids = state.get("dataset_ids", [])
 
     # 使用 orchestrator.py 的专业 prompt（含数据集、指标上下文的动态构建）
     sys_prompt, usr_prompt = build_orchestrator_prompt(es)
@@ -801,7 +801,7 @@ async def orchestrator_node(state: ReactWorkflowState, config: RunnableConfig) -
     # ══════════════════════════════════════════════════════════════════
     # 第三层：路由修正（确保有数据源时优先走 data_query）
     # ══════════════════════════════════════════════════════════════════
-    if route == "knowledge" and database_id and not is_clearly_non_data:
+    if route == "knowledge" and database_id:
         route = "data_query"
         plan = f"路由修正：已选数据源，强制走数据查询。原计划: {plan}"
 
@@ -1113,6 +1113,11 @@ async def data_worker_node(state: ReactWorkflowState, config: RunnableConfig) ->
     table_schemas = []
     datasets = await asyncio.get_event_loop().run_in_executor(
         None, fetch_datasets_for_database, db_id)
+    # 如果用户通过 skill 选中了特定数据集，只保留选中的
+    selected_ds_ids = state.get("dataset_ids", [])
+    if selected_ds_ids and datasets:
+        selected_set = set(selected_ds_ids)
+        datasets = [d for d in datasets if d.get("id") in selected_set]
     ds_map = {d.get("tableName", ""): d for d in datasets}
 
     for table_name in list(explored_tables):
@@ -1331,7 +1336,7 @@ async def synthesizer_node(state: ReactWorkflowState, config: RunnableConfig) ->
         "analysis": final_answer or "分析完成",  # 兼容旧字段名
         "generatedSql": generated_sql,
         "sqlExplanation": sql_explanation,
-        "rawResults": raw_results[:20],
+        "rawResults": raw_results[:2000],
         "totalRows": len(raw_results),
         "columns": [list(r.keys()) for r in raw_results[:1]][0] if raw_results else [],
         "intent": state.get("intent", ""),

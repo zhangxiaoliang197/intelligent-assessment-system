@@ -436,33 +436,65 @@ def _extract_no_sql(response_text: str) -> dict:
 
 def _clean_sql(sql: str) -> str:
     """
-    清理 SQL 语句的前导注释和空白行。
+    清理 SQL 语句中的所有注释（前导 / 行内 / 独立注释行）和空白行。
 
-    跳过 SQL 文本开头的：
-    - 空行
-    - 以 -- 开头的注释行
-    - 以 # 开头的注释行（部分 SQL 方言支持）
+    处理三种注释形式：
+    1. 以 -- 开头的独立注释行（包括 SQL 开头和中间的）
+    2. 以 # 开头的独立注释行（部分 SQL 方言支持）
+    3. 行内 -- 注释：SQL 语句后面的 -- 及之后内容
 
-    这样可以去除 LLM 在 SQL 前附加的解释性注释，保留纯净的 SQL。
+    Java 端 SqlExecutionService.prepareReadOnlySql() 会拒收含 -- 和 /* 的 SQL，
+    因此必须在此处彻底清除。
 
     Args:
         sql: 原始 SQL 字符串
 
     Returns:
-        str: 清理后的 SQL（已去除前导注释 + 末尾分号和特殊字符）
+        str: 清理后的 SQL（已去除所有注释 + 末尾分号和特殊字符）
     """
     lines = sql.strip().split("\n")
     result = []
-    started = False
     for line in lines:
         stripped = line.strip()
-        # 跳过前置的注释行和空行：在遇到第一条有效行之前，忽略注释
-        if not started and (not stripped or stripped.startswith("--") or stripped.startswith("#")):
+        # 跳过纯注释行（整行以 -- 或 # 开头）
+        if not stripped or stripped.startswith("--") or stripped.startswith("#"):
             continue
-        started = True
-        result.append(line)
+        # 去除行内 -- 注释（保留注释前的 SQL 部分）
+        comment_pos = _find_comment_pos(line)
+        if comment_pos >= 0:
+            line = line[:comment_pos]
+        stripped_after = line.strip()
+        if stripped_after:  # 去除注释后可能变成空行
+            result.append(line)
     sql = "\n".join(result).strip()
     return _sanitize_sql_ending(sql)
+
+
+def _find_comment_pos(line: str) -> int:
+    """
+    在 SQL 行中定位 -- 注释的起始位置（忽略字符串字面量内的 --）。
+
+    遍历行中字符，跟踪是否处于单引号字符串内。
+    只在字符串外部检测 -- 注释：两个连续的减号且下一个字符是空白或行尾。
+
+    Args:
+        line: 单行 SQL 文本
+
+    Returns:
+        int: -- 注释起始位置，未找到则返回 -1
+    """
+    in_string = False
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if ch == "'":
+            in_string = not in_string
+        elif not in_string and ch == "-" and i + 1 < len(line) and line[i + 1] == "-":
+            # 确认是注释而非负号：后面是空白或行尾
+            if i + 2 >= len(line) or line[i + 2].isspace():
+                return i
+        i += 1
+    return -1
 
 
 def _sanitize_sql_ending(sql: str) -> str:

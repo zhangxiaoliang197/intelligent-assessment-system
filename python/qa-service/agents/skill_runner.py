@@ -39,7 +39,7 @@ from .skill_execution_store import (
 logger = logging.getLogger("evaluation.skill_runner")
 _METADATA_TIMEOUT = 65
 _QUERY_TIMEOUT = 130
-_MAX_RESULT_ROWS = 20
+_MAX_RESULT_ROWS = 500
 _MAX_SYNTHESIS_ROWS = 3
 _SKILL_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="evaluation-skill")
 
@@ -480,6 +480,7 @@ def _build_skill_visualization(
                 "yAxis": y_axis,
             },
             "rawResults": copy.deepcopy(rows),
+            "columns": columns,
         }
     return {}
 

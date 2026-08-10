@@ -385,9 +385,6 @@ async def orchestrator_start_node(state: WorkflowState, config: RunnableConfig) 
     # 这些关键词代表的问题，无论数据源内容是什么，都不太可能需要查数据库。
     # 仅拦截"明显不相关"的类型，模糊问题仍交给 orchestrator LLM 判断。
     _NON_DATA_QUERY_PATTERNS = [
-        "地理位置", "在哪儿", "在哪里", "坐标", "经纬度",
-        "北纬", "东经", "南纬", "西经", "经度", "纬度",
-        "地图", "标注", "位置信息",
         "今天天气", "天气预报", "多少度", "天气如何",
         "你是谁", "你能做什么", "你会什么", "介绍一下",
         "什么是", "概念", "定义", "解释",
@@ -554,10 +551,13 @@ def route_by_intent(state: WorkflowState) -> str:
         下一个节点的名称字符串（必须与 add_node 中注册的名称一致）
     """
     query_type = state.get("query_type", "")
-    # LLM 判定为通用分析 → 无论是否有数据源都走通用分析
+    database_id = state.get("database_id", "")
+    # 有数据源时，不允许 LLM 把问题路由到 general_analysis（兜底保护）
+    if query_type == "general_analysis" and database_id:
+        return "data_explore"
     if query_type == "general_analysis":
         return "simple_analysis"
-    if not state.get("database_id"):
+    if not database_id:
         return "simple_analysis"
     return "data_explore"
 
@@ -804,6 +804,11 @@ async def dataset_check_node(state: WorkflowState, config: RunnableConfig) -> Wo
     # ── 查询数据集 ──
     try:
         datasets_found = fetch_datasets_for_database(db_id)
+        # 如果用户指定了数据集，只保留选中的
+        selected_ds_ids = state.get("dataset_ids", [])
+        if selected_ds_ids and datasets_found:
+            selected_set = set(selected_ds_ids)
+            datasets_found = [ds for ds in datasets_found if ds.get('id') in selected_set]
     except Exception as e:
         logger.warning(f"获取数据集失败: {e}")
 
@@ -814,7 +819,7 @@ async def dataset_check_node(state: WorkflowState, config: RunnableConfig) -> Wo
     else:
         _add_step(steps, 3.1, "查询数据集", "completed", detail="未找到关联数据集")
 
-    # ── 查询指标 ──
+    # ── 查询指标（只查选中数据集的指标）──
     try:
         ds_ids = [ds.get("id") for ds in datasets_found]
         indicators_found = fetch_indicators_for_datasets(ds_ids)
@@ -1248,8 +1253,8 @@ async def finalize_node(state: WorkflowState, config: RunnableConfig) -> Workflo
     if existing:
         return {**state, "steps": steps}
 
-    # 截断原始结果，防止前端渲染过大数据集
-    raw_results = state.get("raw_results", [])[:20]
+    # 截断原始结果，防止前端渲染过大数据集（保留足够行数供地图坐标提取）
+    raw_results = state.get("raw_results", [])[:2000]
     result = {
         "type": "data_query" if state.get("database_id") else "general",
         "final_answer": state.get("final_answer", "分析完成"),
