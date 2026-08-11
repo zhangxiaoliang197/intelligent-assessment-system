@@ -1696,7 +1696,12 @@ def load_db() -> None:
                 continue
 
         # 重新从迁移后的数据构造 OntologyModel（含 schema_version）
-        ont = OntologyModel(**data.get('ontology', item))
+        # 以 index 条目为基础，用 data.ontology 覆盖（data.ontology 可能只有 schema_version）
+        merged_ontology = dict(item)  # 始终保留 index 中的 id/name/create_time 等
+        onto_from_data = data.get('ontology', {}) if isinstance(data, dict) else {}
+        if isinstance(onto_from_data, dict):
+            merged_ontology.update(onto_from_data)
+        ont = OntologyModel(**merged_ontology)
         ontologies_db[ont.id] = ont
 
         # 加载概念

@@ -215,6 +215,7 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
             "points": data.get("points", []),
             "routes": data.get("routes", []),
             "areas": data.get("areas", []),
+            "circles": data.get("circles", []),
             "layerConfig": data.get("layerConfig", {}),
         })
     elif event_type == "narrative":

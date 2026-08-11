@@ -136,6 +136,13 @@ async def mock_generate(query: str, report_id: str) -> AsyncIterator[SSEEvent]:
         ],
         "routes": [],
         "areas": [],
+        "circles": [
+            {
+                "name": "C 区域雷达覆盖",
+                "center": {"lng": 113.27, "lat": 23.13},
+                "radiusKm": 120
+            }
+        ],
         "layerConfig": {"color": "#e74c3c", "opacity": 0.85},
     }
 

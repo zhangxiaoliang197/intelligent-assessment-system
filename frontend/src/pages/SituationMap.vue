@@ -40,27 +40,7 @@
             @layer-toggle="onLayerToggle"
             @draw-end="onDrawEnd"
             @viewport-change="onViewportChange"
-          >
-            <!--
-              地图同事组件挂入点（docs/situation-map/06 §2）：
-              同事采用方式 A（作用域插槽）或方式 B（直读 store）接入。
-              当前未接入时显示占位，下方注释为同事接入示例（方式 A）：
-
-              <template #map="ctx">
-                <ColleagueMap
-                  :dataset="ctx.dataset"
-                  :layers="ctx.layers"
-                  :viewport="ctx.viewport"
-                  :selected-region="ctx.selectedRegion"
-                  @region-select="ctx['on-region-select']"
-                  @marker-click="ctx['on-marker-click']"
-                  @layer-toggle="ctx['on-layer-toggle']"
-                  @draw-end="ctx['on-draw-end']"
-                  @viewport-change="ctx['on-viewport-change']"
-                />
-              </template>
-            -->
-          </SituationMapSlot>
+          />
         </div>
       </div>
 

@@ -46,11 +46,12 @@ class ChartSpec(BaseModel):
 
 
 class MapLayerSpec(BaseModel):
-    """地图图层规格（points/routes/areas 与前端 GeoMap.vue 同形，WGS84）。"""
+    """地图图层规格（points/routes/areas/circles 与前端 GeoMap.vue 同形，WGS84）。"""
     layerId: str
     points: List[Dict[str, Any]] = Field(default_factory=list)
     routes: List[Dict[str, Any]] = Field(default_factory=list)
     areas: List[Dict[str, Any]] = Field(default_factory=list)
+    circles: List[Dict[str, Any]] = Field(default_factory=list)
     layerConfig: Dict[str, Any] = Field(default_factory=dict)
 
 
