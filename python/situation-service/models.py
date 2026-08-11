@@ -63,7 +63,7 @@ class Explanation(BaseModel):
 
 class Narrative(BaseModel):
     """态势介绍 + 逐图说明（介绍性，非结论先行）。"""
-    intro: str
+    intro: str = ""
     explanations: List[Explanation] = Field(default_factory=list)
 
 

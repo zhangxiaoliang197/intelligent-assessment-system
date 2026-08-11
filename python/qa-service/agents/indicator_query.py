@@ -281,6 +281,28 @@ def dataset_indicator_node(database_id, indicator_defs):
             merged.append(ai)
             existing_names.add(ai.get("name", ""))
 
+    # 兜底过滤：admin_indicators 是按当前 database_id 过滤后的权威来源；
+    # indicator_defs 来自 LLM 生成的指标体系，可能含不属于当前数据源的指标
+    # （例如选了 db_olist 但 LLM 幻觉生成了"毛利率"，实际属于 db_tianchi）。
+    # 处理策略：同名时用 admin 版本替换（带正确的 dataset_id/field_mapping）；
+    # 仅在 admin 中不存在的 LLM 生成指标才保留（概念性指标，让后续 SQL 必要性判断处理）。
+    if admin_indicators:
+        admin_names = {ai.get("name", "") for ai in admin_indicators}
+        deduped = list(admin_indicators)  # admin 版本优先纳入
+        seen = set(admin_names)
+        for ind in merged:
+            name = ind.get("name", "")
+            # 仅保留 admin 中没有的 LLM 生成指标（避免名称冲突导致字段映射错位）
+            if name and name not in seen:
+                deduped.append(ind)
+                seen.add(name)
+        if len(deduped) != len(merged):
+            logger.info(
+                f"[dataset_indicator] 按数据源兜底过滤："
+                f"传入 {len(merged)} → 过滤后 {len(deduped)} 个指标"
+                f"（admin 权威 {len(admin_indicators)} + LLM 新增 {len(deduped) - len(admin_indicators)}）")
+        merged = deduped
+
     yield {"type": "step", "step": _build_step(
         Step.CHECK_DATASETS, "Check Datasets & Indicators", "completed",
         detail=f"数据集: {len(datasets_found)} | 指标体系: {len(merged)} 个",

@@ -539,10 +539,115 @@ public class AdminController {
         return ResponseEntity.ok(Map.of("success", true, "message", "数据集已删除"));
     }
 
+    /**
+     * 执行数据集查询，返回数据行（通用能力，数据源无关）。
+     * 优先执行 dataset.sql_text；为空则回退为 SELECT * FROM tableName。
+     * 安全：仅允许 SELECT/WITH 语句，限制行数与超时，防注入与误写。
+     * 供 situation-service Agent 在 Phase 2 取真实数据画图。
+     */
+    @GetMapping("/dataset/{datasetId}/data")
+    public ResponseEntity<Map<String, Object>> getDatasetData(
+            @PathVariable String datasetId,
+            @RequestParam(value = "limit", defaultValue = "200") int limit) {
+        Optional<Dataset> optDs = datasetRepo.findById(datasetId);
+        if (optDs.isEmpty()) return ResponseEntity.notFound().build();
+        Dataset ds = optDs.get();
+
+        if (ds.getDatabaseId() == null) {
+            return ResponseEntity.ok(errorMap("数据集未关联数据库"));
+        }
+        Optional<DatabaseConfig> optDb = dbConfigRepo.findById(ds.getDatabaseId());
+        if (optDb.isEmpty()) return ResponseEntity.ok(errorMap("关联的数据库配置不存在"));
+        DatabaseConfig db = optDb.get();
+
+        // 确定查询 SQL：优先 sql_text，否则回退 SELECT * FROM tableName
+        String sql = ds.getSqlText();
+        if (sql == null || sql.trim().isEmpty()) {
+            if (ds.getTableName() == null || ds.getTableName().isEmpty()) {
+                return ResponseEntity.ok(errorMap("数据集既无 SQL 也未指定表名"));
+            }
+            sql = "SELECT * FROM " + ds.getTableName();
+        }
+        // 安全：仅允许只读查询，拦截 INSERT/UPDATE/DELETE/DROP/ALTER 等
+        String trimmed = sql.trim();
+        String upper = trimmed.toUpperCase();
+        if (!upper.startsWith("SELECT") && !upper.startsWith("WITH")) {
+            return ResponseEntity.ok(errorMap("仅允许 SELECT/WITH 查询，当前 SQL 开头不被允许"));
+        }
+
+        Driver driver = findDriverByType(db.getType());
+        if (driver == null) return ResponseEntity.ok(errorMap("未找到驱动: " + db.getType()));
+
+        String url = (driver.getUrlTemplate() != null ? driver.getUrlTemplate() : "")
+                .replace("{host}", db.getHost())
+                .replace("{port}", String.valueOf(db.getPort()))
+                .replace("{database}", db.getDbName());
+
+        int safeLimit = Math.max(1, Math.min(limit, 1000));  // 行数硬上限 1000
+        long start = System.currentTimeMillis();
+        try (Connection conn = getJdbcConnection(driver, url, db.getUsername(), db.getPassword())) {
+            try (Statement stmt = conn.createStatement(
+                    ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
+                stmt.setMaxRows(safeLimit);
+                stmt.setQueryTimeout(30);  // 30 秒超时保护
+                try (ResultSet rs = stmt.executeQuery(trimmed)) {
+                    int colCount = rs.getMetaData().getColumnCount();
+                    List<String> columns = new ArrayList<>();
+                    for (int i = 1; i <= colCount; i++) {
+                        columns.add(rs.getMetaData().getColumnLabel(i));
+                    }
+                    List<Map<String, Object>> rows = new ArrayList<>();
+                    while (rs.next() && rows.size() < safeLimit) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        for (int i = 1; i <= colCount; i++) {
+                            Object val = rs.getObject(i);
+                            // 序列化友好：字节流/大对象转字符串，避免 JSON 序列化失败
+                            if (val instanceof byte[]) val = "[BLOB]";
+                            row.put(columns.get(i - 1), val);
+                        }
+                        rows.add(row);
+                    }
+                    long elapsed = System.currentTimeMillis() - start;
+                    return ResponseEntity.ok(Map.of(
+                            "success", true,
+                            "datasetId", datasetId,
+                            "datasetName", ds.getName(),
+                            "columns", columns,
+                            "rows", rows,
+                            "total", rows.size(),
+                            "truncated", rows.size() >= safeLimit,
+                            "latency", elapsed + "ms"
+                    ));
+                }
+            }
+        } catch (Exception e) {
+            return ResponseEntity.ok(errorMap("数据查询失败: " + e.getClass().getSimpleName()
+                    + ": " + e.getMessage()));
+        }
+    }
+
     // ==================== 指标管理（MySQL持久化） ====================
+
     @GetMapping("/indicator/list")
-    public ResponseEntity<Map<String, Object>> listIndicators() {
-        List<Indicator> all = indicatorRepo.findAll();
+    public ResponseEntity<Map<String, Object>> listIndicators(
+            @RequestParam(required = false) String databaseId) {
+        // 支持按数据源过滤：databaseId 非空时，通过 database_id → datasets → indicators 关联链
+        // 只返回该数据源绑定的指标；为空时返回全部（向后兼容）
+        List<Indicator> all;
+        if (databaseId != null && !databaseId.isEmpty()) {
+            List<Dataset> datasets = datasetRepo.findByDatabaseId(databaseId);
+            List<String> datasetIds = new ArrayList<>();
+            for (Dataset ds : datasets) {
+                if (ds.getId() != null) {
+                    datasetIds.add(ds.getId());
+                }
+            }
+            all = datasetIds.isEmpty()
+                    ? List.of()
+                    : indicatorRepo.findByDatasetIdIn(datasetIds);
+        } else {
+            all = indicatorRepo.findAll();
+        }
         return ResponseEntity.ok(Map.of("success", true, "total", all.size(), "indicators", all));
     }
 
@@ -1210,6 +1315,7 @@ public class AdminController {
             if (fields.isEmpty()) continue;
 
             Map<String, Object> schema = new LinkedHashMap<>();
+            schema.put("datasetId", ds.getId());
             schema.put("datasetName", ds.getName());
             schema.put("tableName", ds.getTableName());
             schema.put("description", ds.getDescription());

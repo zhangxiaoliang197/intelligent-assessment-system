@@ -5,6 +5,9 @@
  * 这就是「图表与地图同源 + 联动」的落点（见 docs/situation-map/05 §3）。
  *
  * 字段对齐 docs/situation-map/04 §4 Report 结构与 06 章插槽契约。
+ *
+ * 对话式工作区（仿指标分析）：单次提问=一份产物，对话区基于当前 query+产物
+ * 渲染一轮（user 消息 + ai 消息）；历史列表来自后端持久化产物。
  */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
@@ -45,6 +48,25 @@ export interface Viewport {
   zoom: number
 }
 
+// ── 执行步骤（SSE 事件转步骤，供 execution-panel 展示）──
+export interface ExecStep {
+  phase: 'plan' | 'dataset' | 'chart' | 'map_layer' | 'narrative' | 'done' | 'error'
+  description: string
+  status: 'in_progress' | 'completed' | 'error'
+  detail?: string
+  ts: number
+}
+
+// ── 历史产物元信息（后端 /situation/reports 列表项）──
+export interface ReportMeta {
+  reportId: string
+  title: string
+  query: string
+  source: string
+  status: string
+  createTime?: string
+}
+
 export type SituationStatus = 'idle' | 'generating' | 'ready' | 'partial' | 'failed'
 
 export const useSituationStore = defineStore('situation', () => {
@@ -72,13 +94,34 @@ export const useSituationStore = defineStore('situation', () => {
   const eventSource = ref<EventSource | null>(null)
   const errorMsg = ref('')
 
+  // ── 对话式工作区状态 ──
+  const history = ref<ReportMeta[]>([])           // 后端历史产物列表
+  const executionSteps = ref<ExecStep[]>([])      // 执行步骤面板
+
   const activeDataset = computed(() =>
     datasets.value.find((d) => d.datasetId === activeDatasetId.value) || null
   )
 
   const isGenerating = computed(() => status.value === 'generating')
 
-  // ── 重置 ──
+  // 执行步骤进度（completed / total）
+  const stepProgress = computed(() => {
+    const total = executionSteps.value.length
+    const done = executionSteps.value.filter((s) => s.status === 'completed').length
+    return { total, done, percent: total === 0 ? 0 : Math.round((done / total) * 100) }
+  })
+
+  // ── 执行步骤追加（内部 helper）──
+  function pushStep(
+    phase: ExecStep['phase'],
+    description: string,
+    status: ExecStep['status'] = 'completed',
+    detail?: string
+  ) {
+    executionSteps.value.push({ phase, description, status, detail, ts: Date.now() })
+  }
+
+  // ── 重置（清产物 + 步骤；不清历史列表）──
   function reset() {
     reportId.value = null
     status.value = 'idle'
@@ -94,6 +137,7 @@ export const useSituationStore = defineStore('situation', () => {
     selectedTimeRange.value = null
     filters.value = {}
     errorMsg.value = ''
+    executionSteps.value = []
     closeStream()
   }
 
@@ -117,20 +161,42 @@ export const useSituationStore = defineStore('situation', () => {
     source.value = (data.source || snapshot.source || 'manual') as any
     status.value = (data.status || snapshot.status || 'ready') as SituationStatus
     charts.value = snapshot.charts || []
-    mapLayers.value = snapshot.map?.layers || []
+    mapLayers.value = snapshot.map?.layers || snapshot.mapLayers || []
     narrative.value = snapshot.narrative || { intro: '', explanations: [] }
     datasets.value = snapshot.datasets || []
+    executionSteps.value = []   // 历史产物不回放步骤
     if (datasets.value.length && !activeDatasetId.value) {
       activeDatasetId.value = datasets.value[0].datasetId
+    }
+  }
+
+  // ── 加载历史列表 ──
+  async function fetchHistory() {
+    try {
+      const resp: any = await api.get('/situation/reports')
+      if (resp && resp.success !== false) {
+        const list = resp.data?.items || resp.data || resp.items || []
+        history.value = Array.isArray(list) ? list : []
+      }
+    } catch (e) {
+      console.warn('历史列表加载失败', e)
     }
   }
 
   // ── SSE 事件落库（核心）──
   function applyEvent(eventType: string, data: any) {
     switch (eventType) {
-      case 'plan':
-        // 规划阶段，仅记录（可选用于展示生成进度）
+      case 'plan': {
+        // 规划阶段：记录生成方案
+        const chartCount = data?.plan?.charts?.length ?? data?.chartCount
+        const mapCount = data?.plan?.mapLayers?.length ?? data?.mapCount
+        const desc =
+          chartCount != null || mapCount != null
+            ? `规划生成方案：${chartCount ?? 0} 张图表 + ${mapCount ?? 0} 个地图图层`
+            : '规划生成方案'
+        pushStep('plan', desc, 'completed', data?.plan ? JSON.stringify(data.plan).slice(0, 200) : '')
         break
+      }
       case 'dataset': {
         const ds: DatasetSummary = {
           datasetId: data.datasetId,
@@ -140,6 +206,7 @@ export const useSituationStore = defineStore('situation', () => {
         }
         datasets.value.push(ds)
         if (!activeDatasetId.value) activeDatasetId.value = ds.datasetId
+        pushStep('dataset', `获取数据集 ${ds.datasetId}（${ds.rows} 行）`, 'completed', ds.summary)
         break
       }
       case 'chart':
@@ -150,6 +217,7 @@ export const useSituationStore = defineStore('situation', () => {
           option: data.option,
           datasetRef: data.datasetRef || '',
         })
+        pushStep('chart', `生成图表：${data.title || data.chartId}`, 'completed')
         break
       case 'chart_update': {
         const c = charts.value.find((x) => x.chartId === data.chartId)
@@ -165,6 +233,7 @@ export const useSituationStore = defineStore('situation', () => {
           circles: data.circles || [],
           layerConfig: data.layerConfig || {},
         })
+        pushStep('map_layer', `生成地图图层：${data.layerId}`, 'completed')
         break
       case 'map_update': {
         const lyr = mapLayers.value.find((x) => x.layerId === data.layerId)
@@ -188,14 +257,17 @@ export const useSituationStore = defineStore('situation', () => {
         charts.value.forEach((c) => {
           if (expMap.has(c.chartId)) c.explanation = expMap.get(c.chartId)
         })
+        pushStep('narrative', '撰写态势介绍', 'completed')
         break
       case 'done':
         status.value = (data.status as SituationStatus) || 'ready'
+        pushStep('done', '生成完成', 'completed')
         closeStream()
         break
       case 'error':
         errorMsg.value = data.message || '生成异常'
         if (data.fatal) status.value = 'failed'
+        pushStep('error', `错误：${data.message || '生成异常'}`, 'error')
         break
     }
   }
@@ -204,7 +276,7 @@ export const useSituationStore = defineStore('situation', () => {
   async function generate(q?: string) {
     if (q) query.value = q
     if (!query.value.trim()) return
-    // 重置产物字段，保留 query/source
+    // 重置产物字段与步骤，保留 query/source（不清历史列表）
     const _query = query.value
     const _source = source.value
     reset()
@@ -287,11 +359,12 @@ export const useSituationStore = defineStore('situation', () => {
     datasets, activeDatasetId, charts, mapLayers, narrative,
     selectedRegion, selectedTimeRange, filters, viewport,
     eventSource, errorMsg,
+    history, executionSteps,
     // getters
-    activeDataset, isGenerating,
+    activeDataset, isGenerating, stepProgress,
     // actions
     reset, initFromDraft, loadReport, applyEvent, generate,
-    subscribeSSE, closeStream, refresh,
+    subscribeSSE, closeStream, refresh, fetchHistory,
     setSelectedRegion, setSelectedTimeRange, setViewport, toggleLayer,
   }
 })

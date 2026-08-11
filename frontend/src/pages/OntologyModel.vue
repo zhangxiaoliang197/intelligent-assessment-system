@@ -8,6 +8,7 @@
           <el-tag type="primary" size="small" effect="dark" class="engine-badge">ECharts 知识图谱</el-tag>
         </div>
         <div class="header-actions">
+          <el-button @click="openTemplateLibrary" :icon="Files">模板库</el-button>
           <el-button @click="refreshData" :icon="Refresh">刷新</el-button>
           <el-button type="primary" @click="showCreateMethodDialog = true" :icon="Plus">新建本体</el-button>
         </div>
@@ -66,6 +67,7 @@
             </div>
             <p class="card-desc">{{ ont.description || '暂无描述' }}</p>
             <div class="card-stats">
+              <span><el-icon><SetUp /></el-icon> {{ ont.concepts_count }} 类型</span>
               <span><el-icon><Box /></el-icon> {{ ont.entities_count }} 实体</span>
               <span><el-icon><Connection /></el-icon> {{ ont.relations_count }} 关系</span>
             </div>
@@ -84,6 +86,7 @@
                   <el-dropdown-menu>
                     <el-dropdown-item command="edit">编辑</el-dropdown-item>
                     <el-dropdown-item command="export">导出</el-dropdown-item>
+                    <el-dropdown-item command="template">另存为模板</el-dropdown-item>
                     <el-dropdown-item command="default" v-if="!ont.is_default">设为默认</el-dropdown-item>
                     <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
                   </el-dropdown-menu>
@@ -160,7 +163,7 @@
               <el-icon :size="28"><EditPen /></el-icon>
             </div>
             <h4>手动构建</h4>
-            <p>自行定义本体名称、描述、实体类型与关系类型</p>
+            <p>向导式分步构建：先搭骨架（类+属性+关系类型），再填实例（实体+属性值+关系）</p>
           </div>
         </div>
       </el-dialog>
@@ -293,6 +296,24 @@
               placeholder="请输入本体描述" 
             />
           </el-form-item>
+          <el-form-item label="使用模板">
+            <el-select
+              v-model="buildForm.templateId"
+              placeholder="不使用模板（从零推荐）"
+              clearable
+              style="width: 100%"
+            >
+              <el-option
+                v-for="tpl in templates"
+                :key="tpl.id"
+                :label="`${tpl.name}（${tpl.entity_types_count || tpl.concepts_count} 实体类型）`"
+                :value="tpl.id"
+              />
+            </el-select>
+            <div style="font-size: 0.75rem; color: #909399; margin-top: 4px;">
+              选中后，模板的实体类型层级/属性骨架/类型间关系将作为软约束注入各阶段 LLM 提示词
+            </div>
+          </el-form-item>
           <el-form-item label="选择文档" required>
             <el-upload
               ref="buildUploadRef"
@@ -318,6 +339,71 @@
           </el-button>
         </template>
       </el-dialog>
+
+      <!-- 模板库对话框 -->
+      <el-dialog v-model="showTemplateLibraryDialog" title="本体模板库" width="780px" top="5vh">
+        <div class="template-library" v-loading="templateLoading">
+          <el-alert
+            title="模板是从已有本体抽取的 schema 层（元模型+概念类+属性骨架），可用于文档构建（注入 prompt）或手动构建（一键预填骨架）。"
+            type="info"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 1rem"
+          />
+          <el-empty v-if="!templates.length && !templateLoading" description="暂无模板，可从任意本体「另存为模板」" :image-size="100" />
+          <div class="template-list" v-else>
+            <div v-for="tpl in templates" :key="tpl.id" class="template-card">
+              <div class="tpl-header">
+                <h4>{{ tpl.name }}</h4>
+                <el-tag size="small" type="info">{{ tpl.entity_types_count || tpl.concepts_count }} 实体类型</el-tag>
+              </div>
+              <p class="tpl-desc">{{ tpl.description || '暂无描述' }}</p>
+              <div class="tpl-meta">
+                <span>实体类型 {{ tpl.entity_types_count }}</span>
+                <span>关系类型 {{ tpl.relation_types_count }}</span>
+                <span>更新: {{ formatTime(tpl.update_time) }}</span>
+              </div>
+              <div class="tpl-actions">
+                <el-button size="small" type="primary" @click="createFromTemplate(tpl.id)">基于模板新建本体</el-button>
+                <el-button size="small" @click="viewTemplate(tpl.id)">查看 Schema</el-button>
+                <el-button size="small" type="danger" link @click="deleteTemplateItem(tpl)">删除</el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </el-dialog>
+
+      <!-- 模板 Schema 查看对话框 -->
+      <el-dialog v-model="showTemplateDetailDialog" :title="`模板 Schema：${templateDetail?.name || ''}`" width="720px" top="5vh">
+        <div v-if="templateDetail" class="template-detail">
+          <el-descriptions :column="2" border style="margin-bottom: 1rem">
+            <el-descriptions-item label="实体类型">
+              {{ templateDetail.entity_types.map((t: any) => t.name).join('、') || '无' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="关系类型">
+              {{ templateDetail.relation_types.map((t: any) => t.name).join('、') || '无' }}
+            </el-descriptions-item>
+          </el-descriptions>
+          <h4 style="margin: 0.5rem 0">实体类型清单（{{ templateDetail.entity_types.length }}）</h4>
+          <el-collapse>
+            <el-collapse-item
+              v-for="(c, idx) in templateDetail.entity_types"
+              :key="idx"
+              :title="`${c.name}（${c.parent_entity_type_name ? '父类：' + c.parent_entity_type_name : '顶层类型'}）`"
+            >
+              <p v-if="c.description" style="color: #606266; margin: 0 0 0.5rem">{{ c.description }}</p>
+              <el-table v-if="c.property_schema && c.property_schema.length" :data="c.property_schema" size="small" border>
+                <el-table-column prop="name" label="属性名" width="140" />
+                <el-table-column prop="category" label="分类" width="100" />
+                <el-table-column prop="data_type" label="数据类型" width="100" />
+                <el-table-column prop="unit" label="单位" width="80" />
+                <el-table-column prop="description" label="说明" />
+              </el-table>
+              <el-text v-else type="info" size="small">无属性骨架</el-text>
+            </el-collapse-item>
+          </el-collapse>
+        </div>
+      </el-dialog>
     </div>
   </Layout>
 </template>
@@ -327,7 +413,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Box, SetUp,
-  Refresh, Plus, Document, Upload, UploadFilled, EditPen, ArrowDown
+  Refresh, Plus, Document, Upload, UploadFilled, EditPen, ArrowDown, Files
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import Layout from '@/components/Layout.vue'
@@ -342,6 +428,12 @@ import {
   exportOntology as exportOntologyApi
 } from '@/services/ontology'
 import { getBuildJobList, createBuildJob, deleteBuildJob } from '@/services/ontologyBuild'
+import {
+  getTemplateList,
+  getTemplate,
+  saveTemplateFromOntology,
+  deleteTemplate as deleteTemplateApi
+} from '@/services/ontologyTemplate'
 
 const router = useRouter()
 
@@ -394,9 +486,17 @@ const uploadRef = ref()
 const buildForm = ref({
   name: '',
   description: '',
+  templateId: '',
   file: null as File | null
 })
 const buildUploadRef = ref()
+
+// ── 模板库状态 ──
+const templates = ref<any[]>([])
+const templateLoading = ref(false)
+const showTemplateLibraryDialog = ref(false)
+const showTemplateDetailDialog = ref(false)
+const templateDetail = ref<any>(null)
 
 // ── 计算属性 ──
 const filteredOntologies = computed(() => {
@@ -460,6 +560,7 @@ const viewOntology = (id: string) => {
 const handleCardAction = (cmd: string, ont: any) => {
   if (cmd === 'edit') editOntology(ont)
   else if (cmd === 'export') exportOntology(ont)
+  else if (cmd === 'template') saveAsTemplate(ont)
   else if (cmd === 'default') setDefault(ont)
   else if (cmd === 'delete') deleteOntology(ont)
 }
@@ -472,8 +573,141 @@ const handleCreateMethod = (type: string) => {
   } else if (type === 'import') {
     showImportDialog.value = true
   } else if (type === 'manual') {
-    editingOntology.value = null
-    showCreateDialog.value = true
+    // 手动构建：先创建空本体，再跳转向导页
+    startManualBuild()
+  }
+}
+
+// 启动手动构建：创建空本体后跳转到向导页
+const startManualBuild = async () => {
+  submitting.value = true
+  try {
+    const fd = new FormData()
+    fd.append('name', '未命名本体')
+    fd.append('description', '手动构建本体')
+    // 给一个最小默认元模型，便于向导页 Phase A 编辑
+    fd.append('entity_types', JSON.stringify([
+      { name: '概念', color: '#5470c6' },
+      { name: '实体', color: '#91cc75' }
+    ]))
+    fd.append('relation_types', JSON.stringify([
+      { name: '关联' }, { name: '影响' }
+    ]))
+    const res: any = await createOntology(fd)
+    const newId = res.data?.id || res.id
+    ElMessage.success('已创建空本体，进入向导页')
+    router.push(`/ontology/manual/${newId}`)
+  } catch (e: any) {
+    ElMessage.error(e.serverMessage || '创建本体失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+// ── 模板库操作 ──
+const loadTemplates = async () => {
+  templateLoading.value = true
+  try {
+    const res: any = await getTemplateList()
+    templates.value = res.data || []
+  } catch (e: any) {
+    ElMessage.error(e.serverMessage || '加载模板列表失败')
+  } finally {
+    templateLoading.value = false
+  }
+}
+
+const openTemplateLibrary = async () => {
+  showTemplateLibraryDialog.value = true
+  await loadTemplates()
+}
+
+// 另存为模板：从已有本体抽取 schema 层
+const saveAsTemplate = async (ont: any) => {
+  let name = ''
+  try {
+    const result = await ElMessageBox.prompt(
+      `将本体「${ont.name}」的 schema 层（元模型+概念+属性骨架）抽取为模板，实例数据不会进入模板。`,
+      '另存为模板',
+      {
+        confirmButtonText: '保存',
+        cancelButtonText: '取消',
+        inputPlaceholder: '请输入模板名称',
+        inputValue: `${ont.name} 模板`
+      }
+    )
+    name = result.value
+  } catch { return }
+
+  if (!name?.trim()) {
+    ElMessage.warning('请输入模板名称')
+    return
+  }
+
+  submitting.value = true
+  try {
+    const fd = new FormData()
+    fd.append('name', name.trim())
+    fd.append('description', ont.description || '')
+    await saveTemplateFromOntology(ont.id, fd)
+    ElMessage.success('模板创建成功')
+    await loadTemplates()
+  } catch (e: any) {
+    ElMessage.error(e.serverMessage || '模板创建失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+// 基于模板新建本体：创建空本体后跳转向导页，带上 template 查询参数触发预填
+const createFromTemplate = async (templateId: string) => {
+  submitting.value = true
+  try {
+    const fd = new FormData()
+    const tpl = templates.value.find(t => t.id === templateId)
+    fd.append('name', `${tpl?.name || '模板本体'} - 副本`)
+    fd.append('description', `基于模板「${tpl?.name || ''}」创建`)
+    fd.append('entity_types', JSON.stringify([]))
+    fd.append('relation_types', JSON.stringify([]))
+    const res: any = await createOntology(fd)
+    const newId = res.data?.id || res.id
+    showTemplateLibraryDialog.value = false
+    ElMessage.success('已创建空本体，正在载入模板骨架...')
+    router.push(`/ontology/manual/${newId}?template=${templateId}`)
+  } catch (e: any) {
+    ElMessage.error(e.serverMessage || '创建本体失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+// 查看模板 schema 详情
+const viewTemplate = async (templateId: string) => {
+  try {
+    const res: any = await getTemplate(templateId)
+    templateDetail.value = res.data
+    showTemplateDetailDialog.value = true
+  } catch (e: any) {
+    ElMessage.error(e.serverMessage || '加载模板详情失败')
+  }
+}
+
+// 删除模板
+const deleteTemplateItem = async (tpl: any) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除模板「${tpl.name}」吗？已基于该模板创建的本体/任务不受影响。`,
+      '提示',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+
+  try {
+    await deleteTemplateApi(tpl.id)
+    ElMessage.success('模板已删除')
+    await loadTemplates()
+  } catch (e: any) {
+    ElMessage.error(e.serverMessage || '删除失败')
   }
 }
 
@@ -603,20 +837,23 @@ const startBuild = async () => {
     ElMessage.warning('请填写本体名称并选择文档')
     return
   }
-  
+
   creatingBuild.value = true
   try {
     const fd = new FormData()
     fd.append('file', buildForm.value.file)
     fd.append('name', buildForm.value.name)
     fd.append('description', buildForm.value.description)
-    
+    if (buildForm.value.templateId) {
+      fd.append('template_id', buildForm.value.templateId)
+    }
+
     const res: any = await createBuildJob(fd)
     ElMessage.success('构建任务创建成功')
     showBuildDialog.value = false
-    buildForm.value = { name: '', description: '', file: null }
+    buildForm.value = { name: '', description: '', templateId: '', file: null }
     await loadData()
-    
+
     // 跳转到构建页面
     router.push(`/ontology-build/${res.data.job_id}`)
   } catch (e: any) {
@@ -677,6 +914,8 @@ const formatTime = (time: string) => {
 // ── 生命周期 ──
 onMounted(() => {
   loadData()
+  // 预加载模板列表，供文档构建对话框下拉使用
+  loadTemplates()
 })
 </script>
 
@@ -984,5 +1223,72 @@ onMounted(() => {
   font-size: 0.8rem;
   line-height: 1.5;
   color: var(--text-tertiary);
+}
+
+/* ── 模板库 ── */
+.template-library {
+  min-height: 200px;
+}
+
+.template-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.template-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem;
+  transition: all 0.2s;
+}
+
+.template-card:hover {
+  border-color: var(--primary-300);
+  box-shadow: var(--shadow-sm);
+}
+
+.tpl-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.tpl-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tpl-desc {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.825rem;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  min-height: 24px;
+}
+
+.tpl-meta {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.tpl-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.template-detail h4 {
+  margin: 0.5rem 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 </style>

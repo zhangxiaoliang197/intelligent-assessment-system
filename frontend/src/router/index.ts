@@ -7,8 +7,10 @@ import KnowledgeBase from '@/pages/KnowledgeBase.vue'
 import OntologyModel from '@/pages/OntologyModel.vue'
 import OntologyDetail from '@/pages/OntologyDetail.vue'
 import OntologyBuild from '@/pages/OntologyBuild.vue'
+import OntologyManualBuild from '@/pages/OntologyManualBuild.vue'
 import AdminSystem from '@/pages/AdminSystem.vue'
 import SituationMap from '@/pages/SituationMap.vue'
+import SituationView from '@/pages/SituationView.vue'
 import SituationList from '@/pages/SituationList.vue'
 import SituationShare from '@/pages/SituationShare.vue'
 
@@ -50,6 +52,13 @@ const routes: Array<RouteRecordRaw> = [
     meta: { title: '本体详情' }
   },
   {
+    // 手动构建向导：?template={tplId} 触发模板预填骨架
+    path: '/ontology/manual/:id',
+    name: 'OntologyManualBuild',
+    component: OntologyManualBuild,
+    meta: { title: '手动构建本体' }
+  },
+  {
     path: '/ontology-build/:jobId',
     name: 'OntologyBuild',
     component: OntologyBuild,
@@ -65,6 +74,12 @@ const routes: Array<RouteRecordRaw> = [
     name: 'SituationMap',
     component: SituationMap,
     meta: { title: '态势图' }
+  },
+  {
+    path: '/situation/view/:reportId',
+    name: 'SituationView',
+    component: SituationView,
+    meta: { title: '态势图查看' }
   },
   {
     path: '/situation/list',

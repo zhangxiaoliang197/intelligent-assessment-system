@@ -1,15 +1,21 @@
 """LLM Agent 工具集（Phase 2 启用）。
 
-每个工具对应一个数据/产出接口，供 tool-calling 循环派发。
-Phase 1 仅提供桩实现与下游调用封装，不被 mock 编排器使用。
+数据工具（取真实数据，数据源无关）：
+  query_datasets_meta  调 admin-service /export/for-llm，取全量数据集 schema + 指标定义
+  query_admin_data     调 admin-service /dataset/{id}/data，执行数据集 SQL 取数据行
+  query_knowledge      调 qa-service 知识检索
+  get_indicators       调 indicator-service 指标列表
+  get_evaluation       调 qa-service 评估结果
+  fetch_external_data  外部实时数据源（预留）
 
-工具清单（与 docs/situation-map/03 §2 一致）：
-  query_knowledge / get_indicators / get_evaluation / query_admin_data
-  fetch_external_data（预留）
-  render_chart / render_map_layer / write_narrative（产出工具）
+产出工具（编排器内部构造 SSE 事件用，LLM 返回 JSON 后由编排器转事件）：
+  render_chart / render_map_layer / write_narrative
+
+所有工具为同步实现（urllib），编排器通过 asyncio.to_thread 调用以避免阻塞事件循环。
 """
 import json
 import logging
+import urllib.parse
 import urllib.request
 import urllib.error
 
@@ -35,44 +41,65 @@ def _http_get(url: str, timeout: int = None) -> dict:
         return {"success": False, "message": str(e)[:200]}
 
 
+def query_datasets_meta() -> dict:
+    """取全量数据集 schema + 指标定义（调 admin-service /export/for-llm）。
+
+    返回 {schemas:[...], indicators:[...]}，供 LLM 规划要查哪些数据。
+    数据源无关：LLM 据此发现可用数据集，不硬编码任何表名/字段。
+    """
+    return _http_get(f"{config.ADMIN_SERVICE_URL}/api/admin/export/for-llm",
+                     timeout=config.HTTP_TIMEOUT)
+
+
+def query_admin_data(dataset_id: str, limit: int = 200) -> dict:
+    """执行数据集查询，返回数据行（调 admin-service /dataset/{id}/data）。
+
+    通用能力：执行数据集定义的 sql_text（或回退 SELECT * FROM tableName），
+    返回 {columns, rows, total}。生产环境配什么数据集就查什么，不绑定特定数据。
+    """
+    return _http_get(
+        f"{config.ADMIN_SERVICE_URL}/api/admin/dataset/{dataset_id}/data?limit={limit}",
+        timeout=config.HTTP_TIMEOUT,
+    )
+
+
 def query_knowledge(query: str, top_k: int = 5) -> dict:
-    """知识库检索（调 qa-service）。Phase 2 启用。"""
-    return _http_get(f"{config.QA_SERVICE_URL}/qa/search?q={query}&top_k={top_k}")
+    """知识库检索（调 qa-service）。"""
+    q = urllib.parse.quote(query)
+    return _http_get(f"{config.QA_SERVICE_URL}/qa/search?q={q}&top_k={top_k}")
 
 
-def get_indicators(indicator_ids: list = None) -> dict:
-    """取指标数据（调 indicator-service）。Phase 2 启用。"""
-    return _http_get(f"{config.INDICATOR_SERVICE_URL}/indicator/list")
+def get_indicators() -> dict:
+    """取指标列表（调 admin-service /indicator/list，数据源无关）。"""
+    return _http_get(f"{config.ADMIN_SERVICE_URL}/api/admin/indicator/list")
 
 
 def get_evaluation(evaluation_id: str) -> dict:
-    """取评估结果（调 qa-service 暴露的 evaluation 端点）。Phase 2 启用。"""
+    """取评估结果（调 qa-service 暴露的 evaluation 端点）。"""
     return _http_get(f"{config.QA_SERVICE_URL}/evaluation/{evaluation_id}")
 
 
-def query_admin_data(dataset_id: str) -> dict:
-    """取数据源/字段/原始记录（调 admin-service）。Phase 2 启用。"""
-    return _http_get(f"{config.ADMIN_SERVICE_URL}/api/admin/dataset/{dataset_id}")
-
-
 def fetch_external_data(adapter: str, params: dict = None) -> dict:
-    """外部实时数据源适配器（预留，Q-03 待定规范）。Phase 2+ 启用。"""
+    """外部实时数据源适配器（预留，Q-03 待定规范）。"""
     logger.info("外部数据源适配器调用: adapter=%s（预留）", adapter)
     return {"success": False, "message": "外部数据源适配器尚未配置"}
 
 
-# ── 产出工具（Phase 2 由编排器调用，同时通过 SSE 推送事件）──
-def render_chart(chart_id: str, chart_type: str, title: str, option: dict, dataset_ref: str = "") -> dict:
-    """产出单个图表（ECharts option）。Phase 2 由编排器派发。"""
+# ── 产出工具（编排器构造 SSE 事件用，LLM 返回 JSON 后转事件）──
+def render_chart(chart_id: str, chart_type: str, title: str, option: dict,
+                 dataset_ref: str = "", explanation: str = "") -> dict:
+    """产出单个图表（ECharts option）。"""
     return {"chartId": chart_id, "type": chart_type, "title": title,
-            "option": option, "datasetRef": dataset_ref}
+            "option": option, "datasetRef": dataset_ref, "explanation": explanation}
 
 
 def render_map_layer(layer_id: str, points: list = None, routes: list = None,
-                     areas: list = None, layer_config: dict = None) -> dict:
-    """产出地图图层（WGS84 坐标）。Phase 2 由编排器派发。"""
+                     areas: list = None, circles: list = None,
+                     layer_config: dict = None) -> dict:
+    """产出地图图层（WGS84 坐标）。"""
     return {"layerId": layer_id, "points": points or [], "routes": routes or [],
-            "areas": areas or [], "layerConfig": layer_config or {}}
+            "areas": areas or [], "circles": circles or [],
+            "layerConfig": layer_config or {}}
 
 
 def write_narrative(intro: str, explanations: list) -> dict:

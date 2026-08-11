@@ -6,3 +6,7 @@ python-json-logger>=2.0.8
 filelock>=3.13.0
 PyPDF2>=3.0.0
 python-docx>=1.0.0
+# OWL 2 / RDF 建模（Phase 2 引入）：Pydantic→OWL 映射 + HermiT 推理
+owlready2>=0.46
+# Neo4j 图数据库驱动（Phase 3 引入）：Neo4jRepository 实现
+neo4j>=5.14

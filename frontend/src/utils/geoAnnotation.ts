@@ -15,11 +15,13 @@ import { extractCoordinates, type GeoPoint } from './geoParser'
 export interface GeoRoute {
   name: string
   points: GeoPoint[]
+  color?: string
 }
 
 export interface GeoArea {
   name: string
   points: GeoPoint[]
+  color?: string
 }
 
 export interface GeoAnnotationResult {

@@ -49,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, onUnmounted, computed } from 'vue'
+import { ref, onMounted, watch, onUnmounted, computed, nextTick } from 'vue'
 import L from 'leaflet'
 import 'leaflet-draw'
 import 'leaflet-draw/dist/leaflet.draw.css'
@@ -654,7 +654,13 @@ function clearCircles() {
 }
 
 watch(() => props.points, () => {
-  if (map) addMarkers()
+  if (!map) return
+  // compact/嵌入模式下容器尺寸常在挂载后才稳定，标注到达时先强制 leaflet 重测容器，
+  // 否则 addMarkers 内的 fitBounds 会用旧像素尺寸算 zoom，导致部分点落在视口外。
+  nextTick(() => {
+    map!.invalidateSize()
+    addMarkers()
+  })
 }, { deep: true })
 
 watch(() => props.routes, () => {
@@ -670,7 +676,10 @@ watch(() => props.circles, () => {
 }, { deep: true })
 
 onMounted(() => {
-  initMap()
+  initMap().then(() => {
+    // 等布局就绪后重测一次，避免 flex/grid 嵌套下初始容器高度为 0 导致视野/瓦片错位
+    nextTick(() => map?.invalidateSize())
+  })
 })
 
 onUnmounted(() => {

@@ -26,3 +26,10 @@ HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "20"))
 
 # ── Phase 1 mock 流式模拟间隔（秒）；Phase 2 接入真实 Agent 后移除 ──
 MOCK_STREAM_INTERVAL = float(os.getenv("MOCK_STREAM_INTERVAL", "0.6"))
+
+# ── 生成模式：true=Phase1 mock（canned 数据，不调 LLM）；false=Phase2 真实 LLM Agent ──
+# Phase 2 默认启用；调试或无 LLM 环境时设 SITUATION_USE_MOCK=true 回退 mock
+USE_MOCK = os.getenv("SITUATION_USE_MOCK", "false")
+
+# ── 真实生成时单数据集查询行数上限（传给 admin-service /dataset/{id}/data）──
+DATA_QUERY_LIMIT = int(os.getenv("DATA_QUERY_LIMIT", "200"))

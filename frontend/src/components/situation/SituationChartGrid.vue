@@ -42,20 +42,19 @@ defineExpose({ scrollToChart })
 
 <style scoped>
 .chart-grid {
-  height: 100%;
-  overflow-y: auto;
+  width: 100%;
 }
 .chart-grid-inner {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  /* 左侧分栏宽度有限，minmax(300px,1fr) 让图表在 chart-side 内可多列排列，
+     数量多时自动换行撑高，高度由内容决定（区域内不滚动）。 */
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 12px;
-  padding: 12px;
 }
 .chart-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100%;
   min-height: 240px;
 }
 </style>
