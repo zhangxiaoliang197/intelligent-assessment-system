@@ -5,6 +5,8 @@ Docker 部署时由 start-docker-run.sh 的 -e 覆盖为容器名。
 """
 import os
 
+_SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ── 跨服务地址（默认本地开发，Docker 由 -e 覆盖）──
 # admin-service：LLM 配置 / 地图配置 / 态势产物持久化 CRUD
 ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
@@ -33,3 +35,9 @@ USE_MOCK = os.getenv("SITUATION_USE_MOCK", "false")
 
 # ── 真实生成时单数据集查询行数上限（传给 admin-service /dataset/{id}/data）──
 DATA_QUERY_LIMIT = int(os.getenv("DATA_QUERY_LIMIT", "200"))
+
+# ── Skill 生命周期 / 收藏 / 使用记录持久化（SQLite）──
+SITUATION_SKILL_DB = os.getenv(
+    "SITUATION_SKILL_DB",
+    os.path.join(_SERVICE_DIR, "data", "situation_skills.sqlite3"),
+)

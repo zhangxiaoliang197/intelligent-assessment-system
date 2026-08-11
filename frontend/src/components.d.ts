@@ -64,8 +64,14 @@ declare module 'vue' {
     SituationMapSlot: typeof import('./components/situation/SituationMapSlot.vue')['default']
     SituationNarrative: typeof import('./components/situation/SituationNarrative.vue')['default']
     SituationQueryBar: typeof import('./components/situation/SituationQueryBar.vue')['default']
+    SituationSkillDrawer: typeof import('./components/situation/SituationSkillDrawer.vue')['default']
+    SituationSkillEditorDialog: typeof import('./components/situation/SituationSkillEditorDialog.vue')['default']
+    SituationSkillMarkdownDialog: typeof import('./components/situation/SituationSkillMarkdownDialog.vue')['default']
+    SituationSkillParametersDialog: typeof import('./components/situation/SituationSkillParametersDialog.vue')['default']
+    SituationSkillToolbar: typeof import('./components/situation/SituationSkillToolbar.vue')['default']
     SituationToolbar: typeof import('./components/situation/SituationToolbar.vue')['default']
     SkillEditorDialog: typeof import('./components/evaluation/SkillEditorDialog.vue')['default']
+    SkillMarkdownDialog: typeof import('./components/evaluation/SkillMarkdownDialog.vue')['default']
     SkillOperationsDrawer: typeof import('./components/evaluation/SkillOperationsDrawer.vue')['default']
   }
   export interface ComponentCustomProperties {

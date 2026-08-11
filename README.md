@@ -99,6 +99,9 @@ Windows PowerShell 构建：
 30 个内置 Skill。更新镜像后不要使用 `docker compose restart`，该命令
 仍会复用旧容器。
 
+态势图模块另含 30 个面向地图与图表编排的专业 Skill，支持搜索、分类、
+智能推荐、收藏、执行计划预检，并通过 `skillId` 进入态势生成流程。
+
 ## 📁 项目结构
 
 ```

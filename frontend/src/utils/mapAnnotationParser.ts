@@ -8,10 +8,34 @@
  * 新格式示例：
  * ```map_annotations
  * { "markers": [...], "routes": [...], "areas": [...] }
- * ```
  */
 import { extractCoordinates, type GeoPoint } from './geoParser'
 import { parseAnnotations, filterOverlapPoints, type GeoRoute, type GeoArea } from './geoAnnotation'
+
+/** 字段名 → 中文标签映射 */
+export const FIELD_CN_MAP: Record<string, string> = {
+  // 经纬度
+  'lng': '经度', 'lon': '经度', 'longitude': '经度',
+  'lat': '纬度', 'latitude': '纬度',
+  // 雷达
+  'radius_km': '覆盖半径(km)', 'radius': '覆盖半径(km)',
+  'radar_type': '雷达类型', 'status': '状态',
+  'install_date': '安装日期', 'description': '说明',
+  // 飞机轨迹
+  'speed': '速度(km/h)', 'altitude': '高度(m)',
+  'heading': '航向(°)', 'record_time': '记录时间',
+  'fuel_remaining': '剩余燃油(%)', 'fuel': '燃油(%)',
+  'seq': '序号',
+  'aircraft_id': '飞机编号', 'aircraft_name': '名称',
+  'aircraft_type': '机型',
+  // 通用
+  'name': '名称', 'id': '编号',
+}
+
+/** 获取字段的中文标签，无映射则用原值 */
+export function cnLabel(key: string): string {
+  return FIELD_CN_MAP[key.toLowerCase()] || key.replace(/_/g, ' ')
+}
 
 // ── 新格式类型定义 ──
 
@@ -20,6 +44,8 @@ interface AnnotationMarker {
   name: string
   lng: number
   lat: number
+  props?: Record<string, any>  // 动态附加属性
+  routeName?: string           // 所属路线名，用于同路线点同色
 }
 
 /** LLM 输出的路线 */
@@ -35,6 +61,7 @@ interface AnnotationArea {
   points?: Array<{ lng: number; lat: number }>
   center?: { lng: number; lat: number }
   radiusKm?: number
+  props?: Record<string, any>  // 附加业务属性
 }
 
 /** map_annotations JSON 顶层结构 */
@@ -49,6 +76,7 @@ export interface CircleArea {
   name: string
   center: { lng: number; lat: number }
   radiusKm: number
+  props?: Record<string, any>  // 附加业务属性
 }
 
 export interface MapAnnotationResult {
@@ -132,12 +160,19 @@ function convertJsonToResult(json: MapAnnotationJson, validationMode: 'strict' |
         continue
       }
       const name = m.name.trim()
-      markers.push({
+      const marker: GeoPoint = {
         name,
         lng: parseFloat(m.lng.toFixed(6)),
         lat: parseFloat(m.lat.toFixed(6)),
         raw: `${name}: ${m.lng}, ${m.lat}`,
-      })
+      }
+      if (m.props && Object.keys(m.props).length > 0) {
+        marker.props = m.props
+      }
+      if (m.routeName) {
+        marker.routeName = m.routeName
+      }
+      markers.push(marker)
     }
   }
 
@@ -194,14 +229,18 @@ function convertJsonToResult(json: MapAnnotationJson, validationMode: 'strict' |
           errors.push(`circle "${a.name}" radiusKm 无效: ${a.radiusKm}（需为 0~5000 的正数）`)
           if (validationMode === 'strict') continue
         }
-        circles.push({
+        const circle: CircleArea = {
           name: a.name.trim(),
           center: {
             lng: parseFloat(a.center.lng.toFixed(6)),
             lat: parseFloat(a.center.lat.toFixed(6)),
           },
           radiusKm: parseFloat(radiusKm.toFixed(2)),
-        })
+        }
+        if (a.props && Object.keys(a.props).length > 0) {
+          circle.props = a.props
+        }
+        circles.push(circle)
       } else {
         // ── 多边形区域（默认）──
         if (!Array.isArray(a.points) || a.points.length < 3) {

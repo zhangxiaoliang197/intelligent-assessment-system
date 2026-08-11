@@ -14,7 +14,7 @@ if SERVICE_ROOT not in sys.path:
 from agents.sql_dialect import normalize_database_dialect  # noqa: E402
 from agents.state import EvaluationState  # noqa: E402
 from agents.text_to_sql import _validate_sql, run_text_to_sql  # noqa: E402
-from agents.langgraph_workflow import route_by_intent  # noqa: E402
+from agents.table_selection import route_by_intent  # noqa: E402
 
 
 class SqlDialectValidationTests(unittest.TestCase):

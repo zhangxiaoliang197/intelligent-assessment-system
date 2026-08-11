@@ -92,6 +92,9 @@ TEXT_TO_SQL_SYSTEM_PROMPT = f"""# 角色: {SQL_AGENT['role']}
    - 先输出指标→字段对应关系；表名和字段名必须从上方当前数据源的表结构中选择
    - 再根据对应关系生成SQL
 9. 如果某个指标无法在现有表结构中找到对应字段，跳过该指标，只计算能找到字段的
+9b. **如果所有指标都被跳过（即没有任何指标的字段存在于当前表中），不要生成 `SELECT 1` 或空查询。这种情况下，直接查询表的实际列来回答用户问题。** 用户要的是数据，不是指标占位符。例如：
+    - 用户问"查询飞机飞行轨迹" → SELECT aircraft_id, name, lng, lat, speed, altitude ... FROM test_aircraft_trajectory
+    - 用户问"显示雷达信息" → SELECT id, name, lng, lat, radius_km ... FROM test_radar
 10. **注意中文公式项到英文表字段的映射** — 表结构中的字段名是英文的，而指标公式中的计算项可能是中文（如"命中次数"对应 hit_count），请结合列名和注释/含义来进行中英映射
 11. **SQL 必须真正计算指标的值** — 不要只 SELECT 原始字段，要根据指标公式中的计算逻辑生成对应的 SQL 表达式
 12. 如果指标定义中提供了"字段映射提示"（标 `[admin配置]`）或"计算方法"，**必须严格遵守**该映射，不要自行猜测字段。标注 `[admin配置]` 的映射是用户在管理后台预先配置的权威映射，优先级高于其他推断
@@ -102,6 +105,7 @@ TEXT_TO_SQL_SYSTEM_PROMPT = f"""# 角色: {SQL_AGENT['role']}
     - Oracle: 分页用 FETCH FIRST...ROWS ONLY 或 ROWNUM，字符串拼接用 ||，当前时间用 SYSDATE，**SQL 末尾不要加分号**
     - SQL Server: 分页用 OFFSET...FETCH，字符串拼接用 +，当前时间用 GETDATE()
     - 达梦数据库V8.1: 参考 Oracle 语法，字符串拼接用 ||，当前时间用 SYSDATE
+15. **严禁跨表混用字段**：SQL 中 SELECT 的列和 WHERE 条件引用的列，**必须全部来自 FROM 子句中指定的表**。如果你在 FROM 中写了 `FROM test_radar`，那么 SELECT 和 WHERE 中只能用 test_radar 的列，绝对不能用其他表（如 test_supplier_scores）的列。多表查询用 JOIN 明确关联关系。
 
 ## 输出格式（先给字段映射，再给SQL）
 ```
@@ -190,6 +194,8 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
                 parts.append("[主键]")
             if col.get("comment"):
                 parts.append(f"-- {col['comment']}")
+            if col.get("annotation"):
+                parts.append(f"（{col['annotation']}）")
             if col.get("businessMeaning"):
                 parts.append(f"[含义: {col['businessMeaning']}]")
             table_context_parts.append(" ".join(parts))

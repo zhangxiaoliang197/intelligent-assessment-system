@@ -130,6 +130,20 @@ export interface EvaluationSkillCatalog {
   skills: EvaluationSkill[]
 }
 
+export interface SkillMarkdownDocument {
+  skillId: string
+  skillName: string
+  source: EvaluationSkillSource
+  content: string
+  contentHash: string
+  editable: boolean
+  storage: 'catalog' | 'override' | 'custom'
+  overridden: boolean
+  relativePath: string
+  revision: number
+  lastModified?: string
+}
+
 export interface ListEvaluationSkillsParams {
   dataSourceId?: string
   status?: EvaluationSkillStatus

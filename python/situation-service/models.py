@@ -26,13 +26,55 @@ class DraftRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     """发起态势生成请求。"""
-    query: str
+    query: str = Field(min_length=1, max_length=2000)
     draftId: Optional[str] = None
     source: str = "manual"
     context: Dict[str, Any] = Field(default_factory=dict)
     userId: str = "local-admin"
     teamIds: List[str] = Field(default_factory=list)
     autoRefresh: bool = False
+    skillId: str = ""
+    skillParameters: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SkillRecommendRequest(BaseModel):
+    """根据自然语言问题推荐态势图 Skill。"""
+    query: str = Field(default="", max_length=2000)
+    limit: int = Field(default=3, ge=1, le=10)
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SkillApplyRequest(BaseModel):
+    """预执行 Skill，返回最终问题和可审计执行计划。"""
+    query: str = Field(default="", max_length=2000)
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SkillFavoriteRequest(BaseModel):
+    """收藏或取消收藏 Skill。"""
+    favorite: bool = True
+
+
+class SkillUpsertRequest(BaseModel):
+    """创建或更新自定义 Skill。"""
+    definition: Dict[str, Any]
+    expectedRevision: Optional[int] = None
+
+
+class SkillPublishRequest(BaseModel):
+    """发布自定义 Skill。"""
+    changeNote: str = Field(default="", max_length=300)
+
+
+class SkillRollbackRequest(BaseModel):
+    """回滚到指定已保存版本，回滚后进入草稿态。"""
+    version: int = Field(ge=1)
+
+
+class SkillMarkdownUpdateRequest(BaseModel):
+    """更新完整 SKILL.md，并用内容哈希避免覆盖并发修改。"""
+    content: str = Field(min_length=1, max_length=131072)
+    expectedHash: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
 
 
 class ChartSpec(BaseModel):
@@ -81,6 +123,10 @@ class Report(BaseModel):
     title: str
     query: str
     source: str = "manual"
+    skillId: str = ""
+    skillName: str = ""
+    skillCategory: str = ""
+    skillParameters: Dict[str, Any] = Field(default_factory=dict)
     userId: str = "local-admin"
     teamIds: List[str] = Field(default_factory=list)
     status: str = "generating"        # generating | ready | partial | failed

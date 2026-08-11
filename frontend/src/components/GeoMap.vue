@@ -1,9 +1,9 @@
 <template>
   <div class="geo-map-container" :class="{ 'is-compact': compact }">
-    <div v-if="!compact" class="geo-map-header">
+    <div v-if="showHeader && !compact" class="geo-map-header">
       <span class="geo-map-title">坐标可视化</span>
       <div class="geo-map-header-right">
-        <span class="geo-map-count">{{ points.length }} 个AI坐标点</span>
+        <span class="geo-map-count">{{ points.length }} 个坐标点</span>
         <span v-if="routes && routes.length > 0" class="geo-map-count geo-map-route-count">
           {{ routes.length }} 条路线
         </span>
@@ -20,26 +20,28 @@
     </div>
     <div ref="mapContainer" class="geo-map-content"></div>
     <div v-if="!compact && points.length > 0" class="geo-point-table">
-      <div class="geo-table-header">
-        <span class="geo-table-title">提取坐标点</span>
+      <div class="geo-table-header" @click="tableExpanded = !tableExpanded" style="cursor:pointer; user-select:none">
+        <span class="geo-table-title">{{ tableExpanded ? '▼' : '▶' }} 提取坐标点 ({{ points.length }})</span>
       </div>
-      <table>
+      <table v-if="tableExpanded">
         <thead>
           <tr>
             <th>名称</th>
             <th>经度</th>
             <th>纬度</th>
+            <th v-for="col in extraColumns" :key="col">{{ cnLabel(col) }}</th>
             <th>原文</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="(p, i) in points" :key="i">
             <td>
-              <span class="point-dot" :style="{ background: getColorByName(`${p.lng.toFixed(4)},${p.lat.toFixed(4)}`) }"></span>
+              <span class="point-dot" :style="{ background: getColorByName(p.routeName || p.name) }"></span>
               {{ p.name }}
             </td>
             <td>{{ p.lng.toFixed(4) }}</td>
             <td>{{ p.lat.toFixed(4) }}</td>
+            <td v-for="col in extraColumns" :key="col">{{ p.props?.[col] ?? '-' }}</td>
             <td class="raw-cell" :title="p.raw">{{ p.raw }}</td>
           </tr>
         </tbody>
@@ -57,15 +59,28 @@ import gcoord from 'gcoord'
 import { type GeoPoint } from '@/utils/geoParser'
 import { type GeoRoute, type GeoArea } from '@/utils/geoAnnotation'
 import { type CircleArea } from '@/utils/mapAnnotationParser'
+import { cnLabel } from '@/utils/mapAnnotationParser'
 import api from '@/services/api'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   points: GeoPoint[]
   routes?: GeoRoute[]
   areas?: GeoArea[]
   circles?: CircleArea[]
   title?: string
   compact?: boolean  // 紧凑模式：隐藏标题栏和坐标表，适用于嵌入其他面板
+  showHeader?: boolean   // 隐藏“坐标可视化”头部
+  showTable?: boolean    // 隐藏坐标点表格
+}>(), {
+  showHeader: true,
+  showTable: true,
+})
+
+const emit = defineEmits<{
+  (e: 'marker-click', payload: { point: GeoPoint; layerId?: string }): void
+  (e: 'region-select', payload: { regionId: string; name: string; geometry?: any }): void
+  (e: 'draw-end', payload: { type: string; geojson: any; name?: string }): void
+  (e: 'viewport-change', vp: { center: [number, number]; zoom: number }): void
 }>()
 
 const mapContainer = ref<HTMLElement | null>(null)
@@ -82,6 +97,25 @@ let tileLayers: { layer: L.TileLayer; config: MapLayerConfig }[] = []
 let drawnItems: L.FeatureGroup | null = null
 let drawControl: L.Control.Draw | null = null
 const drawnCount = ref(0)
+
+const tableExpanded = ref(false)
+
+/** 动态发现所有点共同的附加属性列（排除 lng/lat/name/raw） */
+const extraColumns = computed(() => {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const p of props.points) {
+    if (p.props) {
+      for (const k of Object.keys(p.props)) {
+        if (!seen.has(k)) {
+          seen.add(k)
+          result.push(k)
+        }
+      }
+    }
+  }
+  return result
+})
 
 // ── 地图图层配置接口 ──
 interface MapLayerConfig {
@@ -168,6 +202,11 @@ const fitViewport = computed(() => {
 function transformCoord(lng: number, lat: number): [number, number] {
   const result = gcoord.transform([lng, lat], gcoord.WGS84, gcoord.GCJ02)
   return [result[1], result[0]]
+}
+
+/** 手绘几何（GCJ02，画在 GCJ02 地图上）逆转为 WGS84。gcoord 会原地修改 GeoJSON，先深拷贝。 */
+function toWgs84GeoJSON(gj: any): any {
+  return gcoord.transform(JSON.parse(JSON.stringify(gj)), gcoord.GCJ02, gcoord.WGS84)
 }
 
 function buildTileLayers(layerConfigs: MapLayerConfig[]) {
@@ -389,6 +428,13 @@ function initDrawControl() {
 
     const initialName = defaultNames[e.layerType] || '手绘元素'
     bindEditablePopup(layer, initialName)
+
+    const name = layer._customName || initialName
+    emit('draw-end', {
+      type: e.layerType === 'rectangle' ? 'polygon' : e.layerType,
+      geojson: toWgs84GeoJSON(layer.toGeoJSON()),
+      name,
+    })
   })
 
   // ── 编辑完成事件 ──
@@ -430,12 +476,20 @@ async function initMap() {
   initDrawControl()
 
   map.on('zoomend', updateLayerOpacity)
+  map.on('moveend', onViewportChange)
   updateLayerOpacity()
 
   addMarkers()
   addRoutes()
   addAreas()
   addCircles()
+}
+
+/** 地图平移/缩放结束后向外发送 viewport（仅 emit，不回写，避免与 props 形成循环）。 */
+function onViewportChange() {
+  if (!map) return
+  const c = map.getCenter()
+  emit('viewport-change', { center: [c.lat, c.lng], zoom: map.getZoom() })
 }
 
 /**
@@ -496,7 +550,8 @@ function addMarkers() {
   })
 
   if (spiderLineLayer) { map!.removeLayer(spiderLineLayer) }
-  spiderLineLayer = L.featureGroup().addTo(map!)
+  const currentSpiderLineLayer = L.featureGroup().addTo(map!)
+  spiderLineLayer = currentSpiderLineLayer
 
   groups.forEach(({ lat, lng, points: group }) => {
     const n = group.length
@@ -519,11 +574,11 @@ function addMarkers() {
           weight: 1.5,
           opacity: 0.5,
           dashArray: '4 3',
-        }).addTo(spiderLineLayer)
+        }).addTo(currentSpiderLineLayer)
       }
 
-      // 同坐标点使用同一颜色（基于坐标 hash，而非名称）
-      const color = getColorByName(`${p.lng.toFixed(4)},${p.lat.toFixed(4)}`)
+      // 同路线使用同一颜色（基于 routeName），不同路线颜色不同
+      const color = getColorByName(p.routeName || p.name)
 
       const circle = L.circleMarker([offsetLat, offsetLng], {
         radius: n > 1 ? 6 : 8,
@@ -534,12 +589,23 @@ function addMarkers() {
         fillOpacity: 0.9,
       }).addTo(map!)
 
-      const tooltip = n > 1
-        ? `<strong>${p.name}</strong><br/>经度: ${p.lng.toFixed(4)}<br/>纬度: ${p.lat.toFixed(4)}<br/><em>该位置共 ${n} 个点</em><br/>原文: ${p.raw}`
-        : `<strong>${p.name}</strong><br/>经度: ${p.lng.toFixed(4)}<br/>纬度: ${p.lat.toFixed(4)}<br/>原文: ${p.raw}`
+      // 构建弹窗内容：基础信息 + 动态属性（中文化）
+      let tooltip = `<strong>${p.name}</strong>`
+      tooltip += `<br/>经度: ${p.lng.toFixed(4)}`
+      tooltip += `<br/>纬度: ${p.lat.toFixed(4)}`
+      if (n > 1) tooltip += `<br/><em>该位置共 ${n} 个点</em>`
+      if (p.props) {
+        for (const [key, val] of Object.entries(p.props)) {
+          if (val !== null && val !== undefined && val !== '') {
+            tooltip += `<br/>${cnLabel(key)}: ${val}`
+          }
+        }
+      }
+      tooltip += `<br/><small style="color:#999">${p.raw}</small>`
 
       circle.bindPopup(tooltip)
       circle.on('mouseover', () => { circle.openPopup() })
+      circle.on('click', () => { emit('marker-click', { point: p, layerId: (p as any)._layerId }) })
       circleMarkers.push(circle)
 
       const marker = L.marker([offsetLat, offsetLng], {
@@ -575,7 +641,16 @@ function clearMarkers() {
 }
 
 // ── AI 路线/区域标注渲染 ──
-const routeColors = colors
+let arrowMarkers: L.Marker[] = []
+
+/** 计算两点间方位角（度），用于箭头旋转 */
+function bearing(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const y = Math.sin(dLng) * Math.cos(lat2 * Math.PI / 180)
+  const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180)
+    - Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos(dLng)
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360
+}
 
 function addRoutes() {
   if (!map || !props.routes) return
@@ -586,7 +661,7 @@ function addRoutes() {
       return [lat, lng] as L.LatLngTuple
     })
     if (latlngs.length < 2) return
-    const color = routeColors[ri % routeColors.length]
+    const color = getColorByName(route.name)
     const polyline = L.polyline(latlngs, {
       color,
       weight: 4,
@@ -595,12 +670,39 @@ function addRoutes() {
     }).addTo(map!)
     polyline.bindPopup(`<strong>路线: ${route.name}</strong><br/>${route.points.length} 个节点`)
     routeLayers.push(polyline)
+
+    // ── 方向箭头：在连续点对的中点上放置旋转箭头 ──
+    for (let i = 0; i < latlngs.length - 1; i++) {
+      const [latA, lngA] = latlngs[i]
+      const [latB, lngB] = latlngs[i + 1]
+      const midLat = (latA + latB) / 2
+      const midLng = (lngA + lngB) / 2
+      const angle = bearing(latA, lngA, latB, lngB)
+      const arrow = L.marker([midLat, midLng], {
+        icon: L.divIcon({
+          className: 'geo-route-arrow',
+          html: `<div style="
+            width:0;height:0;
+            border-left:6px solid transparent;
+            border-right:6px solid transparent;
+            border-bottom:12px solid ${color};
+            transform:rotate(${angle}deg);
+          "></div>`,
+          iconSize: [12, 12],
+          iconAnchor: [6, 6],
+        }),
+        interactive: false,
+      }).addTo(map!)
+      arrowMarkers.push(arrow)
+    }
   })
 }
 
 function clearRoutes() {
   routeLayers.forEach(l => { if (map) map.removeLayer(l) })
   routeLayers = []
+  arrowMarkers.forEach(m => { if (map) map.removeLayer(m) })
+  arrowMarkers = []
 }
 
 function addAreas() {
@@ -612,7 +714,7 @@ function addAreas() {
       return [lat, lng] as L.LatLngTuple
     })
     if (latlngs.length < 3) return
-    const color = routeColors[ai % routeColors.length]
+    const color = getColorByName(area.name)
     const polygon = L.polygon(latlngs, {
       color,
       weight: 2,
@@ -620,6 +722,14 @@ function addAreas() {
       fillColor: color,
     }).addTo(map!)
     polygon.bindPopup(`<strong>区域: ${area.name}</strong><br/>${area.points.length} 个顶点`)
+    polygon.on('click', () => {
+      const a = area as any
+      emit('region-select', {
+        regionId: a._regionId || area.name,
+        name: area.name,
+        geometry: toWgs84GeoJSON(polygon.toGeoJSON()),
+      })
+    })
     areaLayers.push(polygon)
   })
 }
@@ -635,7 +745,7 @@ function addCircles() {
   props.circles.forEach((c, ci) => {
     const [lat, lng] = transformCoord(c.center.lng, c.center.lat)
     const radiusMeters = c.radiusKm * 1000
-    const color = routeColors[ci % routeColors.length]
+    const color = getColorByName(c.name)
     const circle = L.circle([lat, lng], {
       radius: radiusMeters,
       color,
@@ -643,7 +753,18 @@ function addCircles() {
       fillOpacity: 0.12,
       fillColor: color,
     }).addTo(map!)
-    circle.bindPopup(`<strong>圆形区域: ${c.name}</strong><br/>半径: ${c.radiusKm}km<br/>圆心: ${c.center.lng.toFixed(4)}°, ${c.center.lat.toFixed(4)}°`)
+    // ── 圆形弹窗：基础信息 + 附加业务属性（中文化）──
+    let popupHtml = `<strong>${c.name}</strong>`
+    popupHtml += `<br/>覆盖半径: ${c.radiusKm}km`
+    popupHtml += `<br/>圆心: ${c.center.lng.toFixed(4)}°, ${c.center.lat.toFixed(4)}°`
+    if (c.props) {
+      for (const [key, val] of Object.entries(c.props)) {
+        if (val !== null && val !== undefined && val !== '') {
+          popupHtml += `<br/>${cnLabel(key)}: ${val}`
+        }
+      }
+    }
+    circle.bindPopup(popupHtml)
     circleLayers.push(circle)
   })
 }
@@ -685,6 +806,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (map) {
     map.off('zoomend', updateLayerOpacity)
+    map.off('moveend', onViewportChange)
     // 清理绘制控件事件
     map.off(L.Draw.Event.CREATED)
     map.off(L.Draw.Event.EDITED)

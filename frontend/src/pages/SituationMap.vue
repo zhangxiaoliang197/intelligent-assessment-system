@@ -46,6 +46,22 @@
 
       <!-- 主内容 -->
       <div class="main-content">
+        <!-- Skill 工具栏（Skill 引擎：选择 / 推荐 / 技能库 / SKILL.md / 参数配置） -->
+        <SituationSkillToolbar
+          :skills="skills"
+          :categories="skillCategories"
+          :active-skill="store.activeSkill"
+          :recommendations="skillRecommendations"
+          :skill-total="skillCatalogTotal"
+          :loading="skillsLoading"
+          :parameters="store.skillParameters"
+          @select="onSelectSkill"
+          @clear="onClearSkill"
+          @open-library="onOpenSkillDrawer"
+          @open-markdown="skillMarkdownVisible = true"
+          @configure="skillParametersVisible = true"
+        />
+
         <div class="content-area">
           <!-- 对话面板 -->
           <div class="chat-panel">
@@ -234,11 +250,62 @@
       </el-input>
       <template #footer><el-button @click="shareVisible = false">关闭</el-button></template>
     </el-dialog>
+
+    <!-- Skill 技能库抽屉 -->
+    <SituationSkillDrawer
+      v-model="skillDrawerVisible"
+      :skills="skills"
+      :categories="skillCategories"
+      :selected-skill-id="store.activeSkill?.id"
+      :query="inputText"
+      :loading="skillsLoading"
+      :favorite-ids="skillFavoriteIds"
+      :usage-stats="skillUsageStats"
+      @select="onSelectSkill"
+      @clear="onClearSkill"
+      @reload="loadSkillCatalog"
+      @favorite="onToggleSkillFavorite"
+      @show-usage="openSkillUsage"
+    />
+
+    <SituationSkillParametersDialog
+      v-model="skillParametersVisible"
+      :skill="activeFullSkill"
+      :parameters="store.skillParameters"
+      :query="inputText"
+      @save="onSaveSkillParameters"
+    />
+
+    <SituationSkillMarkdownDialog
+      v-model="skillMarkdownVisible"
+      :skill="activeFullSkill"
+      @saved="onSkillMarkdownSaved"
+    />
+
+    <el-dialog v-model="skillUsageVisible" title="Skill 使用记录" width="760px">
+      <el-table v-loading="skillUsageLoading" :data="skillUsageItems" empty-text="暂无使用记录">
+        <el-table-column label="Skill" min-width="150">
+          <template #default="scope">{{ skillName(scope.row.skillId) }}</template>
+        </el-table-column>
+        <el-table-column prop="query" label="问题" min-width="230" show-overflow-tooltip />
+        <el-table-column label="状态" width="90">
+          <template #default="scope">
+            <el-tag size="small" :type="scope.row.status === 'ready' ? 'success' : scope.row.status === 'failed' ? 'danger' : 'warning'">
+              {{ scope.row.status === 'ready' ? '成功' : scope.row.status === 'failed' ? '失败' : '执行中' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="耗时" width="90">
+          <template #default="scope">{{ scope.row.durationMs ? `${(scope.row.durationMs / 1000).toFixed(1)}s` : '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="startedAt" label="开始时间" width="180" />
+      </el-table>
+    </el-dialog>
   </Layout>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, nextTick, watch, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -250,9 +317,27 @@ import Layout from '@/components/Layout.vue'
 import SituationChartGrid from '@/components/situation/SituationChartGrid.vue'
 import SituationMapSlot from '@/components/situation/SituationMapSlot.vue'
 import SituationNarrative from '@/components/situation/SituationNarrative.vue'
+import SituationSkillToolbar from '@/components/situation/SituationSkillToolbar.vue'
+import SituationSkillDrawer from '@/components/situation/SituationSkillDrawer.vue'
+import SituationSkillParametersDialog from '@/components/situation/SituationSkillParametersDialog.vue'
+import SituationSkillMarkdownDialog from '@/components/situation/SituationSkillMarkdownDialog.vue'
 import { useSituationStore, type Viewport, type ReportMeta } from '@/stores/situation'
 import { useSituationExport } from '@/composables/useSituationExport'
 import api from '@/services/api'
+import {
+  listSituationSkills,
+  listSituationSkillFavorites,
+  listSituationSkillUsage,
+  preflightSituationSkill,
+  recommendSituationSkills,
+  setSituationSkillFavorite,
+} from '@/services/situationSkills'
+import type {
+  SituationSkill,
+  SituationSkillCategory,
+  SituationSkillPreflight,
+  SituationSkillUsageItem,
+} from '@/types/situationSkill'
 
 const router = useRouter()
 const route = useRoute()
@@ -268,6 +353,25 @@ const showExecPanel = ref(true)
 const execPanelWidth = ref(340)
 const shareVisible = ref(false)
 const shareUrl = ref('')
+const skillDrawerVisible = ref(false)
+const skillsLoading = ref(false)
+const skills = ref<SituationSkill[]>([])
+const skillCategories = ref<SituationSkillCategory[]>([])
+const skillCatalogTotal = ref(0)
+const skillRecommendations = ref<SituationSkill[]>([])
+const skillFavoriteIds = ref<string[]>([])
+const skillUsageStats = ref<Record<string, { uses: number; successes: number }>>({})
+const skillUsageItems = ref<SituationSkillUsageItem[]>([])
+const skillUsageVisible = ref(false)
+const skillUsageLoading = ref(false)
+const skillParametersVisible = ref(false)
+const skillMarkdownVisible = ref(false)
+let recommendTimer: ReturnType<typeof setTimeout> | undefined
+let recommendRequest = 0
+
+const activeFullSkill = computed(() => (
+  skills.value.find((skill) => skill.id === store.activeSkill?.id) || null
+))
 
 const inputPlaceholder = '输入态势分析需求，如：分析各省份订单销售态势与客单价、评分、配送效率趋势...'
 
@@ -302,6 +406,9 @@ const filteredHistory = computed(() => {
 // ── 生命周期 ──
 onMounted(async () => {
   store.fetchHistory()
+  void loadSkillCatalog()
+  void loadSkillPreferences()
+  // 1) 跨功能跳转：带 draftId
   const draftId = route.query.draftId as string
   if (draftId) {
     try {
@@ -325,6 +432,143 @@ watch(() => store.charts.length + store.mapLayers.length + store.executionSteps.
   if (chatAreaRef.value) chatAreaRef.value.scrollTop = chatAreaRef.value.scrollHeight
 })
 
+onUnmounted(() => {
+  if (recommendTimer) clearTimeout(recommendTimer)
+})
+
+// 输入变化时防抖刷新 Skill 智能推荐
+watch(inputText, (value) => {
+  if (recommendTimer) clearTimeout(recommendTimer)
+  recommendTimer = setTimeout(() => void updateSkillRecommendations(value), 320)
+})
+
+watch(skills, (items) => {
+  if (store.activeSkill?.id) {
+    const fullSkill = items.find((skill) => skill.id === store.activeSkill?.id)
+    if (fullSkill) store.setActiveSkill(fullSkill)
+  }
+  if (!inputText.value.trim()) {
+    skillRecommendations.value = items.filter((skill) => skill.featured).slice(0, 3)
+  }
+})
+
+watch(() => store.activeSkill?.id, (skillId) => {
+  if (!skillId) return
+  const fullSkill = skills.value.find((skill) => skill.id === skillId)
+  if (fullSkill && store.activeSkill?.description !== fullSkill.description) {
+    store.setActiveSkill(fullSkill)
+  }
+})
+
+// ── Skill 目录 / 偏好 ──
+async function loadSkillCatalog() {
+  if (skillsLoading.value) return
+  skillsLoading.value = true
+  try {
+    const catalog = await listSituationSkills({ limit: 100 })
+    skills.value = catalog.items
+    skillCategories.value = catalog.categories
+    skillCatalogTotal.value = catalog.catalogTotal || catalog.total
+  } catch (error) {
+    console.warn('态势 Skill 目录加载失败', error)
+    ElMessage.error('态势 Skill 目录加载失败，请稍后重试')
+  } finally {
+    skillsLoading.value = false
+  }
+}
+
+async function loadSkillPreferences() {
+  try {
+    const [favorites, usage] = await Promise.all([
+      listSituationSkillFavorites(),
+      listSituationSkillUsage(50),
+    ])
+    skillFavoriteIds.value = favorites
+    skillUsageStats.value = usage.stats
+    skillUsageItems.value = usage.items
+  } catch (error) {
+    console.warn('Skill 偏好与使用记录加载失败', error)
+  }
+}
+
+function onOpenSkillDrawer() {
+  skillDrawerVisible.value = true
+  if (!skills.value.length) void loadSkillCatalog()
+}
+
+async function onSkillMarkdownSaved(skillId: string) {
+  await loadSkillCatalog()
+  const refreshed = skills.value.find((skill) => skill.id === skillId)
+  if (refreshed && store.activeSkill?.id === skillId) store.setActiveSkill(refreshed)
+}
+
+async function updateSkillRecommendations(value: string) {
+  const text = value.trim()
+  if (!text) {
+    skillRecommendations.value = skills.value.filter((skill) => skill.featured).slice(0, 3)
+    return
+  }
+  const requestId = ++recommendRequest
+  try {
+    const items = await recommendSituationSkills(text, 3, {
+      source: store.source,
+      selectedRegion: store.selectedRegion || '',
+      ...store.filters,
+    })
+    if (requestId === recommendRequest) skillRecommendations.value = items
+  } catch (error) {
+    if (requestId === recommendRequest) skillRecommendations.value = []
+    console.warn('态势 Skill 推荐失败', error)
+  }
+}
+
+function onSelectSkill(skill: SituationSkill, question?: string) {
+  store.setActiveSkill(skill)
+  if (question || !inputText.value.trim()) {
+    inputText.value = question || skill.recommendedQuestions[0] || ''
+  }
+  ElMessage.success(`已启用「${skill.name}」`)
+}
+
+function onSaveSkillParameters(parameters: Record<string, unknown>, preflight?: SituationSkillPreflight) {
+  store.setSkillParameters(preflight?.parameters || parameters)
+  ElMessage.success('Skill 参数已保存')
+}
+
+async function onToggleSkillFavorite(skillId: string, favorite: boolean) {
+  try {
+    await setSituationSkillFavorite(skillId, favorite)
+    skillFavoriteIds.value = favorite
+      ? Array.from(new Set([skillId, ...skillFavoriteIds.value]))
+      : skillFavoriteIds.value.filter((id) => id !== skillId)
+    ElMessage.success(favorite ? '已收藏' : '已取消收藏')
+  } catch (error: any) {
+    ElMessage.error(error?.serverMessage || '收藏操作失败')
+  }
+}
+
+async function openSkillUsage() {
+  skillUsageVisible.value = true
+  skillUsageLoading.value = true
+  try {
+    const usage = await listSituationSkillUsage(50)
+    skillUsageItems.value = usage.items
+    skillUsageStats.value = usage.stats
+  } catch (error: any) {
+    ElMessage.error(error?.serverMessage || '使用记录加载失败')
+  } finally {
+    skillUsageLoading.value = false
+  }
+}
+
+function skillName(skillId: string) {
+  return skills.value.find((skill) => skill.id === skillId)?.name || skillId
+}
+
+function onClearSkill() {
+  store.setActiveSkill(null)
+}
+
 // ── 交互 ──
 async function onGenerate(q?: string) {
   const text = (typeof q === 'string' ? q : inputText.value) || ''
@@ -334,8 +578,25 @@ async function onGenerate(q?: string) {
   }
   inputText.value = text
   try {
+    // 已启用 Skill 时先执行前检查（preflight）
+    if (activeFullSkill.value) {
+      const preflight = await preflightSituationSkill(
+        activeFullSkill.value.id,
+        text,
+        store.skillParameters,
+      )
+      if (!preflight.ready) {
+        ElMessage.error(preflight.errors.join('；') || 'Skill 执行前检查未通过')
+        return
+      }
+      store.setSkillParameters(preflight.parameters)
+      if (preflight.warnings.length) {
+        ElMessage.warning(`执行前检查通过：${preflight.warnings[0]}`)
+      }
+    }
     await store.generate(text)
     store.fetchHistory()
+    void loadSkillPreferences()
   } catch (e: any) {
     ElMessage.error('生成失败：' + (e?.serverMessage || e?.message || '未知错误'))
   }

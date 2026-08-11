@@ -41,6 +41,11 @@ build_and_save() {
         docker run --rm --entrypoint python "assessment-$IMAGE_NAME:latest" \
             -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 30; print('Skill catalog OK:', len(catalog['skills']))"
     fi
+    if [[ "$IMAGE_NAME" == "situation" ]]; then
+        echo ">>> 运行态势 Skill 测试与目录校验..."
+        docker run --rm --entrypoint python "assessment-$IMAGE_NAME:latest" \
+            -m unittest discover -s tests -v
+    fi
 
     echo -e "${GREEN}>>> 导出 assessment-$IMAGE_NAME.tar${NC}"
     docker save -o "$IMAGES_DIR/assessment-$IMAGE_NAME.tar" "assessment-$IMAGE_NAME:latest"

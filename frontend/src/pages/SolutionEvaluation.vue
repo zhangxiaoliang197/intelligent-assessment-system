@@ -158,6 +158,15 @@
             <el-icon class="skill-plan-arrow"><ArrowRight /></el-icon>
             <span class="skill-plan-step output">生成结论</span>
           </div>
+          <el-button
+            class="skill-markdown-button"
+            size="small"
+            plain
+            :icon="Document"
+            @click="skillMarkdownVisible = true"
+          >
+            SKILL.md
+          </el-button>
         </div>
 
         <!-- 内容区 -->
@@ -647,6 +656,11 @@
           @deleted="onSkillDeleted"
         />
       </el-drawer>
+      <SkillMarkdownDialog
+        v-model="skillMarkdownVisible"
+        :skill="selectedSkill"
+        @saved="handleSkillMarkdownSaved"
+      />
     </div>
   </Layout>
 </template>
@@ -678,6 +692,7 @@ import {
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
 import SkillsLibrary from '@/pages/SkillsLibrary.vue'
+import SkillMarkdownDialog from '@/components/evaluation/SkillMarkdownDialog.vue'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData, extractGeoFromResults } from '@/composables/useMapPrompt'
 import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
@@ -781,6 +796,7 @@ const selectedDataSourceName = ref<string>('')
 const evaluationSkills = ref<EvaluationSkill[]>([])
 const selectedSkillId = ref<string>('')
 const skillLibraryVisible = ref(false)
+const skillMarkdownVisible = ref(false)
 const dataSourceDialogVisible = ref(false)
 const showExecutionPanel = ref(true)
 const chartViewMode = ref('chart')
@@ -1159,6 +1175,23 @@ const syncSkillsFromLibrary = (skills: EvaluationSkill[]) => {
   }
 }
 
+const handleSkillMarkdownSaved = async (skillId: string) => {
+  if (selectedDataSourceId.value) {
+    await refreshSkillsForDataSource(selectedDataSourceId.value)
+    return
+  }
+  try {
+    const catalog = await listEvaluationSkills()
+    evaluationSkills.value = catalog.skills
+    if (!catalog.skills.some(skill => skill.id === skillId)) {
+      selectedSkillId.value = ''
+      skillMarkdownVisible.value = false
+    }
+  } catch (error: any) {
+    ElMessage.warning(error?.serverMessage || 'SKILL.md 已保存，但技能列表刷新失败')
+  }
+}
+
 const onSkillDeleted = (skillId: string) => {
   if (selectedSkillId.value !== skillId) return
   selectedSkillId.value = ''
@@ -1473,11 +1506,14 @@ const sendMessage = async () => {
         // Skill 结果卡已经包含综合结论，正文不再重复显示。
         aiMessage.content = result.type === 'skill' || result.need_conclusion === false ? '' : stripMapAnnotationBlock(answerText)
         aiMessage.result = result
-        // 提取坐标并设置地图状态（来源1: final_answer 文本中的DMS格式坐标）
-        const textMapData = processMapData(answerText, query)
-        // 提取坐标（来源2: 查询结果数据中的经度/纬度数值列，每行=一个点，不做去重）
-        const resultGeoPoints = extractGeoFromResults(result)
-        // 合并：文本提取的坐标 + 数据库查询结果（不做去重，每个学生一个点）
+        // 提取坐标并设置地图状态
+        // 来源1: result.map_annotations（后端直接生成，优先级最高）
+        // 来源2: final_answer 文本中的 map_annotations/DMS格式坐标（兼容旧版）
+        const mapAnnotationsRaw = result.map_annotations || ''
+        const textMapData = processMapData(mapAnnotationsRaw || answerText, query)
+        // 来源3: rawResults 中的坐标（仅在 map_annotations 未提供时使用，避免重复）
+        const resultGeoPoints = (textMapData.hasAnnotations || mapAnnotationsRaw) ? [] : extractGeoFromResults(result)
+        // 合并：文本提取的坐标 + 数据库查询结果
         const allGeoPoints = textMapData.geoPoints.slice()
         for (const pt of resultGeoPoints) {
           allGeoPoints.push(pt)
@@ -1651,8 +1687,19 @@ const loadHistory = async (item: any) => {
     }
 
     if (!restoredMessages) throw new Error('会话没有可恢复的消息内容')
-    // 恢复历史消息中的地图状态 (第一处)
+    // 恢复历史消息中的地图状态
     restoredMessages.forEach((msg: any) => {
+      // 从服务端加载时 msg 没有地图数据，从 result 中重新提取
+      if (msg.result && (!msg.geoPoints || msg.geoPoints.length === 0 || !msg.routes || msg.routes.length === 0)) {
+        // 优先用 result.map_annotations（后端直接生成），兼容旧版从 final_answer 文本解析
+        const mapAnnotationsRaw = msg.result.map_annotations || ''
+        const mapData = processMapData(mapAnnotationsRaw || msg.result.final_answer || msg.result.summary || msg.result.answer || '', msg.result.question || '')
+        const resultGeoPoints = (mapData.hasAnnotations || mapAnnotationsRaw) ? [] : extractGeoFromResults(msg.result)
+        msg.geoPoints = [...mapData.geoPoints, ...resultGeoPoints]
+        msg.routes = mapData.routes
+        msg.areas = mapData.areas
+        msg.circles = mapData.circles
+      }
       if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0) {
         msg.showMap = true
         msg.showMapPrompt = false
@@ -2080,6 +2127,11 @@ onMounted(async () => {
   min-width: 0;
   overflow-x: auto;
   padding-bottom: 2px;
+}
+
+.skill-markdown-button {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .skill-plan-step {

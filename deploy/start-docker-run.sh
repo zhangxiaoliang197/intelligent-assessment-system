@@ -47,6 +47,7 @@ mkdir -p "$DATA_DIR/qdrant"
 mkdir -p "$DATA_DIR/qa"
 mkdir -p "$DATA_DIR/ontology"
 mkdir -p "$DATA_DIR/evaluation"
+mkdir -p "$DATA_DIR/situation"
 mkdir -p "$DATA_DIR/config"
 
 # ─── 日志目录（统一日志持久化）───
@@ -199,6 +200,7 @@ docker run -d --name assessment-qa \
     -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
     -e ONTOLOGY_SERVICE_URL="http://assessment-ontology:10256" \
     -e EVALUATION_SKILLS_DIR="/app/config/skills" \
+    -e EVALUATION_SKILL_MD_OVERRIDE_DIR="/app/data/skill-markdown-overrides" \
     -e LOG_ENV="$LOG_ENV" \
     -e LOG_LEVEL="$LOG_LEVEL" \
     -e LOG_DIR="/app/logs" \
@@ -277,12 +279,15 @@ docker run -d --name assessment-situation \
     -e QA_SERVICE_URL="http://assessment-qa:10253" \
     -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
     -e INDICATOR_SERVICE_URL="http://assessment-indicator:10254" \
+    -e SITUATION_SKILL_DB="/app/data/situation_skills.sqlite3" \
+    -e SITUATION_SKILL_MD_OVERRIDE_DIR="/app/data/situation-skill-markdown-overrides" \
     -e LLM_MAX_TOKENS="24000" \
     -e LOG_ENV="$LOG_ENV" \
     -e LOG_LEVEL="$LOG_LEVEL" \
     -e LOG_DIR="/app/logs" \
     -e LOG_RETENTION_DAYS="$LOG_RETENTION_DAYS" \
     -e LOG_MAX_SIZE_MB="$LOG_MAX_SIZE_MB" \
+    -v "$DATA_DIR/situation:/app/data" \
     -v "$LOG_DIR_HOST/situation:/app/logs" \
     --log-driver json-file \
     --log-opt max-size=50m \
