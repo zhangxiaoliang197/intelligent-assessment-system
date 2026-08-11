@@ -19,7 +19,7 @@
       </div>
     </div>
     <div ref="mapContainer" class="geo-map-content"></div>
-    <div v-if="showTable && !compact && points.length > 0" class="geo-point-table">
+    <div v-if="!compact && points.length > 0" class="geo-point-table">
       <div class="geo-table-header" @click="tableExpanded = !tableExpanded" style="cursor:pointer; user-select:none">
         <span class="geo-table-title">{{ tableExpanded ? '▼' : '▶' }} 提取坐标点 ({{ points.length }})</span>
       </div>
