@@ -1,6 +1,6 @@
 <template>
-  <div class="geo-map-container">
-    <div v-if="showHeader" class="geo-map-header">
+  <div class="geo-map-container" :class="{ 'is-compact': compact }">
+    <div v-if="showHeader && !compact" class="geo-map-header">
       <span class="geo-map-title">坐标可视化</span>
       <div class="geo-map-header-right">
         <span class="geo-map-count">{{ points.length }} 个AI坐标点</span>
@@ -19,7 +19,7 @@
       </div>
     </div>
     <div ref="mapContainer" class="geo-map-content"></div>
-    <div v-if="showTable && points.length > 0" class="geo-point-table">
+    <div v-if="showTable && !compact && points.length > 0" class="geo-point-table">
       <div class="geo-table-header">
         <span class="geo-table-title">提取坐标点</span>
       </div>
@@ -65,8 +65,9 @@ const props = withDefaults(defineProps<{
   areas?: GeoArea[]
   circles?: CircleArea[]
   title?: string
-  showHeader?: boolean   // 态势图适配器传 false，隐藏“坐标可视化”头部
-  showTable?: boolean    // 态势图适配器传 false，隐藏坐标点表格
+  compact?: boolean  // 紧凑模式：隐藏标题栏和坐标表，适用于嵌入其他面板
+  showHeader?: boolean   // 隐藏“坐标可视化”头部
+  showTable?: boolean    // 隐藏坐标点表格
 }>(), {
   showHeader: true,
   showTable: true,
@@ -742,6 +743,15 @@ onUnmounted(() => {
   overflow: hidden;
   background: #fff;
 }
+.geo-map-container.is-compact {
+  width: 100%;
+  height: 100%;
+  margin-top: 0;
+  border: none;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+}
 
 .geo-map-header {
   display: flex;
@@ -789,6 +799,10 @@ onUnmounted(() => {
 
 .geo-map-content {
   height: 420px;
+}
+.geo-map-container.is-compact .geo-map-content {
+  flex: 1;
+  height: auto;
 }
 
 .geo-point-table {

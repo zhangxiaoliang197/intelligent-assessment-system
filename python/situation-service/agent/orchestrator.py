@@ -169,11 +169,19 @@ def _map_payload(profile: Dict[str, Any]) -> Dict[str, Any]:
                 {"name": "边界4", "lng": 115.7, "lat": 39.3},
             ],
         }]
+    circles = []
+    if any(layer_type in {"circles", "coverage", "radar"} for layer_type in layer_types):
+        circles = [{
+            "name": "C 区域雷达覆盖",
+            "center": {"lng": 113.27, "lat": 23.13},
+            "radiusKm": 120,
+        }]
     return {
         "layerId": layer_id,
         "points": points,
         "routes": routes,
         "areas": areas,
+        "circles": circles,
         "layerConfig": {
             "name": profile["skillName"],
             "type": layer_types[0],

@@ -25,6 +25,7 @@ export interface MapLayer {
   points?: any[]
   routes?: any[]
   areas?: any[]
+  circles?: any[]
   layerConfig: Record<string, any>
 }
 
@@ -175,6 +176,7 @@ export const useSituationStore = defineStore('situation', () => {
           points: data.points || [],
           routes: data.routes || [],
           areas: data.areas || [],
+          circles: data.circles || [],
           layerConfig: data.layerConfig || {},
         })
         break
@@ -184,6 +186,7 @@ export const useSituationStore = defineStore('situation', () => {
           if (data.points) lyr.points = data.points
           if (data.routes) lyr.routes = data.routes
           if (data.areas) lyr.areas = data.areas
+          if (data.circles) lyr.circles = data.circles
         }
         break
       }

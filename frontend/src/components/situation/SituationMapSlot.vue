@@ -1,50 +1,26 @@
 <template>
   <div class="situation-map-slot">
-    <div class="map-header">
-      <span class="map-title">{{ title }}</span>
-      <div class="map-tools">
-        <slot name="map-tools" />
-      </div>
-    </div>
-    <div class="map-body">
-      <!--
-        地图插槽（docs/situation-map/06 §2）：
-        同事组件挂入点。框架通过作用域插槽注入 dataset/layers/viewport/联动状态 + 事件回调。
-        未挂入同事组件时显示占位。
-      -->
-      <slot
-        name="map"
-        :dataset="dataset"
-        :layers="layers"
-        :viewport="viewport"
-        :selected-region="selectedRegion"
-        :time-range="timeRange"
-        :filters="filters"
-        :on-region-select="emitRegionSelect"
-        :on-marker-click="emitMarkerClick"
-        :on-layer-toggle="emitLayerToggle"
-        :on-draw-end="emitDrawEnd"
-        :on-viewport-change="emitViewportChange"
-      >
-        <div class="map-placeholder">
-          <el-icon :size="36"><MapLocation /></el-icon>
-          <p>地图组件待接入</p>
-          <p class="map-placeholder-hint">
-            同事按 docs/situation-map/06 契约把地图生成逻辑封装为 Vue 组件挂入 #map 插槽
-          </p>
-        </div>
-      </slot>
-    </div>
+    <GeoMap
+      compact
+      :points="mergedPoints"
+      :routes="mergedRoutes"
+      :areas="mergedAreas"
+      :circles="mergedCircles"
+      @marker-click="(p: any) => emit('marker-click', { point: p })"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { MapLocation } from '@element-plus/icons-vue'
-import type { DatasetSummary, MapLayer, Viewport } from '@/stores/situation'
+import { computed } from 'vue'
+import GeoMap from '@/components/GeoMap.vue'
+import type { GeoPoint } from '@/utils/geoParser'
+import type { GeoRoute, GeoArea } from '@/utils/geoAnnotation'
+import type { CircleArea } from '@/utils/mapAnnotationParser'
+import type { MapLayer, Viewport } from '@/stores/situation'
 
-defineProps<{
-  title?: string
-  dataset: DatasetSummary | null
+const props = defineProps<{
+  dataset: any
   layers: MapLayer[]
   viewport: Viewport
   selectedRegion: string | null
@@ -60,57 +36,83 @@ const emit = defineEmits<{
   (e: 'viewport-change', vp: Viewport): void
 }>()
 
-const emitRegionSelect = (p: any) => emit('region-select', p)
-const emitMarkerClick = (p: any) => emit('marker-click', p)
-const emitLayerToggle = (p: any) => emit('layer-toggle', p)
-const emitDrawEnd = (p: any) => emit('draw-end', p)
-const emitViewportChange = (vp: Viewport) => emit('viewport-change', vp)
+/** 合并所有图层 → GeoMap props */
+
+const mergedPoints = computed<GeoPoint[]>(() => {
+  const all: GeoPoint[] = []
+  for (const layer of props.layers) {
+    if (!layer.points) continue
+    const color = layer.layerConfig?.color || '#e74c3c'
+    for (const p of layer.points) {
+      all.push({
+        name: p.name || '',
+        lng: p.lng ?? 0,
+        lat: p.lat ?? 0,
+        raw: p.raw || `${p.lng}, ${p.lat}`,
+        color,
+      } as any)
+    }
+  }
+  return all
+})
+
+const mergedRoutes = computed<GeoRoute[]>(() => {
+  const all: GeoRoute[] = []
+  for (const layer of props.layers) {
+    if (!layer.routes || layer.routes.length === 0) continue
+    const color = layer.layerConfig?.color || '#e74c3c'
+    for (const r of layer.routes) {
+      const pts: GeoPoint[] = (r.points || []).map((p: any) => ({
+        name: '',
+        lng: p.lng ?? 0,
+        lat: p.lat ?? 0,
+        raw: `${p.lng}, ${p.lat}`,
+        color,
+      } as any))
+      all.push({ name: r.name || '', points: pts, color })
+    }
+  }
+  return all
+})
+
+const mergedAreas = computed<GeoArea[]>(() => {
+  const all: GeoArea[] = []
+  for (const layer of props.layers) {
+    if (!layer.areas || layer.areas.length === 0) continue
+    const color = layer.layerConfig?.color || '#3498db'
+    for (const a of layer.areas) {
+      const pts: GeoPoint[] = (a.points || []).map((p: any) => ({
+        name: '',
+        lng: p.lng ?? 0,
+        lat: p.lat ?? 0,
+        raw: `${p.lng}, ${p.lat}`,
+        color,
+      } as any))
+      all.push({ name: a.name || '', points: pts, color })
+    }
+  }
+  return all
+})
+
+const mergedCircles = computed<CircleArea[]>(() => {
+  const all: CircleArea[] = []
+  for (const layer of props.layers) {
+    if (!layer.circles || layer.circles.length === 0) continue
+    for (const c of layer.circles) {
+      all.push({
+        name: c.name || '',
+        center: { lng: c.center?.lng ?? 0, lat: c.center?.lat ?? 0 },
+        radiusKm: c.radiusKm || 50,
+      })
+    }
+  }
+  return all
+})
 </script>
 
 <style scoped>
 .situation-map-slot {
-  display: flex;
-  flex-direction: column;
+  width: 100%;
   height: 100%;
-  background: #fff;
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  overflow: hidden;
-}
-.map-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid #ebeef5;
-  background: #fafafa;
-}
-.map-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #303133;
-}
-.map-body {
-  flex: 1;
-  position: relative;
-  min-height: 320px;
-}
-.map-placeholder {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: #909399;
-  text-align: center;
-  padding: 16px;
-}
-.map-placeholder-hint {
-  font-size: 12px;
-  color: #c0c4cc;
-  max-width: 320px;
-  line-height: 1.5;
 }
 </style>
