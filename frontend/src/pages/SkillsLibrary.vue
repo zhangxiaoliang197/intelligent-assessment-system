@@ -338,6 +338,7 @@
                   {{ isExpanded(skill.id) ? '收起执行步骤' : '查看执行步骤' }}
                 </el-button>
                 <div class="card-actions">
+                  <el-button text :icon="Document" @click="openMarkdown(skill)">MD 文档</el-button>
                   <el-button v-if="skill.editable" text :icon="Edit" @click="openEditEditor(skill)">编辑</el-button>
                   <el-button
                     v-if="skill.deletable"
@@ -388,6 +389,11 @@
         :data-source-id="dataSourceId"
         @saved="handleEditorSaved"
         @refresh="loadSkills"
+      />
+      <SkillMarkdownDialog
+        v-model="markdownVisible"
+        :skill="markdownSkill"
+        @saved="handleMarkdownSaved"
       />
       <SkillOperationsDrawer
         v-model="operationsVisible"
@@ -522,6 +528,7 @@ import {
   CopyDocument,
   DataAnalysis,
   Delete,
+  Document,
   DocumentChecked,
   Download,
   Edit,
@@ -541,6 +548,7 @@ import {
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import SkillEditorDialog from '@/components/evaluation/SkillEditorDialog.vue'
+import SkillMarkdownDialog from '@/components/evaluation/SkillMarkdownDialog.vue'
 import SkillOperationsDrawer from '@/components/evaluation/SkillOperationsDrawer.vue'
 import {
   cloneEvaluationSkill,
@@ -584,6 +592,8 @@ const favoritesOnly = ref(false)
 const expandedSkillIds = ref<string[]>([])
 const editorVisible = ref(false)
 const editingSkill = ref<EvaluationSkill | null>(null)
+const markdownVisible = ref(false)
+const markdownSkill = ref<EvaluationSkill | null>(null)
 const aiCreatorVisible = ref(false)
 const aiRequirement = ref('')
 const aiMaxSteps = ref(6)
@@ -924,6 +934,16 @@ const openEditEditor = (skill: EvaluationSkill) => {
   if (!skill.editable) return
   editingSkill.value = skill
   editorVisible.value = true
+}
+
+const openMarkdown = (skill: EvaluationSkill) => {
+  markdownSkill.value = skill
+  markdownVisible.value = true
+}
+
+const handleMarkdownSaved = async (skillId: string) => {
+  await loadSkills()
+  markdownSkill.value = skills.value.find(skill => skill.id === skillId) || markdownSkill.value
 }
 
 const handleEditorSaved = async (saved: EvaluationSkill, selectAfterSave: boolean) => {

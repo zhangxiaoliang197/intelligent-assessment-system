@@ -52,6 +52,7 @@ _custom_catalog_warning = ""
 
 _CATALOG_ENV_VAR = "EVALUATION_SKILLS_DIR"
 _LEGACY_CATALOG_ENV_VAR = "EVALUATION_SKILL_CATALOG_PATH"
+_MARKDOWN_OVERRIDE_ENV_VAR = "EVALUATION_SKILL_MD_OVERRIDE_DIR"
 _CATALOG_DIRECTORY = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "config",
@@ -331,6 +332,25 @@ def get_catalog_directory() -> str:
     return os.path.abspath(os.path.expanduser(configured))
 
 
+def get_markdown_override_directory() -> str:
+    """Return the persistent, writable layer for edited built-in Markdown.
+
+    The image-provided catalog remains an auditable baseline.  Online edits go
+    to ``data/skill-markdown-overrides`` so they survive container replacement
+    through the existing QA data volume without requiring the image catalog to
+    be mounted read-write.
+    """
+
+    configured = os.getenv(_MARKDOWN_OVERRIDE_ENV_VAR, "").strip()
+    if not configured:
+        configured = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "data",
+            "skill-markdown-overrides",
+        )
+    return os.path.abspath(os.path.expanduser(configured))
+
+
 def _read_markdown_front_matter(markdown_file: Path) -> tuple[Dict[str, Any], str]:
     """Read YAML front matter and the human-readable body from a Markdown file."""
 
@@ -377,8 +397,11 @@ def _read_markdown_front_matter(markdown_file: Path) -> tuple[Dict[str, Any], st
     return metadata, "\n".join(lines[closing_index + 1 :]).strip()
 
 
-@lru_cache(maxsize=4)
-def _load_catalog_cached(catalog_directory: str) -> Dict[str, Any]:
+@lru_cache(maxsize=8)
+def _load_catalog_cached(
+    catalog_directory: str,
+    markdown_override_directory: str,
+) -> Dict[str, Any]:
     catalog_path = Path(catalog_directory)
     if not catalog_path.exists():
         raise SkillCatalogError(
@@ -408,7 +431,10 @@ def _load_catalog_cached(catalog_directory: str) -> Dict[str, Any]:
     ordered_skills: List[tuple[int, Dict[str, Any]]] = []
     seen_orders: set[int] = set()
     seen_ids: set[str] = set()
-    for skill_file in skill_files:
+    override_root = Path(markdown_override_directory)
+    for baseline_skill_file in skill_files:
+        override_file = override_root / baseline_skill_file.parent.name / _SKILL_FILE
+        skill_file = override_file if override_file.is_file() else baseline_skill_file
         skill, body = _read_markdown_front_matter(skill_file)
         order = skill.pop("order", None)
         if not isinstance(order, int) or isinstance(order, bool) or order < 1:
@@ -434,28 +460,42 @@ def _load_catalog_cached(catalog_directory: str) -> Dict[str, Any]:
 
 def load_catalog() -> Dict[str, Any]:
     """Return a defensive copy of the validated built-in Skill catalog."""
-    return copy.deepcopy(_load_catalog_cached(get_catalog_directory()))
+    return copy.deepcopy(
+        _load_catalog_cached(
+            get_catalog_directory(),
+            get_markdown_override_directory(),
+        )
+    )
 
 
 def get_catalog_diagnostics() -> Dict[str, Any]:
     """Return deployment-safe readiness information for health checks."""
 
     catalog_directory = get_catalog_directory()
+    override_directory = get_markdown_override_directory()
     try:
-        catalog = _load_catalog_cached(catalog_directory)
+        catalog = _load_catalog_cached(catalog_directory, override_directory)
     except SkillCatalogError as exc:
         return {
             "ready": False,
             "path": catalog_directory,
+            "overridePath": override_directory,
             "skillCount": 0,
             "error": str(exc),
         }
     return {
         "ready": True,
         "path": catalog_directory,
+        "overridePath": override_directory,
         "skillCount": len(catalog["skills"]),
         "error": "",
     }
+
+
+def clear_catalog_cache() -> None:
+    """Invalidate the parsed catalog after a Markdown override is saved."""
+
+    _load_catalog_cached.cache_clear()
 
 
 def _decorate_skill(
@@ -744,6 +784,7 @@ def _normalize_custom_skill(
             "timeoutSeconds": int(raw_orchestration.get("timeoutSeconds", 600) or 600),
             "failurePolicy": _clean_text(raw_orchestration.get("failurePolicy")) or "continue",
         },
+        "markdownBody": _clean_text(payload.get("markdownBody")) or "",
         "revision": revision,
         "createdAt": created_at,
         "updatedAt": updated_at,

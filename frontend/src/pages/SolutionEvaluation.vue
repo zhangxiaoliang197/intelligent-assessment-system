@@ -158,6 +158,15 @@
             <el-icon class="skill-plan-arrow"><ArrowRight /></el-icon>
             <span class="skill-plan-step output">生成结论</span>
           </div>
+          <el-button
+            class="skill-markdown-button"
+            size="small"
+            plain
+            :icon="Document"
+            @click="skillMarkdownVisible = true"
+          >
+            SKILL.md
+          </el-button>
         </div>
 
         <!-- 内容区 -->
@@ -647,6 +656,11 @@
           @deleted="onSkillDeleted"
         />
       </el-drawer>
+      <SkillMarkdownDialog
+        v-model="skillMarkdownVisible"
+        :skill="selectedSkill"
+        @saved="handleSkillMarkdownSaved"
+      />
     </div>
   </Layout>
 </template>
@@ -678,6 +692,7 @@ import {
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
 import SkillsLibrary from '@/pages/SkillsLibrary.vue'
+import SkillMarkdownDialog from '@/components/evaluation/SkillMarkdownDialog.vue'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData, extractGeoFromResults } from '@/composables/useMapPrompt'
 import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
@@ -781,6 +796,7 @@ const selectedDataSourceName = ref<string>('')
 const evaluationSkills = ref<EvaluationSkill[]>([])
 const selectedSkillId = ref<string>('')
 const skillLibraryVisible = ref(false)
+const skillMarkdownVisible = ref(false)
 const dataSourceDialogVisible = ref(false)
 const showExecutionPanel = ref(true)
 const chartViewMode = ref('chart')
@@ -1156,6 +1172,23 @@ const syncSkillsFromLibrary = (skills: EvaluationSkill[]) => {
   if (selectedSkillId.value && !skills.some(skill => skill.id === selectedSkillId.value)) {
     selectedSkillId.value = ''
     executionSteps.value = []
+  }
+}
+
+const handleSkillMarkdownSaved = async (skillId: string) => {
+  if (selectedDataSourceId.value) {
+    await refreshSkillsForDataSource(selectedDataSourceId.value)
+    return
+  }
+  try {
+    const catalog = await listEvaluationSkills()
+    evaluationSkills.value = catalog.skills
+    if (!catalog.skills.some(skill => skill.id === skillId)) {
+      selectedSkillId.value = ''
+      skillMarkdownVisible.value = false
+    }
+  } catch (error: any) {
+    ElMessage.warning(error?.serverMessage || 'SKILL.md 已保存，但技能列表刷新失败')
   }
 }
 
@@ -2080,6 +2113,11 @@ onMounted(async () => {
   min-width: 0;
   overflow-x: auto;
   padding-bottom: 2px;
+}
+
+.skill-markdown-button {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .skill-plan-step {

@@ -6,7 +6,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY python/situation-service/ .
 ENV LOG_DIR=/app/logs \
     LOG_ENV=prod \
-    LOG_LEVEL=INFO
-RUN mkdir -p /app/logs
+    LOG_LEVEL=INFO \
+    SITUATION_SKILL_DB=/app/data/situation_skills.sqlite3 \
+    SITUATION_SKILL_MD_OVERRIDE_DIR=/app/data/situation-skill-markdown-overrides
+RUN mkdir -p /app/logs /app/data
 EXPOSE 10257
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import json,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:10257/situation/health',timeout=3)); health=data.get('data',{}); assert data.get('success') and health.get('skills',0)>=30 and health.get('skillStorage')=='healthy'"
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10257"]

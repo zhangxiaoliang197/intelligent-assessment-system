@@ -1,6 +1,6 @@
 #!/bin/bash
 # ========================================
-# 同步 python/common/logging_config.py 到 5 个 Python 服务目录
+# 同步 python/common/logging_config.py 到 6 个 Python 服务目录
 # ========================================
 set -euo pipefail
 
@@ -12,9 +12,9 @@ if [ ! -f "$SRC" ]; then
     exit 1
 fi
 
-SERVICES=(knowledge-service qa-service indicator-service evaluation-service ontology-service)
+SERVICES=(knowledge-service qa-service indicator-service evaluation-service ontology-service situation-service)
 
-echo "同步 logging_config.py 到 5 个 Python 服务..."
+echo "同步 logging_config.py 到 6 个 Python 服务..."
 for svc in "${SERVICES[@]}"; do
     DST="$PROJECT_DIR/python/$svc/logging_config.py"
     cp -f "$SRC" "$DST"

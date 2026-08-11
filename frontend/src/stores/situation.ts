@@ -9,6 +9,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '@/services/api'
+import type { SituationSkillSummary } from '@/types/situationSkill'
 
 export interface ChartSpec {
   chartId: string
@@ -53,6 +54,8 @@ export const useSituationStore = defineStore('situation', () => {
   const query = ref('')
   const source = ref<'manual' | 'qa' | 'indicator' | 'evaluation'>('manual')
   const title = ref('')
+  const activeSkill = ref<SituationSkillSummary | null>(null)
+  const skillParameters = ref<Record<string, unknown>>({})
 
   // ── 统一态势数据集（图表与地图同源）──
   const datasets = ref<DatasetSummary[]>([])
@@ -84,6 +87,8 @@ export const useSituationStore = defineStore('situation', () => {
     query.value = ''
     source.value = 'manual'
     title.value = ''
+    activeSkill.value = null
+    skillParameters.value = {}
     datasets.value = []
     activeDatasetId.value = null
     charts.value = []
@@ -114,6 +119,15 @@ export const useSituationStore = defineStore('situation', () => {
     title.value = data.title || snapshot.title || ''
     query.value = data.query || snapshot.query || ''
     source.value = (data.source || snapshot.source || 'manual') as any
+    const skillId = data.skillId || snapshot.skillId || ''
+    const skillName = data.skillName || snapshot.skillName || ''
+    activeSkill.value = skillId ? {
+      id: skillId,
+      name: skillName || skillId,
+      category: data.skillCategory || snapshot.skillCategory || '态势 Skill',
+      description: '该历史产物由此 Skill 生成',
+    } : null
+    skillParameters.value = snapshot.skillParameters || {}
     status.value = (data.status || snapshot.status || 'ready') as SituationStatus
     charts.value = snapshot.charts || []
     mapLayers.value = snapshot.map?.layers || []
@@ -204,18 +218,32 @@ export const useSituationStore = defineStore('situation', () => {
     // 重置产物字段，保留 query/source
     const _query = query.value
     const _source = source.value
+    const _skill = activeSkill.value
+    const _skillParameters = skillParameters.value
     reset()
     query.value = _query
     source.value = _source
+    activeSkill.value = _skill
+    skillParameters.value = _skillParameters
     status.value = 'generating'
 
     const resp: any = await api.post('/situation/generate', {
       query: query.value,
       source: source.value,
+      skillId: activeSkill.value?.id || '',
+      skillParameters: skillParameters.value,
     })
     if (!resp || resp.success === false) return
     const data = resp.data || resp
     reportId.value = data.reportId
+    if (data.skill) {
+      activeSkill.value = {
+        id: data.skill.id,
+        name: data.skill.name,
+        category: data.skill.category || activeSkill.value?.category || '态势 Skill',
+        description: activeSkill.value?.description || '使用专业 Skill 编排生成',
+      }
+    }
     subscribeSSE(data.reportId)
   }
 
@@ -277,10 +305,26 @@ export const useSituationStore = defineStore('situation', () => {
     const lyr = mapLayers.value.find((x) => x.layerId === layerId)
     if (lyr) lyr.layerConfig.visible = visible
   }
+  function setActiveSkill(skill: SituationSkillSummary | null) {
+    const changed = activeSkill.value?.id !== skill?.id
+    activeSkill.value = skill
+    if (!skill) {
+      skillParameters.value = {}
+    } else if (changed) {
+      skillParameters.value = Object.fromEntries(
+        (skill.parameters || [])
+          .filter((parameter) => parameter.default !== undefined && parameter.default !== '')
+          .map((parameter) => [parameter.key, parameter.default]),
+      )
+    }
+  }
+  function setSkillParameters(parameters: Record<string, unknown>) {
+    skillParameters.value = { ...parameters }
+  }
 
   return {
     // state
-    reportId, status, query, source, title,
+    reportId, status, query, source, title, activeSkill, skillParameters,
     datasets, activeDatasetId, charts, mapLayers, narrative,
     selectedRegion, selectedTimeRange, filters, viewport,
     eventSource, errorMsg,
@@ -290,5 +334,6 @@ export const useSituationStore = defineStore('situation', () => {
     reset, initFromDraft, loadReport, applyEvent, generate,
     subscribeSSE, closeStream, refresh,
     setSelectedRegion, setSelectedTimeRange, setViewport, toggleLayer,
+    setActiveSkill, setSkillParameters,
   }
 })

@@ -30,6 +30,7 @@ import type {
   SkillPreflightResult,
   SkillQualityOverview,
   SkillQualityReport,
+  SkillMarkdownDocument,
   SkillSchedule,
   SkillSchedulePayload,
   SkillShare,
@@ -267,6 +268,44 @@ export const listEvaluationSkills = async (
 
 export const getEvaluationSkill = async (skillId: string): Promise<EvaluationSkill> =>
   normalizeEvaluationSkill(await api.get<unknown>(`/evaluation/skills/${encodeURIComponent(skillId)}`))
+
+const normalizeSkillMarkdownDocument = (value: unknown): SkillMarkdownDocument => {
+  const root = asRecord(unwrapData(value))
+  const document = asRecord(root.document ?? root)
+  const storage = asString(document.storage)
+  return {
+    skillId: asString(document.skillId ?? document.skill_id),
+    skillName: asString(document.skillName ?? document.skill_name),
+    source: asString(document.source) === 'custom' ? 'custom' : 'builtin',
+    content: asString(document.content),
+    contentHash: asString(document.contentHash ?? document.content_hash),
+    editable: asBoolean(document.editable),
+    storage: ['override', 'custom'].includes(storage)
+      ? storage as 'override' | 'custom'
+      : 'catalog',
+    overridden: asBoolean(document.overridden),
+    relativePath: asString(document.relativePath ?? document.relative_path),
+    revision: Number(document.revision) || 1,
+    lastModified: asString(document.lastModified ?? document.last_modified)
+  }
+}
+
+export const getEvaluationSkillMarkdown = async (
+  skillId: string
+): Promise<SkillMarkdownDocument> => normalizeSkillMarkdownDocument(
+  await api.get<unknown>(`/evaluation/skills/${encodeURIComponent(skillId)}/markdown`)
+)
+
+export const updateEvaluationSkillMarkdown = async (
+  skillId: string,
+  content: string,
+  expectedHash: string
+): Promise<SkillMarkdownDocument> => normalizeSkillMarkdownDocument(
+  await api.put<unknown>(`/evaluation/skills/${encodeURIComponent(skillId)}/markdown`, {
+    content,
+    expectedHash
+  })
+)
 
 export const recommendEvaluationSkills = async (
   params: RecommendEvaluationSkillsParams

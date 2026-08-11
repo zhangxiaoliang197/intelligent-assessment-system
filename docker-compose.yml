@@ -79,6 +79,7 @@ services:
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
       - ONTOLOGY_SERVICE_URL=http://assessment-ontology:10256
       - EVALUATION_SKILLS_DIR=/app/config/skills
+      - EVALUATION_SKILL_MD_OVERRIDE_DIR=/app/data/skill-markdown-overrides
       - LOG_ENV=${LOG_ENV:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -182,6 +183,8 @@ services:
       - QA_SERVICE_URL=http://assessment-qa:10253
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
       - INDICATOR_SERVICE_URL=http://assessment-indicator:10254
+      - SITUATION_SKILL_DB=/app/data/situation_skills.sqlite3
+      - SITUATION_SKILL_MD_OVERRIDE_DIR=/app/data/situation-skill-markdown-overrides
       - LLM_MAX_TOKENS=24000
       - LOG_ENV=${LOG_ENV:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -189,6 +192,7 @@ services:
       - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-14}
       - LOG_MAX_SIZE_MB=${LOG_MAX_SIZE_MB:-100}
     volumes:
+      - situation-data:/app/data
       - ./logs/situation-service:/app/logs
     depends_on:
       - admin-service
@@ -248,4 +252,5 @@ volumes:
   indicator-data:
   evaluation-data:
   ontology-data:
+  situation-data:
   drivers-data:

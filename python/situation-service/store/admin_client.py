@@ -65,3 +65,8 @@ def create_share(report_id: str) -> dict:
 
 def get_share(token: str) -> dict:
     return _http("GET", f"/api/admin/situation/share/{token}")
+
+
+def list_datasets() -> dict:
+    """读取已注册数据集，供 Skill 执行前检查匹配物理表。"""
+    return _http("GET", "/api/admin/dataset/list", timeout=min(config.HTTP_TIMEOUT, 5))

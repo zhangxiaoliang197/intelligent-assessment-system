@@ -1681,6 +1681,14 @@ def load_db() -> None:
         # 读取本体数据文件
         data = load_json_with_backup(_resolve_ontology_file(ont.id), {'entities': [], 'relations': []})
         ont_meta = data.get('ontology', {}) if isinstance(data, dict) else {}
+
+        # 数据文件缺失或 ontology 元数据不完整时，以索引条目为准，
+        # 避免迁移出残缺元数据（仅 schema_version）导致后续构造失败
+        if not isinstance(ont_meta, dict) or not ont_meta.get('id'):
+            data = dict(data) if isinstance(data, dict) else {}
+            data['ontology'] = dict(item)
+            ont_meta = data['ontology']
+
         data_schema_version = ont_meta.get('schema_version', 1) if isinstance(ont_meta, dict) else 1
 
         # 需要迁移：调用迁移函数，回写文件

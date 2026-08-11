@@ -19,7 +19,7 @@ Write-Host ""
 
 # ---- 同步公共日志配置到各 Python 服务目录 ----
 Write-Host ">>> 同步 logging_config.py 到各 Python 服务..." -ForegroundColor Yellow
-$services = @("knowledge-service","qa-service","indicator-service","evaluation-service","ontology-service")
+$services = @("knowledge-service","qa-service","indicator-service","evaluation-service","ontology-service","situation-service")
 $srcLogConfig = "$PROJECT\python\common\logging_config.py"
 foreach ($svc in $services) {
     $dst = "$PROJECT\python\$svc\logging_config.py"
@@ -70,6 +70,14 @@ from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert le
             exit 1
         }
     }
+    if ($ImageName -eq "situation") {
+        Write-Host ">>> 运行态势 Skill 测试与目录校验..." -ForegroundColor Yellow
+        docker run --rm --entrypoint python "assessment-${ImageName}:latest" -m unittest discover -s tests -v
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ERROR: 态势 Skill 测试失败，停止导出!" -ForegroundColor Red
+            exit 1
+        }
+    }
 
     Write-Host ">>> 导出 assessment-$ImageName.tar ..." -ForegroundColor Green
     docker save -o "$IMAGES_DIR\assessment-$ImageName.tar" "assessment-${ImageName}:latest"
@@ -78,10 +86,10 @@ from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert le
     Write-Host "  [OK] assessment-$ImageName.tar ($([math]::Round($size, 1)) MB)" -ForegroundColor Green
 }
 
-# ---- 阶段1: Python 服务 (5个) ----
+# ---- 阶段1: Python 服务 (6个) ----
 Write-Host ""
 Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host "阶段 1/4: 构建 Python 微服务 (5个)" -ForegroundColor Cyan
+Write-Host "阶段 1/4: 构建 Python 微服务 (6个)" -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 
 Build-And-Save "knowledge"             "knowledge"             "10252" "知识库服务"
@@ -89,6 +97,7 @@ Build-And-Save "qa"                    "qa"                    "10253" "智能�
 Build-And-Save "indicator"             "indicator"             "10254" "指标分析服务"
 Build-And-Save "evaluation"            "evaluation"            "10255" "评估分析服务"
 Build-And-Save "ontology"              "ontology"              "10256" "本体模型服务"
+Build-And-Save "situation"             "situation"             "10257" "态势图服务"
 
 # ---- 阶段2: Java 服务 (1个) ----
 Write-Host ""
@@ -127,7 +136,7 @@ Write-Host "  [OK] assessment-qdrant.tar ($([math]::Round($size, 1)) MB)" -Foreg
 # ---- 汇总 ----
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "全部 8 个镜像构建完成!" -ForegroundColor Green
+Write-Host "全部 9 个镜像构建完成!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Get-ChildItem $IMAGES_DIR | ForEach-Object {

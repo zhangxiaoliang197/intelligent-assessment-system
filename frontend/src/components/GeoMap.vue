@@ -1,6 +1,6 @@
 <template>
   <div class="geo-map-container">
-    <div class="geo-map-header">
+    <div v-if="showHeader" class="geo-map-header">
       <span class="geo-map-title">坐标可视化</span>
       <div class="geo-map-header-right">
         <span class="geo-map-count">{{ points.length }} 个AI坐标点</span>
@@ -19,7 +19,7 @@
       </div>
     </div>
     <div ref="mapContainer" class="geo-map-content"></div>
-    <div v-if="points.length > 0" class="geo-point-table">
+    <div v-if="showTable && points.length > 0" class="geo-point-table">
       <div class="geo-table-header">
         <span class="geo-table-title">提取坐标点</span>
       </div>
@@ -59,12 +59,24 @@ import { type GeoRoute, type GeoArea } from '@/utils/geoAnnotation'
 import { type CircleArea } from '@/utils/mapAnnotationParser'
 import api from '@/services/api'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   points: GeoPoint[]
   routes?: GeoRoute[]
   areas?: GeoArea[]
   circles?: CircleArea[]
   title?: string
+  showHeader?: boolean   // 态势图适配器传 false，隐藏“坐标可视化”头部
+  showTable?: boolean    // 态势图适配器传 false，隐藏坐标点表格
+}>(), {
+  showHeader: true,
+  showTable: true,
+})
+
+const emit = defineEmits<{
+  (e: 'marker-click', payload: { point: GeoPoint; layerId?: string }): void
+  (e: 'region-select', payload: { regionId: string; name: string; geometry?: any }): void
+  (e: 'draw-end', payload: { type: string; geojson: any; name?: string }): void
+  (e: 'viewport-change', vp: { center: [number, number]; zoom: number }): void
 }>()
 
 const mapContainer = ref<HTMLElement | null>(null)
@@ -167,6 +179,11 @@ const fitViewport = computed(() => {
 function transformCoord(lng: number, lat: number): [number, number] {
   const result = gcoord.transform([lng, lat], gcoord.WGS84, gcoord.GCJ02)
   return [result[1], result[0]]
+}
+
+/** 手绘几何（GCJ02，画在 GCJ02 地图上）逆转为 WGS84。gcoord 会原地修改 GeoJSON，先深拷贝。 */
+function toWgs84GeoJSON(gj: any): any {
+  return gcoord.transform(JSON.parse(JSON.stringify(gj)), gcoord.GCJ02, gcoord.WGS84)
 }
 
 function buildTileLayers(layerConfigs: MapLayerConfig[]) {
@@ -388,6 +405,13 @@ function initDrawControl() {
 
     const initialName = defaultNames[e.layerType] || '手绘元素'
     bindEditablePopup(layer, initialName)
+
+    const name = layer._customName || initialName
+    emit('draw-end', {
+      type: e.layerType === 'rectangle' ? 'polygon' : e.layerType,
+      geojson: toWgs84GeoJSON(layer.toGeoJSON()),
+      name,
+    })
   })
 
   // ── 编辑完成事件 ──
@@ -429,12 +453,20 @@ async function initMap() {
   initDrawControl()
 
   map.on('zoomend', updateLayerOpacity)
+  map.on('moveend', onViewportChange)
   updateLayerOpacity()
 
   addMarkers()
   addRoutes()
   addAreas()
   addCircles()
+}
+
+/** 地图平移/缩放结束后向外发送 viewport（仅 emit，不回写，避免与 props 形成循环）。 */
+function onViewportChange() {
+  if (!map) return
+  const c = map.getCenter()
+  emit('viewport-change', { center: [c.lat, c.lng], zoom: map.getZoom() })
 }
 
 /**
@@ -495,7 +527,8 @@ function addMarkers() {
   })
 
   if (spiderLineLayer) { map!.removeLayer(spiderLineLayer) }
-  spiderLineLayer = L.featureGroup().addTo(map!)
+  const currentSpiderLineLayer = L.featureGroup().addTo(map!)
+  spiderLineLayer = currentSpiderLineLayer
 
   groups.forEach(({ lat, lng, points: group }) => {
     const n = group.length
@@ -518,7 +551,7 @@ function addMarkers() {
           weight: 1.5,
           opacity: 0.5,
           dashArray: '4 3',
-        }).addTo(spiderLineLayer)
+        }).addTo(currentSpiderLineLayer)
       }
 
       // 同坐标点使用同一颜色（基于坐标 hash，而非名称）
@@ -539,6 +572,7 @@ function addMarkers() {
 
       circle.bindPopup(tooltip)
       circle.on('mouseover', () => { circle.openPopup() })
+      circle.on('click', () => { emit('marker-click', { point: p, layerId: (p as any)._layerId }) })
       circleMarkers.push(circle)
 
       const marker = L.marker([offsetLat, offsetLng], {
@@ -619,6 +653,14 @@ function addAreas() {
       fillColor: color,
     }).addTo(map!)
     polygon.bindPopup(`<strong>区域: ${area.name}</strong><br/>${area.points.length} 个顶点`)
+    polygon.on('click', () => {
+      const a = area as any
+      emit('region-select', {
+        regionId: a._regionId || area.name,
+        name: area.name,
+        geometry: toWgs84GeoJSON(polygon.toGeoJSON()),
+      })
+    })
     areaLayers.push(polygon)
   })
 }
@@ -675,6 +717,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (map) {
     map.off('zoomend', updateLayerOpacity)
+    map.off('moveend', onViewportChange)
     // 清理绘制控件事件
     map.off(L.Draw.Event.CREATED)
     map.off(L.Draw.Event.EDITED)

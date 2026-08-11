@@ -44,6 +44,11 @@ from agents.skill_quality_service import (
     evaluate_execution_quality,
     get_skill_operations_overview,
 )
+from agents.skill_markdown_service import (
+    MAX_MARKDOWN_BYTES,
+    get_skill_markdown,
+    update_skill_markdown,
+)
 from agents.skill_runner import (
     cancel_skill_run,
     get_skill_execution,
@@ -319,6 +324,18 @@ class SkillQualityEvaluateRequest(BaseModel):
     )
 
 
+class SkillMarkdownUpdateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    content: str = Field(min_length=1, max_length=MAX_MARKDOWN_BYTES)
+    expected_hash: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[a-f0-9]{64}$",
+        alias="expectedHash",
+    )
+
+
 @skill_api_router.post("/skills/ai-draft")
 async def create_ai_skill_draft(payload: SkillAiDraftRequest, request: Request):
     """Generate an editable private draft; normal create/publish governance still applies."""
@@ -390,6 +407,40 @@ async def get_quality_overview(
         days=days,
     )
     return {"success": True, "overview": overview, **overview}
+
+
+@skill_api_router.get("/skills/{skill_id}/markdown")
+async def get_skill_markdown_document(skill_id: str, request: Request):
+    """Return a visible Skill as its complete, round-trippable SKILL.md."""
+
+    actor = skill_actor_from_request(request)
+    try:
+        document = await asyncio.to_thread(get_skill_markdown, skill_id, actor)
+    except SkillCatalogError as exc:
+        _raise_catalog_error(exc)
+    return {"success": True, "document": document}
+
+
+@skill_api_router.put("/skills/{skill_id}/markdown")
+async def update_skill_markdown_document(
+    skill_id: str,
+    payload: SkillMarkdownUpdateRequest,
+    request: Request,
+):
+    """Validate and persist a SKILL.md with optimistic concurrency control."""
+
+    actor = skill_actor_from_request(request)
+    try:
+        document = await asyncio.to_thread(
+            update_skill_markdown,
+            skill_id,
+            payload.content,
+            payload.expected_hash,
+            actor,
+        )
+    except SkillCatalogError as exc:
+        _raise_catalog_error(exc)
+    return {"success": True, "document": document}
 
 
 @skill_api_router.put("/skills/{skill_id}/favorite")
