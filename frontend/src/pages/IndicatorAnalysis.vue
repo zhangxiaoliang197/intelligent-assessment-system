@@ -374,8 +374,8 @@
               v-model="inputMessage"
               type="textarea"
               :rows="3"
-              placeholder="输入指标需求，如：帮我分析火力打击任务完成度指标..."
-              @keydown.enter.exact.prevent="() => analyzeIndicator()"
+              placeholder="输入指标需求，Enter 发送，Shift+Enter 换行"
+              @keydown="sendMessageOnEnter($event, () => analyzeIndicator())"
             />
             <div class="input-actions">
               <el-tooltip :content="isListening ? '停止录音' : '语音输入'" placement="top">
@@ -506,6 +506,7 @@ import { processMapData } from '@/composables/useMapPrompt'
 import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
 import api from '@/services/api'
 import { renderMarkdown } from '@/utils/markdown'
+import { sendMessageOnEnter } from '@/utils/messageInput'
 
 const router = useRouter()
 

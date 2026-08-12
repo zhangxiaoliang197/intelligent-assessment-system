@@ -26,7 +26,7 @@ class SituationSkillGovernanceTests(unittest.TestCase):
         self.original_db = config.SITUATION_SKILL_DB
         config.SITUATION_SKILL_DB = f"{self.tempdir.name}/skills.sqlite3"
         skill_store._SCHEMA_READY = False
-        preflight_module._SOURCE_CACHE.update(expires=0.0, tables=set(), adminReady=False)
+        preflight_module._SOURCE_CACHE.clear()
 
     def tearDown(self):
         config.SITUATION_SKILL_DB = self.original_db

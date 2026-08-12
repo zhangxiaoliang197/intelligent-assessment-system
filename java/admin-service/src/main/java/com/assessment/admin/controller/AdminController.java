@@ -490,12 +490,23 @@ public class AdminController {
             m.put("databaseId", ds.getDatabaseId());
             m.put("tableName", ds.getTableName());
             m.put("sql", ds.getSqlText());
+            m.put("schemaVersion", ds.getSchemaVersion() != null ? ds.getSchemaVersion() : 1);
+            m.put("sensitiveColumns", splitCsv(ds.getSensitiveColumns()));
             m.put("records", ds.getRecords());
             m.put("lastExecuted", ds.getLastExecuted() != null ? ds.getLastExecuted().toString() : "");
             m.put("createTime", ds.getCreateTime() != null ? ds.getCreateTime().toString() : "");
             list.add(m);
         }
         return ResponseEntity.ok(Map.of("success", true, "total", list.size(), "datasets", list));
+    }
+
+    private List<String> splitCsv(String csv) {
+        if (csv == null || csv.isBlank()) return List.of();
+        List<String> result = new ArrayList<>();
+        for (String value : csv.split(",")) {
+            if (!value.isBlank()) result.add(value.trim());
+        }
+        return result;
     }
 
     @PostMapping("/dataset")
@@ -507,6 +518,11 @@ public class AdminController {
         ds.setDatabaseId((String) body.getOrDefault("databaseId", ""));
         ds.setTableName((String) body.getOrDefault("tableName", ""));
         ds.setSqlText((String) body.getOrDefault("sql", ""));
+        ds.setAllowedUserIds((String) body.getOrDefault("allowedUserIds", ""));
+        ds.setAllowedTeamIds((String) body.getOrDefault("allowedTeamIds", ""));
+        ds.setAllowedColumns((String) body.getOrDefault("allowedColumns", ""));
+        ds.setSensitiveColumns((String) body.getOrDefault("sensitiveColumns", ""));
+        ds.setSchemaVersion(1);
         datasetRepo.save(ds);
         return ResponseEntity.ok(Map.of("success", true, "message", "数据集已保存", "id", ds.getId()));
     }
@@ -529,6 +545,11 @@ public class AdminController {
         if (body.containsKey("databaseId")) ds.setDatabaseId((String) body.get("databaseId"));
         if (body.containsKey("tableName")) ds.setTableName((String) body.get("tableName"));
         if (body.containsKey("sql")) ds.setSqlText((String) body.get("sql"));
+        if (body.containsKey("allowedUserIds")) ds.setAllowedUserIds((String) body.get("allowedUserIds"));
+        if (body.containsKey("allowedTeamIds")) ds.setAllowedTeamIds((String) body.get("allowedTeamIds"));
+        if (body.containsKey("allowedColumns")) ds.setAllowedColumns((String) body.get("allowedColumns"));
+        if (body.containsKey("sensitiveColumns")) ds.setSensitiveColumns((String) body.get("sensitiveColumns"));
+        ds.setSchemaVersion((ds.getSchemaVersion() != null ? ds.getSchemaVersion() : 1) + 1);
         datasetRepo.save(ds);
         return ResponseEntity.ok(Map.of("success", true, "message", "数据集已更新"));
     }

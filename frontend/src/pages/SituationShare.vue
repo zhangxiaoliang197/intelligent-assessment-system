@@ -53,6 +53,7 @@ const { exportPDF, exportImage } = useSituationExport()
 const loading = ref(true)
 
 onMounted(async () => {
+  store.reset()
   const token = route.params.token as string
   try {
     const resp: any = await api.get(`/situation/share/${token}`)
@@ -60,6 +61,7 @@ onMounted(async () => {
       store.loadReport(resp.data || resp)
     }
   } catch (e) {
+    store.reset()
     console.warn('分享加载失败', e)
   } finally {
     loading.value = false

@@ -10,6 +10,9 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Stopping all services..." -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
+# 注意：GeoServer (:9090) 故意不在此列表 —— 它是仓库外的常驻外部服务，由 start.ps1 按
+# ensure-up 语义管理（已在运行就跳过，从不强杀）。如需停止请用其 Jetty STOP 端口 8079
+# （-DSTOP.KEY=geoserver）或 bin\shutdown.bat。
 $ports = @(10086, 10252, 10253, 10254, 10255, 10256, 10257, 10258)
 $names = @("Frontend","Knowledge","QA","Indicator","Evaluation","Ontology","Situation","Admin")
 
@@ -67,7 +70,7 @@ foreach ($port in $ports) {
 if ($stillRunning) {
     Write-Host "  [WARN] Ports still in use: $($stillRunning -join ', ')" -ForegroundColor Yellow
 } else {
-    Write-Host "  All ports released." -ForegroundColor Green
+    Write-Host "  All tracked ports released (GeoServer :9090 为外部常驻服务，不在此范围内)." -ForegroundColor Green
 }
 
 Write-Host ""

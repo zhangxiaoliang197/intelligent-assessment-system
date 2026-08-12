@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 import yaml
+import hashlib
 
 from .store import (
     SkillStoreConflict,
@@ -240,6 +241,22 @@ def _parameter_definition(hint: str, index: int) -> Dict[str, Any]:
         "default": "",
         "placeholder": f"请输入{normalized}" if normalized else "请输入参数",
     }
+
+
+def _parameter_binding(definition: Dict[str, Any]) -> Dict[str, Any]:
+    """Compile a parameter definition into a deterministic workflow operator."""
+    explicit = definition.get("binding")
+    if isinstance(explicit, dict) and explicit.get("operator"):
+        return copy.deepcopy(explicit)
+    key = str(definition.get("key") or "")
+    lowered = key.lower()
+    if any(token in lowered for token in ("top n", "数量", "条数")):
+        return {"operator": "limit"}
+    if any(token in key for token in ("阈值", "下限", "半径")):
+        return {"operator": "numeric-threshold", "field": key}
+    if any(token in key for token in ("天数", "时间窗", "日期", "时间范围")):
+        return {"operator": "time-window", "field": key}
+    return {"operator": "equals", "field": key}
 
 
 def _enrich_skill(skill: Dict[str, Any], *, builtin: bool) -> Dict[str, Any]:
@@ -567,6 +584,23 @@ def build_skill_context(
         "mapLayerTypes": skill["mapLayerTypes"],
         "focusMetrics": skill["focusMetrics"],
         "analysisGoal": skill["analysisGoal"],
+        "workflow": [
+            {
+                "sequence": index,
+                "name": step,
+                "operator": "collect" if index == 1 else "visualize" if index == len(skill["steps"]) else "transform",
+            }
+            for index, step in enumerate(skill["steps"], start=1)
+        ],
+        "parameterBindings": {
+            definition["key"]: _parameter_binding(definition)
+            for definition in skill.get("parameters", [])
+        },
+        "revision": int(skill.get("revision") or 1),
+        "version": int(skill.get("version") or 1),
+        "contentHash": hashlib.sha256(
+            json.dumps(skill, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest(),
     }
 
 
@@ -612,6 +646,9 @@ def update_skill_definition(
     payload: Dict[str, Any],
     user_id: str,
     expected_revision: Optional[int] = None,
+    *,
+    allow_any_editor: bool = False,
+    preserve_status: bool = False,
 ) -> Dict[str, Any]:
     if any(skill["id"] == skill_id for skill in _builtin_skills()):
         raise SkillCatalogError("内置 Skill 只读，可先复制为自定义 Skill")
@@ -625,7 +662,14 @@ def update_skill_definition(
     definition = _custom_definition(retained_payload, skill_id=skill_id)
     try:
         return _enrich_skill(
-            update_custom_skill(skill_id, definition, user_id, expected_revision),
+            update_custom_skill(
+                skill_id,
+                definition,
+                user_id,
+                expected_revision,
+                allow_any_editor=allow_any_editor,
+                preserve_status=preserve_status,
+            ),
             builtin=False,
         )
     except (SkillStoreConflict, SkillStoreNotFound, SkillStoreError) as exc:

@@ -29,7 +29,12 @@ public class DataQueryController {
     private SqlExecutionService sqlExecutionService;
 
     @PostMapping("/execute")
-    public ResponseEntity<Map<String, Object>> executeQuery(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<Map<String, Object>> executeQuery(
+            @RequestHeader(value = "X-User-Role", required = false) String role,
+            @RequestBody Map<String, Object> body) {
+        if (!"admin".equalsIgnoreCase(role)) {
+            return ResponseEntity.status(403).body(errorMap("仅管理员可执行临时 SQL"));
+        }
         String databaseId = (String) body.get("databaseId");
         String sql = (String) body.get("sql");
 

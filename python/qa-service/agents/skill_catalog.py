@@ -855,6 +855,7 @@ def update_custom_skill(
     *,
     action: str = "update",
     change_note: str = "",
+    allow_any_editor: bool = False,
 ) -> Dict[str, Any]:
     principal = coerce_skill_actor(actor)
     payload = copy.deepcopy(payload)
@@ -867,7 +868,7 @@ def update_custom_skill(
             raise SkillStoreUnavailableError(get_custom_catalog_warning())
         raise SkillNotFoundError(f"自定义 Skill 不存在: {skill_id}")
     permissions = skill_permissions(current, principal)
-    if not permissions["editable"]:
+    if not permissions["editable"] and not allow_any_editor:
         raise SkillPermissionError("当前用户没有编辑此 Skill 的权限")
     requested_status = str(payload.get("status") or current.get("status") or "draft").lower()
     if (

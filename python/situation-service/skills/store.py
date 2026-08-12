@@ -202,6 +202,9 @@ def update_custom_skill(
     definition: Dict[str, Any],
     owner_id: str,
     expected_revision: Optional[int] = None,
+    *,
+    allow_any_editor: bool = False,
+    preserve_status: bool = False,
 ) -> Dict[str, Any]:
     now = _utc_now()
     try:
@@ -211,13 +214,16 @@ def update_custom_skill(
                 "SELECT * FROM situation_custom_skills WHERE id = ?",
                 (skill_id,),
             ).fetchone()
-            if not row or row["owner_id"] != owner_id:
+            if not row or (row["owner_id"] != owner_id and not allow_any_editor):
                 raise SkillStoreNotFound("自定义 Skill 不存在或无权编辑")
             if expected_revision is not None and row["revision"] != expected_revision:
                 raise SkillStoreConflict(
                     f"Skill 已被更新，当前修订为 {row['revision']}，请刷新后重试"
                 )
-            status = "draft" if row["status"] == "published" else row["status"]
+            # 在线 Markdown 编辑保留发布状态，避免一次小改动把共享 Skill 降级为草稿。
+            status = row["status"] if preserve_status else (
+                "draft" if row["status"] == "published" else row["status"]
+            )
             if status == "archived":
                 raise SkillStoreConflict("已归档 Skill 不能编辑")
             revision = row["revision"] + 1

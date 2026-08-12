@@ -70,3 +70,6 @@ logging:
     org.hibernate.SQL: WARN
     org.hibernate.type.descriptor.sql.BasicBinder: WARN
     com.zaxxer.hikari: WARN
+
+internal:
+  service-token: ${INTERNAL_SERVICE_TOKEN:local-development-token}

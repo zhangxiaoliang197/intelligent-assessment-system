@@ -183,6 +183,17 @@ services:
       - QA_SERVICE_URL=http://assessment-qa:10253
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
       - INDICATOR_SERVICE_URL=http://assessment-indicator:10254
+      - SITUATION_GENERATION_MODE=real
+      - SITUATION_ALLOW_DATA_FALLBACK=true
+      - SITUATION_DATA_ROW_LIMIT=200
+      - SITUATION_AUTO_DATASET_LIMIT=2
+      - SITUATION_STREAM_REPLAY_TTL=300
+      - SITUATION_MAX_INFLIGHT=${SITUATION_MAX_INFLIGHT:-8}
+      - SITUATION_MAX_CONCURRENT=${SITUATION_MAX_CONCURRENT:-2}
+      - SITUATION_MAX_PER_USER=${SITUATION_MAX_PER_USER:-2}
+      - SITUATION_GENERATION_TIMEOUT=${SITUATION_GENERATION_TIMEOUT:-240}
+      - SITUATION_LLM_EVIDENCE_ROWS=${SITUATION_LLM_EVIDENCE_ROWS:-0}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-local-development-token}
       - SITUATION_SKILL_DB=/app/data/situation_skills.sqlite3
       - SITUATION_SKILL_MD_OVERRIDE_DIR=/app/data/situation-skill-markdown-overrides
       - LLM_MAX_TOKENS=24000
@@ -223,6 +234,7 @@ services:
       - MYSQL_USER=${MYSQL_USER:-root}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD:-}
       - SPRING_PROFILES_ACTIVE=${LOG_ENV:-prod}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-local-development-token}
       - LOG_PATH=/app/logs
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     # Linux 下让 host.docker.internal 解析到宿主机网关

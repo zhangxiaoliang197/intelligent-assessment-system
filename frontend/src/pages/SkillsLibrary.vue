@@ -425,7 +425,8 @@
                 :rows="4"
                 maxlength="4000"
                 show-word-limit
-                placeholder="例如：创建一个评估任务完成质量的 Skill，先核验计划执行，再分析资源消耗，最后识别异常并给出改进建议。"
+                placeholder="描述需求；Enter 生成，Shift+Enter 换行"
+                @keydown="sendMessageOnEnter($event, generateAiDraft)"
               />
             </el-form-item>
             <div class="ai-creator-options">
@@ -550,6 +551,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import SkillEditorDialog from '@/components/evaluation/SkillEditorDialog.vue'
 import SkillMarkdownDialog from '@/components/evaluation/SkillMarkdownDialog.vue'
 import SkillOperationsDrawer from '@/components/evaluation/SkillOperationsDrawer.vue'
+import { sendMessageOnEnter } from '@/utils/messageInput'
 import {
   cloneEvaluationSkill,
   createEvaluationSkill,

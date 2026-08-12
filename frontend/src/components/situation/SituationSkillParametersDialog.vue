@@ -110,6 +110,7 @@ const emit = defineEmits<{
 const draft = ref<Record<string, any>>({})
 const checking = ref(false)
 const preflight = ref<SituationSkillPreflight | null>(null)
+const preflightFingerprint = ref('')
 
 watch(
   () => [props.modelValue, props.skill?.id, props.parameters] as const,
@@ -117,12 +118,26 @@ watch(
     if (!open) return
     draft.value = { ...props.parameters }
     preflight.value = null
+    preflightFingerprint.value = ''
   },
   { immediate: true, deep: true },
 )
 
+watch(draft, () => {
+  if (preflight.value && fingerprint() !== preflightFingerprint.value) {
+    preflight.value = null
+    preflightFingerprint.value = ''
+  }
+}, { deep: true })
+
+function fingerprint() {
+  return JSON.stringify(normalizedParameters(), Object.keys(normalizedParameters()).sort())
+}
+
 function normalizedParameters() {
-  return Object.fromEntries(Object.entries(draft.value).filter(([, value]) => (
+  const allowed = new Set((props.skill?.parameters || []).map((parameter) => parameter.key))
+  return Object.fromEntries(Object.entries(draft.value).filter(([key, value]) => (
+    allowed.has(key) &&
     value !== undefined && value !== null && value !== '' && (!Array.isArray(value) || value.length)
   )))
 }
@@ -136,6 +151,7 @@ async function runPreflight() {
       props.query || props.skill.recommendedQuestions?.[0] || '',
       normalizedParameters(),
     )
+    preflightFingerprint.value = fingerprint()
     if (preflight.value.ready) {
       draft.value = { ...preflight.value.parameters }
       ElMessage.success(preflight.value.complete ? '执行前检查全部通过' : '检查通过，请留意数据源提醒')
@@ -150,7 +166,7 @@ async function runPreflight() {
 }
 
 function save() {
-  emit('save', normalizedParameters(), preflight.value || undefined)
+  emit('save', normalizedParameters(), preflightFingerprint.value === fingerprint() ? preflight.value || undefined : undefined)
   emit('update:modelValue', false)
 }
 </script>

@@ -10,12 +10,44 @@ Phase 1 仅提供桩实现与下游调用封装，不被 mock 编排器使用。
 """
 import json
 import logging
+import re
+import urllib.parse
 import urllib.request
 import urllib.error
+from contextvars import ContextVar
+from contextlib import contextmanager
 
 import config
 
 logger = logging.getLogger("situation-service")
+
+_ACTOR: ContextVar[dict] = ContextVar("situation_actor", default={})
+
+
+@contextmanager
+def actor_context(actor: dict = None):
+    """Bind the end-user identity to downstream calls made by the current task."""
+    token = _ACTOR.set(dict(actor or {}))
+    try:
+        yield
+    finally:
+        _ACTOR.reset(token)
+
+
+def _identity_headers() -> dict:
+    actor = _ACTOR.get() or {}
+    return {
+        "X-Service-Token": config.INTERNAL_SERVICE_TOKEN,
+        "X-User-Id": str(actor.get("userId") or ""),
+        "X-Team-Ids": ",".join(str(item) for item in actor.get("teamIds") or []),
+        "X-User-Role": str(actor.get("role") or "viewer"),
+    }
+
+
+def _add_identity_headers(req: urllib.request.Request) -> None:
+    for name, value in _identity_headers().items():
+        if value:
+            req.add_header(name, value)
 
 
 def _http_get(url: str, timeout: int = None) -> dict:
@@ -23,6 +55,7 @@ def _http_get(url: str, timeout: int = None) -> dict:
     timeout = timeout or config.HTTP_TIMEOUT
     req = urllib.request.Request(url, method="GET")
     req.add_header("Content-Type", "application/json")
+    _add_identity_headers(req)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -35,24 +68,95 @@ def _http_get(url: str, timeout: int = None) -> dict:
         return {"success": False, "message": str(e)[:200]}
 
 
+def _http_json(method: str, url: str, body: dict = None, timeout: int = None) -> dict:
+    """调用 JSON HTTP 接口；网络或协议错误转成可降级的结果。"""
+    timeout = timeout or config.HTTP_TIMEOUT
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Content-Type", "application/json")
+    _add_identity_headers(req)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        payload = exc.read().decode("utf-8", errors="ignore")
+        logger.warning("%s %s 失败 HTTP %s: %s", method, url, exc.code, payload[:200])
+        return {"success": False, "message": f"HTTP {exc.code}: {payload[:200]}"}
+    except Exception as exc:
+        logger.warning("%s %s 失败: %s", method, url, exc)
+        return {"success": False, "message": str(exc)[:200]}
+
+
 def query_knowledge(query: str, top_k: int = 5) -> dict:
-    """知识库检索（调 qa-service）。Phase 2 启用。"""
-    return _http_get(f"{config.QA_SERVICE_URL}/qa/search?q={query}&top_k={top_k}")
+    """调用知识库的真实混合检索接口。"""
+    return _http_json(
+        "POST",
+        f"{config.KNOWLEDGE_SERVICE_URL}/knowledge/search",
+        {"query": query, "top_k": max(1, min(int(top_k), 20))},
+    )
 
 
 def get_indicators(indicator_ids: list = None) -> dict:
-    """取指标数据（调 indicator-service）。Phase 2 启用。"""
-    return _http_get(f"{config.INDICATOR_SERVICE_URL}/indicator/list")
+    """读取真实指标目录，并按上下文中的指标 ID 过滤。"""
+    result = _http_get(f"{config.INDICATOR_SERVICE_URL}/indicator/list")
+    if indicator_ids and isinstance(result.get("indicators"), list):
+        wanted = {str(item) for item in indicator_ids}
+        result["indicators"] = [
+            item for item in result["indicators"]
+            if str(item.get("id", "")) in wanted or str(item.get("name", "")) in wanted
+        ]
+    return result
 
 
 def get_evaluation(evaluation_id: str) -> dict:
-    """取评估结果（调 qa-service 暴露的 evaluation 端点）。Phase 2 启用。"""
-    return _http_get(f"{config.QA_SERVICE_URL}/evaluation/{evaluation_id}")
+    """读取评估分析会话快照。"""
+    safe_id = urllib.parse.quote(str(evaluation_id), safe="")
+    return _http_get(f"{config.QA_SERVICE_URL}/evaluation/session/{safe_id}")
 
 
 def query_admin_data(dataset_id: str) -> dict:
-    """取数据源/字段/原始记录（调 admin-service）。Phase 2 启用。"""
-    return _http_get(f"{config.ADMIN_SERVICE_URL}/api/admin/dataset/{dataset_id}")
+    """读取已注册数据集元数据。"""
+    safe_id = urllib.parse.quote(str(dataset_id), safe="")
+    return _http_get(f"{config.ADMIN_SERVICE_URL}/api/admin/dataset/{safe_id}")
+
+
+def list_admin_datasets() -> dict:
+    """读取当前执行身份获授权的真实数据集。"""
+    return _http_get(f"{config.ADMIN_SERVICE_URL}/api/admin/dataset/authorized-list")
+
+
+def query_admin_dataset(dataset: dict, row_limit: int = None) -> dict:
+    """在注册数据集上执行只读查询并返回真实记录。
+
+    优先使用管理员保存的数据集 SQL；未配置时只允许从安全的物理表标识符构造
+    ``SELECT *``。最终行数同时受 admin-service 的只读校验和硬上限保护。
+    """
+    dataset_id = str(dataset.get("id") or "").strip()
+    table_name = str(dataset.get("tableName") or "").strip()
+    if not dataset_id:
+        return {"success": False, "message": "数据集 ID 为空"}
+    safe_id = urllib.parse.quote(dataset_id, safe="")
+    # 只调用服务端拥有的查询模板。Skill 和浏览器都不能再提交 SQL；admin-service
+    # 会二次验证服务身份、用户的数据集 ACL、物理表绑定与允许列。
+    result = _http_json(
+        "POST",
+        f"{config.ADMIN_SERVICE_URL}/api/admin/dataset/{safe_id}/query",
+        {"limit": min(int(row_limit or config.SITUATION_DATA_ROW_LIMIT), 1000)},
+        timeout=max(config.HTTP_TIMEOUT, 65),
+    )
+    limit = row_limit or config.SITUATION_DATA_ROW_LIMIT
+    if isinstance(result.get("rows"), list):
+        result["rows"] = result["rows"][:limit]
+        result["rowCount"] = len(result["rows"])
+    result["dataset"] = {
+        "id": dataset_id,
+        "name": dataset.get("name", ""),
+        "tableName": table_name,
+        "description": dataset.get("description", ""),
+        "schemaVersion": dataset.get("schemaVersion", 1),
+        "sensitiveColumns": dataset.get("sensitiveColumns") or [],
+    }
+    return result
 
 
 def fetch_external_data(adapter: str, params: dict = None) -> dict:

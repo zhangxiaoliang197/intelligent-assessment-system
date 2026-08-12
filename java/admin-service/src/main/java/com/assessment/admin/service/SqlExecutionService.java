@@ -125,6 +125,43 @@ public class SqlExecutionService {
         }
     }
 
+    /** Execute the server-owned query template bound to exactly one physical dataset. */
+    public Map<String, Object> queryDataset(String datasetId, int requestedLimit) {
+        Optional<Dataset> optDs = datasetRepo.findById(datasetId);
+        if (optDs.isEmpty()) return errorMap("数据集不存在");
+        Dataset ds = optDs.get();
+        String tableName = ds.getTableName() == null ? "" : ds.getTableName().trim();
+        if (!tableName.matches("[A-Za-z_][A-Za-z0-9_.$]*")) {
+            return errorMap("数据集未绑定安全的物理表");
+        }
+        List<String> allowed = safeIdentifiers(ds.getAllowedColumns());
+        Set<String> sensitive = new HashSet<>(safeIdentifiers(ds.getSensitiveColumns()));
+        allowed.removeIf(sensitive::contains);
+        String projection = allowed.isEmpty() ? "*" : String.join(", ", allowed);
+        String sql = "SELECT " + projection + " FROM " + tableName;
+        Map<String, Object> result = executeSql(datasetId, sql);
+        int limit = Math.max(1, Math.min(requestedLimit, 1000));
+        Object rowsValue = result.get("rows");
+        if (Boolean.TRUE.equals(result.get("success")) && rowsValue instanceof List<?> rows && rows.size() > limit) {
+            Map<String, Object> limited = new HashMap<>(result);
+            limited.put("rows", new ArrayList<>(rows.subList(0, limit)));
+            limited.put("rowCount", limit);
+            limited.put("truncated", true);
+            return limited;
+        }
+        return result;
+    }
+
+    private List<String> safeIdentifiers(String csv) {
+        if (csv == null || csv.isBlank()) return new ArrayList<>();
+        List<String> result = new ArrayList<>();
+        for (String item : csv.split(",")) {
+            String value = item.trim();
+            if (value.matches("[A-Za-z_][A-Za-z0-9_$]*")) result.add(value);
+        }
+        return result;
+    }
+
     /**
      * 在指定数据库配置上执行 SQL（不关联数据集）
      */

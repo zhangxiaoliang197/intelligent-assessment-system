@@ -28,7 +28,7 @@
 
     <SituationQueryBar
       v-model="query"
-      :loading="store.isGenerating"
+      :loading="store.isGenerating || submitting"
       :placeholder="queryPlaceholder"
       @generate="onGenerate"
     />
@@ -132,7 +132,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import SituationToolbar from '@/components/situation/SituationToolbar.vue'
 import SituationSkillToolbar from '@/components/situation/SituationSkillToolbar.vue'
@@ -157,11 +157,11 @@ import {
 import type {
   SituationSkill,
   SituationSkillCategory,
-  SituationSkillPreflight,
   SituationSkillUsageItem,
 } from '@/types/situationSkill'
 
 const route = useRoute()
+const router = useRouter()
 const store = useSituationStore()
 const { exportPDF, exportImage } = useSituationExport()
 
@@ -186,12 +186,15 @@ const skillParametersVisible = ref(false)
 const skillMarkdownVisible = ref(false)
 let recommendTimer: ReturnType<typeof setTimeout> | undefined
 let recommendRequest = 0
+const submitting = ref(false)
 
 const activeFullSkill = computed(() => (
   skills.value.find((skill) => skill.id === store.activeSkill?.id) || null
 ))
 
 onMounted(async () => {
+  store.closeStream()
+  if (!route.query.draftId && !route.query.reportId) store.reset()
   void loadSkillCatalog()
   void loadSkillPreferences()
   // 1) 跨功能跳转：带 draftId
@@ -218,6 +221,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (recommendTimer) clearTimeout(recommendTimer)
+  store.closeStream()
 })
 
 watch(query, (value) => {
@@ -287,6 +291,7 @@ async function onSkillMarkdownSaved(skillId: string) {
 async function updateSkillRecommendations(value: string) {
   const text = value.trim()
   if (!text) {
+    recommendRequest += 1
     skillRecommendations.value = skills.value.filter((skill) => skill.featured).slice(0, 3)
     return
   }
@@ -312,8 +317,8 @@ function onSelectSkill(skill: SituationSkill, question?: string) {
   ElMessage.success(`已启用「${skill.name}」`)
 }
 
-function onSaveSkillParameters(parameters: Record<string, unknown>, preflight?: SituationSkillPreflight) {
-  store.setSkillParameters(preflight?.parameters || parameters)
+function onSaveSkillParameters(parameters: Record<string, unknown>) {
+  store.setSkillParameters(parameters)
   ElMessage.success('Skill 参数已保存')
 }
 
@@ -352,6 +357,8 @@ function onClearSkill() {
 }
 
 async function loadExisting(rid: string) {
+  store.reset()
+  query.value = ''
   try {
     const resp: any = await api.get(`/situation/reports/${rid}`)
     if (resp?.success !== false) {
@@ -359,17 +366,22 @@ async function loadExisting(rid: string) {
       query.value = store.query
     }
   } catch (e) {
+    store.reset()
+    query.value = ''
+    ElMessage.error('产物不存在或无权访问')
     console.warn('产物加载失败', e)
   }
 }
 
 async function onGenerate(q?: string) {
+  if (submitting.value || store.isGenerating) return
   const text = (typeof q === 'string' ? q : query.value) || ''
   if (!text.trim()) {
     ElMessage.warning('请输入问题')
     return
   }
   query.value = text
+  submitting.value = true
   try {
     if (activeFullSkill.value) {
       const preflight = await preflightSituationSkill(
@@ -390,6 +402,8 @@ async function onGenerate(q?: string) {
     void loadSkillPreferences()
   } catch (e: any) {
     ElMessage.error('生成失败：' + (e?.serverMessage || e?.message || '未知错误'))
+  } finally {
+    submitting.value = false
   }
 }
 
@@ -406,7 +420,9 @@ async function onShare() {
     const resp: any = await api.post(`/situation/reports/${store.reportId}/share`)
     if (resp?.success !== false) {
       const data = resp.data || resp
-      shareUrl.value = `${window.location.origin}/#/situation/share/${data.token}`
+      shareUrl.value = data.shareUrl
+        ? new URL(data.shareUrl, window.location.origin).toString()
+        : new URL(router.resolve({ name: 'SituationShare', params: { token: data.token } }).href, window.location.origin).toString()
       shareVisible.value = true
     }
   } catch (e: any) {
@@ -421,7 +437,9 @@ function onExport(format: 'pdf' | 'image') {
 }
 
 function copyShare() {
-  navigator.clipboard.writeText(shareUrl.value).then(() => ElMessage.success('已复制'))
+  navigator.clipboard.writeText(shareUrl.value)
+    .then(() => ElMessage.success('已复制'))
+    .catch(() => ElMessage.error('复制失败，请手动复制'))
 }
 
 // ── 地图联动回调（写共享状态 → 图表响应）──

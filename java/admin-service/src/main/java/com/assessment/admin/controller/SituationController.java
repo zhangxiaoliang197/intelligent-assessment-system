@@ -28,11 +28,17 @@ public class SituationController {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @org.springframework.beans.factory.annotation.Value("${internal.service-token:local-development-token}")
+    private String internalServiceToken;
+
     // ==================== 产物 CRUD ====================
 
     /** 创建产物（situation-service 生成中/完成时调用）。 */
     @PostMapping("/reports")
-    public ResponseEntity<Map<String, Object>> createReport(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<Map<String, Object>> createReport(
+            @RequestHeader(value = "X-Service-Token", required = false) String serviceToken,
+            @RequestBody Map<String, Object> body) {
+        if (!Objects.equals(internalServiceToken, serviceToken)) return unauthorizedService();
         SituationReport r = new SituationReport();
         r.setId(getStr(body, "reportId"));
         r.setTitle(getStr(body, "title"));
@@ -49,7 +55,9 @@ public class SituationController {
     /** 更新产物（生成完成/编辑另存）。不存在则新建（兼容 situation-service 先 PUT 后 POST 的兜底）。 */
     @PutMapping("/reports/{reportId}")
     public ResponseEntity<Map<String, Object>> updateReport(@PathVariable String reportId,
+                                                            @RequestHeader(value = "X-Service-Token", required = false) String serviceToken,
                                                             @RequestBody Map<String, Object> body) {
+        if (!Objects.equals(internalServiceToken, serviceToken)) return unauthorizedService();
         Optional<SituationReport> opt = reportRepo.findById(reportId);
         SituationReport r;
         boolean created = false;
@@ -75,21 +83,19 @@ public class SituationController {
     /** 列表（分页 + userId/teamIds 过滤）。 */
     @GetMapping("/reports")
     public ResponseEntity<Map<String, Object>> listReports(
-            @RequestHeader(value = "X-User-Id", required = false, defaultValue = "local-admin") String userId,
+            @RequestHeader(value = "X-Service-Token", required = false) String serviceToken,
+            @RequestHeader(value = "X-User-Id", required = false, defaultValue = "local-user") String userId,
             @RequestHeader(value = "X-Team-Ids", required = false) String teamIdsRaw,
+            @RequestHeader(value = "X-User-Role", required = false) String role,
             @RequestParam(value = "userId", required = false) String userIdParam,
             @RequestParam(value = "teamIds", required = false) String teamIdsParam,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
-        // 请求参数优先于请求头
-        String uid = userIdParam != null && !userIdParam.isEmpty() ? userIdParam : userId;
-        List<SituationReport> all;
-        if (uid != null && !uid.isEmpty() && !"local-admin".equals(uid)) {
-            all = reportRepo.findByUserIdOrderByCreatedAtDesc(uid);
-        } else {
-            all = reportRepo.findAll();
-            all.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
-        }
+        if (!Objects.equals(internalServiceToken, serviceToken)) return unauthorizedService();
+        // Query parameters cannot widen the authenticated actor's scope.
+        List<SituationReport> all = reportRepo.findAll();
+        all.removeIf(report -> !canAccess(report, userId, teamIdsRaw, role));
+        all.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
 
         int total = all.size();
         int from = Math.max(0, (page - 1) * size);
@@ -103,15 +109,35 @@ public class SituationController {
 
     /** 详情（含 snapshot）。 */
     @GetMapping("/reports/{reportId}")
-    public ResponseEntity<Map<String, Object>> getReport(@PathVariable String reportId) {
+    public ResponseEntity<Map<String, Object>> getReport(
+            @PathVariable String reportId,
+            @RequestHeader(value = "X-Service-Token", required = false) String serviceToken,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-Team-Ids", required = false) String teamIds,
+            @RequestHeader(value = "X-User-Role", required = false) String role) {
+        if (!Objects.equals(internalServiceToken, serviceToken)) return unauthorizedService();
         Optional<SituationReport> opt = reportRepo.findById(reportId);
         if (opt.isEmpty()) return ResponseEntity.status(404).body(Map.of("success", false, "message", "产物不存在"));
+        if (!canAccess(opt.get(), userId, teamIds, role)) {
+            return ResponseEntity.status(403).body(Map.of("success", false, "message", "无权访问该产物"));
+        }
         return ResponseEntity.ok(Map.of("success", true, "data", toDetail(opt.get())));
     }
 
     /** 删除。 */
     @DeleteMapping("/reports/{reportId}")
-    public ResponseEntity<Map<String, Object>> deleteReport(@PathVariable String reportId) {
+    public ResponseEntity<Map<String, Object>> deleteReport(
+            @PathVariable String reportId,
+            @RequestHeader(value = "X-Service-Token", required = false) String serviceToken,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-Team-Ids", required = false) String teamIds,
+            @RequestHeader(value = "X-User-Role", required = false) String role) {
+        if (!Objects.equals(internalServiceToken, serviceToken)) return unauthorizedService();
+        Optional<SituationReport> report = reportRepo.findById(reportId);
+        if (report.isEmpty()) return ResponseEntity.status(404).body(Map.of("success", false, "message", "产物不存在"));
+        if (!canAccess(report.get(), userId, teamIds, role)) {
+            return ResponseEntity.status(403).body(Map.of("success", false, "message", "无权删除该产物"));
+        }
         reportRepo.deleteById(reportId);
         return ResponseEntity.ok(Map.of("success", true, "message", "产物已删除"));
     }
@@ -120,9 +146,18 @@ public class SituationController {
 
     /** 生成分享 token（v1 永不过期，Q-04）。 */
     @PostMapping("/reports/{reportId}/share")
-    public ResponseEntity<Map<String, Object>> createShare(@PathVariable String reportId) {
+    public ResponseEntity<Map<String, Object>> createShare(
+            @PathVariable String reportId,
+            @RequestHeader(value = "X-Service-Token", required = false) String serviceToken,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-Team-Ids", required = false) String teamIds,
+            @RequestHeader(value = "X-User-Role", required = false) String role) {
+        if (!Objects.equals(internalServiceToken, serviceToken)) return unauthorizedService();
         Optional<SituationReport> opt = reportRepo.findById(reportId);
         if (opt.isEmpty()) return ResponseEntity.status(404).body(Map.of("success", false, "message", "产物不存在"));
+        if (!canAccess(opt.get(), userId, teamIds, role)) {
+            return ResponseEntity.status(403).body(Map.of("success", false, "message", "无权分享该产物"));
+        }
         SituationReport r = opt.get();
         if (r.getShareToken() == null || r.getShareToken().isEmpty()) {
             r.setShareToken(UUID.randomUUID().toString().replace("-", "").substring(0, 24));
@@ -152,6 +187,25 @@ public class SituationController {
     private String getStr(Map<String, Object> body, String key) {
         Object v = body.get(key);
         return v == null ? "" : String.valueOf(v);
+    }
+
+    private boolean canAccess(SituationReport report, String userId, String teamIds, String role) {
+        if ("admin".equalsIgnoreCase(role)) return true;
+        if (userId != null && userId.equals(report.getUserId())) return true;
+        Set<String> requestTeams = csvSet(teamIds);
+        requestTeams.retainAll(csvSet(report.getTeamIds()));
+        return !requestTeams.isEmpty();
+    }
+
+    private ResponseEntity<Map<String, Object>> unauthorizedService() {
+        return ResponseEntity.status(401).body(Map.of("success", false, "message", "服务身份校验失败"));
+    }
+
+    private Set<String> csvSet(String value) {
+        if (value == null || value.isBlank()) return new HashSet<>();
+        Set<String> result = new HashSet<>();
+        for (String item : value.split(",")) if (!item.isBlank()) result.add(item.trim());
+        return result;
     }
 
     /** 把 snapshot 对象序列化为 JSON 字符串存储。 */

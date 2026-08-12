@@ -7,10 +7,10 @@
       :placeholder="placeholder"
       resize="none"
       :disabled="disabled"
-      @keydown.ctrl.enter="onGenerate"
+      @keydown="sendMessageOnEnter($event, onGenerate)"
     />
     <div class="query-actions">
-      <span class="query-hint">Ctrl + Enter 发送</span>
+      <span class="query-hint">Enter 发送，Shift + Enter 换行</span>
       <el-button
         type="primary"
         :icon="Promotion"
@@ -27,6 +27,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { Promotion } from '@element-plus/icons-vue'
+import { sendMessageOnEnter } from '@/utils/messageInput'
 
 const props = withDefaults(defineProps<{
   modelValue?: string

@@ -576,7 +576,7 @@
               type="textarea"
               :rows="3"
               :placeholder="inputPlaceholder"
-              @keydown.enter.exact.prevent="sendMessage"
+              @keydown="sendMessageOnEnter($event, sendMessage)"
             />
             <div class="input-actions">
               <el-tooltip :content="isListening ? '停止录音' : '语音输入'" placement="top">
@@ -704,6 +704,7 @@ import {
   recommendEvaluationSkills
 } from '@/services/evaluationSkills'
 import type { EvaluationSkill } from '@/types/evaluationSkill'
+import { sendMessageOnEnter } from '@/utils/messageInput'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, PieChart, LineChart } from 'echarts/charts'

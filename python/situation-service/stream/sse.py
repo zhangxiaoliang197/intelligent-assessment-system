@@ -9,7 +9,7 @@ from typing import AsyncIterator, Tuple
 from fastapi.responses import StreamingResponse
 
 
-def format_event(event_type: str, data: dict) -> str:
+def format_event(event_type: str, data: dict, event_id: int = None) -> str:
     """格式化一条 SSE 事件。
 
     Args:
@@ -20,7 +20,8 @@ def format_event(event_type: str, data: dict) -> str:
         SSE 文本行 ``event: <type>\\ndata: <json>\\n\\n``
     """
     payload = json.dumps(data, ensure_ascii=False)
-    return f"event: {event_type}\ndata: {payload}\n\n"
+    id_line = f"id: {event_id}\n" if event_id is not None else ""
+    return f"{id_line}event: {event_type}\ndata: {payload}\n\n"
 
 
 def sse_response(event_generator: AsyncIterator[str]) -> StreamingResponse:
@@ -37,6 +38,7 @@ def sse_response(event_generator: AsyncIterator[str]) -> StreamingResponse:
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
             # 禁用 nginx 缓冲，保证事件实时推送
             "X-Accel-Buffering": "no",
         },

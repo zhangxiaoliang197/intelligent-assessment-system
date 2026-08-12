@@ -14,6 +14,8 @@ import ssl
 import urllib.request
 import urllib.error
 import logging
+import os
+import urllib.parse
 
 import config
 
@@ -55,8 +57,8 @@ def load_llm_config() -> dict:
         req.add_header("Content-Type", "application/json")
         with urllib.request.urlopen(req, timeout=5) as resp:
             list_data = json.loads(resp.read().decode("utf-8"))
-            if list_data.get("success") and list_data.get("data"):
-                configs = list_data["data"]
+            configs = list_data.get("data") or list_data.get("configs")
+            if list_data.get("success") and configs:
                 if isinstance(configs, list) and len(configs) > 0:
                     # 优先 vllm > openai > deepseek
                     for pt in ["vllm", "openai", "deepseek"]:
@@ -103,6 +105,17 @@ def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000) -
     api_url = config.get("apiUrl", "https://api.deepseek.com/v1").rstrip("/")
     model = config.get("model", "deepseek-chat")
 
+    parsed_url = urllib.parse.urlparse(api_url)
+    if parsed_url.scheme not in {"https", "http"} or not parsed_url.hostname:
+        raise RuntimeError("大模型 API 地址无效")
+    allow_insecure_http = os.getenv("LLM_ALLOW_INSECURE_HTTP", "false").lower() in {
+        "1", "true", "yes", "on",
+    }
+    if parsed_url.scheme != "https" and not (
+        allow_insecure_http and parsed_url.hostname in {"localhost", "127.0.0.1", "::1"}
+    ):
+        raise RuntimeError("大模型 API 必须使用 HTTPS；本地 HTTP 需显式开启 LLM_ALLOW_INSECURE_HTTP")
+
     # vLLM 本地部署无需 API Key
     if not api_key and llm_type != "vllm":
         raise RuntimeError("大模型 API Key 未配置，请在「基础管理 → 大模型配置」中设置")
@@ -120,10 +133,10 @@ def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000) -
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", f"Bearer {api_key}")
 
-    # 跳过 SSL 证书校验（内网 vLLM 部署常用自签名证书）
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode = ssl.CERT_NONE
+    # 默认严格验证服务端证书；内网自签证书应通过 LLM_CA_FILE 注入专用 CA，
+    # 不能以关闭校验的方式发送 API Key 和业务证据。
+    ca_file = os.getenv("LLM_CA_FILE", "").strip() or None
+    ssl_ctx = ssl.create_default_context(cafile=ca_file)
 
     try:
         with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp:

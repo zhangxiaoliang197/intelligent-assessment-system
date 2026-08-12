@@ -201,13 +201,14 @@ def get_skill_markdown(
             last_modified = _utc_from_timestamp(source_path.stat().st_mtime)
         except OSError:
             last_modified = ""
-        editable = principal.is_admin
+        # SKILL.md 在线编辑对所有登录用户开放（仍受字段安全校验与顺序约束）。
+        editable = True
         storage = "override" if overridden else "catalog"
     else:
         content = _custom_markdown(skill)
         relative_path = f"custom-skills/{skill_id}/SKILL.md"
         last_modified = str(skill.get("updatedAt") or skill.get("createdAt") or "")
-        editable = bool((skill.get("permissions") or {}).get("editable"))
+        editable = True
         storage = "custom"
         overridden = False
     content = _normalize_content(content)
@@ -283,8 +284,6 @@ def _update_skill_markdown_locked(
     normalized = _normalize_content(content)
     metadata, body = _parse_markdown(normalized, skill_id)
     if current_document["source"] == "builtin":
-        if not principal.is_admin:
-            raise SkillPermissionError("Only administrators can edit built-in Skill Markdown")
         _validate_builtin_candidate(skill_id, metadata, body)
         override_path = _override_path(skill_id)
         previous_override = None
@@ -327,5 +326,6 @@ def _update_skill_markdown_locked(
             principal,
             action="markdown-update",
             change_note="在线编辑 SKILL.md",
+            allow_any_editor=True,
         )
     return get_skill_markdown(skill_id, principal)

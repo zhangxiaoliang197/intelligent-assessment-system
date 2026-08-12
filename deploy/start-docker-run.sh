@@ -59,6 +59,7 @@ LOG_ENV="${LOG_ENV:-prod}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
 LOG_MAX_SIZE_MB="${LOG_MAX_SIZE_MB:-100}"
+INTERNAL_SERVICE_TOKEN="${INTERNAL_SERVICE_TOKEN:-local-development-token}"
 
 echo "  数据目录: $DATA_DIR"
 echo "  日志目录: $LOG_DIR_HOST"
@@ -281,6 +282,17 @@ docker run -d --name assessment-situation \
     -e INDICATOR_SERVICE_URL="http://assessment-indicator:10254" \
     -e SITUATION_SKILL_DB="/app/data/situation_skills.sqlite3" \
     -e SITUATION_SKILL_MD_OVERRIDE_DIR="/app/data/situation-skill-markdown-overrides" \
+    -e SITUATION_GENERATION_MODE="real" \
+    -e SITUATION_ALLOW_DATA_FALLBACK="true" \
+    -e SITUATION_DATA_ROW_LIMIT="200" \
+    -e SITUATION_AUTO_DATASET_LIMIT="2" \
+    -e SITUATION_STREAM_REPLAY_TTL="300" \
+    -e SITUATION_MAX_INFLIGHT="${SITUATION_MAX_INFLIGHT:-8}" \
+    -e SITUATION_MAX_CONCURRENT="${SITUATION_MAX_CONCURRENT:-2}" \
+    -e SITUATION_MAX_PER_USER="${SITUATION_MAX_PER_USER:-2}" \
+    -e SITUATION_GENERATION_TIMEOUT="${SITUATION_GENERATION_TIMEOUT:-240}" \
+    -e SITUATION_LLM_EVIDENCE_ROWS="${SITUATION_LLM_EVIDENCE_ROWS:-0}" \
+    -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
     -e LLM_MAX_TOKENS="24000" \
     -e LOG_ENV="$LOG_ENV" \
     -e LOG_LEVEL="$LOG_LEVEL" \
@@ -313,6 +325,7 @@ docker run -d --name assessment-admin \
     -e MYSQL_PASSWORD="$MYSQL_PASSWORD" \
     -e DB_TYPE="$DB_TYPE" \
     -e SPRING_PROFILES_ACTIVE="$LOG_ENV" \
+    -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
     -e LOG_PATH="/app/logs" \
     -e LOG_LEVEL="$LOG_LEVEL" \
     -v "$LOG_DIR_HOST/admin:/app/logs" \

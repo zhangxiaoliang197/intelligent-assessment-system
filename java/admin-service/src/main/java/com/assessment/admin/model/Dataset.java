@@ -26,6 +26,23 @@ public class Dataset {
     @Column(name = "sql_text", columnDefinition = "text")
     private String sqlText;
 
+    /** Comma separated users/teams allowed to query this dataset. Empty means admin-only. */
+    @Column(name = "allowed_user_ids", columnDefinition = "text")
+    private String allowedUserIds;
+
+    @Column(name = "allowed_team_ids", columnDefinition = "text")
+    private String allowedTeamIds;
+
+    /** Optional comma separated projection. Sensitive columns must never be exposed by templates. */
+    @Column(name = "allowed_columns", columnDefinition = "text")
+    private String allowedColumns;
+
+    @Column(name = "sensitive_columns", columnDefinition = "text")
+    private String sensitiveColumns;
+
+    @Column(name = "schema_version")
+    private Integer schemaVersion;
+
     private Integer records;
 
     @Column(name = "last_executed")
@@ -42,6 +59,7 @@ public class Dataset {
         createTime = LocalDateTime.now();
         updateTime = LocalDateTime.now();
         if (records == null) records = 0;
+        if (schemaVersion == null) schemaVersion = 1;
     }
 
     @PreUpdate
@@ -63,6 +81,16 @@ public class Dataset {
     public void setTableName(String tableName) { this.tableName = tableName; }
     public String getSqlText() { return sqlText; }
     public void setSqlText(String sqlText) { this.sqlText = sqlText; }
+    public String getAllowedUserIds() { return allowedUserIds; }
+    public void setAllowedUserIds(String allowedUserIds) { this.allowedUserIds = allowedUserIds; }
+    public String getAllowedTeamIds() { return allowedTeamIds; }
+    public void setAllowedTeamIds(String allowedTeamIds) { this.allowedTeamIds = allowedTeamIds; }
+    public String getAllowedColumns() { return allowedColumns; }
+    public void setAllowedColumns(String allowedColumns) { this.allowedColumns = allowedColumns; }
+    public String getSensitiveColumns() { return sensitiveColumns; }
+    public void setSensitiveColumns(String sensitiveColumns) { this.sensitiveColumns = sensitiveColumns; }
+    public Integer getSchemaVersion() { return schemaVersion; }
+    public void setSchemaVersion(Integer schemaVersion) { this.schemaVersion = schemaVersion; }
     public Integer getRecords() { return records; }
     public void setRecords(Integer records) { this.records = records; }
     public LocalDateTime getLastExecuted() { return lastExecuted; }

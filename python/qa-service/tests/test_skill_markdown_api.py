@@ -118,7 +118,7 @@ class SkillMarkdownApiTests(unittest.TestCase):
         )
         self.assertEqual(409, stale_response.status_code)
 
-    def test_builtin_markdown_is_read_only_for_viewers(self) -> None:
+    def test_builtin_markdown_is_editable_by_any_user(self) -> None:
         headers = {"X-User-Id": "reader", "X-User-Role": "viewer"}
         response = self.client.get(
             f"/evaluation/skills/{BUILTIN_ID}/markdown",
@@ -126,14 +126,19 @@ class SkillMarkdownApiTests(unittest.TestCase):
         )
         self.assertEqual(200, response.status_code, response.text)
         document = response.json()["document"]
-        self.assertFalse(document["editable"])
+        self.assertTrue(document["editable"])
 
+        description = "由 viewer 通过 Markdown 在线编辑接口更新的内置说明。"
+        changed = _replace_metadata(document["content"], description=description)
         update = self.client.put(
             f"/evaluation/skills/{BUILTIN_ID}/markdown",
             headers=headers,
-            json={"content": document["content"], "expectedHash": document["contentHash"]},
+            json={"content": changed, "expectedHash": document["contentHash"]},
         )
-        self.assertEqual(403, update.status_code)
+        self.assertEqual(200, update.status_code, update.text)
+        saved = update.json()["document"]
+        self.assertEqual("override", saved["storage"])
+        self.assertTrue(saved["overridden"])
 
     def test_invalid_or_unsafe_markdown_is_rejected_without_changing_catalog(self) -> None:
         initial = self.client.get(
@@ -190,6 +195,48 @@ class SkillMarkdownApiTests(unittest.TestCase):
             f"/evaluation/skills/{created['id']}/versions"
         ).json()["versions"]
         self.assertEqual("在线编辑 SKILL.md", versions[0]["changeNote"])
+
+    def test_custom_skill_markdown_is_editable_by_other_users(self) -> None:
+        alice_headers = {"X-User-Id": "alice", "X-User-Role": "editor"}
+        created_response = self.client.post(
+            "/evaluation/skills",
+            headers=alice_headers,
+            json={**_custom_payload(), "visibility": "public"},
+        )
+        self.assertEqual(201, created_response.status_code, created_response.text)
+        created = created_response.json()["skill"]
+        publish_response = self.client.post(
+            f"/evaluation/skills/{created['id']}/publish",
+            headers=alice_headers,
+            json={"changeNote": "发布", "expectedRevision": created["revision"]},
+        )
+        self.assertEqual(200, publish_response.status_code, publish_response.text)
+
+        bob_headers = {"X-User-Id": "bob", "X-User-Role": "viewer"}
+        initial_response = self.client.get(
+            f"/evaluation/skills/{created['id']}/markdown",
+            headers=bob_headers,
+        )
+        self.assertEqual(200, initial_response.status_code, initial_response.text)
+        initial = initial_response.json()["document"]
+        self.assertTrue(initial["editable"])
+
+        description = "Bob 通过 Markdown 编辑了 Alice 的自定义 Skill。"
+        changed = _replace_metadata(initial["content"], description=description)
+        saved_response = self.client.put(
+            f"/evaluation/skills/{created['id']}/markdown",
+            headers=bob_headers,
+            json={"content": changed, "expectedHash": initial["contentHash"]},
+        )
+        self.assertEqual(200, saved_response.status_code, saved_response.text)
+        saved = saved_response.json()["document"]
+        self.assertEqual(initial["revision"] + 1, saved["revision"])
+
+        skill = self.client.get(
+            f"/evaluation/skills/{created['id']}",
+            headers=alice_headers,
+        ).json()["skill"]
+        self.assertEqual(description, skill["description"])
 
 
 if __name__ == "__main__":

@@ -85,6 +85,8 @@ class ChartSpec(BaseModel):
     option: Dict[str, Any]
     explanation: str = ""
     datasetRef: str = ""
+    provenance: Dict[str, Any] = Field(default_factory=dict)
+    verification: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MapLayerSpec(BaseModel):
@@ -115,6 +117,11 @@ class DatasetSummary(BaseModel):
     source: str
     summary: str
     rows: int = 0
+    physicalDatasetId: str = ""
+    schemaVersion: int = 1
+    truncated: bool = False
+    evidenceHash: str = ""
+    execution: Dict[str, Any] = Field(default_factory=dict)
 
 
 class Report(BaseModel):
@@ -127,6 +134,9 @@ class Report(BaseModel):
     skillName: str = ""
     skillCategory: str = ""
     skillParameters: Dict[str, Any] = Field(default_factory=dict)
+    skillRevision: int = 1
+    skillVersion: int = 1
+    skillContentHash: str = ""
     userId: str = "local-admin"
     teamIds: List[str] = Field(default_factory=list)
     status: str = "generating"        # generating | ready | partial | failed

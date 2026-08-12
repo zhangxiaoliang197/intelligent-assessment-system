@@ -16,15 +16,25 @@ from .catalog import SkillCatalogError, get_skill, validate_skill_parameters
 
 
 _CACHE_LOCK = threading.Lock()
-_SOURCE_CACHE: Dict[str, Any] = {"expires": 0.0, "tables": set(), "adminReady": False}
+_SOURCE_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
-def _dataset_snapshot() -> Dict[str, Any]:
+def _actor_cache_key(actor: Dict[str, Any] = None) -> str:
+    actor = actor or {}
+    teams = sorted(str(item) for item in actor.get("teamIds") or [])
+    return "|".join([
+        str(actor.get("userId") or ""), ",".join(teams), str(actor.get("role") or "viewer"),
+    ])
+
+
+def _dataset_snapshot(actor: Dict[str, Any] = None) -> Dict[str, Any]:
     now = time.monotonic()
+    cache_key = _actor_cache_key(actor)
     with _CACHE_LOCK:
-        if _SOURCE_CACHE["expires"] > now:
-            return dict(_SOURCE_CACHE)
-    response = admin_client.list_datasets()
+        cached = _SOURCE_CACHE.get(cache_key)
+        if cached and cached["expires"] > now:
+            return dict(cached)
+    response = admin_client.list_datasets(actor)
     datasets = response.get("datasets") if isinstance(response, dict) else []
     if not isinstance(datasets, list) and isinstance(response, dict):
         wrapped = response.get("data")
@@ -45,7 +55,7 @@ def _dataset_snapshot() -> Dict[str, Any]:
         "adminReady": bool(response.get("success")) if isinstance(response, dict) else False,
     }
     with _CACHE_LOCK:
-        _SOURCE_CACHE.update(snapshot)
+        _SOURCE_CACHE[cache_key] = snapshot
     return snapshot
 
 
@@ -102,6 +112,8 @@ def preflight_skill(
     parameters: Optional[Dict[str, Any]] = None,
     *,
     user_id: str = "",
+    team_ids: Optional[List[str]] = None,
+    role: str = "viewer",
 ) -> Dict[str, Any]:
     skill = get_skill(skill_id, user_id)
     if not skill:
@@ -131,7 +143,7 @@ def preflight_skill(
             "message": f"未填写问题，将使用推荐问题：{skill['recommendedQuestions'][0]}",
         })
 
-    snapshot = _dataset_snapshot()
+    snapshot = _dataset_snapshot({"userId": user_id, "teamIds": team_ids or [], "role": role})
     source_checks = [_source_check(source, snapshot) for source in skill["dataSources"]]
     for item in source_checks:
         checks.append({

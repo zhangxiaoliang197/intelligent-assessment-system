@@ -42,7 +42,7 @@
               placeholder="请输入您的问题，回车或点击发送"
               size="large"
               class="search-input"
-              @keyup.enter="handleSearch"
+              @keydown="sendMessageOnEnter($event, handleSearch)"
             >
               <template #prefix>
                 <el-icon class="search-prefix-icon"><Search /></el-icon>
@@ -154,6 +154,7 @@ import FloatingSidebar from '@/components/FloatingSidebar.vue'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import { useAttachmentUpload } from '@/composables/useAttachmentUpload'
+import { sendMessageOnEnter } from '@/utils/messageInput'
 
 const router = useRouter()
 const userStore = useUserStore()

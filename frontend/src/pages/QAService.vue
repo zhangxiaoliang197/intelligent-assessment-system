@@ -169,8 +169,8 @@
               v-model="inputMessage"
               type="textarea"
               :rows="3"
-              placeholder="请输入您的问题..."
-              @keydown.enter.exact.prevent="sendMessage"
+              placeholder="请输入您的问题，Enter 发送，Shift+Enter 换行"
+              @keydown="sendMessageOnEnter($event, sendMessage)"
             />
             <div class="input-actions">
               <input
@@ -282,6 +282,7 @@ import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useAttachmentUpload } from '@/composables/useAttachmentUpload'
 import { useImageUpload } from '@/composables/useImageUpload'
+import { sendMessageOnEnter } from '@/utils/messageInput'
 
 const router = useRouter()
 

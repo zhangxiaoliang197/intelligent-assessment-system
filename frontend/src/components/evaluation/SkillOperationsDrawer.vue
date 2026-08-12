@@ -114,7 +114,8 @@
                   :rows="3"
                   maxlength="500"
                   show-word-limit
-                  placeholder="输入只针对该步骤的测试问题"
+                  placeholder="输入测试问题；Enter 运行，Shift+Enter 换行"
+                  @keydown="sendMessageOnEnter($event, runTrial)"
                 />
               </el-form-item>
               <el-button
@@ -527,6 +528,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { CircleCheck, Refresh, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { sendMessageOnEnter } from '@/utils/messageInput'
 import {
   cancelSkillBatch,
   cancelSkillExecution,
