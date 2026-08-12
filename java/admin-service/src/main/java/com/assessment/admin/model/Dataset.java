@@ -42,6 +42,9 @@ public class Dataset {
 
     @Column(name = "schema_version")
     private Integer schemaVersion;
+    /** 琛ㄩ棿杩炴帴�?JSON锛歔{"left":"orders.order_id","right":"order_items.order_id"}] */
+    @Column(name = "key_mappings", columnDefinition = "json")
+    private String keyMappings;
 
     private Integer records;
 
@@ -91,6 +94,8 @@ public class Dataset {
     public void setSensitiveColumns(String sensitiveColumns) { this.sensitiveColumns = sensitiveColumns; }
     public Integer getSchemaVersion() { return schemaVersion; }
     public void setSchemaVersion(Integer schemaVersion) { this.schemaVersion = schemaVersion; }
+    public String getKeyMappings() { return keyMappings; }
+    public void setKeyMappings(String keyMappings) { this.keyMappings = keyMappings; }
     public Integer getRecords() { return records; }
     public void setRecords(Integer records) { this.records = records; }
     public LocalDateTime getLastExecuted() { return lastExecuted; }

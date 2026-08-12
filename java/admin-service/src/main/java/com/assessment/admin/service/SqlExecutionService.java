@@ -238,6 +238,54 @@ public class SqlExecutionService {
         }
     }
 
+    /**
+     * 读取某数据库配置下表的所有列名（live schema），供规格校验与语义目录重建使用。
+     */
+    public List<String> listColumnsOnDatabase(String dbConfigId, String tableName) {
+        if (dbConfigId == null || dbConfigId.isEmpty()
+                || tableName == null || tableName.isEmpty()) {
+            return List.of();
+        }
+        try {
+            Optional<DatabaseConfig> optDb = dbConfigRepo.findById(dbConfigId);
+            if (optDb.isEmpty()) return List.of();
+            DatabaseConfig dbConfig = optDb.get();
+            Driver driver = findDriver(dbConfig.getType());
+            if (driver == null) return List.of();
+            String url = buildJdbcUrl(driver, dbConfig);
+            try (Connection conn = getConnection(
+                    driver, url, dbConfig.getUsername(), dbConfig.getPassword())) {
+                DatabaseMetaData meta = conn.getMetaData();
+                LinkedHashSet<String> columns = new LinkedHashSet<>();
+                readColumnNames(meta, safeCatalog(conn), safeSchema(conn), tableName, columns);
+                if (columns.isEmpty()) {
+                    readColumnNames(meta, null, null, tableName, columns);
+                }
+                return new ArrayList<>(columns);
+            }
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    private void readColumnNames(DatabaseMetaData meta, String catalog, String schema,
+                                 String tableName, Set<String> columns) throws SQLException {
+        try (ResultSet rs = meta.getColumns(catalog, schema, tableName, "%")) {
+            while (rs.next()) {
+                String name = rs.getString("COLUMN_NAME");
+                if (name != null && !name.isBlank()) columns.add(name);
+            }
+        }
+    }
+
+    private String safeCatalog(Connection conn) {
+        try { return conn.getCatalog(); } catch (SQLException ignored) { return null; }
+    }
+
+    private String safeSchema(Connection conn) {
+        try { return conn.getSchema(); } catch (SQLException ignored) { return null; }
+    }
+
     // ====== 内部辅助 ======
 
     /**

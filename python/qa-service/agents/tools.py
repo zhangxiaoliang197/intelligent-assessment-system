@@ -563,6 +563,38 @@ def fetch_indicator_detail(indicator_id: str) -> dict:
     return ind
 
 
+def fetch_database_catalog(database_id: str) -> dict:
+    """获取语义目录完整视图（表 + 列 + 标注 + 连接键），供 LLM 建议绑定使用。"""
+    try:
+        url = f"catalog/database?databaseId={database_id}" if database_id else "catalog/database"
+        resp = _api_get(url, timeout=30)
+        return resp if isinstance(resp, dict) else {}
+    except Exception as e:
+        logger.warning(f"获取语义目录失败: {e}")
+        return {}
+
+
+def save_catalog_synonym(concept: str, dataset_id: str, table_name: str,
+                         column_name: str, database_id: str = "",
+                         column_comment: str = "") -> bool:
+    """人工确认后回写语义目录同义词条目。"""
+    try:
+        body = {
+            "concept": concept,
+            "datasetId": dataset_id or "",
+            "tableName": table_name or "",
+            "columnName": column_name or "",
+            "databaseId": database_id or "",
+            "columnComment": column_comment or "",
+            "source": "llm-confirmed",
+        }
+        resp = _api_post("catalog/synonym", body, timeout=30)
+        return bool(resp and resp.get("success"))
+    except Exception as e:
+        logger.warning(f"回写语义目录失败: {e}")
+        return False
+
+
 def search_knowledge_base(query: str, top_k: int = 3) -> list:
     """通过 HTTP 调用 knowledge-service 的知识库搜索接口。
 

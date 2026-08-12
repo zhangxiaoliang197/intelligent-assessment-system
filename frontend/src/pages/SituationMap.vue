@@ -177,6 +177,7 @@
                           :selected-region="store.selectedRegion"
                           :time-range="store.selectedTimeRange"
                           :filters="store.filters"
+                          :explanation="store.mapExplanation"
                           @region-select="onRegionSelect"
                           @marker-click="onMarkerClick"
                           @layer-toggle="onLayerToggle"
@@ -249,6 +250,7 @@
 
           <!-- 执行面板 -->
           <div v-if="showExecPanel" class="execution-panel" :style="{ width: execPanelWidth + 'px' }">
+            <div class="resize-handle" @mousedown="startResize"></div>
             <div class="panel-header">
               <div class="panel-title-wrap"><span>执行过程</span></div>
               <el-icon class="panel-close" @click="showExecPanel = false"><Close /></el-icon>
@@ -431,8 +433,9 @@ const inputText = ref('')
 const historySearch = ref('')
 const chatAreaRef = ref<HTMLElement | null>(null)
 const aiMsgRef = ref<HTMLElement | null>(null)
-const showExecPanel = ref(true)
-const execPanelWidth = ref(340)
+const showExecPanel = ref(false)
+const execPanelWidth = ref(460)
+const isResizing = ref(false)
 const shareVisible = ref(false)
 const shareUrl = ref('')
 const skillDrawerVisible = ref(false)
@@ -451,6 +454,29 @@ const skillMarkdownVisible = ref(false)
 const dataSourceDialogVisible = ref(false)
 let recommendTimer: ReturnType<typeof setTimeout> | undefined
 let recommendRequest = 0
+
+// ── 执行面板拖拽缩放（与指标分析保持一致）──
+function startResize(e: MouseEvent) {
+  isResizing.value = true
+  const startX = e.clientX
+  const startWidth = execPanelWidth.value
+  const onMouseMove = (ev: MouseEvent) => {
+    if (!isResizing.value) return
+    const delta = startX - ev.clientX
+    execPanelWidth.value = Math.min(700, Math.max(300, startWidth + delta))
+  }
+  const onMouseUp = () => {
+    isResizing.value = false
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
 
 // ── 数据源切换 ──
 function onDataSourceChange(val: string) {
@@ -685,6 +711,8 @@ async function onGenerate(q?: string) {
         ElMessage.warning(`执行前检查通过：${preflight.warnings[0]}`)
       }
     }
+    // 用户提问后展示系统执行过程面板（与指标分析保持一致）
+    showExecPanel.value = true
     await store.generate(text)
     store.fetchHistory()
     void loadSkillPreferences()
@@ -701,6 +729,7 @@ function onStop() {
 function onNewSession() {
   store.reset()
   inputText.value = ''
+  showExecPanel.value = false
 }
 
 async function onPickHistory(item: ReportMeta) {
@@ -1052,6 +1081,20 @@ function formatTime(t: string): string {
   position: relative;
   overflow: hidden;
 }
+
+.resize-handle {
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background 0.15s;
+}
+.resize-handle:hover, .resize-handle:active { background: rgba(64, 158, 255, 0.35); }
+
 .panel-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px; border-bottom: 1px solid #e2e8f0; background: white;

@@ -8,11 +8,16 @@
       :circles="mergedCircles"
       @marker-click="(p: any) => emit('marker-click', { point: p })"
     />
+    <div v-if="explanation" class="map-explain">
+      <el-icon><InfoFilled /></el-icon>
+      <span>{{ explanation }}</span>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { InfoFilled } from '@element-plus/icons-vue'
 import GeoMap from '@/components/GeoMap.vue'
 import type { GeoPoint } from '@/utils/geoParser'
 import type { GeoRoute, GeoArea } from '@/utils/geoAnnotation'
@@ -26,6 +31,7 @@ const props = defineProps<{
   selectedRegion: string | null
   timeRange: [number, number] | null
   filters: Record<string, any>
+  explanation?: string
 }>()
 
 const emit = defineEmits<{
@@ -114,5 +120,20 @@ const mergedCircles = computed<CircleArea[]>(() => {
 .situation-map-slot {
   width: 100%;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.map-explain {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.5;
+  background: #f5f7fa;
+  padding: 6px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
 }
 </style>

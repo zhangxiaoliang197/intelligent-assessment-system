@@ -65,6 +65,12 @@ public class AdminController {
     @Autowired
     private MapServiceConfigRepository mapConfigRepo;
 
+    @Autowired
+    private com.assessment.admin.service.IndicatorSpecService indicatorSpecService;
+
+    @Autowired
+    private com.assessment.admin.service.SemanticCatalogService semanticCatalogService;
+
     @Value("${db.type:mysql}")
     private String dbType;
 
@@ -1322,6 +1328,100 @@ public class AdminController {
         }
 
         return ResponseEntity.ok(Map.of("success", true, "data", result));
+    }
+
+    // ==================== Indicator Spec ====================
+
+    /** Save indicator spec with binding-status write-back. */
+    @PostMapping("/indicator/{indicatorId}/spec")
+    public ResponseEntity<Map<String, Object>> saveIndicatorSpec(
+            @PathVariable String indicatorId,
+            @RequestBody Map<String, Object> body) {
+        Object spec = body.get("indicatorSpec");
+        String specJson = spec == null ? null : String.valueOf(spec);
+        Map<String, Object> result = indicatorSpecService.saveAndValidate(indicatorId, specJson);
+        return Boolean.TRUE.equals(result.get("success"))
+                ? ResponseEntity.ok(result)
+                : ResponseEntity.badRequest().body(result);
+    }
+
+    /** Validate spec only, no persistence. */
+    @PostMapping("/indicator/spec/validate")
+    public ResponseEntity<Map<String, Object>> validateIndicatorSpec(
+            @RequestBody Map<String, Object> body) {
+        Object spec = body.get("indicatorSpec");
+        String specJson = spec == null ? null : String.valueOf(spec);
+        Map<String, Object> specMap;
+        try {
+            specMap = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(specJson, Map.class);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false, "message", "indicatorSpec is not valid JSON: " + e.getMessage()));
+        }
+        return ResponseEntity.ok(indicatorSpecService.validateSpec(specMap));
+    }
+
+    /** Dry-run: read-only probe of each source table referenced by the spec. */
+    @PostMapping("/indicator/{indicatorId}/dry-run")
+    public ResponseEntity<Map<String, Object>> dryRunIndicatorSpec(
+            @PathVariable String indicatorId) {
+        Map<String, Object> result = indicatorSpecService.dryRun(indicatorId);
+        return Boolean.TRUE.equals(result.get("success"))
+                ? ResponseEntity.ok(result)
+                : ResponseEntity.badRequest().body(result);
+    }
+
+    // ==================== Semantic Catalog ====================
+
+    /** Rebuild catalog from field annotations + manual synonyms. */
+    @PostMapping("/catalog/rebuild")
+    public ResponseEntity<Map<String, Object>> rebuildCatalog(
+            @RequestBody(required = false) Map<String, Object> body) {
+        String databaseId = body == null ? null : (String) body.get("databaseId");
+        return ResponseEntity.ok(semanticCatalogService.rebuildCatalog(databaseId));
+    }
+
+    /** Concept -> candidate column search. */
+    @GetMapping("/catalog/search")
+    public ResponseEntity<Map<String, Object>> searchCatalog(
+            @RequestParam("term") String term,
+            @RequestParam(value = "databaseId", required = false) String databaseId,
+            @RequestParam(value = "limit", defaultValue = "10") int limit) {
+        List<Map<String, Object>> items = semanticCatalogService.searchConcept(term, databaseId, limit);
+        return ResponseEntity.ok(Map.of("success", true, "term", term, "items", items));
+    }
+
+    /** Full catalog for a database (tables + columns + annotations + key mappings). */
+    @GetMapping("/catalog/database")
+    public ResponseEntity<Map<String, Object>> catalogForDatabase(
+            @RequestParam(value = "databaseId", required = false) String databaseId) {
+        return ResponseEntity.ok(semanticCatalogService.catalogForDatabase(databaseId));
+    }
+
+    /** Manual synonym upsert. */
+    @PostMapping("/catalog/synonym")
+    public ResponseEntity<Map<String, Object>> upsertSynonym(@RequestBody Map<String, Object> body) {
+        Map<String, Object> result = semanticCatalogService.upsertSynonym(body);
+        return Boolean.TRUE.equals(result.get("success"))
+                ? ResponseEntity.ok(result)
+                : ResponseEntity.badRequest().body(result);
+    }
+
+    /** Update dataset key mappings (join keys). */
+    @PostMapping("/dataset/{datasetId}/key-mappings")
+    public ResponseEntity<Map<String, Object>> saveKeyMappings(
+            @PathVariable String datasetId,
+            @RequestBody Map<String, Object> body) {
+        Optional<Dataset> opt = datasetRepo.findById(datasetId);
+        if (opt.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "dataset not found"));
+        }
+        Dataset ds = opt.get();
+        Object km = body.get("keyMappings");
+        ds.setKeyMappings(km == null ? null : String.valueOf(km));
+        datasetRepo.save(ds);
+        return ResponseEntity.ok(Map.of("success", true, "message", "key mappings saved"));
     }
 
     // ==================== LLM 学习数据导出 ====================

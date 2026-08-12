@@ -143,6 +143,7 @@
               <el-table-column label="操作" min-width="300">
                 <template #default="scope">
                   <el-button size="small" type="success" @click="openIndicatorLink(scope.row)">关联</el-button>
+                  <el-button size="small" type="primary" @click="openIndicatorSpec(scope.row)">配置规格</el-button>
                   <el-button size="small" @click="openEditIndicator(scope.row)">编辑</el-button>
                   <el-button size="small" type="danger" @click="deleteIndicator(scope.row)">删除</el-button>
                 </template>
@@ -476,6 +477,49 @@
           <el-button @click="showLinkDialog = false">取消</el-button>
           <el-button type="primary" @click="saveIndicatorLink">保存关联</el-button>
         </template>
+      </el-dialog>
+
+      <!-- 指标规格配置（Indicator Spec） -->
+      <el-dialog v-model="showSpecDialog" title="指标规格配置（可编译查询规格）" width="860px" top="4vh">
+        <el-form label-width="100px">
+          <el-form-item label="指标公式">
+            <el-input :model-value="specIndicator?.formula || ''" readonly />
+          </el-form-item>
+          <el-form-item label="绑定状态">
+            <el-tag v-if="specBindStatus === 'ready'" type="success" size="small">ready（可编译查询）</el-tag>
+            <el-tag v-else type="warning" size="small">{{ specBindStatus === 'pending' ? 'pending（待确认）' : 'not_ready（存在缺口）' }}</el-tag>
+          </el-form-item>
+          <el-form-item label="规格 JSON">
+            <el-input v-model="specJson" type="textarea" :rows="14"
+              placeholder='{"sourceTables":[...],"keyMappings":[...],"bindings":[...],"dimensions":[...],"parameters":[...]}' />
+          </el-form-item>
+          <el-form-item label="语义目录">
+            <el-collapse>
+              <el-collapse-item :title="`数据源表结构（${catalogTables.length} 张表，含字段标注/注释）`">
+                <div v-for="t in catalogTables" :key="t.tableName" style="margin-bottom:8px">
+                  <b>{{ t.tableName }}</b>
+                  <span v-if="t.datasetName !== t.tableName" style="color:#888">（{{ t.datasetName }}）</span>
+                  <div v-if="t.keyMappings" style="color:#409eff;font-size:12px">连接键: {{ t.keyMappings }}</div>
+                  <div v-for="c in (t.columns || [])" :key="c.columnName" style="font-size:12px;margin-left:12px">
+                    {{ c.columnName }} ({{ c.dataType }})
+                    <span v-if="c.comment || c.annotation || c.businessMeaning" style="color:#666">
+                      — {{ c.comment || c.annotation || c.businessMeaning }}
+                    </span>
+                  </div>
+                </div>
+                <el-button size="small" @click="rebuildCatalog">重建目录索引</el-button>
+              </el-collapse-item>
+            </el-collapse>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="suggestSpecBindings" :loading="suggestingSpec">LLM 建议绑定</el-button>
+          <el-button @click="validateSpecJson" :loading="validatingSpec">校验</el-button>
+          <el-button @click="dryRunSpec" :loading="dryRunningSpec">试运行 (dry-run)</el-button>
+          <el-button @click="showSpecDialog = false">取消</el-button>
+          <el-button type="primary" @click="saveIndicatorSpec">保存规格</el-button>
+        </template>
+        <div v-if="specFeedback" style="margin-top:8px;white-space:pre-wrap;font-size:12px;color:#666">{{ specFeedback }}</div>
       </el-dialog>
     </div>
   </Layout>
@@ -1114,6 +1158,147 @@ async function saveIndicatorLink() {
   }
 }
 
+// ==================== Indicator Spec ====================
+const showSpecDialog = ref(false)
+const specIndicator = ref<any>(null)
+const specJson = ref('')
+const specBindStatus = ref('not_ready')
+const catalogTables = ref<any[]>([])
+const specFeedback = ref('')
+const suggestingSpec = ref(false)
+const validatingSpec = ref(false)
+const dryRunningSpec = ref(false)
+
+function buildEmptySpec(ind: any) {
+  return {
+    formula: ind?.formula || '',
+    sourceTables: [],
+    keyMappings: [],
+    bindings: [],
+    dimensions: [],
+    parameters: [],
+    grain: { groupBy: [], distinct: false }
+  }
+}
+
+async function openIndicatorSpec(row: any) {
+  specIndicator.value = row
+  specBindStatus.value = row.bindStatus || 'not_ready'
+  let spec: any = null
+  try {
+    if (row.indicatorSpec) spec = typeof row.indicatorSpec === 'string' ? JSON.parse(row.indicatorSpec) : row.indicatorSpec
+  } catch { spec = null }
+  specJson.value = spec ? JSON.stringify(spec, null, 2) : JSON.stringify(buildEmptySpec(row), null, 2)
+  specFeedback.value = ''
+  await loadCatalog()
+  showSpecDialog.value = true
+}
+
+async function loadCatalog() {
+  try {
+    const res = await api.get('/admin/catalog/database')
+    if (res && res.success) catalogTables.value = res.tables || []
+  } catch { catalogTables.value = [] }
+}
+
+async function rebuildCatalog() {
+  try {
+    const res = await api.post('/admin/catalog/rebuild', {})
+    if (res && res.success) {
+      specFeedback.value = `目录重建完成：新增 ${res.created || 0}，更新 ${res.updated || 0}，总计 ${res.total || 0}`
+      await loadCatalog()
+    }
+  } catch (e: any) {
+    specFeedback.value = '目录重建失败: ' + (e.serverMessage || e.message || '')
+  }
+}
+
+function parseSpecOrWarn(): any | null {
+  try {
+    const parsed = JSON.parse(specJson.value)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      specFeedback.value = '规格必须是 JSON 对象'
+      return null
+    }
+    return parsed
+  } catch (e: any) {
+    specFeedback.value = '规格 JSON 解析失败: ' + (e.message || e)
+    return null
+  }
+}
+
+async function validateSpecJson() {
+  const spec = parseSpecOrWarn()
+  if (!spec) return
+  validatingSpec.value = true
+  try {
+    const res = await api.post('/admin/indicator/spec/validate', { indicatorSpec: JSON.stringify(spec) })
+    specFeedback.value = res.ready
+      ? `校验通过：绑定 ${res.bindingCount || 0} 项，无缺口`
+      : `校验未通过：\n${(res.errors || []).join('\n') || '存在缺口'}\n未绑定项: ${(res.missingTerms || []).join('、') || '无'}`
+  } catch (e: any) {
+    specFeedback.value = '校验失败: ' + (e.serverMessage || e.message || '')
+  } finally {
+    validatingSpec.value = false
+  }
+}
+
+async function dryRunSpec() {
+  if (!specIndicator.value?.id) return
+  dryRunningSpec.value = true
+  specFeedback.value = ''
+  try {
+    const res = await api.post(`/admin/indicator/${specIndicator.value.id}/dry-run`)
+    const lines = (res.checks || []).map((c: any) => `[${c.ok ? 'OK' : 'FAIL'}] ${c.table} — ${c.message}`)
+    specFeedback.value = `dry-run ${res.dryRunOk ? '通过' : '未通过'}：\n` + lines.join('\n')
+  } catch (e: any) {
+    specFeedback.value = 'dry-run 失败: ' + (e.serverMessage || e.message || '')
+  } finally {
+    dryRunningSpec.value = false
+  }
+}
+
+async function suggestSpecBindings() {
+  const ind = specIndicator.value
+  if (!ind) return
+  suggestingSpec.value = true
+  specFeedback.value = ''
+  try {
+    const body: any = {
+      indicator_name: ind.name || '',
+      formula: ind.formula || '',
+      current_spec: parseSpecOrWarn() || {}
+    }
+    const res = await api.post('/evaluation/indicator-spec/suggest', body)
+    if (res && res.success && res.suggestedSpec) {
+      specJson.value = JSON.stringify(res.suggestedSpec, null, 2)
+      specFeedback.value = '已生成绑定建议（LLM 建议，保存前请校验/dry-run 并人工确认）'
+    } else {
+      specFeedback.value = '建议生成失败: ' + (res?.message || '')
+    }
+  } catch (e: any) {
+    specFeedback.value = '建议生成失败: ' + (e.serverMessage || e.message || '')
+  } finally {
+    suggestingSpec.value = false
+  }
+}
+
+async function saveIndicatorSpec() {
+  const spec = parseSpecOrWarn()
+  if (!spec) return
+  if (!specIndicator.value?.id) return
+  try {
+    const res = await api.post(`/admin/indicator/${specIndicator.value.id}/spec`, { indicatorSpec: JSON.stringify(spec) })
+    specBindStatus.value = res.bindStatus || 'not_ready'
+    specFeedback.value = res.ready
+      ? `规格已保存，状态 ready（绑定 ${res.bindingCount || 0} 项）`
+      : `规格已保存，状态 ${res.bindStatus}。\n${(res.errors || []).join('\n') || '存在缺口'}`
+    ElMessage.success('指标规格已保存')
+    loadIndicators()
+  } catch (e: any) {
+    specFeedback.value = '保存失败: ' + (e.serverMessage || e.message || '')
+  }
+}
 // ==================== 大模型 多配置管理 ====================
 const llmConfigs = ref<any[]>([])
 const showLlmDialog = ref(false)

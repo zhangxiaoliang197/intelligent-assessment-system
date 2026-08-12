@@ -250,7 +250,8 @@ async def mock_generate(
 
     # ── 4. map_layer（WGS84 坐标，前端 gcoord 转 GCJ02）──
     await asyncio.sleep(interval)
-    yield "map_layer", _map_payload(profile)
+    map_payload = _map_payload(profile)
+    yield "map_layer", map_payload
 
     # ── 5. narrative（态势介绍 + 逐图说明，最后产出）──
     await asyncio.sleep(interval)
@@ -267,6 +268,12 @@ async def mock_generate(
             }
             for index, metric in enumerate(focus_metrics, start=1)
         ],
+        "mapExplanation": (
+            f"该地图用于展示「{query}」相关关键对象的空间分布（"
+            f"{len(map_payload.get('points', []))} 个标点、{len(map_payload.get('routes', []))} 条路线、"
+            f"{len(map_payload.get('areas', []))} 个区域、{len(map_payload.get('circles', []))} 个圆形区域），"
+            f"请结合各图表与地图位置进行联动分析。"
+        ),
     }
 
     # ── 6. done ──

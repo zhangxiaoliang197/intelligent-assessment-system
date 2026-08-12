@@ -826,6 +826,108 @@ class IndicatorQueryRequest(BaseModel):
     selected_indicator_names: Optional[list] = None
 
 
+class IndicatorSpecSuggestRequest(BaseModel):
+    indicator_name: str = ""
+    formula: str = ""
+    database_id: str = ""
+    current_spec: Optional[dict] = None
+
+
+def _extract_formula_terms(formula: str) -> list:
+    """公式分词：中文连续词 + 英文/数字标识符，用于 LLM 绑定建议的 term 清单。"""
+    import re as _re
+    terms = []
+    for m in _re.finditer(r"[\u4e00-\u9fff]{2,}|[A-Za-z_][A-Za-z0-9_]{1,}", formula or ""):
+        t = m.group()
+        if t and t not in terms:
+            terms.append(t)
+    return terms[:20]
+
+
+def _catalog_to_text(catalog: dict) -> str:
+    """语义目录 → prompt 上下文文本。"""
+    lines = []
+    for t in catalog.get("tables", []) or []:
+        lines.append(f"### 表 {t.get('tableName', '')}（数据集: {t.get('datasetName', '')}"
+                     f"{'，' + str(t.get('description')) if t.get('description') else ''}）")
+        for c in t.get("columns", []) or []:
+            parts = [f"  - {c.get('columnName')} ({c.get('dataType', '')})"]
+            if c.get("comment"):
+                parts.append(f"-- {c['comment']}")
+            if c.get("annotation"):
+                parts.append(f"[{c['annotation']}]")
+            if c.get("businessMeaning"):
+                parts.append(f"[{c['businessMeaning']}]")
+            lines.append(" ".join(parts))
+        km = t.get("keyMappings")
+        if km:
+            lines.append(f"  连接键: {km}")
+    return "\n".join(lines) or "（无目录数据）"
+
+
+@evaluation_router.post("/indicator-spec/suggest")
+async def indicator_spec_suggest(request: IndicatorSpecSuggestRequest):
+    """LLM 辅助配置：根据公式 + 语义目录建议绑定（候选，需人工确认 + dry-run）。"""
+    from agents.tools import fetch_database_catalog
+
+    formula = (request.formula or "").strip()
+    if not formula:
+        return {"success": False, "message": "缺少公式"}
+    terms = _extract_formula_terms(formula)
+    if not terms:
+        return {"success": False, "message": "未能从公式中解析出计算项"}
+
+    catalog = fetch_database_catalog(request.database_id)
+    catalog_text = _catalog_to_text(catalog)
+    current = request.current_spec or {}
+
+    system_prompt = (
+        "你是数据库指标配置助手。给定指标公式中的计算项（term）和数据库语义目录，"
+        "为每个 term 建议绑定。只返回严格 JSON，不要其他文字：\n"
+        '{"sourceTables": [{"alias": "a", "tableName": "物理表名"}...],\n'
+        ' "keyMappings": [{"left": "a.列", "right": "b.列"}...],\n'
+        ' "bindings": [{"term": "公式词", "kind": "agg", "agg": "COUNT|SUM|AVG|MIN|MAX",\n'
+        '   "table": "别名", "column": "物理列名"}...],\n'
+        ' "dimensions": [{"alias": "d", "table": "别名", "column": "物理列名"}...],\n'
+        ' "parameters": [{"name": "参数名", "term": "公式词", "type": "filter",\n'
+        '   "target": {"table": "别名", "column": "物理列名"}}...],\n'
+        ' "notes": ["一句话说明每个绑定依据"]}\n'
+        "规则：\n"
+        "1. 表名/列名必须严格来自上方语义目录；\n"
+        "2. 找不到对应列的 term 不要强行绑定，notes 里说明；\n"
+        "3. 跨表时给出 keyMappings；\n"
+        "4. agg 只允许 COUNT/SUM/AVG/MIN/MAX；\n"
+        "5. 若某 term 表示过滤条件（如某物品），放入 parameters.target。"
+    )
+    user_message = (
+        f"指标名称：{request.indicator_name or '未知'}\n"
+        f"公式：{formula}\n"
+        f"计算项：{', '.join(terms)}\n\n"
+        f"当前已有规格（可为空）：\n{json.dumps(current, ensure_ascii=False)[:1000]}\n\n"
+        f"数据库语义目录：\n{catalog_text[:6000]}"
+    )
+
+    try:
+        response = await async_llm_call(system_prompt, user_message)
+    except Exception as e:
+        logger.warning(f"LLM 绑定建议失败: {e}")
+        return {"success": False, "message": f"LLM 调用失败: {str(e)[:120]}"}
+
+    import re as _re
+    m = _re.search(r"\{.*\}", response, _re.DOTALL)
+    if not m:
+        return {"success": False, "message": "LLM 响应未包含 JSON"}
+    try:
+        suggested = json.loads(m.group())
+    except json.JSONDecodeError as e:
+        return {"success": False, "message": f"JSON 解析失败: {e}"}
+
+    suggested.setdefault("formula", formula)
+    suggested.setdefault("terms", terms)
+    suggested.setdefault("status", "pending")
+    return {"success": True, "suggestedSpec": suggested, "terms": terms}
+
+
 @evaluation_router.post("/indicator-query/stream")
 async def indicator_query_stream(request: IndicatorQueryRequest):
     """

@@ -25,6 +25,9 @@ from .tools import (
 from .text_to_sql import run_text_to_sql, _validate_sql
 from .analyst import run_analyst
 from .sufficiency import assess_data_sufficiency, build_indicator_types
+from .indicator_engine import (
+    build_check_schema, plan_indicators, preflight_indicators,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -320,8 +323,12 @@ def dataset_indicator_node(database_id, indicator_defs):
 # =========================================================================
 
 async def table_select_node(all_tables, datasets_found, analysis_plan, question,
-                            database_id, db_connected):
-    """选择相关表，然后并行读取表结构。"""
+                            database_id, db_connected, required_tables=None):
+    """选择相关表，然后并行读取表结构。
+
+    required_tables: 可选，指标规格(sourceTables)引用的表名；
+      这些表必须被读取（确定性编译路径），即使启发式打分未命中。
+    """
     yield {"type": "step", "step": _build_step(
         Step.TABLE_SELECT, "Select Tables", "in_progress",
         detail="Selecting relevant tables for indicators...", progress=30)}
@@ -341,6 +348,13 @@ async def table_select_node(all_tables, datasets_found, analysis_plan, question,
         tname = _extract_table_info(t)[0]
         if tname in dataset_table_map and tname not in relevant:
             if len(relevant) < 6:
+                relevant.append(tname)
+
+    # 指标规格引用的表必须覆盖（确定性编译路径）
+    if required_tables:
+        for t in list(all_tables):
+            tname = _extract_table_info(t)[0]
+            if tname in required_tables and tname not in relevant:
                 relevant.append(tname)
 
     n = len(relevant)
@@ -996,6 +1010,209 @@ async def _concept_answer_flow(question, indicator_defs, llm_call_fn,
 # 编排器（公共 API）
 # =========================================================================
 
+def _spec_table_names(indicator_defs):
+    """收集指标规格 sourceTables 引用的物理表名。"""
+    names = []
+    for ind in indicator_defs or []:
+        spec_raw = ind.get("indicatorSpec") or ind.get("_spec") or ""
+        spec = None
+        if isinstance(spec_raw, str) and spec_raw.strip():
+            try:
+                spec = json.loads(spec_raw)
+            except json.JSONDecodeError:
+                spec = None
+        elif isinstance(spec_raw, dict):
+            spec = spec_raw
+        if not spec:
+            continue
+        for st in spec.get("sourceTables") or []:
+            tn = st.get("tableName", "") if isinstance(st, dict) else ""
+            if tn and tn not in names:
+                names.append(tn)
+    return names
+
+
+def _has_spec(indicator_defs):
+    for ind in indicator_defs or []:
+        spec = ind.get("indicatorSpec") or ind.get("_spec") or ""
+        if spec:
+            return True
+    return False
+
+
+async def _compiled_query_flow(question, database_id, merged,
+                               schemas, llm_call_fn, stream_llm_gen,
+                               selection_note="", quote_style="none"):
+    """确定性编译路径：Preflight → 计划编译 → 执行 → 分析。"""
+    from .indicator_engine import build_check_schema, plan_indicators, preflight_indicators
+
+    check_schema = build_check_schema(schemas)
+    spec_indicators = [ind for ind in merged
+                       if ind.get("indicatorSpec") or ind.get("_spec")]
+
+    # ── 参数抽取（LLM 窄任务 + 确定性兜底） ──
+    params = await _extract_query_params(question, spec_indicators, llm_call_fn)
+    if params:
+        logger.info(f"[compiled] 抽取参数: {params}")
+
+    # ── Preflight 就绪度检查（查询前） ──
+    preflight = preflight_indicators(spec_indicators, check_schema=check_schema,
+                                     question=question, quote_style=quote_style)
+    yield {"type": "step", "step": _build_step(
+        Step.SUFFICIENCY, "Preflight Readiness", "completed",
+        detail=(f"就绪 {preflight['ready']}/{preflight['total']} 个指标"
+                f"{selection_note}"),
+        thinking=("指标就绪度：\n" + "\n".join(
+            f"  [{p['status']}] {p['name']}" + (f" — {p['reason']}" if p["reason"] else "")
+            for p in preflight["per_indicator"])),
+        progress=100)}
+
+    # ── 查询计划编译 ──
+    plan_result = plan_indicators(spec_indicators, params=params,
+                                  check_schema=check_schema,
+                                  quote_style=quote_style)
+    plans = [p for p in plan_result.get("plans", []) if p.get("ok")]
+    if not plans:
+        reason = "；".join(plan_result.get("gaps", []) or ["无可用查询计划"])
+        yield {"type": "step", "step": _build_step(
+            Step.SQL_GENERATE, "Compile Query Plan", "error",
+            detail=reason[:120], progress=100)}
+        # 让 analyst 输出缺口说明
+        es = EvaluationState(question=question, database_id=database_id)
+        es.indicator_defs = merged
+        es.sufficiency_report = {
+            "scenario": "insufficient",
+            "reason": f"指标规格存在缺口：{reason[:200]}",
+            "per_indicator": preflight.get("per_indicator", []),
+        }
+        es.execution_error = reason[:200]
+        async for ev in analyst_node(es, [], stream_llm_gen):
+            yield ev
+        yield {"type": "result",
+               "final_answer": es.final_answer or f"指标查询计划不可用：{reason[:200]}",
+               "generatedSql": "", "rawResults": [], "totalRows": 0,
+               "query_type": "data_query", "database_used": database_id,
+               "preflight": preflight, "queryPlan": plan_result}
+        return
+
+    all_sql = [p["sql"] for p in plans]
+    yield {"type": "step", "step": _build_step(
+        Step.SQL_GENERATE, "Compile Query Plan", "completed",
+        detail=f"生成 {len(all_sql)} 条确定性 SQL",
+        thinking="\n\n".join(f"--- 计划 {i + 1} ---\n{sql}"
+                             for i, sql in enumerate(all_sql)),
+        progress=100)}
+
+    # ── 执行（每条计划独立执行，按计划归并结果） ──
+    raw_results = []
+    exec_ok = True
+    es = EvaluationState(question=question, database_id=database_id)
+    es.indicator_defs = merged
+    for i, p in enumerate(plans):
+        result = execute_sql_on_database(database_id, p["sql"])
+        if not result.get("success"):
+            exec_ok = False
+            msg = result.get("message", "执行失败")
+            yield {"type": "step", "step": _build_step(
+                Step.SQL_EXECUTE, f"Execute Plan {i + 1}", "error",
+                detail=msg[:120], progress=100)}
+            es.execution_error = msg[:300]
+            continue
+        rows = _extract_rows(result)
+        raw_results.extend(rows)
+        yield {"type": "step", "step": _build_step(
+            Step.SQL_EXECUTE, f"Execute Plan {i + 1}", "completed",
+            detail=f"返回 {len(rows)} 行", progress=100)}
+
+    es.generated_sql = "; ".join(all_sql) if len(all_sql) > 1 else all_sql[0]
+    es.raw_results = raw_results
+    es.sufficiency_report = {
+        "scenario": "sufficient" if (exec_ok and raw_results) else "no_data",
+        "total_rows": len(raw_results),
+        "reason": (f"确定性查询完成（{len(raw_results)} 行，"
+                   f"{len(all_sql)} 条计划）") if exec_ok else "查询执行失败",
+        "per_indicator": preflight.get("per_indicator", []),
+    }
+    es.indicator_types = build_indicator_types(merged)
+
+    for ev in result_preview_node(raw_results, es.sufficiency_report,
+                                  es.indicator_types):
+        yield ev
+    async for ev in analyst_node(es, raw_results, stream_llm_gen):
+        yield ev
+
+    yield {"type": "result",
+           "final_answer": es.final_answer or "分析完成",
+           "generatedSql": es.generated_sql,
+           "rawResults": raw_results[:20],
+           "totalRows": len(raw_results),
+           "query_type": "data_query", "database_used": database_id,
+           "preflight": preflight, "queryPlan": plan_result}
+
+
+async def _extract_query_params(question, spec_indicators, llm_call_fn):
+    """从问题中抽取规格参数值（LLM 窄任务；失败用问题文本关键词兜底）。"""
+    params = {}
+    specs = []
+    for ind in spec_indicators:
+        spec_raw = ind.get("indicatorSpec") or ind.get("_spec") or ""
+        if isinstance(spec_raw, str) and spec_raw.strip():
+            try:
+                spec = json.loads(spec_raw)
+            except json.JSONDecodeError:
+                continue
+        elif isinstance(spec_raw, dict):
+            spec = spec_raw
+        else:
+            continue
+        if spec.get("parameters"):
+            specs.append(spec)
+    if not specs or not question:
+        return {}
+
+    all_params = []
+    for spec in specs:
+        for p in spec.get("parameters", []):
+            name = p.get("name", "")
+            term = p.get("term", "")
+            if name and name not in all_params:
+                all_params.append({"name": name, "term": term,
+                                   "target": p.get("target", {})})
+
+    system_prompt = (
+        "从用户问题中抽取指标查询参数的取值。只返回严格 JSON 对象："
+        '{"参数名": "值"}。找不到就给空字符串 ""。不要任何其他文字。'
+    )
+    user_message = (
+        f"问题：{question}\n"
+        f"参数：{json.dumps(all_params, ensure_ascii=False)}"
+    )
+    if llm_call_fn:
+        try:
+            response = await llm_call_fn(system_prompt, user_message)
+            import re as _re
+            m = _re.search(r"\{.*\}", response or "", _re.DOTALL)
+            if m:
+                parsed = json.loads(m.group())
+                if isinstance(parsed, dict):
+                    for name, val in parsed.items():
+                        if val not in (None, ""):
+                            params[name] = str(val)
+        except Exception as e:
+            logger.warning(f"[compiled] LLM 参数抽取失败，走关键词兜底: {e}")
+
+    # 兜底：问题中 term 后跟值的模式
+    if not params:
+        for p in all_params:
+            term = p.get("term", "")
+            if not term:
+                continue
+            m = re.search(re.escape(term) + r"[：:为是]?\s*([^\s，。；,!?]{1,30})", question)
+            if m:
+                params[p["name"]] = m.group(1).strip()
+    return params
+
+
 async def run_indicator_query(question, database_id, database_name,
                               indicator_defs, analysis_plan,
                               llm_call_fn, stream_llm_gen=None,
@@ -1015,6 +1232,8 @@ async def run_indicator_query(question, database_id, database_name,
     # ── 获取数据库类型（用于 SQL 方言适配）─────────────────────────
     db_config = fetch_database_config(database_id) if database_id else {}
     database_type = db_config.get("type", "")
+    from .indicator_engine import _quote_style_for
+    quote_style = _quote_style_for(database_type)
 
     # ── SQL 必要性判断（概念类指标不走 SQL 管线）─────────────────
     if not _check_needs_sql(indicator_defs):
@@ -1040,6 +1259,8 @@ async def run_indicator_query(question, database_id, database_name,
         else:
             yield ev
 
+    selection_note = ""
+
     # ── 按用户选择过滤指标（在 admin 指标合并之后过滤，避免未选指标被合并回来）──
     # selected_indicator_names 非空时，仅保留用户选中的指标。过滤后整条管线
     # （字段提示 / SQL 生成 / 充分性判定 / 分析）都只针对选中指标。
@@ -1059,12 +1280,23 @@ async def run_indicator_query(question, database_id, database_name,
 
     # ── 步骤 4: 表选择与结构读取 ─────────────────────────────────────
     schemas = None
+    required_tables = _spec_table_names(merged)
     async for ev in table_select_node(all_tables, datasets, analysis_plan,
-                                      question, database_id, db_connected):
+                                      question, database_id, db_connected,
+                                      required_tables=required_tables):
         if "_return" in ev:
             schemas = ev["_return"]
         else:
             yield ev
+
+    # ── 确定性编译路径：有指标规格的指标优先走编译（不依赖运行期 LLM 猜 SQL） ──
+    if _has_spec(merged):
+        async for ev in _compiled_query_flow(
+                question, database_id, merged, schemas,
+                llm_call_fn, stream_llm_gen, selection_note=selection_note,
+                quote_style=quote_style):
+            yield ev
+        return
 
     # ── 字段提示（本地三级匹配 + LLM 语义兜底）────────────────────────────
     enhanced_indicators = await build_field_hints(schemas, merged, llm_call_fn)
@@ -1100,7 +1332,6 @@ async def run_indicator_query(question, database_id, database_name,
     es.sufficiency_report = sufficiency_report
     es.indicator_types = build_indicator_types(enhanced_indicators)
     # 选中指标时在步骤中标注「已选择 N/M」，便于用户确认过滤生效
-    selection_note = ""
     if selected_indicator_names and selection_total:
         selection_note = (f" | 已选择 {sufficiency_report['indicators_total']}/"
                           f"{selection_total} 个指标")

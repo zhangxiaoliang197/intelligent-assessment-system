@@ -25,6 +25,7 @@
               :selected-region="store.selectedRegion"
               :time-range="store.selectedTimeRange"
               :filters="store.filters"
+              :explanation="store.mapExplanation"
             />
           </div>
         </div>
@@ -105,12 +106,12 @@ function onExport(format: 'pdf' | 'image') {
   grid-template-columns: 1fr 1fr;
   gap: 12px;
   padding: 12px;
-  overflow: hidden;
+  /* 图表较多（如 4 个 2×2）时左侧内容高度可能超过视口，允许滚动查看完整说明 */
+  overflow-y: auto;
   min-height: 0;
 }
 .body-left, .body-right {
-  min-height: 0;
-  overflow: hidden;
+  min-height: auto;
   display: flex;
   flex-direction: column;
 }

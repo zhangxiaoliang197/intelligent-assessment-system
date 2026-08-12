@@ -21,18 +21,18 @@ NEO4J_MAX_CONNECTIONS = int(os.getenv("NEO4J_MAX_CONNECTIONS", "100"))
 # 连接超时秒数
 NEO4J_CONNECTION_TIMEOUT = int(os.getenv("NEO4J_CONNECTION_TIMEOUT", "30"))
 
-# ── Step 1 概念提取分批（类型层）──
+# ── Step 1 实体类型及属性提取分批（类型层）──
 # 文档字符数超过此值才分批，否则单次调用（保持兼容、节省开销）
-STEP1_BATCH_THRESHOLD_CHARS = int(os.getenv("STEP1_BATCH_THRESHOLD_CHARS", "10000"))
-# 每批喂给 LLM 的文档字符数上限（≈13.5K-18K token，留出 prompt 模板 + 输出空间）
-STEP1_BATCH_MAX_CHARS = int(os.getenv("STEP1_BATCH_MAX_CHARS", "9000"))
+STEP1_BATCH_THRESHOLD_CHARS = int(os.getenv("STEP1_BATCH_THRESHOLD_CHARS", "5000"))
+# 每批喂给 LLM 的文档字符数上限（≈7.5K-10K token，留出 reasoning 思考链 + prompt 模板 + 输出空间）
+STEP1_BATCH_MAX_CHARS = int(os.getenv("STEP1_BATCH_MAX_CHARS", "5000"))
 # 相邻批重叠字符数（覆盖跨批边界概念的上下文，约 5-8 个句子）
 STEP1_BATCH_OVERLAP = int(os.getenv("STEP1_BATCH_OVERLAP", "500"))
 
 # ── Step 2 实体+属性提取分批（实例层）──
 # 与 step1 同源分批策略：长文档分批提取实体，跨批按 name 去重合并 properties
-STEP2_BATCH_THRESHOLD_CHARS = int(os.getenv("STEP2_BATCH_THRESHOLD_CHARS", "10000"))
-STEP2_BATCH_MAX_CHARS = int(os.getenv("STEP2_BATCH_MAX_CHARS", "9000"))
+STEP2_BATCH_THRESHOLD_CHARS = int(os.getenv("STEP2_BATCH_THRESHOLD_CHARS", "5000"))
+STEP2_BATCH_MAX_CHARS = int(os.getenv("STEP2_BATCH_MAX_CHARS", "5000"))
 STEP2_BATCH_OVERLAP = int(os.getenv("STEP2_BATCH_OVERLAP", "500"))
 
 # ── 并行抽取并发数 ──

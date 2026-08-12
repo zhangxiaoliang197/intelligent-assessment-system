@@ -12,7 +12,7 @@ A 阶段实现：多本体隔离、元模型类型约束、JSON 属性、持久�
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv(usecwd=True))
 
-from fastapi import FastAPI, HTTPException, Form, UploadFile, File
+from fastapi import FastAPI, HTTPException, Form, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
@@ -1982,6 +1982,23 @@ def _get_job_or_404(job_id: str) -> BuildJob:
     if not job:
         raise HTTPException(status_code=404, detail="构建任务不存在")
     return job
+
+
+async def _parse_form_field(request: Request, field: str, default: str = "") -> str:
+    """容错解析表单字段：空请求体或非法 multipart 时返回默认值。
+
+    前端空 FormData 序列化出的请求体只有结束 boundary、没有任何 part，
+    FastAPI 的 Form(...) 参数绑定会在解析阶段直接失败返回 400
+    "There was an error parsing the body"。此函数手动解析并吞掉解析异常，
+    保证空表单请求也能按"未填字段"正常处理。
+    """
+    try:
+        form = await request.form()
+        value = form.get(field)
+        return str(value) if value is not None else default
+    except Exception:
+        # 请求体为空 / multipart 解析失败：按未填字段处理
+        return default
 
 
 def load_db() -> None:
@@ -5006,28 +5023,32 @@ async def build_get_graph(job_id: str, stage: int = 1):
 @app.put("/ontology/build/{job_id}/meta")
 async def build_confirm_meta(
     job_id: str,
-    entity_types: str = Form(...),
-    relation_types: str = Form(...),
+    entity_types: str = Form(""),
+    relation_types: str = Form(""),
     granularity: str = Form("medium"),
-    stage_hints: str = Form("")
+    stage_hints: str = Form(""),
+    template_id: str = Form(""),
+    template_mode: str = Form("")
 ):
-    """用户确认或编辑元模型 + 粒度 + 阶段提示词。
+    """用户确认或编辑元模型 + 粒度 + 阶段提示词 + 模板。
 
-    确认后元模型、粒度、阶段提示词固定，后续 step1/step2/step3/step4 的 LLM 调用遵守此约束。
+    确认后元模型、粒度、阶段提示词固定，后续 step1/step2/step3 的 LLM 调用遵守此约束。
+    entity_types / relation_types 未传时沿用 upload 阶段已生成的元模型（兼容前端不重新编辑元模型的场景）。
     """
     job = _get_job_or_404(job_id)
     if job.status == "completed":
         raise HTTPException(status_code=400, detail="任务已完成，不可修改")
 
-    try:
-        et_list = json.loads(entity_types) if isinstance(entity_types, str) else entity_types
-        rt_list = json.loads(relation_types) if isinstance(relation_types, str) else relation_types
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"元模型 JSON 解析失败: {e}")
-
+    # 元模型可缺省：未传或为空时沿用 upload 阶段 LLM 推荐的元模型
+    et_list = _parse_json_arg(entity_types, None)
+    rt_list = _parse_json_arg(relation_types, None)
     if not isinstance(et_list, list) or not et_list:
-        raise HTTPException(status_code=400, detail="entity_types 不能为空")
+        et_list = job.meta_entity_types or []
     if not isinstance(rt_list, list) or not rt_list:
+        rt_list = job.meta_relation_types or []
+    if not et_list:
+        raise HTTPException(status_code=400, detail="entity_types 不能为空")
+    if not rt_list:
         raise HTTPException(status_code=400, detail="relation_types 不能为空")
 
     # 解析粒度（非法值回退 medium）
@@ -5043,6 +5064,17 @@ async def build_confirm_meta(
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"stage_hints 解析失败，忽略: {e}")
 
+    # 模板配置（可选）：确认时允许修改/切换模板与模板使用模式
+    if template_id:
+        try:
+            tpl = _get_template_or_404(template_id)
+            job.template_id = tpl.id
+            job.template_snapshot = tpl.dict()
+            if template_mode in ("skip_step1", "soft_constraint"):
+                job.template_mode = template_mode
+        except HTTPException as e:
+            logger.warning(f"build_confirm_meta: 模板 {template_id} 不存在，忽略: {e.detail}")
+
     async with build_lock:
         job.meta_entity_types = et_list
         job.meta_relation_types = rt_list
@@ -5057,7 +5089,7 @@ async def build_confirm_meta(
 
     return {
         "success": True,
-        "message": "元模型已确认，可执行概念提取",
+        "message": "配置已确认，可执行实体类型提取",
         "data": {
             "job_id": job_id,
             "meta_entity_types": job.meta_entity_types,
@@ -5069,13 +5101,16 @@ async def build_confirm_meta(
 
 
 @app.post("/ontology/build/{job_id}/step1")
-async def build_step1(job_id: str):
+async def build_step1(job_id: str, request: Request):
     """Step 1: LLM 从文档提取概念清单（类型层，后台异步执行）。
 
     前置条件：元模型已确认（meta_confirmed=True）。
+    stage_hint: 表单字段，用户在本阶段开始时补充的提示词（可选），会注入本次 LLM 提取并持久化。
     立即返回，LLM 调用在后台进行，前端通过 GET /progress 或 GET /build/{job_id} 轮询结果。
     用户可在后台执行期间离开页面，稍后回来查看。
     """
+    # 容错解析 stage_hint：空 FormData 请求体也能正常处理，避免 FastAPI 400
+    stage_hint = await _parse_form_field(request, "stage_hint")
     job = _get_job_or_404(job_id)
     if not job.meta_confirmed:
         raise HTTPException(status_code=400, detail="请先确认元模型（PUT /ontology/build/{job_id}/meta）")
@@ -5093,6 +5128,10 @@ async def build_step1(job_id: str):
 
     # 启动后台任务，立即返回（清空陈旧错误，避免前端显示旧报错）
     async with build_lock:
+        if stage_hint and stage_hint.strip():
+            if not job.stage_hints:
+                job.stage_hints = {}
+            job.stage_hints[1] = stage_hint.strip()
         job.error_message = None
         job.update_time = datetime.now()
         save_build_job(job_id)
@@ -5168,12 +5207,15 @@ async def build_confirm_step1(
 
 
 @app.post("/ontology/build/{job_id}/step2")
-async def build_step2(job_id: str):
+async def build_step2(job_id: str, request: Request):
     """Step 2: LLM 从文档提取实体+属性（实例层，后台异步执行）。
 
     前置条件：step1 已确认。
+    stage_hint: 表单字段，用户在本阶段开始时补充的提示词（可选），会注入本次 LLM 提取并持久化。
     立即返回，LLM 调用在后台进行，前端轮询结果。
     """
+    # 容错解析 stage_hint：空 FormData 请求体也能正常处理，避免 FastAPI 400
+    stage_hint = await _parse_form_field(request, "stage_hint")
     job = _get_job_or_404(job_id)
     if not job.step1_confirmed:
         raise HTTPException(status_code=400, detail="请先确认概念清单（PUT /ontology/build/{job_id}/step1）")
@@ -5190,6 +5232,10 @@ async def build_step2(job_id: str):
                  and job.step2_failed_batch >= 0)
 
     async with build_lock:
+        if stage_hint and stage_hint.strip():
+            if not job.stage_hints:
+                job.stage_hints = {}
+            job.stage_hints[2] = stage_hint.strip()
         job.error_message = None
         job.update_time = datetime.now()
         save_build_job(job_id)
@@ -5276,13 +5322,16 @@ async def build_confirm_step2(
 
 
 @app.post("/ontology/build/{job_id}/step3")
-async def build_step3(job_id: str):
+async def build_step3(job_id: str, request: Request):
     """Step 3: LLM 自检验证 + 报告生成（v3 后台异步执行）。
 
     v3 重构：原 step4 验证+报告 降为 step3。
     前置条件：step2 已确认（实体+关系提取完成）。
+    stage_hint: 表单字段，用户在本阶段开始时补充的提示词（可选），会注入本次验证并持久化。
     立即返回，LLM 调用在后台进行，前端轮询结果。
     """
+    # 容错解析 stage_hint：空 FormData 请求体也能正常处理，避免 FastAPI 400
+    stage_hint = await _parse_form_field(request, "stage_hint")
     job = _get_job_or_404(job_id)
     if not job.step2_confirmed:
         raise HTTPException(status_code=400, detail="请先确认实体+关系清单（PUT /ontology/build/{job_id}/step2）")
@@ -5297,6 +5346,10 @@ async def build_step3(job_id: str):
     is_resume = bool(job.step3_verification or job.step4_verification)
 
     async with build_lock:
+        if stage_hint and stage_hint.strip():
+            if not job.stage_hints:
+                job.stage_hints = {}
+            job.stage_hints[3] = stage_hint.strip()
         job.error_message = None
         job.update_time = datetime.now()
         save_build_job(job_id)
@@ -5450,7 +5503,7 @@ async def build_delete(job_id: str):
 
 
 @app.post("/ontology/build/{job_id}/rework/{step}")
-async def build_rework(job_id: str, step: int, stage_hint: str = Form("")):
+async def build_rework(job_id: str, step: int, request: Request):
     """返工：重新执行指定步骤（用户可输入新提示词，重新调用 LLM）。
 
     v3 新增：支持每步返工，返工时重置该步骤及所有后续步骤的状态。
@@ -5459,11 +5512,11 @@ async def build_rework(job_id: str, step: int, stage_hint: str = Form("")):
     Args:
         job_id: 构建任务ID
         step: 返工步骤（1=实体类型提取, 2=实体+关系提取, 3=验证+报告）
-        stage_hint: 用户为该阶段注入的新提示词（可选，空则沿用原提示词）
-
-    Returns:
-        后台任务启动确认，前端轮询结果
+        request: 表单字段 stage_hint/prompt（可选，空则沿用原提示词；二者互为别名）
     """
+    # 容错解析表单字段：空 FormData 请求体也能正常处理，避免 FastAPI 400
+    stage_hint = await _parse_form_field(request, "stage_hint")
+    prompt = await _parse_form_field(request, "prompt")
     job = _get_job_or_404(job_id)
     if job.status == "completed":
         raise HTTPException(status_code=400, detail="任务已完成，无法返工（如需修改请编辑正式本体）")
@@ -5471,6 +5524,10 @@ async def build_rework(job_id: str, step: int, stage_hint: str = Form("")):
         raise HTTPException(status_code=400, detail="当前有步骤正在后台运行中，请等待完成")
     if step not in (1, 2, 3):
         raise HTTPException(status_code=400, detail="返工步骤必须为 1、2 或 3")
+
+    # 兼容前端字段名：prompt 与 stage_hint 取非空者
+    if prompt and prompt.strip() and not stage_hint:
+        stage_hint = prompt
 
     # 前置条件检查：返工某步需要前序步骤已确认
     if step == 2 and not job.step1_confirmed:

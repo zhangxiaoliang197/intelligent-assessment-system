@@ -137,18 +137,17 @@
                 </el-tag>
               </div>
 
-              <!-- 阶段提示词（3 个阶段） -->
-              <div class="stage-hints-grid">
-                <div v-for="n in [1, 2, 3]" :key="n" class="stage-hint-item">
-                  <span class="stage-hint-label">{{ stageHintLabels[n] }}：</span>
-                  <el-input
-                    v-model="metaForm.stageHints[n]"
-                    size="small"
-                    :placeholder="`为阶段${n}补充提示词（可选）`"
-                    :disabled="job?.meta_confirmed"
-                  />
-                </div>
-              </div>
+              <!-- 阶段提示词已移至各阶段开始时输入 -->
+              <el-alert
+                type="info"
+                :closable="false"
+                show-icon
+                style="margin-top: 0.5rem"
+              >
+                <template #default>
+                  <p>阶段提示词可在每个阶段开始前补充（可选）；阶段完成后也可填写修改意见，系统会携带意见自动返工重建。</p>
+                </template>
+              </el-alert>
             </div>
 
             <div class="step-actions">
@@ -191,6 +190,20 @@
                 </el-button>
               </div>
             </template>
+
+            <!-- 阶段提示词：开始前输入，注入本次 LLM 提取 -->
+            <div v-if="!isExtractingEntityTypes" class="stage-hint-box">
+              <el-input
+                v-model="stageHints[1]"
+                type="textarea"
+                :rows="2"
+                :placeholder="stageHintPlaceholders[1]"
+                :disabled="isRunning"
+              >
+                <template #prepend>{{ stageHintLabels[1] }}</template>
+              </el-input>
+              <div class="stage-hint-tip">提示词将注入 AI 提取过程；阶段完成后还可填写修改意见触发自动返工。</div>
+            </div>
 
             <!-- 分批提取中途失败，可断点续作 -->
             <div v-if="isStep1Resumable" class="extract-section">
@@ -398,13 +411,23 @@
                 </div>
               </div>
 
+              <!-- 阶段完成后的修改意见：填写后确认会先携带意见自动返工 -->
+              <div v-if="aiStep1Done && !job?.step1_confirmed" class="stage-feedback-box">
+                <el-input
+                  v-model="stageFeedback[1]"
+                  type="textarea"
+                  :rows="2"
+                  :placeholder="`${stageFeedbackLabels[1]}（填写后确认将自动返工重建）`"
+                />
+              </div>
+
               <div class="step-actions">
                 <el-button @click="goBack">取消</el-button>
                 <el-button
                   type="primary"
                   :loading="submitting"
                   :disabled="!aiStep1Done || job?.step1_confirmed"
-                  @click="doConfirmEntityTypes"
+                  @click="confirmStageWithFeedback(1, doConfirmEntityTypes)"
                 >
                   {{ job?.step1_confirmed ? '已确认' : (aiStep1Done ? '确认实体类型' : 'AI 提取中（可先编辑已生成部分）...') }}
                 </el-button>
@@ -439,6 +462,20 @@
                 </el-button>
               </div>
             </template>
+
+            <!-- 阶段提示词：开始前输入，注入本次 LLM 提取 -->
+            <div v-if="!isExtractingEntities" class="stage-hint-box">
+              <el-input
+                v-model="stageHints[2]"
+                type="textarea"
+                :rows="2"
+                :placeholder="stageHintPlaceholders[2]"
+                :disabled="isRunning"
+              >
+                <template #prepend>{{ stageHintLabels[2] }}</template>
+              </el-input>
+              <div class="stage-hint-tip">提示词将注入 AI 提取过程；阶段完成后还可填写修改意见触发自动返工。</div>
+            </div>
 
             <!-- 提取中途失败，可断点续作 -->
             <div v-if="isStep2Resumable" class="build-section">
@@ -691,13 +728,23 @@
                 </el-button>
               </div>
 
+              <!-- 阶段完成后的修改意见：填写后确认会先携带意见自动返工 -->
+              <div v-if="aiStep2Done && !job?.step2_confirmed" class="stage-feedback-box">
+                <el-input
+                  v-model="stageFeedback[2]"
+                  type="textarea"
+                  :rows="2"
+                  :placeholder="`${stageFeedbackLabels[2]}（填写后确认将自动返工重建）`"
+                />
+              </div>
+
               <div class="step-actions">
                 <el-button @click="goBack">取消</el-button>
                 <el-button
                   type="primary"
                   :loading="submitting"
                   :disabled="!aiStep2Done || job?.step2_confirmed"
-                  @click="doConfirmEntities"
+                  @click="confirmStageWithFeedback(2, doConfirmEntities)"
                 >
                   {{ job?.step2_confirmed ? '已确认' : (aiStep2Done ? '确认实体+关系' : 'AI 提取中（可先编辑已生成部分）...') }}
                 </el-button>
@@ -730,6 +777,20 @@
                 </el-button>
               </div>
             </template>
+
+            <!-- 阶段提示词：开始前输入，注入本次验证 -->
+            <div v-if="!isVerifying" class="stage-hint-box">
+              <el-input
+                v-model="stageHints[3]"
+                type="textarea"
+                :rows="2"
+                :placeholder="stageHintPlaceholders[3]"
+                :disabled="isRunning"
+              >
+                <template #prepend>{{ stageHintLabels[3] }}</template>
+              </el-input>
+              <div class="stage-hint-tip">提示词将注入 AI 验证过程；验证完成后还可填写修改意见触发自动返工。</div>
+            </div>
 
             <!-- 验证中 -->
             <div v-if="isVerifying" class="waiting-section">
@@ -790,6 +851,16 @@
                 <div class="report-content">{{ job.step3_report }}</div>
               </div>
 
+              <!-- 验证完成后的修改意见：填写后确认会先携带意见自动返工 -->
+              <div v-if="job?.status !== 'completed' && !job?.step3_confirmed" class="stage-feedback-box">
+                <el-input
+                  v-model="stageFeedback[3]"
+                  type="textarea"
+                  :rows="2"
+                  :placeholder="`${stageFeedbackLabels[3]}（填写后确认将自动返工重建）`"
+                />
+              </div>
+
               <!-- 确认生成最终本体 -->
               <div class="step-actions" v-if="job?.status !== 'completed'">
                 <el-button @click="goBack">取消</el-button>
@@ -797,7 +868,7 @@
                   type="primary"
                   :loading="submitting"
                   :disabled="job?.step3_confirmed"
-                  @click="doConfirmVerification"
+                  @click="confirmStageWithFeedback(3, doConfirmVerification)"
                 >
                   {{ job?.step3_confirmed ? '本体已生成' : '确认并生成最终本体' }}
                 </el-button>
@@ -899,18 +970,34 @@ const templates = ref<any[]>([])            // step0 可选模板列表
 const entityViewMode = ref<'grouped' | 'flat'>('grouped')
 const expandedEntityTypeNames = ref<string[]>([])
 
-// ── step0 配置表单（v3：粒度 + 阶段提示词 + 可选模板） ──
+// ── step0 配置表单（v3：粒度 + 可选模板；阶段提示词改为各阶段开始时输入） ──
 const metaForm = ref({
   granularity: 'medium' as 'coarse' | 'medium' | 'fine',
-  stageHints: { 1: '', 2: '', 3: '' } as Record<number, string>,
   templateId: '' as string,
   templateMode: 'soft_constraint' as 'skip_step1' | 'soft_constraint'
 })
 
+// 各阶段开始时用户补充的提示词（持久化到后端 job.stage_hints，注入对应阶段 LLM 调用）
+const stageHints = ref<Record<number, string>>({ 1: '', 2: '', 3: '' })
+// 各阶段完成后用户输入的修改意见：确认时若有意见则先携带意见自动返工
+const stageFeedback = ref<Record<number, string>>({ 1: '', 2: '', 3: '' })
+
 const stageHintLabels: Record<number, string> = {
-  1: '实体类型提示',
-  2: '实体+关系提示',
-  3: '验证提示'
+  1: '实体类型提取提示',
+  2: '实体+关系提取提示',
+  3: '验证报告提示'
+}
+
+const stageFeedbackLabels: Record<number, string> = {
+  1: '对实体类型结果的意见（可选）',
+  2: '对实体+关系结果的意见（可选）',
+  3: '对验证报告的意见（可选）'
+}
+
+const stageHintPlaceholders: Record<number, string> = {
+  1: '例如：重点关注财务指标，实体类型建议包含企业、人物、财务指标等',
+  2: '例如：实体粒度到公司层面即可，属性只保留原文有依据的字段',
+  3: '例如：重点核查资产负债率、营收等关键指标是否可溯源'
 }
 
 const selectedTemplateName = computed(() => {
@@ -1150,7 +1237,7 @@ const loadJob = async () => {
       metaForm.value.granularity = job.value.granularity
     }
     if (job.value.stage_hints && typeof job.value.stage_hints === 'object') {
-      metaForm.value.stageHints = { 1: '', 2: '', 3: '', ...job.value.stage_hints }
+      stageHints.value = { 1: '', 2: '', 3: '', ...job.value.stage_hints }
     }
     if (job.value.template_id) {
       metaForm.value.templateId = job.value.template_id
@@ -1420,19 +1507,12 @@ const retryStream = () => {
 }
 
 // ── 步骤操作 ──
-// step0：确认配置（粒度 + 阶段提示词 + 模板）
+// step0：确认配置（粒度 + 模板；阶段提示词在对应阶段开始时输入）
 const doConfirmMeta = async () => {
   submitting.value = true
   try {
     const fd = new FormData()
     fd.append('granularity', metaForm.value.granularity)
-    // 阶段提示词（只传非空）
-    const hints: Record<string, string> = {}
-    for (const k of Object.keys(metaForm.value.stageHints)) {
-      const v = (metaForm.value.stageHints as any)[k]
-      if (v && String(v).trim()) hints[k] = String(v).trim()
-    }
-    fd.append('stage_hints', JSON.stringify(hints))
     // 模板配置（可选）
     if (metaForm.value.templateId) {
       fd.append('template_id', metaForm.value.templateId)
@@ -1452,7 +1532,11 @@ const doConfirmMeta = async () => {
 // step1：启动实体类型提取（POST /ontology/build/{jobId}/step1）
 const doExtractEntityTypes = async () => {
   try {
-    await api.post(`/ontology/build/${jobId}/step1`)
+    const fd = new FormData()
+    // 始终提交 stage_hint 字段（空串也可），保证 multipart 请求体至少有一个 part，
+    // 否则空 FormData 会被 FastAPI 判定为 body 解析失败返回 400
+    fd.append('stage_hint', (stageHints.value[1] || '').trim())
+    await api.post(`/ontology/build/${jobId}/step1`, fd)
     if (job.value) {
       job.value.running_step = 1
       job.value.progress_message = '正在准备文档...'
@@ -1499,7 +1583,11 @@ const doConfirmEntityTypes = async () => {
 // step2：启动实体+关系提取（POST /ontology/build/{jobId}/step2）
 const doExtractEntities = async () => {
   try {
-    await api.post(`/ontology/build/${jobId}/step2`)
+    const fd = new FormData()
+    // 始终提交 stage_hint 字段（空串也可），保证 multipart 请求体至少有一个 part，
+    // 否则空 FormData 会被 FastAPI 判定为 body 解析失败返回 400
+    fd.append('stage_hint', (stageHints.value[2] || '').trim())
+    await api.post(`/ontology/build/${jobId}/step2`, fd)
     if (job.value) {
       job.value.running_step = 2
       job.value.progress_message = '正在提取实体+关系...'
@@ -1546,7 +1634,11 @@ const doConfirmEntities = async () => {
 // step3：启动验证（POST /ontology/build/{jobId}/step3）
 const doVerify = async () => {
   try {
-    await api.post(`/ontology/build/${jobId}/step3`)
+    const fd = new FormData()
+    // 始终提交 stage_hint 字段（空串也可），保证 multipart 请求体至少有一个 part，
+    // 否则空 FormData 会被 FastAPI 判定为 body 解析失败返回 400
+    fd.append('stage_hint', (stageHints.value[3] || '').trim())
+    await api.post(`/ontology/build/${jobId}/step3`, fd)
     if (job.value) {
       job.value.running_step = 3
       job.value.progress_message = '正在验证+生成报告...'
@@ -1582,38 +1674,68 @@ const openRework = (step: number) => {
 const doRework = async () => {
   reworkSubmitting.value = true
   try {
-    const fd = new FormData()
-    fd.append('prompt', reworkPrompt.value || '')
-    await reworkBuildStep(jobId, reworkTargetStep.value, fd)
+    await triggerRework(reworkTargetStep.value, reworkPrompt.value || '')
     ElMessage.success(`step${reworkTargetStep.value} 返工已开始，结果将被替换`)
     reworkDialogVisible.value = false
-    // 返工后该步结果被替换：重新加载任务状态，并按 running_step 启动 SSE/轮询
-    await loadJob()
-    const rs = job.value?.running_step
-    if (rs >= 1 && rs <= 2) {
-      // step1/step2 返工走 SSE
-      aiStep1Done.value = rs < 1
-      aiStep2Done.value = rs < 2
-      // 清空当前步缓存（后端会重新生成）
-      if (rs === 1) {
-        entityTypes.value = []
-        entityTypeRelations.value = []
-      } else if (rs === 2) {
-        entities.value = []
-        relations.value = []
-      }
-      startStream()
-    } else if (rs === 3) {
-      // step3 返工走轮询
-      job.value.step3_verification = null
-      job.value.step3_report = null
-      startPolling()
-    }
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '返工失败')
   } finally {
     reworkSubmitting.value = false
   }
+}
+
+/**
+ * 触发指定步骤返工（携带用户提示词），并切换到对应的实时/轮询模式。
+ * 供"返工对话框"与"阶段完成后的修改意见自动返工"共用。
+ */
+const triggerRework = async (step: number, promptText: string) => {
+  const fd = new FormData()
+  fd.append('prompt', promptText || '')
+  await reworkBuildStep(jobId, step, fd)
+  // 返工后该步结果被替换：重新加载任务状态，并按 running_step 启动 SSE/轮询
+  await loadJob()
+  const rs = job.value?.running_step
+  if (rs >= 1 && rs <= 2) {
+    // step1/step2 返工走 SSE
+    aiStep1Done.value = rs < 1
+    aiStep2Done.value = rs < 2
+    // 清空当前步缓存（后端会重新生成）
+    if (rs === 1) {
+      entityTypes.value = []
+      entityTypeRelations.value = []
+    } else if (rs === 2) {
+      entities.value = []
+      relations.value = []
+    }
+    startStream()
+  } else if (rs === 3) {
+    // step3 返工走轮询
+    job.value.step3_verification = null
+    job.value.step3_report = null
+    startPolling()
+  }
+}
+
+/**
+ * 阶段确认入口：若用户填了修改意见，则先携带意见自动返工（LLM 重跑该阶段），
+ * 用户审阅返工结果后再次确认；未填意见则直接走原有确认逻辑。
+ */
+const confirmStageWithFeedback = async (step: 1 | 2 | 3, confirmFn: () => Promise<void>) => {
+  const feedback = (stageFeedback.value[step] || '').trim()
+  if (feedback) {
+    submitting.value = true
+    try {
+      await triggerRework(step, feedback)
+      stageFeedback.value[step] = ''
+      ElMessage.success(`已携带您的修改意见重新执行阶段 ${step}，请审阅新结果`)
+    } catch (e: any) {
+      ElMessage.error(e.serverMessage || '返工失败')
+    } finally {
+      submitting.value = false
+    }
+    return
+  }
+  await confirmFn()
 }
 
 // ── 导航 ──
@@ -1884,29 +2006,28 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.stage-hints-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.75rem 1.25rem;
+.stage-hint-box {
+  margin-bottom: 1rem;
 }
 
-@media (max-width: 768px) {
-  .stage-hints-grid {
-    grid-template-columns: 1fr;
-  }
+.stage-hint-box :deep(.el-input-group__prepend) {
+  width: 150px;
+  font-size: 0.85rem;
 }
 
-.stage-hint-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.stage-hint-label {
-  font-size: 0.82rem;
+.stage-hint-tip {
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
   color: var(--text-secondary);
-  white-space: nowrap;
-  min-width: 96px;
+}
+
+.stage-feedback-box {
+  margin-top: 1rem;
+}
+
+.stage-feedback-box :deep(.el-textarea__inner) {
+  border-style: dashed;
+  border-color: var(--el-color-warning);
 }
 
 .waiting-section,

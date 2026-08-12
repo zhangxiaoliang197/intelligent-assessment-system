@@ -181,13 +181,22 @@ def build_narrative_messages(query: str, charts: list, map_layer: dict) -> list:
     charts_summary = "\n".join(f"- {c.get('chartId','')}: {c.get('title','')}（{c.get('explanation','')}）"
                                for c in charts) or "（无图表）"
     points = map_layer.get("points", []) if map_layer else []
-    map_summary = f"图层 {map_layer.get('layerId','')}，{len(points)} 个标点" if map_layer else "（无地图）"
+    routes = map_layer.get("routes", []) if map_layer else []
+    areas = map_layer.get("areas", []) if map_layer else []
+    circles = map_layer.get("circles", []) if map_layer else []
+    map_summary = (
+        f"图层 {map_layer.get('layerId','')}：{len(points)} 个标点、{len(routes)} 条路线、"
+        f"{len(areas)} 个区域、{len(circles)} 个圆形区域"
+        if map_layer else "（无地图）"
+    )
     return [
         {"role": "system", "content": get_system_prompt() +
             "\n\n【当前阶段：文本】\n"
-            "撰写态势介绍 + 逐图说明。intro 是介绍性描述（非先验结论），explanations 对应每个图表。\n"
+            "撰写态势介绍 + 逐图说明 + 地图说明。intro 是介绍性描述（非先验结论），"
+            "explanations 对应每个图表，mapExplanation 对应地图（若存在地图则必填，否则为空字符串）。\n"
             "返回 JSON（仅 JSON）：\n"
-            '{"intro": "态势介绍段落", "explanations": [{"chartId": "c_1", "text": "该图说明"}]}\n'
-            "规则：explanations 的 chartId 必须命中已产出图表；intro 不超过 300 字；中文。"},
+            '{"intro": "态势介绍段落", "explanations": [{"chartId": "c_1", "text": "该图说明"}], "mapExplanation": "地图说明"}\n'
+            "规则：explanations 的 chartId 必须命中已产出图表；mapExplanation 需说明地图展示的内容与联动分析要点；"
+            "intro 不超过 300 字；中文。"},
         {"role": "user", "content": f"用户问题：{query}\n\n已产出图表：\n{charts_summary}\n\n地图：{map_summary}"},
     ]

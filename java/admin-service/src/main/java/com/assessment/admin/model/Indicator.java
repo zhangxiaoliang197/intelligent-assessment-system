@@ -31,6 +31,14 @@ public class Indicator {
     @Column(name = "field_mapping", columnDefinition = "json")
     private String fieldMapping;
 
+    /** 指标规格（Indicator Spec）JSON：来源表、连接键、公式项绑定、粒度、参数。 */
+    @Column(name = "indicator_spec", columnDefinition = "json")
+    private String indicatorSpec;
+
+    /** 绑定状态：ready=可编译查询 / pending=待确认 / not_ready=缺口未补齐 */
+    @Column(name = "bind_status", length = 32)
+    private String bindStatus;
+
     @Column(name = "calculation_method", columnDefinition = "text")
     private String calculationMethod;
 
@@ -69,6 +77,10 @@ public class Indicator {
     public void setDatasetId(String datasetId) { this.datasetId = datasetId; }
     public String getFieldMapping() { return fieldMapping; }
     public void setFieldMapping(String fieldMapping) { this.fieldMapping = fieldMapping; }
+    public String getIndicatorSpec() { return indicatorSpec; }
+    public void setIndicatorSpec(String indicatorSpec) { this.indicatorSpec = indicatorSpec; }
+    public String getBindStatus() { return bindStatus; }
+    public void setBindStatus(String bindStatus) { this.bindStatus = bindStatus; }
     public String getCalculationMethod() { return calculationMethod; }
     public void setCalculationMethod(String calculationMethod) { this.calculationMethod = calculationMethod; }
     public LocalDateTime getCreateTime() { return createTime; }

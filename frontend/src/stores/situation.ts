@@ -42,6 +42,7 @@ export interface DatasetSummary {
 export interface Narrative {
   intro: string
   explanations: Array<{ chartId: string; text: string }>
+  mapExplanation?: string
 }
 
 export interface Viewport {
@@ -86,6 +87,7 @@ export const useSituationStore = defineStore('situation', () => {
   const charts = ref<ChartSpec[]>([])
   const mapLayers = ref<MapLayer[]>([])
   const narrative = ref<Narrative>({ intro: '', explanations: [] })
+  const mapExplanation = ref('')
 
   // ── 联动共享状态（图表 ↔ 地图，ADR-04/13）──
   const selectedRegion = ref<string | null>(null)
@@ -143,6 +145,7 @@ export const useSituationStore = defineStore('situation', () => {
     charts.value = []
     mapLayers.value = []
     narrative.value = { intro: '', explanations: [] }
+    mapExplanation.value = ''
     selectedRegion.value = null
     selectedTimeRange.value = null
     filters.value = {}
@@ -182,6 +185,7 @@ export const useSituationStore = defineStore('situation', () => {
     charts.value = snapshot.charts || []
     mapLayers.value = snapshot.map?.layers || snapshot.mapLayers || []
     narrative.value = snapshot.narrative || { intro: '', explanations: [] }
+    mapExplanation.value = snapshot.map?.explanation || snapshot.mapExplanation || ''
     datasets.value = snapshot.datasets || []
     executionSteps.value = []   // 历史产物不回放步骤
     if (datasets.value.length && !activeDatasetId.value) {
@@ -293,7 +297,9 @@ export const useSituationStore = defineStore('situation', () => {
         narrative.value = {
           intro: data.intro || '',
           explanations: data.explanations || [],
+          mapExplanation: data.mapExplanation || '',
         }
+        mapExplanation.value = data.mapExplanation || ''
         // 回填每个图表的 explanation
         const expMap = new Map<string, string>(
           (data.explanations || []).map((e: any) => [e.chartId as string, e.text as string])
@@ -431,7 +437,7 @@ export const useSituationStore = defineStore('situation', () => {
   return {
     // state
     reportId, status, query, source, title, activeSkill, skillParameters,
-    datasets, activeDatasetId, charts, mapLayers, narrative,
+    datasets, activeDatasetId, charts, mapLayers, narrative, mapExplanation,
     selectedRegion, selectedTimeRange, filters, viewport,
     eventSource, errorMsg,
     history, executionSteps,

@@ -253,6 +253,8 @@ public class SchemaService {
         m.put("weight", ind.getWeight());
         m.put("datasetId", ind.getDatasetId());
         m.put("fieldMapping", ind.getFieldMapping());
+        m.put("indicatorSpec", ind.getIndicatorSpec());
+        m.put("bindStatus", ind.getBindStatus());
         m.put("calculationMethod", ind.getCalculationMethod());
         return m;
     }

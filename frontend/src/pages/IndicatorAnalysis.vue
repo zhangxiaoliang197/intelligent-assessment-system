@@ -295,6 +295,51 @@
                 </div>
               </div>
 
+              <!-- 查询计划 / Preflight 就绪度（确定性编译路径） -->
+              <div v-if="panelState.queryPlan || (panelState.preflight && panelState.preflight.per_indicator)" class="panel-section">
+                <div class="section-header" @click="togglePanel('plan')">
+                  <h5>查询计划 / 指标就绪度</h5>
+                  <el-icon :class="{ rotated: !panelState.sections.plan }"><ArrowDown /></el-icon>
+                </div>
+                <div v-show="!panelState.sections.plan">
+                  <div v-if="panelState.preflight && panelState.preflight.per_indicator" class="panel-data-wrapper">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th style="width:26%">指标</th>
+                          <th style="width:16%">状态</th>
+                          <th style="width:58%">原因 / 建议</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(p, i) in panelState.preflight.per_indicator" :key="i">
+                          <td>{{ p.name }}</td>
+                          <td>
+                            <el-tag :type="p.status === 'ready' ? 'success' : p.status === 'empty_source' ? 'warning' : 'danger'" size="small">
+                              {{ p.status }}
+                            </el-tag>
+                          </td>
+                          <td style="font-size:12px">{{ p.reason || p.suggestion || '-' }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div v-if="panelState.queryPlan && panelState.queryPlan.plans && panelState.queryPlan.plans.length" style="margin-top:10px">
+                    <div v-for="(pl, i) in panelState.queryPlan.plans" :key="i" style="margin-bottom:8px">
+                      <div style="font-size:12px;font-weight:600;margin-bottom:4px">
+                        计划 {{ i + 1 }}：{{ (pl.indicatorNames || []).join('、') || '指标' }}
+                        <el-tag v-if="pl.ok" type="success" size="small" style="margin-left:6px">可执行</el-tag>
+                        <el-tag v-else type="danger" size="small" style="margin-left:6px">缺口</el-tag>
+                      </div>
+                      <pre class="sql-block" style="max-height:160px;overflow:auto;font-size:11px">{{ pl.sql }}</pre>
+                    </div>
+                    <div v-if="panelState.queryPlan.unready && panelState.queryPlan.unready.length" style="font-size:12px;color:#e6a23c">
+                      未就绪：{{ panelState.queryPlan.unready.map((u: any) => u.name).join('、') }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <!-- 指标体系（Phase 1 生成，默认折叠） -->
               <div v-if="panelState.indicators && panelState.indicators.length > 0" class="panel-section">
                 <div class="section-header" @click="togglePanel('indicators')">
@@ -588,9 +633,12 @@ const panelState = ref({
   generatedSql: '',
   rawResults: null as any[] | null,
   indicators: null as any[] | null,
+  preflight: null as any | null,
+  queryPlan: null as any | null,
   activeSkillName: '',
   sections: {
     steps: false,  // collapsed=false 表示展开
+    plan: true,
     indicators: true,  // collapsed=true 表示折叠
     sql: true,
     data: true
@@ -604,7 +652,7 @@ const hasExecutionData = computed(() => {
     (panelState.value.indicators && panelState.value.indicators.length > 0)
 })
 
-const togglePanel = (section: 'steps' | 'indicators' | 'sql' | 'data') => {
+const togglePanel = (section: 'steps' | 'indicators' | 'sql' | 'data' | 'plan') => {
   panelState.value.sections[section] = !panelState.value.sections[section]
 }
 
@@ -661,6 +709,8 @@ const persistState = () => {
       generatedSql: panelState.value.generatedSql,
       rawResults: panelState.value.rawResults,
       indicators: panelState.value.indicators,
+      preflight: panelState.value.preflight,
+      queryPlan: panelState.value.queryPlan,
       sections: panelState.value.sections
     }
     localStorage.setItem(LS_SESSION_EXEC, JSON.stringify(execMap))
@@ -696,6 +746,8 @@ const restoreExecutionState = (sid: string) => {
     panelState.value.generatedSql = state.generatedSql || ''
     panelState.value.rawResults = state.rawResults || null
     panelState.value.indicators = state.indicators || null
+    panelState.value.preflight = state.preflight || null
+    panelState.value.queryPlan = state.queryPlan || null
     if (state.sections) {
       panelState.value.sections = state.sections
     }
@@ -727,7 +779,7 @@ const newSession = () => {
   sessionId.value = ''
   messages.value = []
   executionSteps.value = []
-  panelState.value = { generatedSql: '', rawResults: null, indicators: null, activeSkillName: '', sections: { steps: false, indicators: true, sql: true, data: true } }
+  panelState.value = { generatedSql: '', rawResults: null, indicators: null, preflight: null, queryPlan: null, activeSkillName: '', sections: { steps: false, plan: true, indicators: true, sql: true, data: true } }
   showExecutionPanel.value = false
   activeAbortController = null
   cancelRequested = false
@@ -742,7 +794,7 @@ const deleteHistory = (id: string) => {
     sessionId.value = ''
     messages.value = []
     executionSteps.value = []
-    panelState.value = { generatedSql: '', rawResults: null, indicators: null, activeSkillName: '', sections: { steps: false, indicators: true, sql: true, data: true } }
+    panelState.value = { generatedSql: '', rawResults: null, indicators: null, preflight: null, queryPlan: null, activeSkillName: '', sections: { steps: false, plan: true, indicators: true, sql: true, data: true } }
     showExecutionPanel.value = false
     activeAbortController = null
     cancelRequested = false
@@ -973,6 +1025,8 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
             if (data.generatedSql) panelState.value.generatedSql = data.generatedSql
             if (data.rawResults) panelState.value.rawResults = data.rawResults
             if (data.indicators) panelState.value.indicators = data.indicators
+            if (data.preflight) panelState.value.preflight = data.preflight
+            if (data.queryPlan) panelState.value.queryPlan = data.queryPlan
 
             if (data.session_id) {
               if (!sessionId.value) {
