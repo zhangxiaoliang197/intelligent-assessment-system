@@ -87,6 +87,9 @@ def _api_get(path: str, timeout: int = 30) -> dict:
     url = f"{ADMIN_SERVICE_URL}/api/admin/{path}"
     req = urllib.request.Request(url, method="GET")
     req.add_header("Content-Type", "application/json")
+    # 内部服务通道按管理员身份访问 admin-service（execute-sql 等接口要求该角色头）
+    req.add_header("X-User-Role", "admin")
+    req.add_header("X-User-Id", "system")
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=_ssl_ctx) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -113,6 +116,9 @@ def _api_post(path: str, body: dict, timeout: int = 120) -> dict:
     data = json.dumps(body).encode("utf-8")  # 将请求体序列化为 UTF-8 字节
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
+    # 内部服务通道按管理员身份访问 admin-service（execute-sql 等接口要求该角色头）
+    req.add_header("X-User-Role", "admin")
+    req.add_header("X-User-Id", "system")
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=_ssl_ctx) as resp:
             return json.loads(resp.read().decode("utf-8"))

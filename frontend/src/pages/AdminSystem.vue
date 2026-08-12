@@ -126,7 +126,10 @@
           <div class="tab-content">
             <div class="section-header">
               <h3>评估指标库</h3>
-              <el-button type="primary" @click="openAddIndicator">新建指标</el-button>
+              <div>
+                <el-button type="primary" @click="openAddIndicator">新建指标</el-button>
+                <el-button style="margin-left:8px" @click="openKbImport">从知识库导入</el-button>
+              </div>
             </div>
 
             <el-table :data="indicators" stripe>
@@ -146,6 +149,41 @@
                   <el-button size="small" type="primary" @click="openIndicatorSpec(scope.row)">配置规格</el-button>
                   <el-button size="small" @click="openEditIndicator(scope.row)">编辑</el-button>
                   <el-button size="small" type="danger" @click="deleteIndicator(scope.row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="语义目录" name="catalog">
+          <div class="tab-content">
+            <div class="section-header">
+              <h3>语义目录（业务概念 → 物理列）</h3>
+              <div>
+                <el-select v-model="catalogFilterDb" placeholder="数据源" clearable style="width:180px;margin-right:8px" @change="loadSynonyms">
+                  <el-option v-for="db in databases" :key="db.id" :label="db.name" :value="db.id" />
+                </el-select>
+                <el-input v-model="catalogKeyword" placeholder="搜索概念/表/列" clearable style="width:220px;margin-right:8px" @keyup.enter="loadSynonyms" />
+                <el-button @click="loadSynonyms">搜索</el-button>
+                <el-button type="primary" @click="openSynonymDialog()">新增同义词</el-button>
+                <el-button @click="rebuildCatalogFromTab">重建索引</el-button>
+              </div>
+            </div>
+            <el-table :data="synonyms" stripe v-loading="synonymsLoading">
+              <el-table-column prop="concept" label="业务概念" min-width="150" />
+              <el-table-column prop="tableName" label="表" width="150" />
+              <el-table-column prop="columnName" label="列" width="150" />
+              <el-table-column prop="columnComment" label="列注释" min-width="160" show-overflow-tooltip />
+              <el-table-column prop="datasetName" label="数据集" min-width="120" />
+              <el-table-column label="来源" width="110">
+                <template #default="scope">
+                  <el-tag size="small" :type="['manual', 'llm-confirmed'].includes(scope.row.source) ? 'success' : 'info'">{{ scope.row.source }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="150">
+                <template #default="scope">
+                  <el-button size="small" @click="openSynonymDialog(scope.row)">编辑</el-button>
+                  <el-button size="small" type="danger" @click="deleteSynonym(scope.row)">删除</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -520,6 +558,70 @@
           <el-button type="primary" @click="saveIndicatorSpec">保存规格</el-button>
         </template>
         <div v-if="specFeedback" style="margin-top:8px;white-space:pre-wrap;font-size:12px;color:#666">{{ specFeedback }}</div>
+      </el-dialog>
+
+      <!-- 知识库指标一键导入 -->
+      <el-dialog v-model="showKbImportDialog" title="从知识库导入指标（解析候选 → LLM 建议规格 → 人工确认保存）" width="880px" top="4vh">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <el-select v-model="kbImportDocId" placeholder="选择知识库文档" filterable style="flex:1">
+            <el-option v-for="doc in kbDocs" :key="doc.id" :label="`${doc.title}（${doc.category || '未分类'}）`" :value="doc.id" />
+          </el-select>
+          <el-select v-model="kbImportDbId" placeholder="目标数据源" style="width:220px">
+            <el-option v-for="db in databases" :key="db.id" :label="db.name" :value="db.id" />
+          </el-select>
+          <el-button @click="loadKbDocs">刷新</el-button>
+          <el-button type="primary" @click="parseKbDoc" :loading="parsingKb">解析并生成建议</el-button>
+        </div>
+        <div v-if="kbImportHint" style="font-size:12px;color:#909399;margin-bottom:8px">{{ kbImportHint }}</div>
+        <div v-if="kbCandidates.length" style="max-height:56vh;overflow:auto">
+          <div v-for="(cand, i) in kbCandidates" :key="i" style="border:1px solid #ebeef5;border-radius:6px;padding:10px;margin-bottom:10px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+              <b>{{ cand.name }}</b>
+              <code style="font-size:12px">{{ cand.formula }}</code>
+              <el-tag size="small" type="info">terms: {{ (cand.terms || []).join('、') || '-' }}</el-tag>
+            </div>
+            <div v-if="cand.suggestError" style="font-size:12px;color:#f56c6c">建议生成失败：{{ cand.suggestError }}</div>
+            <div v-else style="display:flex;gap:8px;align-items:flex-start">
+              <el-input v-model="cand._specText" type="textarea" :rows="7" style="flex:1" placeholder="规格 JSON（可人工修正）" />
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <el-button size="small" type="primary" @click="saveImportedIndicator(cand)">保存为新指标</el-button>
+                <el-button size="small" @click="saveImportedIndicator(cand, true)">保存并在编辑器确认</el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </el-dialog>
+
+      <!-- 同义词编辑 -->
+      <el-dialog v-model="showSynonymDialog" :title="synonymForm.id ? '编辑同义词' : '新增同义词'" width="560px">
+        <el-form :model="synonymForm" label-width="100px">
+          <el-form-item label="业务概念" required>
+            <el-input v-model="synonymForm.concept" placeholder="如：销售额 / 物品类别 / 订单数" />
+          </el-form-item>
+          <el-form-item label="数据源">
+            <el-select v-model="synonymForm.databaseId" clearable placeholder="选择数据源" style="width:100%" @change="onSynonymDbChange">
+              <el-option v-for="db in databases" :key="db.id" :label="db.name" :value="db.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="数据集">
+            <el-select v-model="synonymForm.datasetId" clearable placeholder="选择数据集" style="width:100%" @change="onSynonymDsChange">
+              <el-option v-for="ds in datasets" :key="ds.id" :label="`${ds.name}（${ds.tableName}）`" :value="ds.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="表名" required>
+            <el-input v-model="synonymForm.tableName" placeholder="物理表名" />
+          </el-form-item>
+          <el-form-item label="列名" required>
+            <el-input v-model="synonymForm.columnName" placeholder="物理列名" />
+          </el-form-item>
+          <el-form-item label="列注释">
+            <el-input v-model="synonymForm.columnComment" placeholder="可选" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showSynonymDialog = false">取消</el-button>
+          <el-button type="primary" @click="saveSynonym" :loading="savingSynonym">保存</el-button>
+        </template>
       </el-dialog>
     </div>
   </Layout>
@@ -1299,6 +1401,201 @@ async function saveIndicatorSpec() {
     specFeedback.value = '保存失败: ' + (e.serverMessage || e.message || '')
   }
 }
+
+// ==================== 语义目录维护（同义词增删改） ====================
+const synonyms = ref<any[]>([])
+const synonymsLoading = ref(false)
+const catalogFilterDb = ref('')
+const catalogKeyword = ref('')
+const showSynonymDialog = ref(false)
+const savingSynonym = ref(false)
+const synonymForm = ref<any>({
+  id: '', concept: '', databaseId: '', datasetId: '',
+  tableName: '', columnName: '', columnComment: ''
+})
+
+async function loadSynonyms() {
+  synonymsLoading.value = true
+  try {
+    const params: any = { limit: 500 }
+    if (catalogFilterDb.value) params.databaseId = catalogFilterDb.value
+    if (catalogKeyword.value.trim()) params.keyword = catalogKeyword.value.trim()
+    const res = await api.get('/admin/catalog/synonyms', { params })
+    if (res && res.success) synonyms.value = res.items || []
+  } catch (e: any) {
+    ElMessage.error('加载语义目录失败: ' + (e.serverMessage || e.message || ''))
+  } finally {
+    synonymsLoading.value = false
+  }
+}
+
+function openSynonymDialog(row?: any) {
+  synonymForm.value = row
+    ? {
+        id: row.id || '',
+        concept: row.concept || '',
+        databaseId: row.databaseId || '',
+        datasetId: row.datasetId || '',
+        tableName: row.tableName || '',
+        columnName: row.columnName || '',
+        columnComment: row.columnComment || ''
+      }
+    : { id: '', concept: '', databaseId: '', datasetId: '', tableName: '', columnName: '', columnComment: '' }
+  showSynonymDialog.value = true
+}
+
+async function saveSynonym() {
+  if (!synonymForm.value.concept.trim() || !synonymForm.value.columnName.trim()) {
+    ElMessage.warning('业务概念与列名必填')
+    return
+  }
+  savingSynonym.value = true
+  try {
+    await api.post('/admin/catalog/synonym', {
+      concept: synonymForm.value.concept.trim(),
+      databaseId: synonymForm.value.databaseId || '',
+      datasetId: synonymForm.value.datasetId || '',
+      tableName: synonymForm.value.tableName || '',
+      columnName: synonymForm.value.columnName.trim(),
+      columnComment: synonymForm.value.columnComment || '',
+      source: 'manual'
+    })
+    ElMessage.success('同义词已保存')
+    showSynonymDialog.value = false
+    await loadSynonyms()
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + (e.serverMessage || e.message || ''))
+  } finally {
+    savingSynonym.value = false
+  }
+}
+
+async function deleteSynonym(row: any) {
+  try {
+    await ElMessageBox.confirm(`确认删除同义词「${row.concept} → ${row.tableName}.${row.columnName}」？`, '删除确认', { type: 'warning' })
+  } catch { return }
+  try {
+    await api.delete(`/admin/catalog/synonym/${row.id}`)
+    ElMessage.success('已删除')
+    await loadSynonyms()
+  } catch (e: any) {
+    ElMessage.error('删除失败: ' + (e.serverMessage || e.message || ''))
+  }
+}
+
+async function rebuildCatalogFromTab() {
+  try {
+    const res = await api.post('/admin/catalog/rebuild', {})
+    if (res && res.success) {
+      ElMessage.success(`目录重建完成：新增 ${res.created || 0}，更新 ${res.updated || 0}，总计 ${res.total || 0}`)
+      await loadSynonyms()
+    }
+  } catch (e: any) {
+    ElMessage.error('重建失败: ' + (e.serverMessage || e.message || ''))
+  }
+}
+
+function onSynonymDbChange() {
+  synonymForm.value.datasetId = ''
+  synonymForm.value.tableName = ''
+}
+
+function onSynonymDsChange(dsId: string) {
+  const ds = datasets.value.find((d: any) => d.id === dsId)
+  if (ds) {
+    if (ds.tableName) synonymForm.value.tableName = ds.tableName
+    if (ds.databaseId && !synonymForm.value.databaseId) synonymForm.value.databaseId = ds.databaseId
+  }
+}
+
+// ==================== 知识库指标一键导入 ====================
+const showKbImportDialog = ref(false)
+const kbDocs = ref<any[]>([])
+const kbImportDocId = ref('')
+const kbImportDbId = ref('')
+const kbCandidates = ref<any[]>([])
+const parsingKb = ref(false)
+const kbImportHint = ref('')
+
+async function openKbImport() {
+  showKbImportDialog.value = true
+  kbImportHint.value = ''
+  kbCandidates.value = []
+  if (!databases.value.length) await loadDatabases()
+  kbImportDbId.value = kbImportDbId.value || databases.value[0]?.id || ''
+  await loadKbDocs()
+}
+
+async function loadKbDocs() {
+  try {
+    const res = await api.get('/knowledge/list?page_size=200')
+    if (res && res.success) kbDocs.value = res.items || []
+  } catch (e: any) {
+    ElMessage.error('加载知识库文档失败: ' + (e.serverMessage || e.message || ''))
+  }
+}
+
+async function parseKbDoc() {
+  if (!kbImportDocId.value) { ElMessage.warning('请先选择知识库文档'); return }
+  if (!kbImportDbId.value) { ElMessage.warning('请选择目标数据源'); return }
+  parsingKb.value = true
+  kbImportHint.value = ''
+  kbCandidates.value = []
+  try {
+    const res = await api.post('/evaluation/indicator-spec/import-from-knowledge', {
+      knowledge_id: kbImportDocId.value,
+      database_id: kbImportDbId.value
+    })
+    if (res && res.success) {
+      kbCandidates.value = (res.candidates || []).map((c: any) => ({
+        ...c,
+        _specText: c.suggestedSpec ? JSON.stringify(c.suggestedSpec, null, 2) : ''
+      }))
+      kbImportHint.value = kbCandidates.value.length
+        ? `解析到 ${kbCandidates.value.length} 个候选指标，均为待确认规格（LLM 建议），保存前请人工核对。`
+        : ''
+    } else {
+      ElMessage.warning(res?.message || '解析失败')
+      kbImportHint.value = res?.contentPreview ? '文档内容预览：\n' + String(res.contentPreview).slice(0, 300) : ''
+    }
+  } catch (e: any) {
+    ElMessage.error('解析失败: ' + (e.serverMessage || e.message || ''))
+  } finally {
+    parsingKb.value = false
+  }
+}
+
+async function saveImportedIndicator(cand: any, openEditor = false) {
+  let spec: any = null
+  try { spec = JSON.parse(cand._specText) } catch { spec = null }
+  if (!spec) { ElMessage.warning('规格 JSON 无效，无法保存'); return }
+  const savingMsg = ElMessage({ message: '保存中…', type: 'info', duration: 0 })
+  try {
+    const created = await api.post('/admin/indicator', {
+      name: cand.name,
+      formula: cand.formula,
+      category: '知识库导入',
+      description: `从知识库导入（${cand.source || ''}）`
+    })
+    const id = created.id
+    const saved = await api.post(`/admin/indicator/${id}/spec`, { indicatorSpec: JSON.stringify(spec) })
+    savingMsg.close()
+    ElMessage.success(
+      `指标「${cand.name}」已保存${saved.ready ? '（ready）' : `（${saved.bindStatus || 'not_ready'}，可在规格编辑器补缺口）`}`
+    )
+    await loadIndicators()
+    if (openEditor) {
+      openIndicatorSpec({
+        id, name: cand.name, formula: cand.formula,
+        indicatorSpec: JSON.stringify(spec), bindStatus: saved.bindStatus || 'not_ready'
+      })
+    }
+  } catch (e: any) {
+    savingMsg.close()
+    ElMessage.error('保存失败: ' + (e.serverMessage || e.message || ''))
+  }
+}
+
 // ==================== 大模型 多配置管理 ====================
 const llmConfigs = ref<any[]>([])
 const showLlmDialog = ref(false)

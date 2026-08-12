@@ -333,8 +333,12 @@
                       </div>
                       <pre class="sql-block" style="max-height:160px;overflow:auto;font-size:11px">{{ pl.sql }}</pre>
                     </div>
-                    <div v-if="panelState.queryPlan.unready && panelState.queryPlan.unready.length" style="font-size:12px;color:#e6a23c">
-                      未就绪：{{ panelState.queryPlan.unready.map((u: any) => u.name).join('、') }}
+                    <div v-if="panelState.queryPlan.unready && panelState.queryPlan.unready.length" style="margin-top:10px">
+                      <div style="font-size:12px;font-weight:600;color:#e6a23c;margin-bottom:6px">未就绪指标（可即时绑定后重新查询）</div>
+                      <div v-for="(u, ui) in panelState.queryPlan.unready" :key="ui" style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px">
+                        <span style="color:#e6a23c;flex:1">{{ u.name }}：{{ u.reason || '-' }}</span>
+                        <el-button size="small" type="primary" plain @click="openRuntimeBind(u)">即时绑定</el-button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -482,6 +486,53 @@
       <template #footer>
         <el-button @click="dataSourceDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="confirmDataSource">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 运行期即时绑定确认对话框 -->
+    <el-dialog v-model="showRuntimeBindDialog" title="即时绑定（LLM 建议 → 代码编译 + dry-run → 人工确认）" width="820px" top="5vh">
+      <div v-if="runtimeBindLoading" style="padding:24px;text-align:center;color:#909399">正在生成绑定建议并校验…</div>
+      <template v-else>
+        <el-form label-width="90px">
+          <el-form-item label="指标">
+            <b>{{ runtimeBindTarget?.name || '-' }}</b>
+            <code style="margin-left:10px;font-size:12px">{{ runtimeBindFormula }}</code>
+          </el-form-item>
+          <el-form-item label="规格 JSON">
+            <el-input v-model="runtimeBindSpecText" type="textarea" :rows="10"
+              placeholder='{"sourceTables":[...],"keyMappings":[...],"bindings":[...]}' />
+          </el-form-item>
+          <el-form-item v-if="runtimeBindPlan" label="SQL 计划">
+            <div style="width:100%">
+              <el-tag size="small" :type="runtimeBindPlan.ok ? 'success' : 'danger'" style="margin-bottom:6px">
+                {{ runtimeBindPlan.ok ? '可编译' : '有缺口' }}
+              </el-tag>
+              <pre class="sql-block" style="max-height:140px;overflow:auto;font-size:11px;background:#f5f7fa;padding:8px;border-radius:6px">{{ runtimeBindPlan.sql || '-' }}</pre>
+              <div v-if="runtimeBindPlan.gaps && runtimeBindPlan.gaps.length" style="font-size:12px;color:#f56c6c">
+                缺口：{{ runtimeBindPlan.gaps.join('；') }}
+              </div>
+              <div v-if="runtimeBindPlan.errors && runtimeBindPlan.errors.length" style="font-size:12px;color:#f56c6c">
+                错误：{{ runtimeBindPlan.errors.join('；') }}
+              </div>
+            </div>
+          </el-form-item>
+          <el-form-item v-if="runtimeBindDryRun" label="dry-run">
+            <div style="width:100%">
+              <el-tag size="small" :type="runtimeBindDryRun.ok ? 'success' : 'warning'">
+                {{ runtimeBindDryRun.ok ? '来源表可读，列存在' : '存在未通过项' }}
+              </el-tag>
+              <div v-for="(c, ci) in runtimeBindDryRun.checks" :key="ci" style="font-size:12px;margin-top:4px">
+                [{{ c.ok ? 'OK' : 'FAIL' }}] {{ c.table }} — {{ c.message }}
+              </div>
+            </div>
+          </el-form-item>
+          <div v-if="runtimeBindMsg" style="font-size:12px;color:#e6a23c;margin-bottom:8px">{{ runtimeBindMsg }}</div>
+        </el-form>
+      </template>
+      <template #footer>
+        <el-button @click="showRuntimeBindDialog = false">取消</el-button>
+        <el-button v-if="!runtimeBindLoading" @click="runRuntimeBind" :loading="runtimeBindLoading">重新生成</el-button>
+        <el-button v-if="!runtimeBindLoading" type="primary" @click="saveRuntimeBind">确认并保存规格</el-button>
       </template>
     </el-dialog>
 
@@ -1180,6 +1231,99 @@ const filteredHistoryList = computed(() => {
   if (!searchQuery.value.trim()) return historyList.value
   return historyList.value.filter(item => item.title.toLowerCase().includes(searchQuery.value.toLowerCase()))
 })
+
+// ── 运行期即时绑定（未就绪指标 → LLM 建议 → 编译 + dry-run → 人工确认保存） ──
+const showRuntimeBindDialog = ref(false)
+const runtimeBindLoading = ref(false)
+const runtimeBindTarget = ref<any>(null)
+const runtimeBindFormula = ref('')
+const runtimeBindSpecText = ref('')
+const runtimeBindPlan = ref<any>(null)
+const runtimeBindDryRun = ref<any>(null)
+const runtimeBindMsg = ref('')
+const runtimeBindIndicator = ref<any>(null)
+
+async function openRuntimeBind(u: any) {
+  runtimeBindTarget.value = u
+  runtimeBindPlan.value = null
+  runtimeBindDryRun.value = null
+  runtimeBindMsg.value = ''
+  runtimeBindIndicator.value = null
+  runtimeBindFormula.value = u.formula || ''
+  // 若该指标在管理端已存在，取其公式与 ID（保存时可直接回写规格）
+  try {
+    const res = await api.get('/admin/indicator/list')
+    if (res && res.success && res.indicators) {
+      const hit = res.indicators.find((i: any) => i.name === u.name)
+      if (hit) {
+        runtimeBindIndicator.value = hit
+        runtimeBindFormula.value = hit.formula || runtimeBindFormula.value
+      }
+    }
+  } catch { /* 忽略：未匹配到管理端指标时按新建处理 */ }
+  if (!runtimeBindFormula.value) {
+    ElMessage.warning('未找到该指标的公式，无法即时绑定')
+    return
+  }
+  runtimeBindSpecText.value = ''
+  showRuntimeBindDialog.value = true
+  await runRuntimeBind()
+}
+
+async function runRuntimeBind() {
+  if (!selectedDataSourceId.value) {
+    ElMessage.warning('请先选择数据源')
+    return
+  }
+  runtimeBindLoading.value = true
+  runtimeBindMsg.value = ''
+  try {
+    const res = await api.post('/evaluation/indicator-spec/runtime-bind', {
+      indicator_name: runtimeBindTarget.value?.name || '',
+      formula: runtimeBindFormula.value,
+      database_id: selectedDataSourceId.value,
+      question: inputMessage.value || ''
+    })
+    if (res && res.success) {
+      runtimeBindSpecText.value = res.suggestedSpec ? JSON.stringify(res.suggestedSpec, null, 2) : ''
+      runtimeBindPlan.value = res.plan || null
+      runtimeBindDryRun.value = res.dryRun || null
+      runtimeBindMsg.value = res.message || ''
+    } else {
+      ElMessage.error(res?.message || '即时绑定失败')
+      runtimeBindMsg.value = res?.message || ''
+    }
+  } catch (e: any) {
+    ElMessage.error('即时绑定失败: ' + (e.serverMessage || e.message || ''))
+  } finally {
+    runtimeBindLoading.value = false
+  }
+}
+
+async function saveRuntimeBind() {
+  let spec: any = null
+  try { spec = JSON.parse(runtimeBindSpecText.value) } catch { spec = null }
+  if (!spec) { ElMessage.warning('规格 JSON 无效，无法保存'); return }
+  try {
+    let id = runtimeBindIndicator.value?.id || ''
+    if (!id) {
+      const created = await api.post('/admin/indicator', {
+        name: runtimeBindTarget.value?.name || '',
+        formula: runtimeBindFormula.value,
+        category: '即时绑定导入',
+        description: '运行期即时绑定（LLM 建议 + 人工确认）'
+      })
+      id = created.id
+    }
+    const saved = await api.post(`/admin/indicator/${id}/spec`, { indicatorSpec: JSON.stringify(spec) })
+    ElMessage.success(
+      `规格已保存${saved.ready ? '（ready）' : `（${saved.bindStatus || 'not_ready'}）`}，重新查询将走确定性编译路径`
+    )
+    showRuntimeBindDialog.value = false
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + (e.serverMessage || e.message || ''))
+  }
+}
 
 onMounted(async () => {
   // 加载数据源

@@ -250,6 +250,51 @@ public class SemanticCatalogService {
         return Map.of("success", true, "id", s.getId());
     }
 
+    /** 语义目录维护页：列出同义词条目（支持按数据源/关键字过滤）。 */
+    public Map<String, Object> listSynonyms(String databaseId, String keyword, int limit) {
+        List<FieldSynonym> all = (databaseId == null || databaseId.isEmpty())
+                ? fieldSynonymRepo.findAll()
+                : fieldSynonymRepo.findByDatabaseId(databaseId);
+        String kw = normalize(keyword);
+        int max = Math.max(1, Math.min(limit <= 0 ? 200 : limit, 1000));
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (FieldSynonym s : all) {
+            if (!kw.isEmpty()) {
+                String hay = normalize(s.getConcept() + " " + s.getTableName() + " "
+                        + s.getColumnName() + " " + s.getColumnComment());
+                if (!hay.contains(kw)) continue;
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", s.getId());
+            m.put("concept", s.getConcept());
+            m.put("databaseId", s.getDatabaseId());
+            m.put("datasetId", s.getDatasetId());
+            m.put("datasetName", datasetName(s.getDatasetId()));
+            m.put("tableName", s.getTableName());
+            m.put("columnName", s.getColumnName());
+            m.put("columnComment", s.getColumnComment());
+            m.put("source", s.getSource());
+            m.put("createTime", s.getCreateTime() == null ? "" : s.getCreateTime().toString());
+            m.put("updateTime", s.getUpdateTime() == null ? "" : s.getUpdateTime().toString());
+            items.add(m);
+            if (items.size() >= max) break;
+        }
+        return Map.of("success", true, "total", items.size(), "items", items);
+    }
+
+    /** 删除同义词条目（重建目录时会被字段标注重新生成，此处仅删除人工/LLM 条目）。 */
+    public Map<String, Object> deleteSynonym(String id) {
+        if (id == null || id.isBlank()) {
+            return Map.of("success", false, "message", "缺少同义词 ID");
+        }
+        Optional<FieldSynonym> opt = fieldSynonymRepo.findById(id);
+        if (opt.isEmpty()) {
+            return Map.of("success", false, "message", "同义词条目不存在: " + id);
+        }
+        fieldSynonymRepo.deleteById(id);
+        return Map.of("success", true, "message", "已删除同义词条目");
+    }
+
     private void addConcept(List<String> concepts, String text) {
         if (text == null || text.trim().isEmpty()) return;
         for (String line : text.split("\\n")) {

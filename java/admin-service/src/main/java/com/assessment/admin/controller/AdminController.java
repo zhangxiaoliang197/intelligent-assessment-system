@@ -1408,6 +1408,24 @@ public class AdminController {
                 : ResponseEntity.badRequest().body(result);
     }
 
+    /** 语义目录维护页：列出同义词条目（支持按数据源/关键字过滤）。 */
+    @GetMapping("/catalog/synonyms")
+    public ResponseEntity<Map<String, Object>> listSynonyms(
+            @RequestParam(value = "databaseId", required = false) String databaseId,
+            @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "limit", defaultValue = "200") int limit) {
+        return ResponseEntity.ok(semanticCatalogService.listSynonyms(databaseId, keyword, limit));
+    }
+
+    /** 删除同义词条目。 */
+    @DeleteMapping("/catalog/synonym/{id}")
+    public ResponseEntity<Map<String, Object>> deleteSynonym(@PathVariable String id) {
+        Map<String, Object> result = semanticCatalogService.deleteSynonym(id);
+        return Boolean.TRUE.equals(result.get("success"))
+                ? ResponseEntity.ok(result)
+                : ResponseEntity.badRequest().body(result);
+    }
+
     /** Update dataset key mappings (join keys). */
     @PostMapping("/dataset/{datasetId}/key-mappings")
     public ResponseEntity<Map<String, Object>> saveKeyMappings(

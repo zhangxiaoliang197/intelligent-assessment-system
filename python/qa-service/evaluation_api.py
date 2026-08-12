@@ -973,6 +973,101 @@ async def indicator_query_stream(request: IndicatorQueryRequest):
     )
 
 
+class IndicatorSpecImportRequest(BaseModel):
+    knowledge_id: str = ""
+    content: str = ""
+    database_id: str = ""
+
+
+@evaluation_router.post("/indicator-spec/import-from-knowledge")
+async def indicator_spec_import_from_knowledge(request: IndicatorSpecImportRequest):
+    """知识库指标一键导入：解析文档中的「指标名 = 公式」候选，逐条生成待确认规格。"""
+    from agents.indicator_spec_assist import (
+        fetch_knowledge_content,
+        parse_knowledge_candidates,
+        suggest_bindings,
+    )
+
+    content = (request.content or "").strip()
+    if not content and request.knowledge_id:
+        content = fetch_knowledge_content(request.knowledge_id)
+    if not content:
+        return {"success": False,
+                "message": "未能获取知识库文档内容（文档可能尚未解析完成）"}
+    candidates = parse_knowledge_candidates(content, source_title=request.knowledge_id)
+    if not candidates:
+        return {"success": False,
+                "message": "文档中未解析出「指标名 = 公式」形式的候选指标",
+                "contentPreview": content[:500]}
+
+    results = []
+    for cand in candidates:
+        res = await suggest_bindings(
+            indicator_name=cand["name"],
+            formula=cand["formula"],
+            database_id=request.database_id,
+        )
+        results.append({
+            "name": cand["name"],
+            "formula": cand["formula"],
+            "terms": res.get("terms", []),
+            "suggestedSpec": res.get("suggestedSpec"),
+            "suggestError": None if res.get("success") else res.get("message", ""),
+        })
+    return {"success": True, "count": len(results), "candidates": results}
+
+
+class IndicatorSpecRuntimeBindRequest(BaseModel):
+    indicator_name: str = ""
+    formula: str = ""
+    database_id: str = ""
+    question: str = ""
+    current_spec: Optional[dict] = None
+
+
+@evaluation_router.post("/indicator-spec/runtime-bind")
+async def indicator_spec_runtime_bind(request: IndicatorSpecRuntimeBindRequest):
+    """运行期即时绑定：LLM 只建议 term→列 绑定，代码编译 SQL 并对来源表 dry-run。
+
+    三道校验（列存在 / 类型 / dry-run）全部通过后才允许保存为待确认规格；
+    前端人工确认后再回写，杜绝模型直接产出整条 SQL。
+    """
+    from agents.indicator_spec_assist import compile_and_probe_spec, suggest_bindings
+    from agents.tools import fetch_database_config
+
+    if not request.database_id:
+        return {"success": False, "message": "缺少 database_id"}
+    res = await suggest_bindings(
+        indicator_name=request.indicator_name,
+        formula=request.formula,
+        database_id=request.database_id,
+        current_spec=request.current_spec,
+    )
+    if not res.get("success"):
+        return res
+    spec = res["suggestedSpec"]
+    db_cfg = fetch_database_config(request.database_id)
+    probe = compile_and_probe_spec(
+        spec, request.database_id, db_type=db_cfg.get("type", ""))
+    return {
+        "success": True,
+        "suggestedSpec": spec,
+        "terms": res.get("terms", []),
+        "plan": {
+            "ok": probe["ok"],
+            "sql": probe["sql"],
+            "errors": probe["errors"],
+            "gaps": probe["gaps"],
+        },
+        "dryRun": {
+            "ok": all(c["ok"] for c in probe["checks"]),
+            "checks": probe["checks"],
+        },
+        "message": (None if probe["ok"]
+                    else "存在编译缺口或 dry-run 未通过，请修正绑定后再确认"),
+    }
+
+
 @evaluation_router.get("/data-sources")
 async def get_data_sources():
     """获取所有数据源（数据库配置列表）"""
