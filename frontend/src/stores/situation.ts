@@ -206,6 +206,15 @@ export const useSituationStore = defineStore('situation', () => {
     }
   }
 
+  // ── 删除历史产物 ──
+  async function deleteHistory(targetId: string) {
+    await api.delete(`/situation/reports/${targetId}`)
+    history.value = history.value.filter((h) => h.reportId !== targetId)
+    if (targetId === reportId.value) {
+      reset()
+    }
+  }
+
   // ── 加载数据源列表（调 qa-service /evaluation/data-sources，仿指标分析）──
   async function fetchDataSources() {
     try {
@@ -446,7 +455,7 @@ export const useSituationStore = defineStore('situation', () => {
     activeDataset, isGenerating, stepProgress,
     // actions
     reset, initFromDraft, loadReport, applyEvent, generate,
-    subscribeSSE, closeStream, refresh, fetchHistory,
+    subscribeSSE, closeStream, refresh, fetchHistory, deleteHistory,
     fetchDataSources, setDataSource,
     setSelectedRegion, setSelectedTimeRange, setViewport, toggleLayer,
     setActiveSkill, setSkillParameters,

@@ -267,6 +267,29 @@ function convertJsonToResult(json: MapAnnotationJson, validationMode: 'strict' |
     }
   }
 
+  // ── 自动生成 markers：如果 routes 有节点但没 markers，从 route points 生成 ──
+  if (markers.length === 0 && routes.length > 0) {
+    const seen = new Set<string>()
+    for (const route of routes) {
+      for (let i = 0; i < route.points.length; i++) {
+        const p = route.points[i]
+        const key = `${p.lng.toFixed(4)},${p.lat.toFixed(4)}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        const label = route.points.length > 1
+          ? `${route.name}·节点${i + 1}`
+          : route.name
+        markers.push({
+          name: label,
+          lng: p.lng,
+          lat: p.lat,
+          raw: `${label}: ${p.lng}, ${p.lat}`,
+          routeName: route.name,
+        })
+      }
+    }
+  }
+
   return {
     markers,
     routes,

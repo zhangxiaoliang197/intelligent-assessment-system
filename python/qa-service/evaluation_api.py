@@ -44,37 +44,21 @@ _io_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="evaluation-hist
 
 evaluation_router = APIRouter(prefix="/evaluation", tags=["评估分析"])
 
-# ─── 文件持久化 ───
-_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-os.makedirs(_DATA_DIR, exist_ok=True)
-_SESSIONS_FILE = os.path.join(_DATA_DIR, "evaluation_sessions.json")
-_HISTORY_FILE = os.path.join(_DATA_DIR, "evaluation_history.json")
-_write_lock = threading.RLock()
+# ─── MySQL 持久化（替代 evaluation_sessions.json / evaluation_history.json）──
+from chat_client import (
+    create_session as _cs_create,
+    delete_session as _cs_delete,
+    get_session as _cs_get,
+    add_message as _cs_add_msg,
+    get_messages as _cs_get_msgs,
+    get_last_seq as _cs_last_seq,
+    update_session as _cs_update,
+    list_sessions as _cs_list,
+    DEFAULT_USER_ID,
+)
 
 
-def _load_json(path, default):
-    try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return default
-
-
-def _save_json(path, data):
-    with _write_lock:
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-        os.replace(tmp, path)
-
-
-_eval_sessions: dict = _load_json(_SESSIONS_FILE, {})
-_eval_history: list = _load_json(_HISTORY_FILE, [])
-
-
-def _save_session_to_file(
+def _save_session_to_mysql(
     sid: str,
     question: str,
     final_answer: str,
@@ -84,55 +68,42 @@ def _save_session_to_file(
     database_id: str = "",
     database_name: str = "",
 ):
-    """保存会话到文件"""
-    global _eval_history
-    with _write_lock:
-        now = time.strftime("%Y-%m-%d %H:%M:%S")
-        previous_turns = _eval_sessions.get(sid, {}).get("turns", [])
-        turn = {
-            "question": question,
-            "final_answer": final_answer[:50000],
-            "skill_id": skill_id,
-            "result": result or {},
-            "steps": steps or [],
-            "database_id": database_id,
-            "database_name": database_name,
-            "time": now,
-        }
-        _eval_sessions[sid] = {
-            "session_id": sid,
-            **turn,
-            "turns": [*previous_turns, turn][-50:],
-        }
+    """保存评估会话到 MySQL"""
+    # 构建 metadata
+    import json as _json
+    meta = _json.dumps({
+        "resultType": "skill",
+        "summary": result or {},
+        "skillId": skill_id,
+        "databaseId": database_id,
+        "databaseName": database_name,
+        "executionSteps": steps or [],
+    }, ensure_ascii=False)
 
-        # 将会话移到历史记录最前面，并在历史记录和会话详情中保留同一有界集合
-        _eval_history = [item for item in _eval_history if item.get("id") != sid]
-        _eval_history.insert(0, {
-            "id": sid,
-            "title": question[:30] + ("..." if len(question) > 30 else ""),
-            "time": now,
-            "skill_id": skill_id,
-        })
-        _eval_history = _eval_history[:200]
-        retained_ids = {item.get("id") for item in _eval_history}
-        for stored_id in list(_eval_sessions.keys()):
-            if stored_id not in retained_ids:
-                _eval_sessions.pop(stored_id, None)
+    last_seq = _cs_last_seq(sid)
 
-        _save_json(_SESSIONS_FILE, _eval_sessions)
-        _save_json(_HISTORY_FILE, _eval_history)
+    # 仅首次消息创建会话并设置标题
+    is_first = last_seq == -1
+    if is_first:
+        _cs_create(sid, "evaluation")
+
+    seq_user = last_seq + 1
+    seq_asst = last_seq + 2
+
+    _cs_add_msg(sid, "user", question, seq_user, metadata="")
+    _cs_add_msg(sid, "assistant", final_answer[:50000], seq_asst,
+                metadata=meta)
+
+    # 通过 update_session 显式设置标题（不依赖 addMessage 或 createSession 的 title 参数）
+    if is_first:
+        title = question[:30] + ("..." if len(question) > 30 else "")
+        _cs_update(sid, title=title, summary=title[:200])
 
 
-def _delete_session_from_file(sid: str) -> bool:
-    """原子性地从内存和两个持久化文件中移除一个会话"""
-    global _eval_history
-    with _write_lock:
-        existed = sid in _eval_sessions or any(item.get("id") == sid for item in _eval_history)
-        _eval_sessions.pop(sid, None)
-        _eval_history = [item for item in _eval_history if item.get("id") != sid]
-        _save_json(_SESSIONS_FILE, _eval_sessions)
-        _save_json(_HISTORY_FILE, _eval_history)
-        return existed
+def _delete_session_from_mysql(sid: str) -> bool:
+    """从 MySQL 删除评估会话"""
+    resp = _cs_delete(sid)
+    return resp.get("success", False)
 
 
 class EvaluationRequest(BaseModel):
@@ -571,7 +542,7 @@ async def analyze_stream(request: EvaluationRequest, http_request: Request):
                             await loop.run_in_executor(
                                 _io_pool,
                                 partial(
-                                    _save_session_to_file,
+                                    _save_session_to_mysql,
                                     session_id,
                                     request.query,
                                     final_answer,
@@ -1037,18 +1008,81 @@ async def get_data_source_datasets(database_id: str):
 
 @evaluation_router.get("/history")
 async def get_history():
-    """获取历史记录列表"""
-    with _write_lock:
-        history = copy.deepcopy(_eval_history)
+    """获取历史记录列表（从 MySQL 读取）"""
+    resp = _cs_list("evaluation")
+    if not resp.get("success"):
+        return {"success": True, "history": []}
+    items = resp.get("items", [])
+    history = []
+    for item in items:
+        # 过滤掉没有标题的空会话（点击新建但未发消息）
+        title = item.get("title", "") or ""
+        if not title.strip():
+            continue
+        if len(title) > 20:
+            title = title[:20] + '...'
+        ct = item.get("createTime", "") or item.get("updateTime", "")
+        if "T" in ct:
+            ct = ct.replace("T", " ")[:19]
+        history.append({
+            "id": item.get("sessionId", ""),
+            "title": title,
+            "time": ct,
+            "skill_id": item.get("skillId", ""),
+        })
     return {"success": True, "history": history}
+
+
+@evaluation_router.post("/session/new")
+async def create_new_session():
+    """创建一个新会话，返回新的 session_id"""
+    new_id = str(uuid.uuid4())
+    return {"success": True, "session_id": new_id}
 
 
 @evaluation_router.get("/session/{session_id}")
 async def get_session(session_id: str):
-    """获取指定会话"""
-    with _write_lock:
-        session = copy.deepcopy(_eval_sessions.get(session_id))
-    if session:
+    """获取指定会话（从 MySQL 读取）"""
+    resp = _cs_get(session_id)
+    if resp.get("success") and resp.get("data"):
+        data = resp["data"]
+        msgs = data.get("messages", [])
+        # 从消息中重建 turn 结构（每个 user+assistant 对为一轮）
+        turns = []
+        current_question = ""
+        current_skill_id = ""
+        current_result = {}
+        current_steps = []
+        for msg in msgs:
+            if msg.get("role") == "user":
+                current_question = msg.get("content", "")
+            elif msg.get("role") == "assistant":
+                final_answer = msg.get("content", "")
+                skill_id = ""
+                result = {}
+                steps = []
+                meta_str = msg.get("metadata", "")
+                if meta_str:
+                    try:
+                        meta = json.loads(meta_str)
+                        skill_id = meta.get("skillId", "")
+                        result = meta.get("summary", {})
+                        steps = meta.get("executionSteps", [])
+                    except Exception:
+                        pass
+                turns.append({
+                    "question": current_question,
+                    "final_answer": final_answer,
+                    "skill_id": skill_id,
+                    "result": result,
+                    "steps": steps,
+                    "time": msg.get("createTime", ""),
+                })
+                current_question = ""
+        session = {
+            "session_id": session_id,
+            "turns": turns,
+        }
         return {"success": True, "session": session}
     return {"success": False, "message": "会话不存在"}
 
@@ -1056,6 +1090,5 @@ async def get_session(session_id: str):
 @evaluation_router.delete("/session/{session_id}")
 async def delete_session(session_id: str):
     """删除指定会话"""
-    loop = asyncio.get_running_loop()
-    existed = await loop.run_in_executor(_io_pool, _delete_session_from_file, session_id)
+    existed = _delete_session_from_mysql(session_id)
     return {"success": True, "message": "已删除" if existed else "会话不存在"}

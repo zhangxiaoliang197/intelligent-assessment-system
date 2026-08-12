@@ -1,1 +1,1353 @@
-[]
+[
+  {
+    "id": "ont_61daa626",
+    "name": "金融示例",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "id": "concept_3b58aad2",
+        "ontology_id": "ont_61daa626",
+        "name": "金融实体",
+        "description": "迁移自动生成：金融实体 类概念",
+        "color": "#5470c6",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 08:35:31.812496",
+        "update_time": "2026-08-11 08:35:31.812496"
+      },
+      {
+        "id": "concept_245f956f",
+        "ontology_id": "ont_61daa626",
+        "name": "信贷业务",
+        "description": "迁移自动生成：信贷业务 类概念",
+        "color": "#ee6666",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 08:35:31.812496",
+        "update_time": "2026-08-11 08:35:31.812496"
+      },
+      {
+        "id": "concept_0a0fdaee",
+        "ontology_id": "ont_61daa626",
+        "name": "事件活动",
+        "description": "迁移自动生成：事件活动 类概念",
+        "color": "#3ba272",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 08:35:31.812496",
+        "update_time": "2026-08-11 08:35:31.812496"
+      },
+      {
+        "id": "concept_690fb949",
+        "ontology_id": "ont_61daa626",
+        "name": "财务指标",
+        "description": "迁移自动生成：财务指标 类概念",
+        "color": "#91cc75",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 08:35:31.812496",
+        "update_time": "2026-08-11 08:35:31.812496"
+      },
+      {
+        "id": "concept_a8a6ab6b",
+        "ontology_id": "ont_61daa626",
+        "name": "风险因素",
+        "description": "迁移自动生成：风险因素 类概念",
+        "color": "#fac858",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 08:35:31.812496",
+        "update_time": "2026-08-11 08:35:31.812496"
+      },
+      {
+        "id": "concept_47d2182f",
+        "ontology_id": "ont_61daa626",
+        "name": "政策措施",
+        "description": "迁移自动生成：政策措施 类概念",
+        "color": "#73c0de",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 08:35:31.812496",
+        "update_time": "2026-08-11 08:35:31.812496"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "关联",
+        "description": ""
+      },
+      {
+        "name": "影响",
+        "description": ""
+      },
+      {
+        "name": "包含",
+        "description": ""
+      },
+      {
+        "name": "衡量",
+        "description": ""
+      },
+      {
+        "name": "应对",
+        "description": ""
+      },
+      {
+        "name": "导致",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-04 16:27:17.072121",
+    "update_time": "2026-08-04 16:27:17.072121",
+    "status": "活跃",
+    "is_default": false,
+    "schema_version": 3
+  },
+  {
+    "id": "ont_84fd1dc8",
+    "name": "示例",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "id": "concept_a3f726c2",
+        "ontology_id": "ont_84fd1dc8",
+        "name": "企业",
+        "description": "迁移自动生成：企业 类概念",
+        "color": "#5470c6",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-10 16:23:43.388230",
+        "update_time": "2026-08-10 16:23:43.388230"
+      },
+      {
+        "id": "concept_84908986",
+        "ontology_id": "ont_84fd1dc8",
+        "name": "人物",
+        "description": "迁移自动生成：人物 类概念",
+        "color": "#91cc75",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-10 16:23:43.388230",
+        "update_time": "2026-08-10 16:23:43.388230"
+      },
+      {
+        "id": "concept_1eee0c29",
+        "ontology_id": "ont_84fd1dc8",
+        "name": "财务指标",
+        "description": "迁移自动生成：财务指标 类概念",
+        "color": "#fac858",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-10 16:23:43.388230",
+        "update_time": "2026-08-10 16:23:43.388230"
+      },
+      {
+        "id": "concept_49c8edab",
+        "ontology_id": "ont_84fd1dc8",
+        "name": "融资方案",
+        "description": "迁移自动生成：融资方案 类概念",
+        "color": "#ee6666",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-10 16:23:43.388230",
+        "update_time": "2026-08-10 16:23:43.388230"
+      },
+      {
+        "id": "concept_d1645a34",
+        "ontology_id": "ont_84fd1dc8",
+        "name": "风险事件",
+        "description": "迁移自动生成：风险事件 类概念",
+        "color": "#73c0de",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-10 16:23:43.388230",
+        "update_time": "2026-08-10 16:23:43.388230"
+      },
+      {
+        "id": "concept_6d84459d",
+        "ontology_id": "ont_84fd1dc8",
+        "name": "抵押物",
+        "description": "迁移自动生成：抵押物 类概念",
+        "color": "#fc8452",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-10 16:23:43.388230",
+        "update_time": "2026-08-10 16:23:43.388230"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "提出",
+        "description": ""
+      },
+      {
+        "name": "评估",
+        "description": ""
+      },
+      {
+        "name": "影响",
+        "description": ""
+      },
+      {
+        "name": "担保",
+        "description": ""
+      },
+      {
+        "name": "衡量",
+        "description": ""
+      },
+      {
+        "name": "关联",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-06 15:17:18.426741",
+    "update_time": "2026-08-06 15:17:18.426741",
+    "status": "活跃",
+    "is_default": false,
+    "schema_version": 3
+  },
+  {
+    "id": "ont_079690ef",
+    "name": "西游记",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "id": "concept_543d5035",
+        "ontology_id": "ont_079690ef",
+        "name": "事件",
+        "description": "迁移自动生成：事件 类概念",
+        "color": "#ee6666",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-10 16:23:43.410022",
+        "update_time": "2026-08-10 16:23:43.410022"
+      },
+      {
+        "id": "concept_e541ef63",
+        "ontology_id": "ont_079690ef",
+        "name": "概念",
+        "description": "迁移自动生成：概念 类概念",
+        "color": "#5470c6",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-10 16:23:43.410022",
+        "update_time": "2026-08-10 16:23:43.410022"
+      },
+      {
+        "id": "concept_cfedbf81",
+        "ontology_id": "ont_079690ef",
+        "name": "属性",
+        "description": "迁移自动生成：属性 类概念",
+        "color": "#fac858",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-10 16:23:43.410022",
+        "update_time": "2026-08-10 16:23:43.410022"
+      },
+      {
+        "id": "concept_370885dd",
+        "ontology_id": "ont_079690ef",
+        "name": "实体",
+        "description": "迁移自动生成：实体 类概念",
+        "color": "#91cc75",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-10 16:23:43.410022",
+        "update_time": "2026-08-10 16:23:43.410022"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "包含",
+        "description": ""
+      },
+      {
+        "name": "关联",
+        "description": ""
+      },
+      {
+        "name": "影响",
+        "description": ""
+      },
+      {
+        "name": "衡量",
+        "description": ""
+      },
+      {
+        "name": "继承",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-06 16:32:20.288710",
+    "update_time": "2026-08-06 16:32:20.288710",
+    "status": "活跃",
+    "is_default": false,
+    "schema_version": 3
+  },
+  {
+    "id": "ont_7d2cc296",
+    "name": "机器人",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "id": "concept_a331de8d",
+        "ontology_id": "ont_7d2cc296",
+        "name": "应用领域",
+        "description": "根据机器人应用的行业或场所领域进行分类的维度。",
+        "color": "#91cc75",
+        "property_schema": [
+          {
+            "name": "分类依据",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "按机器人应用场所及行业领域划分"
+          }
+        ],
+        "source_snippet": "根据机器人的应用领域，机器人可分为工业机器人、个人／家用服务机器人、公共服务机器人、特种机器人和其他应用领域机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_9fd82b55",
+        "ontology_id": "ont_7d2cc296",
+        "name": "运动方式",
+        "description": "根据机器人移动或运动实现方式进行分类的维度。",
+        "color": "#91cc75",
+        "property_schema": [
+          {
+            "name": "分类依据",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "按机器人实现运动的方式划分"
+          }
+        ],
+        "source_snippet": "根据机器人的运动方式，机器人可分为轮式机器人、足腿式机器人、履带式机器人、蠕动式机器人、浮游式机器人、潜游式机器人、飞行式机器人和其他运动方式机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_e0fd9e65",
+        "ontology_id": "ont_7d2cc296",
+        "name": "使用空间",
+        "description": "根据机器人所处或使用空间环境进行分类的维度。",
+        "color": "#91cc75",
+        "property_schema": [
+          {
+            "name": "分类依据",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "按机器人工作的空间环境划分"
+          }
+        ],
+        "source_snippet": "根据机器人的使用空间，机器人可分为地面／地下机器人、水面／水下机器人、空中机器人、空间机器人和其他使用空间机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_08e0b1a5",
+        "ontology_id": "ont_7d2cc296",
+        "name": "机械结构",
+        "description": "根据机器人机械结构形式进行分类的维度。",
+        "color": "#91cc75",
+        "property_schema": [
+          {
+            "name": "分类依据",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "按机器人机械结构类型划分"
+          }
+        ],
+        "source_snippet": "机器人按其机械结构类型可分为垂直关节型机器人、平面关节型机器人、直角坐标型机器人、并联机器人和其他机械结构类型机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_cf719fdd",
+        "ontology_id": "ont_7d2cc296",
+        "name": "编程控制方式",
+        "description": "根据机器人编程和控制方式进行分类的维度。",
+        "color": "#91cc75",
+        "property_schema": [
+          {
+            "name": "分类依据",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "按机器人编程方式与控制方式划分"
+          }
+        ],
+        "source_snippet": "根据机器人的编程和控制方式，机器人可分为编程型机器人、主从机器人和协作机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_9619f183",
+        "ontology_id": "ont_7d2cc296",
+        "name": "工业机器人",
+        "description": "自动控制的、可重复编程、多用途，在工业自动化中使用的操作机。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为应用领域"
+          },
+          {
+            "name": "轴数",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "个",
+            "required": false,
+            "description": "可编程轴的数量，通常三个或以上"
+          }
+        ],
+        "source_snippet": "自动控制的、可重复编程、多用途的操作机，可对三个或三个以上轴进行编程，它可以是固定式或移动式。在工业自动化中使用。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_e37ef5da",
+        "ontology_id": "ont_7d2cc296",
+        "name": "家用服务机器人",
+        "description": "在家居环境或类似环境下为满足使用者生活需求而使用的服务机器人，即个人/家用服务机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为应用领域"
+          },
+          {
+            "name": "使用用途",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "家务、教育、娱乐、养老助残等用途"
+          }
+        ],
+        "source_snippet": "在家居环境或类似环境下使用的，以满足使用者生活需求为目的的服务机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_08cb866a",
+        "ontology_id": "ont_7d2cc296",
+        "name": "公共服务机器人",
+        "description": "在住宿、餐饮、金融、清洁、物流、教育、文化和娱乐等公共场合为人类提供一般服务的商用机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为应用领域"
+          },
+          {
+            "name": "服务领域",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "餐饮、讲解导引、多媒体、公共游乐等"
+          }
+        ],
+        "source_snippet": "住宿、餐饮、金融、清洁、物流、教育、文化和娱乐等领域的公共场合为人类提供一般服务的商用机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_3fa1b96a",
+        "ontology_id": "ont_7d2cc296",
+        "name": "特种机器人",
+        "description": "应用于专业领域，一般由经过专门培训的人员操作或使用，辅助和/或替代人执行任务的机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为应用领域"
+          },
+          {
+            "name": "使用用途",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "检查维修、专业检测、搜救、排爆等"
+          }
+        ],
+        "source_snippet": "应用于专业领域，一般由经过专门培训的人员操作或使用的，辅助和／或替代人执行任务的机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_35b5a901",
+        "ontology_id": "ont_7d2cc296",
+        "name": "其他领域机器人",
+        "description": "除工业、家用服务、公共服务、特种机器人之外的其他应用领域机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为应用领域"
+          }
+        ],
+        "source_snippet": "除５．１．２～５．１．５应用领域之外的机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_9ea8018e",
+        "ontology_id": "ont_7d2cc296",
+        "name": "轮式机器人",
+        "description": "利用轮子实现移动的移动机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为运动方式"
+          },
+          {
+            "name": "驱动方式",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "双轮驱动、三轮驱动、全方位驱动等"
+          }
+        ],
+        "source_snippet": "利用轮子实现移动的移动机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_adbc0273",
+        "ontology_id": "ont_7d2cc296",
+        "name": "足腿式机器人",
+        "description": "利用一条或更多条腿实现移动的移动机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为运动方式"
+          },
+          {
+            "name": "腿的数量",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "条",
+            "required": false,
+            "description": "机器人用于移动的腿的数量"
+          }
+        ],
+        "source_snippet": "利用一条或更多条腿实现移动的移动机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_b87d25d9",
+        "ontology_id": "ont_7d2cc296",
+        "name": "履带式机器人",
+        "description": "利用履带实现移动的移动机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为运动方式"
+          },
+          {
+            "name": "履带节数",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "节",
+            "required": false,
+            "description": "驱动履带及关节的节数"
+          }
+        ],
+        "source_snippet": "利用履带实现移动的移动机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_e9de79b8",
+        "ontology_id": "ont_7d2cc296",
+        "name": "蠕动式机器人",
+        "description": "利用自身蠕动装置实现移动的机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为运动方式"
+          },
+          {
+            "name": "移动方向",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "上下蠕动、左右蠕动等"
+          }
+        ],
+        "source_snippet": "利用自身蠕动装置实现移动的机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_e2c58e89",
+        "ontology_id": "ont_7d2cc296",
+        "name": "浮游式机器人",
+        "description": "利用自身推进装置在水面上实现移动的移动机器人，又称水面机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为运动方式"
+          },
+          {
+            "name": "推进方式",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "螺旋桨、平旋推进、喷水、喷气等"
+          }
+        ],
+        "source_snippet": "利用自身的推进装置在水面上实现移动的移动机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_08e42065",
+        "ontology_id": "ont_7d2cc296",
+        "name": "潜游式机器人",
+        "description": "利用下潜、潜游装置实现下潜游动的移动机器人，又称水下机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为运动方式"
+          },
+          {
+            "name": "运动方式",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "拖曳潜游、自主潜游等"
+          }
+        ],
+        "source_snippet": "利用下潜、潜游装置实现下潜游动的移动机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_b069a9c8",
+        "ontology_id": "ont_7d2cc296",
+        "name": "飞行式机器人",
+        "description": "利用自身飞行装置飞行移动的移动机器人，又称空中机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为运动方式"
+          },
+          {
+            "name": "起飞方式",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "直升、滑行、手抛等起飞方式"
+          }
+        ],
+        "source_snippet": "利用自身的飞行装置飞行移动的移动机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_21a62d18",
+        "ontology_id": "ont_7d2cc296",
+        "name": "其他运动机器人",
+        "description": "除轮式、足腿式、履带式、蠕动式、浮游式、潜游式、飞行式之外的其他运动方式机器人，包括固定式、复合式、穿戴式、喷射式等。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为运动方式"
+          }
+        ],
+        "source_snippet": "其他运动方式机器人主要包括固定式机器人、复合式机器人、穿戴式机器人、喷射式机器人和除５．２．５～５．２．８运动方式之外的机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_6c166ba3",
+        "ontology_id": "ont_7d2cc296",
+        "name": "地面地下机器人",
+        "description": "使用空间为地面或地下环境的机器人分类集合，包括室内地面、室外地面、井下等。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为使用空间"
+          }
+        ],
+        "source_snippet": "地面／地下机器人按使用空间可分为室内地面机器人、室外地面机器人、井下机器人和其他地下机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_ebef5fc0",
+        "ontology_id": "ont_7d2cc296",
+        "name": "水面水下机器人",
+        "description": "使用空间为水面或水下环境的机器人分类集合，包括内河、海洋、浅水、深水等。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为使用空间"
+          }
+        ],
+        "source_snippet": "水面／水下机器人按其使用水域可分为内河水面机器人、海洋水面机器人、浅水机器人、深水机器人和其他水下机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_f5ad3708",
+        "ontology_id": "ont_7d2cc296",
+        "name": "空中机器人",
+        "description": "使用空间为空中环境的机器人，按空域分类包括中低空、高空等。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为使用空间"
+          }
+        ],
+        "source_snippet": "按中国民航局空域分类，空中机器人可分为中低空机器人、高空机器人和其他空中机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_95a87c10",
+        "ontology_id": "ont_7d2cc296",
+        "name": "空间机器人",
+        "description": "在太空中进行试验、操作、探测等活动的机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为使用空间"
+          }
+        ],
+        "source_snippet": "在太空中进行试验、操作、探测等活动的机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_4587b634",
+        "ontology_id": "ont_7d2cc296",
+        "name": "其他空间机器人",
+        "description": "除地面/地下、水面/水下、空中、空间之外的其他使用空间机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为使用空间"
+          }
+        ],
+        "source_snippet": "除５．３．２～５．３．５之外的其他使用空间机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_228c1bda",
+        "ontology_id": "ont_7d2cc296",
+        "name": "垂直关节型机器人",
+        "description": "机械结构为垂直关节形式的工业机器人，按轴数分为四轴、五轴、六轴等。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为机械结构"
+          }
+        ],
+        "source_snippet": "垂直关节型机器人按其轴数可分为四轴关节机器人、五轴关节机器人、六轴关节机器人和其他垂直关节型机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_54c16942",
+        "ontology_id": "ont_7d2cc296",
+        "name": "平面关节型机器人",
+        "description": "机械结构为平面关节形式的机器人，典型为SCARA机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为机械结构"
+          }
+        ],
+        "source_snippet": "平面关节型机器人按其手臂数量可分为单臂ＳＣＡＲＡ机器人、双臂ＳＣＡＲＡ机器人和其他平面关节型机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_b87878bb",
+        "ontology_id": "ont_7d2cc296",
+        "name": "直角坐标型机器人",
+        "description": "机械结构为直角坐标形式的机器人，按自由度分为三、四、五自由度等。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为机械结构"
+          }
+        ],
+        "source_snippet": "直角坐标型机器人按其自由度可分为三自由度机器人、四自由度机器人、五自由度机器人和其他直角坐标型机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_ea58160f",
+        "ontology_id": "ont_7d2cc296",
+        "name": "并联机器人",
+        "description": "手臂含有组成闭环结构的杆件的机器人，又称并联杆式机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为机械结构"
+          }
+        ],
+        "source_snippet": "手臂含有组成闭环结构的杆件的机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_e164677c",
+        "ontology_id": "ont_7d2cc296",
+        "name": "其他结构机器人",
+        "description": "除垂直关节、平面关节、直角坐标、并联之外的其他机械结构类型机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为机械结构"
+          }
+        ],
+        "source_snippet": "除５．４．２～５．４．５之外的其他机械结构类型机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_850162c6",
+        "ontology_id": "ont_7d2cc296",
+        "name": "编程型机器人",
+        "description": "按照编程方式实现任务控制的机器人，包括示教编程、离线编程等。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为编程控制方式"
+          }
+        ],
+        "source_snippet": "编程型机器人按其编程方式可分为示教编程机器人、离线编程机器人和其他编程型机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_f3b99571",
+        "ontology_id": "ont_7d2cc296",
+        "name": "主从机器人",
+        "description": "能实现主从控制的机器人，即从设备复现主设备运动的机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为编程控制方式"
+          }
+        ],
+        "source_snippet": "能实现主从控制的机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_581285da",
+        "ontology_id": "ont_7d2cc296",
+        "name": "协作机器人",
+        "description": "为与人直接交互而设计的机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "该机器人分类所依据的维度，此处为编程控制方式"
+          }
+        ],
+        "source_snippet": "为与人直接交互而设计的机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_d8d4bd89",
+        "ontology_id": "ont_7d2cc296",
+        "name": "机器人",
+        "description": "具有两个或两个以上可编程的轴，以及一定程度的自主能力，可在其环境内运动以执行预定任务的执行机构。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "轴数",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "个",
+            "required": false,
+            "description": "可编程轴的数量"
+          },
+          {
+            "name": "自主能力",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "机器人具备的自主能力描述"
+          }
+        ],
+        "source_snippet": "具有两个或两个以上可编程的轴，以及一定程度的自主能力，可在其环境内运动以执行预定任务的执行机构。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_a0408cac",
+        "ontology_id": "ont_7d2cc296",
+        "name": "自主能力",
+        "description": "基于当前状态和感知信息，无人为干预地执行预期任务的能力。",
+        "color": "#ee6666",
+        "property_schema": [],
+        "source_snippet": "基于当前状态和感知信息，无人为干预地执行预期任务的能力。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_b8da2464",
+        "ontology_id": "ont_7d2cc296",
+        "name": "主从控制",
+        "description": "从设备（从）复现主设备（主）运动的控制方法。",
+        "color": "#73c0de",
+        "property_schema": [],
+        "source_snippet": "从设备（从）复现主设备（主）运动的控制方法。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      },
+      {
+        "id": "concept_2cfc36b8",
+        "ontology_id": "ont_7d2cc296",
+        "name": "SCARA机器人",
+        "description": "具有两个平行的回转关节，以便在所选择的平面内提供柔顺性的机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "所属分类维度",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "该机器人分类所依据的维度，此处为机械结构"
+          }
+        ],
+        "source_snippet": "具有两个平行的回转关节，以便在所选择的平面内提供柔顺性的机器人。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-11 16:52:30.921177",
+        "update_time": "2026-08-11 16:52:30.921177"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "包含",
+        "description": ""
+      },
+      {
+        "name": "归类于",
+        "description": ""
+      },
+      {
+        "name": "基于",
+        "description": ""
+      },
+      {
+        "name": "定义",
+        "description": ""
+      },
+      {
+        "name": "关联",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-11 16:52:30.921177",
+    "update_time": "2026-08-11 16:52:30.921177",
+    "status": "活跃",
+    "is_default": false,
+    "schema_version": 3
+  },
+  {
+    "id": "ont_fe9aceee",
+    "name": "未命名本体",
+    "description": "手动构建本体",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "id": "et_6c5f1000",
+        "ontology_id": "",
+        "name": "概念",
+        "description": "",
+        "color": "#5470c6",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 08:59:15.685297",
+        "update_time": "2026-08-12 08:59:15.685297"
+      },
+      {
+        "id": "et_6bcaaeb5",
+        "ontology_id": "",
+        "name": "实体",
+        "description": "",
+        "color": "#91cc75",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 08:59:15.685325",
+        "update_time": "2026-08-12 08:59:15.685325"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "关联",
+        "description": ""
+      },
+      {
+        "name": "影响",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-11 16:57:55.565957",
+    "update_time": "2026-08-11 16:57:55.565957",
+    "status": "活跃",
+    "is_default": false,
+    "schema_version": 3
+  },
+  {
+    "id": "ont_4e6a2b97",
+    "name": "未命名本体",
+    "description": "手动构建本体",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "id": "et_9153fb0a",
+        "ontology_id": "",
+        "name": "概念",
+        "description": "",
+        "color": "#5470c6",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 08:59:15.688096",
+        "update_time": "2026-08-12 08:59:15.688096"
+      },
+      {
+        "id": "et_816e3061",
+        "ontology_id": "",
+        "name": "实体",
+        "description": "",
+        "color": "#91cc75",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 08:59:15.688121",
+        "update_time": "2026-08-12 08:59:15.688121"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "关联",
+        "description": ""
+      },
+      {
+        "name": "影响",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-11 17:00:49.253443",
+    "update_time": "2026-08-11 17:00:49.253443",
+    "status": "活跃",
+    "is_default": false,
+    "schema_version": 3
+  },
+  {
+    "id": "ont_c9af1c35",
+    "name": "未命名本体",
+    "description": "手动构建本体",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "id": "et_6436d3b8",
+        "ontology_id": "",
+        "name": "概念",
+        "description": "",
+        "color": "#5470c6",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 08:59:15.691649",
+        "update_time": "2026-08-12 08:59:15.691649"
+      },
+      {
+        "id": "et_82e23a08",
+        "ontology_id": "",
+        "name": "实体",
+        "description": "",
+        "color": "#91cc75",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 08:59:15.691674",
+        "update_time": "2026-08-12 08:59:15.691674"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "关联",
+        "description": ""
+      },
+      {
+        "name": "影响",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-11 17:32:19.713538",
+    "update_time": "2026-08-11 17:32:19.713538",
+    "status": "活跃",
+    "is_default": false,
+    "schema_version": 3
+  }
+]
