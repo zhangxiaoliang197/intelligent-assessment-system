@@ -60,7 +60,57 @@
           @open-library="onOpenSkillDrawer"
           @open-markdown="skillMarkdownVisible = true"
           @configure="skillParametersVisible = true"
-        />
+        >
+          <!-- 数据源选择（与技能同行，对齐指标分析 top-bar 布局） -->
+          <template #append>
+            <span class="label">数据源：</span>
+            <el-select
+              v-model="store.dataSourceId"
+              placeholder="选择数据源"
+              size="small"
+              style="width: 200px"
+              @change="onDataSourceChange"
+            >
+              <el-option
+                v-for="ds in store.dataSources"
+                :key="ds.id"
+                :label="ds.status === 'available' ? ds.name : `${ds.name}（不可用）`"
+                :value="ds.id"
+                :disabled="ds.status !== 'available'"
+              />
+            </el-select>
+            <el-button size="small" type="primary" @click="dataSourceDialogVisible = true">
+              <el-icon><Setting /></el-icon> 配置
+            </el-button>
+          </template>
+        </SituationSkillToolbar>
+
+        <!-- 执行步骤流（对齐指标分析 skill-plan-bar：选中 Skill 后展示步骤链） -->
+        <div v-if="activeFullSkill" class="skill-plan-bar">
+          <div class="skill-plan-title">
+            <el-icon><MagicStick /></el-icon>
+            <strong>{{ activeFullSkill.name }}</strong>
+            <el-tag size="small" effect="plain">{{ activeFullSkill.category }}</el-tag>
+            <el-tag v-if="activeFullSkill.source === 'custom'" size="small" type="warning" effect="light">自定义</el-tag>
+          </div>
+          <div class="skill-plan-flow">
+            <template v-for="(step, index) in activeFullSkill.steps" :key="index">
+              <span class="skill-plan-step">{{ index + 1 }}. {{ step }}</span>
+              <el-icon v-if="index < activeFullSkill.steps.length - 1" class="skill-plan-arrow"><ArrowRight /></el-icon>
+            </template>
+            <el-icon class="skill-plan-arrow"><ArrowRight /></el-icon>
+            <span class="skill-plan-step output">生成态势</span>
+          </div>
+          <el-button
+            class="skill-markdown-button"
+            size="small"
+            plain
+            :icon="Document"
+            @click="skillMarkdownVisible = true"
+          >
+            SKILL.md
+          </el-button>
+        </div>
 
         <div class="content-area">
           <!-- 对话面板 -->
@@ -159,21 +209,6 @@
 
             <!-- 输入区 -->
             <div class="input-area">
-              <div class="tools-bar">
-                <div
-                  v-for="tool in tools"
-                  :key="tool.id"
-                  :class="['tool-item', { current: tool.current }]"
-                  @click="go(tool.path)"
-                >
-                  <div class="tool-icon">
-                    <el-icon :size="16" :color="tool.current ? 'white' : tool.color">
-                      <component :is="tool.icon" />
-                    </el-icon>
-                  </div>
-                  <span class="tool-name">{{ tool.name }}</span>
-                </div>
-              </div>
               <div class="input-wrapper">
                 <el-input
                   v-model="inputText"
@@ -190,6 +225,23 @@
                   <el-button v-else type="primary" @click="onGenerate">
                     <el-icon><Promotion /></el-icon> 生成态势
                   </el-button>
+                </div>
+              </div>
+
+              <!-- 工具按钮 -->
+              <div class="tools-bar">
+                <div
+                  v-for="tool in tools"
+                  :key="tool.id"
+                  :class="['tool-item', { current: tool.current }]"
+                  @click="navigateToTool(tool.path)"
+                >
+                  <div class="tool-icon">
+                    <el-icon :size="16" :color="tool.current ? 'white' : tool.color">
+                      <component :is="tool.icon" />
+                    </el-icon>
+                  </div>
+                  <span class="tool-name">{{ tool.name }}</span>
                 </div>
               </div>
             </div>
@@ -249,6 +301,35 @@
         <template #append><el-button @click="copyShare">复制</el-button></template>
       </el-input>
       <template #footer><el-button @click="shareVisible = false">关闭</el-button></template>
+    </el-dialog>
+
+    <!-- 数据源配置对话框（对齐指标分析） -->
+    <el-dialog v-model="dataSourceDialogVisible" title="数据源配置" width="600px">
+      <div class="data-source-list">
+        <div
+          v-for="ds in store.dataSources"
+          :key="ds.id"
+          :class="['ds-item', { active: ds.id === store.dataSourceId }]"
+          @click="store.setDataSource(ds.id)"
+        >
+          <div class="ds-item-main">
+            <div class="ds-item-content">
+              <div class="ds-item-name">{{ ds.name }}</div>
+            </div>
+          </div>
+          <div class="ds-item-meta">
+            <el-tag v-if="ds.type" size="small">{{ ds.type }}</el-tag>
+            <el-tag :type="ds.status === 'available' ? 'success' : 'info'" size="small">
+              {{ ds.status === 'available' ? '可用' : '不可用' }}
+            </el-tag>
+            <el-icon v-if="ds.id === store.dataSourceId" class="ds-item-check"><CircleCheck /></el-icon>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="dataSourceDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmDataSource">确定</el-button>
+      </template>
     </el-dialog>
 
     <!-- Skill 技能库抽屉 -->
@@ -311,9 +392,10 @@ import { ElMessage } from 'element-plus'
 import {
   Plus, Collection, Box, List, Search, MapLocation, Promotion, Loading,
   FullScreen, Share, Download, CircleClose, CircleCheck, Close, ArrowRight,
-  ChatDotRound, PieChart, Document, TrendCharts, DataAnalysis
+  PieChart, TrendCharts, DataAnalysis, Setting, MagicStick, Document
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
+import { useToolNav } from '@/composables/useToolNav'
 import SituationChartGrid from '@/components/situation/SituationChartGrid.vue'
 import SituationMapSlot from '@/components/situation/SituationMapSlot.vue'
 import SituationNarrative from '@/components/situation/SituationNarrative.vue'
@@ -366,8 +448,20 @@ const skillUsageVisible = ref(false)
 const skillUsageLoading = ref(false)
 const skillParametersVisible = ref(false)
 const skillMarkdownVisible = ref(false)
+const dataSourceDialogVisible = ref(false)
 let recommendTimer: ReturnType<typeof setTimeout> | undefined
 let recommendRequest = 0
+
+// ── 数据源切换 ──
+function onDataSourceChange(val: string) {
+  store.setDataSource(val)
+}
+
+// 确认数据源选择（关闭对话框并提示）
+function confirmDataSource() {
+  dataSourceDialogVisible.value = false
+  if (store.dataSourceId) ElMessage.success('数据源已更新')
+}
 
 const activeFullSkill = computed(() => (
   skills.value.find((skill) => skill.id === store.activeSkill?.id) || null
@@ -376,12 +470,8 @@ const activeFullSkill = computed(() => (
 const inputPlaceholder = '输入态势分析需求，如：分析各省份订单销售态势与客单价、评分、配送效率趋势...'
 
 // 工具胶囊（与 Portal tools-row 一致，态势图 current）
-const tools = [
-  { id: 1, name: '智能问答', icon: ChatDotRound, color: '#3b82f6', path: '/qa', current: false },
-  { id: 2, name: '指标分析', icon: PieChart, color: '#10b981', path: '/indicator', current: false },
-  { id: 3, name: '评估分析', icon: Document, color: '#f59e0b', path: '/evaluation', current: false },
-  { id: 4, name: '态势图', icon: MapLocation, color: '#8b5cf6', path: '/situation', current: true }
-]
+// 四功能切换栏（共享配置，current 由当前路由自动推导）
+const { tools, navigateToTool } = useToolNav()
 
 // 推荐提问
 const suggests = [
@@ -406,6 +496,7 @@ const filteredHistory = computed(() => {
 // ── 生命周期 ──
 onMounted(async () => {
   store.fetchHistory()
+  void store.fetchDataSources()
   void loadSkillCatalog()
   void loadSkillPreferences()
   // 1) 跨功能跳转：带 draftId
@@ -745,6 +836,116 @@ function formatTime(t: string): string {
   border-left: 1px solid var(--border-light);
 }
 
+/* ── 执行步骤流（对齐指标分析 skill-plan-bar）── */
+.skill-plan-bar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 24px;
+  background: linear-gradient(90deg, rgba(139, 92, 246, 0.06), rgba(109, 40, 217, 0.04));
+  border-top: 1px solid rgba(139, 92, 246, 0.08);
+  border-bottom: 1px solid rgba(139, 92, 246, 0.12);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.skill-plan-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #6d28d9;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.skill-plan-title .el-icon { color: #8b5cf6; }
+.skill-plan-flow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.skill-markdown-button {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.skill-plan-step {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: white;
+  border: 1px solid rgba(139, 92, 246, 0.18);
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.skill-plan-step.output {
+  color: #6d28d9;
+  border-color: rgba(109, 40, 217, 0.25);
+}
+.skill-plan-arrow {
+  color: var(--text-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* 数据源标签（插槽内容，对齐指标分析 label 样式） */
+.label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* ── 数据源配置对话框（对齐指标分析）── */
+.data-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.ds-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.ds-item:hover {
+  border-color: #a78bfa;
+  background: #faf5ff;
+}
+.ds-item.active {
+  border-color: #8b5cf6;
+  background: #faf5ff;
+}
+.ds-item-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ds-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ds-item-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.ds-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ds-item-check {
+  color: #8b5cf6;
+}
+
 /* ── 内容区（左侧对话 + 右侧面板）── */
 .content-area {
   flex: 1;
@@ -927,15 +1128,15 @@ function formatTime(t: string): string {
 .tools-bar .tool-item { display: flex; align-items: center; gap: 6px; padding: 6px 14px; background: var(--gray-50); border-radius: 20px; cursor: pointer; transition: all 0.2s; border: 1px solid var(--border-light); }
 .tools-bar .tool-item:hover { background: white; border-color: #c4b5fd; box-shadow: 0 2px 8px rgba(139, 92, 246, 0.1); }
 .tools-bar .tool-item.current { background: #8b5cf6; border-color: #8b5cf6; cursor: default; }
-.tool-icon { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: inherit; }
+.tools-bar .tool-icon { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: inherit; }
 .tools-bar .tool-item.current .tool-icon { background: transparent; }
-.tool-name { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+.tools-bar .tool-name { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
 .tools-bar .tool-item.current .tool-name { color: white; }
 .tools-bar .tool-item:hover .tool-name { color: #6d28d9; }
 .tools-bar .tool-item.current:hover .tool-name { color: white; }
 
 .input-wrapper { position: relative; max-width: 1000px; margin: 0 auto; width: 100%; }
-.input-wrapper :deep(.el-textarea__inner) { border-radius: 16px !important; border-color: var(--border-normal) !important; padding: 16px 110px 16px 20px !important; font-size: 15px !important; line-height: 1.6 !important; transition: all 0.2s !important; background: var(--gray-50) !important; resize: none; }
+.input-wrapper :deep(.el-textarea__inner) { border-radius: 16px !important; border-color: var(--border-normal) !important; padding: 16px 100px 16px 20px !important; font-size: 15px !important; line-height: 1.6 !important; transition: all 0.2s !important; background: var(--gray-50) !important; resize: none; }
 .input-wrapper :deep(.el-textarea__inner:hover) { border-color: #a78bfa !important; background: white !important; }
 .input-wrapper :deep(.el-textarea__inner:focus) { border-color: #8b5cf6 !important; background: white !important; box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.1) !important; }
 .input-actions { position: absolute; bottom: 14px; right: 16px; display: flex; gap: 8px; justify-content: flex-end; align-items: center; }

@@ -132,7 +132,7 @@ def build_chart_messages(query: str, data_context: dict, plan: dict) -> list:
     """阶段3：产图。LLM 基于真实数据行生成 ECharts option 数组。"""
     plans = plan.get("chartsPlan", [])
     plans_text = "\n".join(f"- {p.get('type','')}: {p.get('title','')}（{p.get('intent','')}）"
-                           for p in plans) or "（规划阶段未指定图表，请根据数据自行设计 1-3 个最贴切问题的图表）"
+                           for p in plans) or "（规划阶段未指定图表，请根据数据自行设计 1-4 个最贴切问题的图表，按需选择图表个数）"
     data_text = ""
     for ds_id, ds_data in data_context.items():
         data_text += f"\n--- 数据集 {ds_id} ---\n{_format_data(ds_data)}\n"

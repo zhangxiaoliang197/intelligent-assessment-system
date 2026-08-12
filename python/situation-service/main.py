@@ -456,6 +456,7 @@ def generate_report(req: GenerateRequest, request: Request):
         userId=req.userId,
         teamIds=req.teamIds,
         status="generating",
+        dataSourceId=req.dataSourceId,
     )
     _INFLIGHT[report_id] = report
     if skill_context:
@@ -512,7 +513,7 @@ def stream_report(report_id: str):
     async def _event_stream():
         try:
             skill_context = _INFLIGHT_SKILLS.get(report_id)
-            async for event_type, data in generate(report.query, report_id, skill_context):
+            async for event_type, data in generate(report.query, report_id, skill_context, report.dataSourceId):
                 # 同步聚合到内存 Report（供完成后落库）
                 _apply_event(report, event_type, data)
                 yield format_event(event_type, data)

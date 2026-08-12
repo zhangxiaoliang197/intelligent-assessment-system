@@ -31,7 +31,8 @@ MOCK_STREAM_INTERVAL = float(os.getenv("MOCK_STREAM_INTERVAL", "0.6"))
 
 # ── 生成模式：true=Phase1 mock（canned 数据，不调 LLM）；false=Phase2 真实 LLM Agent ──
 # Phase 2 默认启用；调试或无 LLM 环境时设 SITUATION_USE_MOCK=true 回退 mock
-USE_MOCK = os.getenv("SITUATION_USE_MOCK", "false")
+# 注意：os.getenv 返回字符串，"false" 在 Python 中为 truthy，必须显式解析为 bool
+USE_MOCK = os.getenv("SITUATION_USE_MOCK", "false").strip().lower() in ("true", "1", "yes", "on")
 
 # ── 真实生成时单数据集查询行数上限（传给 admin-service /dataset/{id}/data）──
 DATA_QUERY_LIMIT = int(os.getenv("DATA_QUERY_LIMIT", "200"))

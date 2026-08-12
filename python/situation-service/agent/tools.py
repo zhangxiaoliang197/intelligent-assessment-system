@@ -41,21 +41,27 @@ def _http_get(url: str, timeout: int = None) -> dict:
         return {"success": False, "message": str(e)[:200]}
 
 
-def query_datasets_meta() -> dict:
-    """取全量数据集 schema + 指标定义（调 admin-service /export/for-llm）。
+def query_datasets_meta(database_id: str = "") -> dict:
+    """取数据集 schema + 指标定义（调 admin-service /export/for-llm）。
+
+    Args:
+        database_id: 数据源 ID。非空时仅返回该数据源下的数据集与指标（后端按 databaseId 过滤）；
+                     为空时返回全量（向后兼容）。
 
     返回 {schemas:[...], indicators:[...]}，供 LLM 规划要查哪些数据。
     数据源无关：LLM 据此发现可用数据集，不硬编码任何表名/字段。
     """
-    return _http_get(f"{config.ADMIN_SERVICE_URL}/api/admin/export/for-llm",
-                     timeout=config.HTTP_TIMEOUT)
+    url = f"{config.ADMIN_SERVICE_URL}/api/admin/export/for-llm"
+    if database_id:
+        url += f"?databaseId={urllib.parse.quote(database_id)}"
+    return _http_get(url, timeout=config.HTTP_TIMEOUT)
 
 
 def query_admin_data(dataset_id: str, limit: int = 200) -> dict:
     """执行数据集查询，返回数据行（调 admin-service /dataset/{id}/data）。
 
     通用能力：执行数据集定义的 sql_text（或回退 SELECT * FROM tableName），
-    返回 {columns, rows, total}。生产环境配什么数据集就查什么，不绑定特定数据。
+    返回 {columns, rows, total}。数据集自带 databaseId，执行时自动连对应数据源。
     """
     return _http_get(
         f"{config.ADMIN_SERVICE_URL}/api/admin/dataset/{dataset_id}/data?limit={limit}",
@@ -69,9 +75,16 @@ def query_knowledge(query: str, top_k: int = 5) -> dict:
     return _http_get(f"{config.QA_SERVICE_URL}/qa/search?q={q}&top_k={top_k}")
 
 
-def get_indicators() -> dict:
-    """取指标列表（调 admin-service /indicator/list，数据源无关）。"""
-    return _http_get(f"{config.ADMIN_SERVICE_URL}/api/admin/indicator/list")
+def get_indicators(database_id: str = "") -> dict:
+    """取指标列表（调 admin-service /indicator/list）。
+
+    Args:
+        database_id: 数据源 ID。非空时仅返回该数据源下的指标（后端按 databaseId 过滤）。
+    """
+    url = f"{config.ADMIN_SERVICE_URL}/api/admin/indicator/list"
+    if database_id:
+        url += f"?databaseId={urllib.parse.quote(database_id)}"
+    return _http_get(url)
 
 
 def get_evaluation(evaluation_id: str) -> dict:

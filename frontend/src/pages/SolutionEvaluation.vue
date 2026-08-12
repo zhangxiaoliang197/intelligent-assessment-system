@@ -679,7 +679,6 @@ import {
   CircleCheck,
   CircleClose,
   Clock,
-  ChatDotRound,
   Loading,
   Cpu,
   Grid,
@@ -687,10 +686,10 @@ import {
   Plus,
   Delete,
   ArrowRight,
-  PieChart as ElPieChart,
   Microphone
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
+import { useToolNav } from '@/composables/useToolNav'
 import SkillsLibrary from '@/pages/SkillsLibrary.vue'
 import SkillMarkdownDialog from '@/components/evaluation/SkillMarkdownDialog.vue'
 import GeoMap from '@/components/GeoMap.vue'
@@ -735,37 +734,8 @@ const LS_HISTORY_LIST = 'solution_history_list'
 const LS_SESSION_MSGS = 'solution_session_msgs'
 
 // 工具配置
-const tools = [
-  {
-    id: 1,
-    name: '智能问答',
-    icon: ChatDotRound,
-    color: '#409eff',
-    path: '/qa',
-    current: false
-  },
-  {
-    id: 2,
-    name: '指标分析',
-    icon: ElPieChart,
-    color: '#67c23a',
-    path: '/indicator',
-    current: false
-  },
-  {
-    id: 3,
-    name: '评估分析',
-    icon: Document,
-    color: '#e6a23c',
-    path: '/evaluation',
-    current: true
-  }
-]
-
-// 跳转工具
-const navigateToTool = (path: string) => {
-  router.push(path)
-}
+// 四功能切换栏（共享配置，current 由当前路由自动推导）
+const { tools, navigateToTool } = useToolNav()
 
 // 状态
 const inputMessage = ref('')
@@ -2974,56 +2944,65 @@ onMounted(async () => {
 
 .tools-bar {
   display: flex;
-  gap: 0.75rem;
+  gap: 8px;
   justify-content: center;
   flex-wrap: wrap;
-  margin-bottom: 1rem;
+  margin-bottom: 14px;
 }
 
 .tools-bar .tool-item {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
-  padding: 0.5rem 1rem;
-  background: #f5f7fa;
-  border-radius: 6px;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--gray-50);
+  border-radius: 20px;
   cursor: pointer;
-  transition: all 0.2s ease;
-  border: 1px solid transparent;
+  transition: all 0.2s;
+  border: 1px solid var(--border-light);
 }
 
 .tools-bar .tool-item:hover {
-  background: #eff6ff;
-  border-color: #409eff;
+  background: white;
+  border-color: var(--primary-300);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
 }
 
 .tools-bar .tool-item.current {
-  background: #409eff;
-  border-color: #409eff;
+  background: var(--primary-500);
+  border-color: var(--primary-500);
   cursor: default;
 }
 
 .tools-bar .tool-icon {
-  width: 24px;
-  height: 24px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.8);
   display: flex;
   align-items: center;
   justify-content: center;
+  color: inherit;
 }
 
 .tools-bar .tool-item.current .tool-icon {
-  background: rgba(255, 255, 255, 0.2);
+  background: transparent;
 }
 
 .tools-bar .tool-name {
-  color: #606266;
-  font-size: 0.85rem;
+  font-size: 13px;
   font-weight: 500;
+  color: var(--text-secondary);
 }
 
 .tools-bar .tool-item.current .tool-name {
+  color: white;
+}
+
+.tools-bar .tool-item:hover .tool-name {
+  color: var(--primary-600);
+}
+
+.tools-bar .tool-item.current:hover .tool-name {
   color: white;
 }
 

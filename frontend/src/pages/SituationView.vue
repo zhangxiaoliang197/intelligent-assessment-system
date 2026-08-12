@@ -21,12 +21,16 @@
         </div>
       </div>
 
-      <!-- 纯展示内容：图表 → 地图 → 态势分析，垂直堆叠，整页可滚动 -->
+      <!-- 纯展示内容：左图表 + 右地图（等高自适应）+ 底部态势分析 -->
       <div class="view-content custom-scroll" ref="captureRef">
-        <div class="main-row">
+        <div
+          class="main-row"
+          :class="{ 'only-map': !store.charts.length }"
+          :style="{ minHeight: chartLayout.minHeight + 'px' }"
+        >
           <div v-if="store.charts.length" class="chart-side">
             <h3 class="section-label">统计图表</h3>
-            <SituationChartGrid :charts="store.charts" />
+            <SituationChartGrid :charts="store.charts" :cols="chartLayout.cols" />
           </div>
 
           <div v-if="store.mapLayers.length" class="map-side">
@@ -97,6 +101,35 @@ const shareUrl = ref('')
 const sourceLabel = computed(() => {
   const map: Record<string, string> = { manual: '手动提问', qa: '智能问答', indicator: '指标分析', evaluation: '评估分析' }
   return map[store.source] || '手动提问'
+})
+
+/**
+ * 根据图表数量智能规划布局（列数 + 区域最小高度）。
+ *
+ * 原则：让左侧图表区的行数决定高度，地图跟随等高（align-items:stretch）。
+ * - 数量少时优先纵向或 2 列，保证地图有足够高度不致过扁；
+ * - 3 个图表用 2 列 + 第 3 个跨列填满第 2 行（避免 1 列 3 行过高使地图过瘦）；
+ * - 4 个用 2×2；5-6 个用 2 列 3 行；7+ 用 3 列。
+ * - 单行高度按 380px 估算（图表卡片 body 320 + header/padding 60），含 12px gap。
+ */
+const chartLayout = computed(() => {
+  const n = store.charts.length
+  // 单行高度估算：卡片 380 + gap 12（末行无 gap，公式 rows*380 + (rows-1)*12）
+  const ROW_H = 380
+  const GAP = 12
+  const PAD = 32 // chart-side 上下 padding
+  const h = (rows: number) => rows * ROW_H + (rows - 1) * GAP + PAD
+
+  if (n === 0) return { cols: 1, minHeight: 520 }        // 无图表：给地图默认高度
+  if (n === 1) return { cols: 1, minHeight: h(1) }       // 单个
+  if (n === 2) return { cols: 1, minHeight: h(2) }       // 纵向 2 行
+  if (n === 3) return { cols: 2, minHeight: h(2) }       // 2+1 跨列，2 行
+  if (n === 4) return { cols: 2, minHeight: h(2) }       // 2×2，2 行
+  if (n <= 6) return { cols: 2, minHeight: h(3) }        // 2 列 3 行
+  if (n <= 9) return { cols: 3, minHeight: h(3) }        // 3×3，3 行
+  // 10+：3 列，按行数动态
+  const rows = Math.ceil(n / 3)
+  return { cols: 3, minHeight: h(rows) }
 })
 
 onMounted(async () => {
@@ -229,7 +262,7 @@ function onViewportChange(vp: Viewport) {
   display: flex;
   align-items: stretch;
   gap: 16px;
-  min-height: 520px;
+  /* minHeight 由 chartLayout 计算属性内联设置，按图表数量自适应 */
 }
 .chart-side {
   flex: 1;
@@ -238,6 +271,11 @@ function onViewportChange(vp: Viewport) {
   border: 1px solid #ebeef5;
   border-radius: 8px;
   padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+}
+.chart-side :deep(.chart-grid) {
+  flex: 1;
 }
 .map-side {
   flex: 0 0 44%;
@@ -247,6 +285,10 @@ function onViewportChange(vp: Viewport) {
   padding: 16px 18px;
   display: flex;
   flex-direction: column;
+}
+/* 无图表时地图占满整行 */
+.main-row.only-map .map-side {
+  flex: 1;
 }
 .map-side .view-map-section {
   flex: 1;

@@ -101,6 +101,11 @@ export const useSituationStore = defineStore('situation', () => {
   const history = ref<ReportMeta[]>([])           // 后端历史产物列表
   const executionSteps = ref<ExecStep[]>([])      // 执行步骤面板
 
+  // ── 数据源（仿指标分析，态势图顶部选择器；real_generate 按此过滤数据集 schema）──
+  const dataSources = ref<Array<{ id: string; name: string; type?: string; status?: string }>>([])
+  const dataSourceId = ref<string>('')
+  const dataSourceName = ref<string>('')
+
   const activeDataset = computed(() =>
     datasets.value.find((d) => d.datasetId === activeDatasetId.value) || null
   )
@@ -195,6 +200,31 @@ export const useSituationStore = defineStore('situation', () => {
     } catch (e) {
       console.warn('历史列表加载失败', e)
     }
+  }
+
+  // ── 加载数据源列表（调 qa-service /evaluation/data-sources，仿指标分析）──
+  async function fetchDataSources() {
+    try {
+      const resp: any = await api.get('/evaluation/data-sources')
+      const list = resp?.dataSources || resp?.data?.dataSources || []
+      if (Array.isArray(list) && list.length) {
+        dataSources.value = list
+        // 默认选中第一个可用数据源
+        if (!dataSourceId.value && list[0]?.id) {
+          dataSourceId.value = list[0].id
+          dataSourceName.value = list[0].name || ''
+        }
+      }
+    } catch (e) {
+      console.warn('数据源列表加载失败', e)
+    }
+  }
+
+  // ── 切换数据源 ──
+  function setDataSource(id: string) {
+    dataSourceId.value = id
+    const found = dataSources.value.find((d) => d.id === id)
+    dataSourceName.value = found?.name || ''
   }
 
   // ── SSE 事件落库（核心）──
@@ -307,6 +337,7 @@ export const useSituationStore = defineStore('situation', () => {
       source: source.value,
       skillId: activeSkill.value?.id || '',
       skillParameters: skillParameters.value,
+      dataSourceId: dataSourceId.value,
     })
     if (!resp || resp.success === false) return
     const data = resp.data || resp
@@ -404,11 +435,13 @@ export const useSituationStore = defineStore('situation', () => {
     selectedRegion, selectedTimeRange, filters, viewport,
     eventSource, errorMsg,
     history, executionSteps,
+    dataSources, dataSourceId, dataSourceName,
     // getters
     activeDataset, isGenerating, stepProgress,
     // actions
     reset, initFromDraft, loadReport, applyEvent, generate,
     subscribeSSE, closeStream, refresh, fetchHistory,
+    fetchDataSources, setDataSource,
     setSelectedRegion, setSelectedTimeRange, setViewport, toggleLayer,
     setActiveSkill, setSkillParameters,
   }

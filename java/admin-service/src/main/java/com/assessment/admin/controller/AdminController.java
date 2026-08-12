@@ -1305,10 +1305,20 @@ public class AdminController {
 
     // ==================== LLM 学习数据导出 ====================
     @GetMapping("/export/for-llm")
-    public ResponseEntity<Map<String, Object>> exportForLlm() {
-        List<Map<String, Object>> schemas = new ArrayList<>();
-        List<Dataset> datasets = datasetRepo.findAll();
+    public ResponseEntity<Map<String, Object>> exportForLlm(
+            @RequestParam(value = "databaseId", required = false) String databaseId) {
+        // databaseId 非空时仅导出该数据源的数据集与指标；为空时导出全量（向后兼容）
+        boolean filterByDb = databaseId != null && !databaseId.isEmpty();
+        List<Dataset> datasets = filterByDb
+                ? datasetRepo.findByDatabaseId(databaseId)
+                : datasetRepo.findAll();
+        // 该数据源下允许的数据集 ID 集合，用于指标过滤
+        java.util.Set<String> allowedDatasetIds = new java.util.HashSet<>();
+        for (Dataset ds : datasets) {
+            allowedDatasetIds.add(ds.getId());
+        }
 
+        List<Map<String, Object>> schemas = new ArrayList<>();
         for (Dataset ds : datasets) {
             if (ds.getTableName() == null) continue;
             List<FieldAnnotation> fields = fieldAnnotationRepo.findByDatasetId(ds.getId());
@@ -1319,6 +1329,7 @@ public class AdminController {
             schema.put("datasetName", ds.getName());
             schema.put("tableName", ds.getTableName());
             schema.put("description", ds.getDescription());
+            schema.put("databaseId", ds.getDatabaseId());
             List<Map<String, Object>> fieldList = new ArrayList<>();
             for (FieldAnnotation f : fields) {
                 Map<String, Object> fd = new LinkedHashMap<>();
@@ -1338,6 +1349,11 @@ public class AdminController {
         List<Map<String, Object>> indicatorConfigs = new ArrayList<>();
         List<Indicator> indicators = indicatorRepo.findAll();
         for (Indicator ind : indicators) {
+            // 按数据源过滤：指标的 datasetId 必须属于该数据源
+            if (filterByDb) {
+                String indDsId = ind.getDatasetId();
+                if (indDsId == null || !allowedDatasetIds.contains(indDsId)) continue;
+            }
             Map<String, Object> ic = new LinkedHashMap<>();
             ic.put("name", ind.getName());
             ic.put("category", ind.getCategory());

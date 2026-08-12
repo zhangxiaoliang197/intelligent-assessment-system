@@ -35,6 +35,8 @@ class GenerateRequest(BaseModel):
     autoRefresh: bool = False
     skillId: str = ""
     skillParameters: Dict[str, Any] = Field(default_factory=dict)
+    # 数据源 ID：非空时按此数据源过滤数据集 schema 与指标（export/for-llm?databaseId=xxx）
+    dataSourceId: str = ""
 
 
 class SkillRecommendRequest(BaseModel):
@@ -130,6 +132,8 @@ class Report(BaseModel):
     userId: str = "local-admin"
     teamIds: List[str] = Field(default_factory=list)
     status: str = "generating"        # generating | ready | partial | failed
+    # 数据源 ID（透传到 stream 阶段供 real_generate 过滤数据集 schema；仅生成期使用，落库 snapshot 也包含）
+    dataSourceId: str = ""
     charts: List[ChartSpec] = Field(default_factory=list)
     map: Dict[str, Any] = Field(default_factory=dict)         # { layers: [MapLayerSpec] }
     narrative: Narrative = Field(default_factory=Narrative)

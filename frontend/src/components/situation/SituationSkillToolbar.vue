@@ -89,6 +89,11 @@
         输入问题后会自动推荐，也可以直接从左侧选择
       </span>
     </div>
+
+    <!-- 数据源选择插槽（与指标分析 top-bar 一致：技能选择与数据源同行） -->
+    <div v-if="$slots.append" class="append-zone">
+      <slot name="append" />
+    </div>
   </div>
 </template>
 
@@ -236,6 +241,22 @@ function useRecommendedQuestion() {
   border-left: 1px solid #e5e7eb;
   overflow: hidden;
 }
+/* 数据源选择区（右侧，与技能同行） */
+.append-zone {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 14px;
+  border-left: 1px solid #e5e7eb;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.append-zone :deep(.label) {
+  font-size: 13px;
+  color: #475569;
+  font-weight: 500;
+}
 .active-status,
 .recommend-label,
 .empty-recommendation {
@@ -316,6 +337,12 @@ function useRecommendedQuestion() {
     width: 100%;
     padding: 0;
     border-left: 0;
+  }
+  .append-zone {
+    width: 100%;
+    padding: 0;
+    border-left: 0;
+    margin-left: 0;
   }
 }
 @media (max-width: 720px) {

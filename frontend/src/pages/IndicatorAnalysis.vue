@@ -497,10 +497,11 @@
 import { ref, onMounted, computed, nextTick, watch } from 'vue'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useRouter } from 'vue-router'
-import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete, ArrowRight, ArrowDown, Microphone, CircleCheck, CircleClose, Loading, Clock, Close, Cpu, Promotion, Setting } from '@element-plus/icons-vue'
+import { Search, Collection, Box, PieChart, Plus, Delete, ArrowRight, ArrowDown, Microphone, CircleCheck, CircleClose, Loading, Clock, Close, Cpu, Promotion, Setting } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
+import { useToolNav } from '@/composables/useToolNav'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData } from '@/composables/useMapPrompt'
 import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
@@ -546,13 +547,8 @@ const toggleSpeech = () => {
   }
 }
 
-const tools = [
-  { id: 1, name: '智能问答', icon: ChatDotRound, color: '#409eff', path: '/qa', current: false },
-  { id: 2, name: '指标分析', icon: PieChart, color: '#67c23a', path: '/indicator', current: true },
-  { id: 3, name: '评估分析', icon: Document, color: '#e6a23c', path: '/evaluation', current: false }
-]
-
-const navigateToTool = (path: string) => { router.push(path) }
+// 四功能切换栏（共享配置，current 由当前路由自动推导）
+const { tools, navigateToTool } = useToolNav()
 
 // ── localStorage 持久化 ──
 const LS_SESSION_ID = 'indicator_session_id'

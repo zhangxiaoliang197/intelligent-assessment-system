@@ -285,21 +285,150 @@ async def real_generate(
     query: str,
     report_id: str,
     skill_context: Optional[Dict[str, Any]] = None,
+    data_source_id: str = "",
 ) -> AsyncIterator[SSEEvent]:
-    """Phase 2 真实生成（LLM tool-calling）。Phase 1 未启用。
+    """Phase 2 真实生成（5 阶段 LLM 编排，多阶段 JSON 协议）。
 
-    时序约束与 mock 一致：图表 → 地图 → narrative。
-    待接入 llm_client.call_llm_with_tools + tools 派发。
+    时序约束（ADR-08）：图表/地图先出，文本为介绍+说明，最后产出。
+    阶段：
+      1. plan     LLM 据数据集元数据规划要查什么、画什么
+      2. data     编排器按 plan 取真实数据行（非 LLM）
+      3. chart    LLM 基于真实数据生成 ECharts option 数组
+      4. map      LLM 基于数据生成地图标注（WGS84）
+      5. narrative LLM 撰写态势介绍 + 逐图说明
+
+    Args:
+        data_source_id: 数据源 ID。非空时仅查该数据源的数据集 schema 与指标。
     """
-    raise NotImplementedError("Phase 2: 真实 LLM Agent 编排待实现")
+    # lazy import：避免模块加载期触发 prompts 的 map_skill_loader
+    from llm_client import call_llm_json
+    from agent import tools, prompts
+
+    skill_id = (skill_context or {}).get("skillId", "")
+    skill_name = (skill_context or {}).get("skillName", "通用态势分析")
+    skill_category = (skill_context or {}).get("category", "综合态势")
+    execution_plan = (skill_context or {}).get("executionPlan", [])
+    stage = "plan"  # 当前阶段标识，用于错误定位
+
+    try:
+        # ── 阶段1：规划 ──
+        meta = await asyncio.to_thread(tools.query_datasets_meta, data_source_id)
+        plan = await asyncio.to_thread(
+            call_llm_json,
+            prompts.build_plan_messages(query, meta),
+            0.3,
+            config.LLM_MAX_TOKENS,
+        )
+        # 兼容 LLM 返回 dict 或含 plan 字段的结构
+        if not isinstance(plan, dict):
+            plan = {"datasets": [], "chartsPlan": [], "mapPlan": []}
+        charts_plan = plan.get("chartsPlan", []) or []
+        map_plan = plan.get("mapPlan", []) or []
+        datasets_plan = plan.get("datasets", []) or []
+        yield "plan", {
+            "skill": {"id": skill_id, "name": skill_name, "category": skill_category},
+            "steps": execution_plan,
+            "datasets": [d.get("datasetId", "") for d in datasets_plan],
+            "chartsPlan": charts_plan,
+            "mapPlan": map_plan,
+            # 对齐 store.applyEvent 的 plan 解析（data.plan.charts / data.plan.mapLayers）
+            "plan": {"charts": charts_plan, "mapLayers": map_plan},
+        }
+
+        # ── 阶段2：取数（按 plan 查数据集，非 LLM）──
+        stage = "data"
+        data_context: Dict[str, Any] = {}
+        for ds in datasets_plan:
+            ds_id = ds.get("datasetId", "")
+            if not ds_id:
+                continue
+            limit = int(ds.get("limit", config.DATA_QUERY_LIMIT))
+            data = await asyncio.to_thread(tools.query_admin_data, ds_id, limit)
+            data_context[ds_id] = data
+            yield "dataset", {
+                "datasetId": ds_id,
+                "source": ds.get("intent", "") or ds_id,
+                "summary": f"数据集 {ds_id}（{data.get('total', 0)} 行）",
+                "rows": data.get("total", 0),
+            }
+
+        # 可选：知识库检索（结果暂不注入 chart/map prompt，预留扩展点）
+        if plan.get("needKnowledge") and plan.get("knowledgeQuery"):
+            stage = "knowledge"
+            try:
+                await asyncio.to_thread(tools.query_knowledge, plan["knowledgeQuery"], 5)
+            except Exception as exc:
+                logger.warning("知识库检索失败（不阻断主流程）: %s", exc)
+
+        # ── 阶段3：产图 ──
+        stage = "chart"
+        charts = await asyncio.to_thread(
+            call_llm_json,
+            prompts.build_chart_messages(query, data_context, plan),
+            0.3,
+            config.LLM_MAX_TOKENS,
+        )
+        if not isinstance(charts, list):
+            charts = [charts] if charts else []
+        for c in charts:
+            if isinstance(c, dict):
+                yield "chart", c
+
+        # ── 阶段4：地图 ──
+        stage = "map"
+        map_layer = await asyncio.to_thread(
+            call_llm_json,
+            prompts.build_map_messages(query, data_context),
+            0.3,
+            config.LLM_MAX_TOKENS,
+        )
+        if isinstance(map_layer, dict):
+            yield "map_layer", map_layer
+
+        # ── 阶段5：文本（态势介绍 + 逐图说明，最后产出）──
+        stage = "narrative"
+        narrative = await asyncio.to_thread(
+            call_llm_json,
+            prompts.build_narrative_messages(query, charts, map_layer if isinstance(map_layer, dict) else {}),
+            0.5,
+            config.LLM_MAX_TOKENS,
+        )
+        if isinstance(narrative, dict):
+            yield "narrative", narrative
+
+        yield "done", {
+            "reportId": report_id,
+            "status": "ready",
+            "partial": False,
+            "skillId": skill_id,
+            "skillName": skill_name,
+        }
+        logger.info("real 生成完成: reportId=%s skillId=%s", report_id, skill_id or "auto")
+    except Exception as e:
+        logger.exception("real_generate 异常: reportId=%s stage=%s", report_id, stage)
+        yield "error", {
+            "stage": stage,
+            "message": str(e)[:300],
+            "fatal": True,
+        }
+        yield "done", {"reportId": report_id, "status": "failed", "partial": False}
 
 
-# 对外入口：Phase 1 用 mock，Phase 2 切换为 real
+# 对外入口：USE_MOCK=true 走 mock（canned 数据），否则走 real_generate（LLM 编排）
 async def generate(
     query: str,
     report_id: str,
     skill_context: Optional[Dict[str, Any]] = None,
+    data_source_id: str = "",
 ) -> AsyncIterator[SSEEvent]:
-    """态势生成入口。Phase 1 走 mock，Phase 2 替换为 real_generate。"""
-    async for evt in mock_generate(query, report_id, skill_context):
-        yield evt
+    """态势生成入口。
+
+    Args:
+        data_source_id: 数据源 ID，仅 real_generate 使用（过滤数据集 schema）。
+    """
+    if config.USE_MOCK:
+        async for evt in mock_generate(query, report_id, skill_context):
+            yield evt
+    else:
+        async for evt in real_generate(query, report_id, skill_context, data_source_id):
+            yield evt
