@@ -2063,6 +2063,22 @@ def load_db() -> None:
         if data_schema_version < SCHEMA_VERSION:
             try:
                 data = migrate_ontology_dict(data, ont.id)
+                # v3 迁移补充：migrate_ontology_dict 只迁移到 v2（SCHEMA_VERSION=2），
+                # 需要额外执行 v2→v3 迁移（concepts → entity_types + schema_version 更新）
+                v3_meta = data.get('ontology', {}) if isinstance(data, dict) else {}
+                v3_sv = v3_meta.get('schema_version', 1) if isinstance(v3_meta, dict) else 1
+                if v3_sv < SCHEMA_VERSION:
+                    # concepts 字段重命名为 entity_types（如果 entity_types 不存在）
+                    if isinstance(data, dict) and 'entity_types' not in data and 'concepts' in data:
+                        data['entity_types'] = data.pop('concepts')
+                    # 新增 entity_type_relations 空数组（v3 字段，旧数据没有）
+                    if isinstance(data, dict) and 'entity_type_relations' not in data:
+                        data['entity_type_relations'] = []
+                    # 更新 schema_version
+                    if not isinstance(v3_meta, dict):
+                        v3_meta = {}
+                        data['ontology'] = v3_meta
+                    v3_meta['schema_version'] = SCHEMA_VERSION
                 # 回写迁移后的数据
                 with FileLock(_lock_path(f'ontology_{ont.id}')):
                     atomic_write_json(_ontology_file(ont.id), data)

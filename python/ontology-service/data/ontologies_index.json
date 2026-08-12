@@ -114,7 +114,7 @@
     "update_time": "2026-08-04 16:27:17.072121",
     "status": "活跃",
     "is_default": false,
-    "schema_version": 2
+    "schema_version": 3
   },
   {
     "id": "ont_84fd1dc8",
@@ -231,7 +231,7 @@
     "update_time": "2026-08-06 15:17:18.426741",
     "status": "活跃",
     "is_default": false,
-    "schema_version": 2
+    "schema_version": 3
   },
   {
     "id": "ont_079690ef",
@@ -318,7 +318,7 @@
     "update_time": "2026-08-06 16:32:20.288710",
     "status": "活跃",
     "is_default": false,
-    "schema_version": 2
+    "schema_version": 3
   },
   {
     "id": "ont_7d2cc296",
@@ -1201,7 +1201,7 @@
     "update_time": "2026-08-11 16:52:30.921177",
     "status": "活跃",
     "is_default": false,
-    "schema_version": 2
+    "schema_version": 3
   },
   {
     "id": "ont_fe9aceee",
@@ -1210,7 +1210,7 @@
     "version": "1.0.0",
     "entity_types": [
       {
-        "id": "et_ea64f2b5",
+        "id": "et_6c5f1000",
         "ontology_id": "",
         "name": "概念",
         "description": "",
@@ -1219,11 +1219,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 18:55:55.029574",
-        "update_time": "2026-08-11 18:55:55.029574"
+        "create_time": "2026-08-12 08:59:15.685297",
+        "update_time": "2026-08-12 08:59:15.685297"
       },
       {
-        "id": "et_249ebc11",
+        "id": "et_6bcaaeb5",
         "ontology_id": "",
         "name": "实体",
         "description": "",
@@ -1232,8 +1232,8 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 18:55:55.029596",
-        "update_time": "2026-08-11 18:55:55.029596"
+        "create_time": "2026-08-12 08:59:15.685325",
+        "update_time": "2026-08-12 08:59:15.685325"
       }
     ],
     "relation_types": [
@@ -1250,7 +1250,7 @@
     "update_time": "2026-08-11 16:57:55.565957",
     "status": "活跃",
     "is_default": false,
-    "schema_version": 2
+    "schema_version": 3
   },
   {
     "id": "ont_4e6a2b97",
@@ -1259,7 +1259,7 @@
     "version": "1.0.0",
     "entity_types": [
       {
-        "id": "et_6648be5e",
+        "id": "et_9153fb0a",
         "ontology_id": "",
         "name": "概念",
         "description": "",
@@ -1268,11 +1268,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 18:55:55.031303",
-        "update_time": "2026-08-11 18:55:55.031303"
+        "create_time": "2026-08-12 08:59:15.688096",
+        "update_time": "2026-08-12 08:59:15.688096"
       },
       {
-        "id": "et_94c8d972",
+        "id": "et_816e3061",
         "ontology_id": "",
         "name": "实体",
         "description": "",
@@ -1281,8 +1281,8 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 18:55:55.031324",
-        "update_time": "2026-08-11 18:55:55.031324"
+        "create_time": "2026-08-12 08:59:15.688121",
+        "update_time": "2026-08-12 08:59:15.688121"
       }
     ],
     "relation_types": [
@@ -1299,7 +1299,7 @@
     "update_time": "2026-08-11 17:00:49.253443",
     "status": "活跃",
     "is_default": false,
-    "schema_version": 2
+    "schema_version": 3
   },
   {
     "id": "ont_c9af1c35",
@@ -1308,7 +1308,7 @@
     "version": "1.0.0",
     "entity_types": [
       {
-        "id": "et_3188728f",
+        "id": "et_6436d3b8",
         "ontology_id": "",
         "name": "概念",
         "description": "",
@@ -1317,11 +1317,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 18:55:55.033076",
-        "update_time": "2026-08-11 18:55:55.033076"
+        "create_time": "2026-08-12 08:59:15.691649",
+        "update_time": "2026-08-12 08:59:15.691649"
       },
       {
-        "id": "et_9ae0fdb7",
+        "id": "et_82e23a08",
         "ontology_id": "",
         "name": "实体",
         "description": "",
@@ -1330,8 +1330,8 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 18:55:55.033096",
-        "update_time": "2026-08-11 18:55:55.033096"
+        "create_time": "2026-08-12 08:59:15.691674",
+        "update_time": "2026-08-12 08:59:15.691674"
       }
     ],
     "relation_types": [
@@ -1348,6 +1348,6 @@
     "update_time": "2026-08-11 17:32:19.713538",
     "status": "活跃",
     "is_default": false,
-    "schema_version": 2
+    "schema_version": 3
   }
 ]
