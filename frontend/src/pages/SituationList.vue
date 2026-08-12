@@ -69,7 +69,7 @@ async function load() {
 }
 
 function open(reportId: string) {
-  router.push(`/situation?reportId=${reportId}`)
+  router.push(`/situation/view/${reportId}`)
 }
 
 async function remove(reportId: string) {

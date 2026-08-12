@@ -273,9 +273,10 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, Collection, Box, ChatLineRound, ChatDotRound, Promotion, PieChart, Document, Plus, Delete, ArrowRight, Microphone, Upload, Loading, Picture } from '@element-plus/icons-vue'
+import { Search, Collection, Box, ChatLineRound, Promotion, Plus, Delete, ArrowRight, Microphone, Upload, Loading, Picture } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import Layout from '@/components/Layout.vue'
+import { useToolNav } from '@/composables/useToolNav'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData } from '@/composables/useMapPrompt'
 import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
@@ -330,37 +331,8 @@ const onImageChange = async (event: Event) => {
 }
 
 // 工具配置
-const tools = [
-  {
-    id: 1,
-    name: '智能问答',
-    icon: ChatDotRound,
-    color: '#409eff',
-    path: '/qa',
-    current: true
-  },
-  {
-    id: 2,
-    name: '指标分析',
-    icon: PieChart,
-    color: '#67c23a',
-    path: '/indicator',
-    current: false
-  },
-  {
-    id: 3,
-    name: '评估分析',
-    icon: Document,
-    color: '#e6a23c',
-    path: '/evaluation',
-    current: false
-  }
-]
-
-// 跳转工具
-const navigateToTool = (path: string) => {
-  router.push(path)
-}
+// 四功能切换栏（共享配置，current 由当前路由自动推导）
+const { tools, navigateToTool } = useToolNav()
 
 // localStorage 持久化 key
 const LS_SESSION_ID = 'qa_session_id'

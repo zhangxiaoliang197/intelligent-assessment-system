@@ -77,7 +77,7 @@ defineExpose({ flashHighlight, chartId: props.spec.chartId })
   color: #303133;
 }
 .chart-card-body {
-  height: 280px;
+  height: 320px;
   width: 100%;
 }
 .chart-card-explain {

@@ -385,13 +385,21 @@ def _jaccard(set_a: set, set_b: set) -> float:
     return inter / union if union else 0.0
 
 
-def _fetch_admin_indicators() -> List[Dict]:
+def _fetch_admin_indicators(database_id: Optional[str] = None) -> List[Dict]:
     """统一从 admin-service 获取已配置指标列表，失败返回空列表。
 
     供指标分析主流程与非流式辅助函数复用，避免重复代码。
+
+    Args:
+        database_id: 数据源 ID。非空时只返回该数据源绑定的指标
+                     （通过 admin-service 的 databaseId → datasets → indicators 关联链过滤）；
+                     为空时返回全部指标（向后兼容，用于管理后台展示等场景）。
     """
     try:
-        data = http_get(f"{ADMIN_SERVICE_URL}/api/admin/indicator/list", timeout=5)
+        url = f"{ADMIN_SERVICE_URL}/api/admin/indicator/list"
+        if database_id:
+            url += f"?databaseId={database_id}"
+        data = http_get(url, timeout=5)
         if data and data.get("success"):
             return data.get("indicators", [])
     except Exception as e:
@@ -1067,7 +1075,9 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
 
     # ── 拉取实际证据：admin-service 已配置指标 + knowledge-service 知识库检索 ──
     # 来源标签由代码层根据这些实际证据标注，不让 LLM 自主打标
-    admin_indicators = _fetch_admin_indicators()
+    # 按用户选定的数据源过滤已配置指标：阶段一只把当前数据源绑定的指标喂给 LLM，
+    # 避免生成不属于当前数据源的指标（如选 Olist 库时不出现财务指标）。
+    admin_indicators = _fetch_admin_indicators(request.database_id)
     kb_results = _fetch_kb_results(request.query, top_k=5)
     db_indicators_text = _build_admin_indicators_text(admin_indicators)
     kb_text = _build_kb_text(kb_results)

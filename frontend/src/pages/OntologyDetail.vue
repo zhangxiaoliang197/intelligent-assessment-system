@@ -154,7 +154,16 @@
                     <el-option label="力导向" value="force" />
                     <el-option label="环形" value="circular" />
                   </el-select>
+                  <el-button
+                    size="small"
+                    type="warning"
+                    :disabled="!foldedConceptIds.size"
+                    @click="resetFold"
+                  >
+                    <el-icon><Fold /></el-icon> 重置折叠（{{ foldedConceptIds.size }}）
+                  </el-button>
                 </div>
+                <div class="graph-hint">右键实体→折叠同类型为实体类型节点；左键实体类型→展开恢复</div>
               </div>
             </template>
             <div class="graph-wrapper">
@@ -189,10 +198,10 @@
                   </el-tag>
                 </el-descriptions-item>
                 <el-descriptions-item label="属性">
-                  <div v-if="Object.keys(selectedEntity.properties || {}).length">
-                    <div v-for="(value, key) in selectedEntity.properties" :key="key" class="property-item">
-                      <span class="property-key">{{ key }}:</span>
-                      <span class="property-value">{{ value }}</span>
+                  <div v-if="displayProperties.length">
+                    <div v-for="p in displayProperties" :key="p.name" class="property-item">
+                      <span class="property-key">{{ p.name }}:</span>
+                      <span class="property-value">{{ p.value }}<template v-if="p.unit"> {{ p.unit }}</template></span>
                     </div>
                   </div>
                   <el-empty v-else description="无属性" :image-size="40" />
@@ -268,24 +277,40 @@
       </el-dialog>
 
       <!-- 添加实体对话框 -->
-      <el-dialog v-model="showAddEntityDialog" title="添加实体" width="560px">
+      <el-dialog v-model="showAddEntityDialog" title="添加实体" width="780px" top="5vh" @open="resetEntityForm">
         <el-form :model="entityForm" label-width="100px">
           <el-form-item label="实体名称" required>
             <el-input v-model="entityForm.name" placeholder="请输入实体名称" />
           </el-form-item>
-          <el-form-item label="实体类型" required>
-            <el-select v-model="entityForm.type" placeholder="请选择类型" style="width: 100%">
-              <el-option v-for="t in entityTypeOptions" :key="t.name" :label="t.name" :value="t.name" />
+          <el-form-item label="归属概念" required>
+            <el-select
+              v-model="entityForm.instance_of"
+              placeholder="请选择概念（类型）"
+              style="width: 100%"
+              @change="onEntityConceptChange"
+            >
+              <el-option
+                v-for="c in concepts"
+                :key="c.id"
+                :label="`${c.name}（${c.parent_entity_type_name ? '父类：' + c.parent_entity_type_name : '顶层类型'}）`"
+                :value="c.id"
+              />
             </el-select>
           </el-form-item>
+
           <el-form-item label="属性">
             <div class="type-editor" style="width: 100%">
-              <div v-for="(p, idx) in entityForm.props" :key="idx" class="type-row">
-                <el-input v-model="p.key" placeholder="属性名" size="small" style="width: 140px" />
-                <el-input v-model="p.value" placeholder="属性值" size="small" style="width: 200px" />
-                <el-button size="small" link type="danger" @click="entityForm.props.splice(idx, 1)">删除</el-button>
+              <div v-for="(p, idx) in entityForm.properties" :key="idx" class="prop-edit-row">
+                <el-input v-model="p.name" placeholder="属性名" size="small" style="width: 130px" />
+                <el-input v-model="p.value" placeholder="属性值" size="small" style="width: 150px" />
+                <el-select v-model="p.category" size="small" style="width: 100px">
+                  <el-option label="描述型" value="descriptive" />
+                  <el-option label="指标型" value="metric" />
+                </el-select>
+                <el-input v-model="p.unit" placeholder="单位" size="small" style="width: 80px" />
+                <el-button size="small" link type="danger" @click="entityForm.properties.splice(idx, 1)">删除</el-button>
               </div>
-              <el-button size="small" @click="entityForm.props.push({ key: '', value: '' })">+ 添加属性</el-button>
+              <el-button size="small" @click="entityForm.properties.push({ name: '', value: '', category: 'descriptive', data_type: 'string', unit: '', source_snippet: '' })">+ 添加属性</el-button>
             </div>
           </el-form-item>
         </el-form>
@@ -296,24 +321,40 @@
       </el-dialog>
 
       <!-- 编辑实体对话框 -->
-      <el-dialog v-model="showEditEntityDialog" title="编辑实体" width="560px">
+      <el-dialog v-model="showEditEntityDialog" title="编辑实体" width="780px" top="5vh">
         <el-form :model="entityForm" label-width="100px">
           <el-form-item label="实体名称" required>
             <el-input v-model="entityForm.name" placeholder="请输入实体名称" />
           </el-form-item>
-          <el-form-item label="实体类型" required>
-            <el-select v-model="entityForm.type" placeholder="请选择类型" style="width: 100%">
-              <el-option v-for="t in entityTypeOptions" :key="t.name" :label="t.name" :value="t.name" />
+          <el-form-item label="归属概念" required>
+            <el-select
+              v-model="entityForm.instance_of"
+              placeholder="请选择概念（类型）"
+              style="width: 100%"
+              @change="onEntityConceptChange"
+            >
+              <el-option
+                v-for="c in concepts"
+                :key="c.id"
+                :label="`${c.name}（${c.parent_entity_type_name ? '父类：' + c.parent_entity_type_name : '顶层类型'}）`"
+                :value="c.id"
+              />
             </el-select>
           </el-form-item>
+
           <el-form-item label="属性">
             <div class="type-editor" style="width: 100%">
-              <div v-for="(p, idx) in entityForm.props" :key="idx" class="type-row">
-                <el-input v-model="p.key" placeholder="属性名" size="small" style="width: 140px" />
-                <el-input v-model="p.value" placeholder="属性值" size="small" style="width: 200px" />
-                <el-button size="small" link type="danger" @click="entityForm.props.splice(idx, 1)">删除</el-button>
+              <div v-for="(p, idx) in entityForm.properties" :key="idx" class="prop-edit-row">
+                <el-input v-model="p.name" placeholder="属性名" size="small" style="width: 130px" />
+                <el-input v-model="p.value" placeholder="属性值" size="small" style="width: 150px" />
+                <el-select v-model="p.category" size="small" style="width: 100px">
+                  <el-option label="描述型" value="descriptive" />
+                  <el-option label="指标型" value="metric" />
+                </el-select>
+                <el-input v-model="p.unit" placeholder="单位" size="small" style="width: 80px" />
+                <el-button size="small" link type="danger" @click="entityForm.properties.splice(idx, 1)">删除</el-button>
               </div>
-              <el-button size="small" @click="entityForm.props.push({ key: '', value: '' })">+ 添加属性</el-button>
+              <el-button size="small" @click="entityForm.properties.push({ name: '', value: '', category: 'descriptive', data_type: 'string', unit: '', source_snippet: '' })">+ 添加属性</el-button>
             </div>
           </el-form-item>
         </el-form>
@@ -359,7 +400,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft, Refresh, Download, Edit, FolderChecked, ZoomIn, ZoomOut, RefreshRight, Delete,
-  Plus, Search, Connection
+  Plus, Search, Connection, Fold
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
@@ -371,7 +412,10 @@ import {
   archiveOntology as archiveOntologyApi,
   getEntityList,
   getRelationList,
-  getGraphData
+  getGraphData,
+  getConceptList,
+  createEntity,
+  updateEntity
 } from '@/services/ontology'
 import service from '@/services/api'
 
@@ -384,6 +428,7 @@ const loading = ref(false)
 const submitting = ref(false)
 
 const ontology = ref<any>(null)
+const concepts = ref<any[]>([])
 const entities = ref<any[]>([])
 const relations = ref<any[]>([])
 const selectedEntity = ref<any>(null)
@@ -394,6 +439,12 @@ const layoutType = ref('force')
 
 const graphRef = ref<HTMLElement | null>(null)
 let chartInstance: echarts.ECharts | null = null
+
+// ── 图谱折叠（后续任务3：详细/粗略展示）──
+// rawGraphData 缓存后端原始图谱数据，foldedConceptIds 记录已折叠的概念 ID
+// 右键实体 → 折叠其所属概念的所有实体为概念节点；左键概念 → 展开恢复
+const rawGraphData = ref<{ nodes: any[]; links: any[] }>({ nodes: [], links: [] })
+const foldedConceptIds = ref<Set<string>>(new Set())
 
 // 对话框开关
 const showEditDialog = ref(false)
@@ -412,8 +463,10 @@ const editForm = ref({
 const entityForm = ref({
   id: '',
   name: '',
-  type: '',
-  props: [] as { key: string; value: string }[]
+  instance_of: '',
+  is_primary: false,
+  source_snippet: '',
+  properties: [] as { name: string; value: string; category: string; data_type: string; unit: string; source_snippet: string }[]
 })
 
 const relationForm = ref({
@@ -462,6 +515,26 @@ const filteredRelations = computed(() => {
   )
 })
 
+/** 选中实体的属性展示列表：兼容新 List[Property] 与旧 Dict 格式。 */
+const displayProperties = computed(() => {
+  const props = selectedEntity.value?.properties
+  if (!props) return []
+  if (Array.isArray(props)) {
+    // 新结构化格式：List[Property]
+    return props.map((p: any) => ({
+      name: p.name || '',
+      value: p.value !== undefined && p.value !== null ? String(p.value) : '',
+      unit: p.unit || ''
+    }))
+  }
+  // 旧 Dict 格式（迁移残留）：{k: v} → [{name: k, value: v}]
+  return Object.entries(props).map(([k, v]) => ({
+    name: k,
+    value: String(v),
+    unit: ''
+  }))
+})
+
 // ── 数据加载 ──
 const loadOntology = async () => {
   loading.value = true
@@ -472,6 +545,15 @@ const loadOntology = async () => {
     ElMessage.error(e.serverMessage || '加载本体失败')
   } finally {
     loading.value = false
+  }
+}
+
+const loadConcepts = async () => {
+  try {
+    const res: any = await getConceptList(ontologyId)
+    concepts.value = res.items || []
+  } catch (e: any) {
+    ElMessage.error(e.serverMessage || '加载概念失败')
   }
 }
 
@@ -496,64 +578,146 @@ const loadRelations = async () => {
 const loadGraph = async () => {
   try {
     const res: any = await getGraphData(ontologyId)
-    renderGraph(res.data)
+    // 缓存原始数据供折叠/展开重算
+    rawGraphData.value = { nodes: res.data.nodes || [], links: res.data.links || [] }
+    // 默认折叠所有概念：初始视图只显示实体类型节点（与实体列表默认隐藏实例保持一致），
+    // 左键概念节点展开该类型的实体，右键实体可再次折叠
+    const allConceptIds = rawGraphData.value.nodes
+      .filter((n: any) => n.node_type === 'concept')
+      .map((n: any) => n.id)
+    foldedConceptIds.value = new Set(allConceptIds)
+    renderGraph()
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '加载图谱失败')
   }
 }
 
 const refreshData = async () => {
-  await Promise.all([loadOntology(), loadEntities(), loadRelations(), loadGraph()])
+  await Promise.all([loadOntology(), loadConcepts(), loadEntities(), loadRelations(), loadGraph()])
   ElMessage.success('数据已刷新')
 }
 
-// ── 图谱渲染 ──
-const renderGraph = (data: { nodes: any[]; links: any[] }) => {
+// ── 图谱渲染（后续任务3：支持折叠/展开详细与粗略展示）──
+const renderGraph = () => {
   if (!graphRef.value) return
   if (!chartInstance) {
     chartInstance = echarts.init(graphRef.value)
+    // 阻止默认右键菜单，让 ECharts contextmenu 事件生效
+    graphRef.value.addEventListener('contextmenu', (e) => e.preventDefault())
+    // 注册图谱交互事件
+    chartInstance.on('contextmenu', handleGraphContextMenu)
+    chartInstance.on('click', handleGraphClick)
   }
-  // 确保画布尺寸与容器一致，避免 flex 布局初始化时高度为 0
   chartInstance.resize()
 
+  const raw = rawGraphData.value
+  if (!raw.nodes.length) return
+
+  // 构建概念层级：有子概念的概念 ID（SUB_CONCEPT_OF 边的 source 是父概念）
+  const parentConceptIds = new Set<string>()
+  for (const l of raw.links) {
+    if (l.relation === 'SUB_CONCEPT_OF') parentConceptIds.add(l.source)
+  }
+
+  // 折叠：移除已折叠概念的实体节点
+  const folded = foldedConceptIds.value
+  const removedEntityIds = new Set<string>()
+  for (const n of raw.nodes) {
+    if (n.node_type === 'entity' && n.concept_id && folded.has(n.concept_id)) {
+      removedEntityIds.add(n.id)
+    }
+  }
+
+  // 类别（颜色）映射，与列表/图例一致
   const catIndex: Record<string, number> = {}
   const categories = entityTypeOptions.value.map((t: any, i: number) => {
     catIndex[t.name] = i
-    // 用后端 entity_types.color 作为节点颜色，与图例/实例列表保持一致；
-    // 若某类型无 color 则走兜底 #409eff，避免 echarts 默认色板导致错位
     return { name: t.name, itemStyle: { color: t.color || '#409eff' } }
   })
-  // 兜底类别：实体类型在 entity_types 中找不到时使用，颜色与 getEntityTypeColor 兜底 #409eff 一致
   const fallbackCatIndex = categories.length
   categories.push({ name: '[未分类]', itemStyle: { color: '#409eff' } })
 
+  // 全量 id→name 映射（含折叠实体，用于边重路由后解析名称）
   const idToName: Record<string, string> = {}
-  const nodes = data.nodes.map((n: any) => {
-    idToName[n.id] = n.name
-    return {
-      name: n.name,
-      // 类型找不到时指向兜底类别（[未分类]，颜色 #409eff），与列表兜底保持一致
-      category: catIndex[n.type] ?? fallbackCatIndex,
-      symbolSize: 50,
-      draggable: true
-    }
-  })
+  for (const n of raw.nodes) idToName[n.id] = n.name
 
-  const links = data.links.map((l: any) => ({
-    source: idToName[l.source] || l.source,
-    target: idToName[l.target] || l.target,
-    value: l.relation,
-    lineStyle: { type: 'solid' }
-  }))
+  // 显示节点：排除折叠实体，概念节点保留并放大
+  const displayNodes = raw.nodes
+    .filter(n => !removedEntityIds.has(n.id))
+    .map((n: any) => {
+      // 节点大小区分：实体 < 子概念 < 父概念 < 折叠概念
+      let symbolSize = 40
+      if (n.node_type === 'concept') {
+        symbolSize = parentConceptIds.has(n.id) ? 65 : 55
+        if (folded.has(n.id)) symbolSize += 10
+      }
+      return {
+        name: n.name,
+        id: n.id,
+        category: catIndex[n.type] ?? fallbackCatIndex,
+        symbolSize,
+        draggable: true,
+        // 自定义字段供事件处理识别
+        nodeType: n.node_type,
+        conceptId: n.concept_id || n.id,
+        // 概念节点加粗边框区分
+        itemStyle: n.node_type === 'concept'
+          ? { borderColor: '#333', borderWidth: 2 }
+          : undefined,
+        label: n.node_type === 'concept'
+          ? { fontWeight: 'bold' }
+          : undefined
+      }
+    })
+
+  // 边：折叠实体的边重路由到概念节点，去重去自环
+  const displayLinks: any[] = []
+  const seenEdges = new Set<string>()
+  for (const l of raw.links) {
+    // 折叠后实体的 instance_of 边隐藏（概念→实体已无实体）
+    if (l.relation === 'instance_of' && removedEntityIds.has(l.target)) continue
+    // 重路由：被移除实体的端点替换为其概念 ID
+    let srcId = l.source
+    let tgtId = l.target
+    if (removedEntityIds.has(srcId)) {
+      const ent = raw.nodes.find(n => n.id === srcId)
+      srcId = ent?.concept_id || srcId
+    }
+    if (removedEntityIds.has(tgtId)) {
+      const ent = raw.nodes.find(n => n.id === tgtId)
+      tgtId = ent?.concept_id || tgtId
+    }
+    if (srcId === tgtId) continue  // 去自环（同概念内部边折叠后消失）
+    const edgeKey = `${srcId}-${tgtId}-${l.relation}`
+    if (seenEdges.has(edgeKey)) continue
+    seenEdges.add(edgeKey)
+    displayLinks.push({
+      // ECharts graph 按 id 匹配节点建边，必须用节点 id（不能用 name）
+      source: srcId,
+      target: tgtId,
+      value: l.relation,
+      // 额外保留名称用于 tooltip 展示，不影响边匹配
+      sourceName: idToName[srcId] || srcId,
+      targetName: idToName[tgtId] || tgtId,
+      lineStyle: { type: 'solid' }
+    })
+  }
 
   const option = {
     tooltip: {
       trigger: 'item',
       formatter: (p: any) => {
         if (p.dataType === 'edge') {
-          return `${p.data.source} → ${p.data.target}<br/>关系: ${p.data.value || ''}`
+          const sName = p.data.sourceName || p.data.source
+          const tName = p.data.targetName || p.data.target
+          return `${sName} → ${tName}<br/>关系: ${p.data.value || ''}`
         }
-        return p.data.name
+        const d = p.data
+        if (d.nodeType === 'concept') {
+          const isFolded = folded.has(d.conceptId)
+          return `${d.name}（实体类型）${isFolded ? '<br/>已折叠，左键展开' : '<br/>右键实体可折叠同类型'}`
+        }
+        return `${d.name}<br/>右键可折叠所属类型`
       }
     },
     series: [{
@@ -563,8 +727,8 @@ const renderGraph = (data: { nodes: any[]; links: any[] }) => {
       label: { show: true, position: 'bottom', fontSize: 12 },
       edgeSymbol: ['circle', 'arrow'],
       edgeSymbolSize: [4, 10],
-      data: nodes,
-      links: links,
+      data: displayNodes,
+      links: displayLinks,
       categories: categories,
       lineStyle: { opacity: 0.6, width: 2, curveness: 0 },
       force: layoutType.value === 'force' ? { repulsion: 200, edgeLength: 150 } : undefined,
@@ -573,6 +737,49 @@ const renderGraph = (data: { nodes: any[]; links: any[] }) => {
   }
 
   chartInstance.setOption(option, true)
+}
+
+// ── 图谱折叠/展开交互 ──
+/** 右键实体 → 折叠其所属概念（同类型实体消失，由概念节点代替） */
+const handleGraphContextMenu = (params: any) => {
+  if (params.dataType !== 'node' || !params.data) return
+  const node = params.data
+  if (node.nodeType === 'entity' && node.conceptId) {
+    foldConcept(node.conceptId)
+  }
+}
+
+/** 左键概念 → 展开（恢复实体）；左键实体 → 选中展示详情 */
+const handleGraphClick = (params: any) => {
+  if (params.dataType !== 'node' || !params.data) return
+  const node = params.data
+  if (node.nodeType === 'concept') {
+    if (foldedConceptIds.value.has(node.conceptId)) {
+      unfoldConcept(node.conceptId)
+    }
+  } else if (node.nodeType === 'entity') {
+    const entity = entities.value.find(e => e.name === node.name)
+    if (entity) selectEntity(entity)
+  }
+}
+
+const foldConcept = (conceptId: string) => {
+  const newSet = new Set(foldedConceptIds.value)
+  newSet.add(conceptId)
+  foldedConceptIds.value = newSet
+  renderGraph()
+}
+
+const unfoldConcept = (conceptId: string) => {
+  const newSet = new Set(foldedConceptIds.value)
+  newSet.delete(conceptId)
+  foldedConceptIds.value = newSet
+  renderGraph()
+}
+
+const resetFold = () => {
+  foldedConceptIds.value = new Set()
+  renderGraph()
 }
 
 const zoomIn = () => {
@@ -599,11 +806,35 @@ const resetZoom = () => {
 // ── 实体操作 ──
 const selectEntity = (entity: any) => {
   selectedEntity.value = entity
+  // 兼容新 List[Property] 与旧 Dict 两种格式，统一映射为表单结构化属性
+  let formProps: any[] = []
+  const raw = entity.properties
+  if (Array.isArray(raw)) {
+    formProps = raw.map((p: any) => ({
+      name: p.name || '',
+      value: p.value !== undefined && p.value !== null ? String(p.value) : '',
+      category: p.category || 'descriptive',
+      data_type: p.data_type || 'string',
+      unit: p.unit || '',
+      source_snippet: p.source_snippet || ''
+    }))
+  } else if (raw && typeof raw === 'object') {
+    formProps = Object.entries(raw).map(([k, v]) => ({
+      name: k,
+      value: String(v),
+      category: 'descriptive',
+      data_type: 'string',
+      unit: '',
+      source_snippet: ''
+    }))
+  }
   entityForm.value = {
     id: entity.id,
     name: entity.name,
-    type: entity.type,
-    props: Object.entries(entity.properties || {}).map(([k, v]) => ({ key: k, value: String(v) }))
+    instance_of: entity.instance_of || '',
+    is_primary: !!entity.is_primary,
+    source_snippet: entity.source_snippet || '',
+    properties: formProps
   }
 }
 
@@ -612,30 +843,54 @@ const getEntityTypeColor = (type: string) => {
   return found?.color || '#409eff'
 }
 
+/** 重置实体表单为空白（用于打开「添加实体」对话框） */
+const resetEntityForm = () => {
+  entityForm.value = {
+    id: '',
+    name: '',
+    instance_of: '',
+    is_primary: false,
+    source_snippet: '',
+    properties: []
+  }
+}
+
+/** 选中概念时按其 property_schema 自动生成属性行 */
+const onEntityConceptChange = (conceptId: string) => {
+  const concept = concepts.value.find(c => c.id === conceptId)
+  if (!concept) return
+  // 仅在表单属性为空时自动填充，避免覆盖已编辑的值
+  if (entityForm.value.properties.length === 0 && concept.property_schema?.length) {
+    entityForm.value.properties = concept.property_schema.map((ps: any) => ({
+      name: ps.name || '',
+      value: '',
+      category: ps.category || 'descriptive',
+      data_type: ps.data_type || 'string',
+      unit: ps.unit || '',
+      source_snippet: ''
+    }))
+  }
+}
+
 const submitEntity = async () => {
-  if (!entityForm.value.name || !entityForm.value.type) {
-    ElMessage.warning('请填写完整信息')
+  if (!entityForm.value.name || !entityForm.value.instance_of) {
+    ElMessage.warning('请填写实体名并选择归属概念')
     return
   }
 
   submitting.value = true
   try {
-    const propsObj: Record<string, string> = {}
-    entityForm.value.props.forEach(p => {
-      if (p.key.trim()) propsObj[p.key.trim()] = p.value
-    })
-
     const fd = new FormData()
     fd.append('name', entityForm.value.name)
-    fd.append('entity_type', entityForm.value.type)
-    fd.append('properties', JSON.stringify(propsObj))
+    fd.append('instance_of', entityForm.value.instance_of)
+    fd.append('is_primary', String(entityForm.value.is_primary))
+    fd.append('source_snippet', entityForm.value.source_snippet)
+    fd.append('properties', JSON.stringify(entityForm.value.properties.filter(p => p.name)))
 
-    await service.post(`/ontology/${ontologyId}/entity`, fd, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
+    await createEntity(ontologyId, fd)
     ElMessage.success('实体添加成功')
     showAddEntityDialog.value = false
-    entityForm.value = { id: '', name: '', type: '', props: [] }
+    resetEntityForm()
     await Promise.all([loadEntities(), loadRelations(), loadGraph()])
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '添加失败')
@@ -645,26 +900,21 @@ const submitEntity = async () => {
 }
 
 const submitEditEntity = async () => {
-  if (!entityForm.value.name || !entityForm.value.type) {
-    ElMessage.warning('请填写完整信息')
+  if (!entityForm.value.name || !entityForm.value.instance_of) {
+    ElMessage.warning('请填写实体名并选择归属概念')
     return
   }
 
   submitting.value = true
   try {
-    const propsObj: Record<string, string> = {}
-    entityForm.value.props.forEach(p => {
-      if (p.key.trim()) propsObj[p.key.trim()] = p.value
-    })
-
     const fd = new FormData()
     fd.append('name', entityForm.value.name)
-    fd.append('entity_type', entityForm.value.type)
-    fd.append('properties', JSON.stringify(propsObj))
+    fd.append('instance_of', entityForm.value.instance_of)
+    fd.append('is_primary', String(entityForm.value.is_primary))
+    fd.append('source_snippet', entityForm.value.source_snippet)
+    fd.append('properties', JSON.stringify(entityForm.value.properties.filter(p => p.name)))
 
-    await service.put(`/ontology/${ontologyId}/entity/${entityForm.value.id}`, fd, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
+    await updateEntity(ontologyId, entityForm.value.id, fd)
     ElMessage.success('实体更新成功')
     showEditEntityDialog.value = false
     await Promise.all([loadEntities(), loadRelations(), loadGraph()])
@@ -817,7 +1067,7 @@ watch(showEditDialog, (val) => {
 })
 
 onMounted(async () => {
-  await Promise.all([loadOntology(), loadEntities(), loadRelations()])
+  await Promise.all([loadOntology(), loadConcepts(), loadEntities(), loadRelations()])
   await nextTick()
   await loadGraph()
   window.addEventListener('resize', handleResize)
@@ -1162,6 +1412,14 @@ onUnmounted(() => {
 .graph-toolbar {
   display: flex;
   gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.graph-hint {
+  font-size: 0.75rem;
+  color: var(--el-text-color-secondary, #909399);
+  margin-top: 0.25rem;
 }
 
 .graph-legend-overlay {
@@ -1255,5 +1513,12 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.prop-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 </style>

@@ -124,3 +124,10 @@ assessment-bench/
 
 python/knowledge-service/data
 
+# 智能提交：根目录一次性调试脚本与本体服务扫描脚本（不入库）
+_tmp_*.ps1
+python/ontology-service/_scan_manual.py
+
+# 本体 OWL 导出产物（owl_builder 自动生成，可重新生成，不入库）
+python/ontology-service/data/ontologies/
+

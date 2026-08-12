@@ -5,6 +5,22 @@
 """
 import os
 
+# ── Repository 后端选择 ──
+# json：JsonRepository（默认，内存字典 + JSON 文件）
+# neo4j：Neo4jRepository（图数据库，Phase 3 引入）
+# dual：DualRepository（双写过渡，Phase 4 引入）
+REPOSITORY_BACKEND = os.getenv("ONTOLOGY_REPOSITORY_BACKEND", "json").lower()
+
+# ── Neo4j 连接配置（Phase 3 引入）──
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "ontology123")
+NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
+# 连接池大小（默认 100，大规模查询可调高）
+NEO4J_MAX_CONNECTIONS = int(os.getenv("NEO4J_MAX_CONNECTIONS", "100"))
+# 连接超时秒数
+NEO4J_CONNECTION_TIMEOUT = int(os.getenv("NEO4J_CONNECTION_TIMEOUT", "30"))
+
 # ── Step 1 概念提取分批（类型层）──
 # 文档字符数超过此值才分批，否则单次调用（保持兼容、节省开销）
 STEP1_BATCH_THRESHOLD_CHARS = int(os.getenv("STEP1_BATCH_THRESHOLD_CHARS", "10000"))
@@ -18,6 +34,12 @@ STEP1_BATCH_OVERLAP = int(os.getenv("STEP1_BATCH_OVERLAP", "500"))
 STEP2_BATCH_THRESHOLD_CHARS = int(os.getenv("STEP2_BATCH_THRESHOLD_CHARS", "10000"))
 STEP2_BATCH_MAX_CHARS = int(os.getenv("STEP2_BATCH_MAX_CHARS", "9000"))
 STEP2_BATCH_OVERLAP = int(os.getenv("STEP2_BATCH_OVERLAP", "500"))
+
+# ── 并行抽取并发数 ──
+# Step1/Step2 多批 LLM 调用的最大并发数（asyncio.Semaphore 限流，避免触发 LLM API 速率限制）。
+# 各批在线程池中并行调用（_llm_json_async → run_in_executor），此处限制同时 in-flight 的批数。
+# 单批或低配 LLM 账号建议设 1-2；高配可设 3-5。
+LLM_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "3"))
 
 # ── Step 3 关系建模分组 ──
 # 实体数超过此值才分组，否则单次调用（保持兼容）

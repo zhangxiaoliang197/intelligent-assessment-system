@@ -8,6 +8,8 @@ export interface GeoPoint {
   lng: number  // 经度
   lat: number  // 纬度
   raw: string  // 原始匹配文本
+  props?: Record<string, any>  // 动态附加属性，如速度、高度、雷达类型等
+  routeName?: string  // 所属路线名称，用于同路线同色显示
 }
 
 /**

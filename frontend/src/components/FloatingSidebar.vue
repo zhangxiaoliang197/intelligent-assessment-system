@@ -21,7 +21,7 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { Collection, Box, Cpu, MapLocation } from '@element-plus/icons-vue'
+import { Collection, Box, Cpu } from '@element-plus/icons-vue'
 
 const router = useRouter()
 
@@ -42,13 +42,6 @@ const systems = [
   },
   {
     id: 3,
-    name: '态势图',
-    icon: MapLocation,
-    color: '#8b5cf6',
-    path: '/situation'
-  },
-  {
-    id: 4,
     name: '基础管理',
     icon: Cpu,
     color: '#f59e0b',

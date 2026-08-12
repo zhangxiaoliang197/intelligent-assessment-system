@@ -1103,6 +1103,47 @@ async def data_worker_node(state: ReactWorkflowState, config: RunnableConfig) ->
     exploration_summary = explore_result["answer"]
     logger.info(f"Phase1 探索完成，探索了 {len(explored_tables)} 张表: {explored_tables}")
 
+    # ── 探索后过滤：只保留与问题相关的表 ──
+    if len(explored_tables) > 3:
+        from .table_selection import pick_relevant_tables
+        try:
+            table_list = await asyncio.get_event_loop().run_in_executor(
+                None, fetch_database_tables, db_id, False, False, True)  # with_comments=True
+            if not table_list:
+                table_list = [{"tableName": t, "tableComment": ""} for t in explored_tables]
+
+            # 提前获取数据集元数据（名称 + 描述），用于弥补物理表注释语义不足
+            table_metadata = {}
+            try:
+                pre_datasets = await asyncio.get_event_loop().run_in_executor(
+                    None, fetch_datasets_for_database, db_id)
+                for ds in pre_datasets:
+                    tn = ds.get("tableName", "")
+                    if tn:
+                        table_metadata[tn] = {
+                            "name": ds.get("name", ""),
+                            "description": ds.get("description", ""),
+                        }
+            except Exception:
+                pass
+
+            # 只对已探索的表做筛选
+            explored_list = [
+                t for t in table_list
+                if (t.get("tableName", "") if isinstance(t, dict) else t) in explored_tables
+            ]
+            relevant = pick_relevant_tables(
+                explored_list, plan, question, max_tables=12,
+                table_metadata=table_metadata,
+            )
+            filtered = set(explored_tables) & set(relevant)
+            if filtered:
+                dropped = explored_tables - filtered
+                logger.info(f"表筛选: 保留 {len(filtered)} 张 (忽略 {len(dropped)} 张: {dropped})")
+                explored_tables = filtered
+        except Exception as e:
+            logger.warning(f"表筛选失败（不影响主流程）: {e}")
+
     # ══════════════════════════════════════════════════════════════════
     # Phase 2：委托专业智能体（text_to_sql + analyst）
     # ══════════════════════════════════════════════════════════════════
@@ -1118,6 +1159,8 @@ async def data_worker_node(state: ReactWorkflowState, config: RunnableConfig) ->
     if selected_ds_ids and datasets:
         selected_set = set(selected_ds_ids)
         datasets = [d for d in datasets if d.get("id") in selected_set]
+    # 限制数据集到已选表范围，避免无关表的指标定义干扰 SQL 生成
+    datasets = [d for d in datasets if d.get("tableName", "") in explored_tables]
     ds_map = {d.get("tableName", ""): d for d in datasets}
 
     for table_name in list(explored_tables):
@@ -1319,21 +1362,22 @@ async def synthesizer_node(state: ReactWorkflowState, config: RunnableConfig) ->
         return {**state, "steps": steps, "result": existing_result,
                 "final_answer": final_answer or existing_result.get("final_answer", "")}
 
-    # 构建与旧版 finalize_node 完全兼容的结果格式
-    # 从 Data Worker 探索总结中提取分析思路
+    # ── data_query / knowledge 分支：组装完整 result ──
     sql_explanation = ""
     if route == "data_query":
         traces = state.get("data_react_traces", [])
-        # 取探索阶段的最终总结作为 SQL 解释
         for t in reversed(traces):
             if t.get("type") == "final":
                 sql_explanation = t.get("answer", t.get("thought", ""))[:300]
                 break
 
+    # 自动生成地图标注（单独存储，不拼入显示文本）
+    map_annotations = _auto_build_map_annotations(raw_results)
+
     result = {
         "type": "data_query" if route == "data_query" else "general",
         "final_answer": final_answer or "分析完成",
-        "analysis": final_answer or "分析完成",  # 兼容旧字段名
+        "analysis": final_answer or "分析完成",
         "generatedSql": generated_sql,
         "sqlExplanation": sql_explanation,
         "rawResults": raw_results[:2000],
@@ -1346,12 +1390,125 @@ async def synthesizer_node(state: ReactWorkflowState, config: RunnableConfig) ->
         "database_used": state.get("database_id", ""),
         "database_name": state.get("database_name", ""),
         "chartConfig": chart_config if chart_config else None,
+        "map_annotations": map_annotations,
     }
 
     _add_step(steps, synth_step, "综合输出", "completed",
               detail="分析流程完成")
 
     return {**state, "steps": steps, "result": result, "final_answer": final_answer}
+
+
+def _auto_build_map_annotations(raw_results):
+    """自动检测查询结果中的 lng/lat 列，生成 map_annotations JSON。
+
+    marker 中自动附带所有非坐标/非标识的业务属性（props），供前端弹窗动态展示。
+    雷达：radar_type, radius_km, status, install_date
+    飞机轨迹：speed, altitude, heading, time, fuel, status
+    只有经纬度的数据：不给 props（或给空对象）
+    """
+    if not raw_results:
+        return ""
+    columns = {k.lower(): k for k in raw_results[0].keys()}
+    has_lng = any(c in columns for c in ('lng', 'lon', 'longitude'))
+    has_lat = any(c in columns for c in ('lat', 'latitude'))
+    if not has_lng or not has_lat:
+        return ""
+    lng_key = next(columns[c] for c in ('lng', 'lon', 'longitude') if c in columns)
+    lat_key = next(columns[c] for c in ('lat', 'latitude') if c in columns)
+
+    # 被排除的列（坐标、标识、排序字段，不需要放入 props）
+    _EXCLUDE = {'name', 'aircraft_name', 'aircraft_id', 'seq', 'id',
+                'lng', 'lon', 'longitude', 'lat', 'latitude', 'raw'}
+
+    def _make_props(row, keys):
+        """从 row 中提取非坐标、非标识的业务字段作为 props"""
+        props = {}
+        for k in keys:
+            if k.lower() in _EXCLUDE:
+                continue
+            v = row.get(k)
+            if v is not None and v != '':
+                # 数值保留合理精度
+                if isinstance(v, float):
+                    v = round(v, 2)
+                props[k] = v
+        return props if props else None
+
+    result_dict = {}
+
+    # 圆形范围（radius_km / radius）
+    if 'radius_km' in columns or 'radius' in columns:
+        rk = 'radius_km' if 'radius_km' in columns else 'radius'
+        result_dict["areas"] = []
+        result_dict["markers"] = []
+        for row in raw_results:
+            # 圆形区域名不含 "圆形区域:" 前缀（前端已处理，避免重复）
+            area_name = str(row.get('name', ''))
+            area = {"name": area_name, "shape": "circle",
+                    "center": {"lng": float(row[lng_key]), "lat": float(row[lat_key])},
+                    "radiusKm": float(row[rk]) if row.get(rk) is not None else 50}
+            ap = _make_props(row, row.keys())
+            if ap:
+                area["props"] = ap
+            result_dict["areas"].append(area)
+
+            marker = {"name": area_name, "lng": float(row[lng_key]),
+                      "lat": float(row[lat_key]), "routeName": area_name}
+            p = _make_props(row, row.keys())
+            if p:
+                marker["props"] = p
+            result_dict["markers"].append(marker)
+
+    # 飞行路线（seq + aircraft_id）
+    has_seq = 'seq' in columns
+    has_aid = 'aircraft_id' in columns or 'aircraft_name' in columns
+    if has_seq and has_aid:
+        id_key = 'aircraft_id' if 'aircraft_id' in columns else 'aircraft_name'
+        name_key = 'aircraft_name' if 'aircraft_name' in columns else id_key
+        groups = {}
+        for row in raw_results:
+            gid = str(row[id_key])
+            if gid not in groups:
+                groups[gid] = {"name": str(row.get(name_key, gid)), "points": []}
+            groups[gid]["points"].append({"seq": int(row.get('seq', 0)), "lng": float(row[lng_key]), "lat": float(row[lat_key]),
+                                         "raw_row": row})
+        routes = []
+        markers = []
+        for gid, g in groups.items():
+            pts = sorted(g["points"], key=lambda p: p["seq"])
+            routes.append({"name": g["name"], "points": [{"lng": p["lng"], "lat": p["lat"]} for p in pts]})
+            for pi, pt in enumerate(pts):
+                is_first = (pi == 0)
+                is_last = (pi == len(pts) - 1)
+                label = g['name']
+                if is_first: label += '-起点'
+                elif is_last: label += '-终点'
+                else: label += f'-途经{pi}'
+                marker = {"name": label, "lng": pt["lng"], "lat": pt["lat"],
+                          "routeName": g["name"]}
+                p = _make_props(pt["raw_row"], pt["raw_row"].keys())
+                if p: marker["props"] = p
+                markers.append(marker)
+        result_dict["routes"] = routes
+        if markers:
+            result_dict["markers"] = markers
+
+    # 默认标记点（无半径、无轨迹）
+    if not result_dict:
+        result_dict["markers"] = []
+        for row in raw_results:
+            name = str(row.get('name', row.get('aircraft_name', '')))
+            marker = {"name": name,
+                      "lng": float(row[lng_key]), "lat": float(row[lat_key]),
+                      "routeName": name}
+            p = _make_props(row, row.keys())
+            if p:
+                marker["props"] = p
+            result_dict["markers"].append(marker)
+
+    import json
+    return "\n```map_annotations\n" + json.dumps(result_dict, ensure_ascii=False, indent=2) + "\n```\n"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

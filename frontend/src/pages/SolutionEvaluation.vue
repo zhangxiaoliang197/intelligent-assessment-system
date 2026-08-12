@@ -679,7 +679,6 @@ import {
   CircleCheck,
   CircleClose,
   Clock,
-  ChatDotRound,
   Loading,
   Cpu,
   Grid,
@@ -687,10 +686,10 @@ import {
   Plus,
   Delete,
   ArrowRight,
-  PieChart as ElPieChart,
   Microphone
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
+import { useToolNav } from '@/composables/useToolNav'
 import SkillsLibrary from '@/pages/SkillsLibrary.vue'
 import SkillMarkdownDialog from '@/components/evaluation/SkillMarkdownDialog.vue'
 import GeoMap from '@/components/GeoMap.vue'
@@ -736,37 +735,8 @@ const LS_HISTORY_LIST = 'solution_history_list'
 const LS_SESSION_MSGS = 'solution_session_msgs'
 
 // 工具配置
-const tools = [
-  {
-    id: 1,
-    name: '智能问答',
-    icon: ChatDotRound,
-    color: '#409eff',
-    path: '/qa',
-    current: false
-  },
-  {
-    id: 2,
-    name: '指标分析',
-    icon: ElPieChart,
-    color: '#67c23a',
-    path: '/indicator',
-    current: false
-  },
-  {
-    id: 3,
-    name: '评估分析',
-    icon: Document,
-    color: '#e6a23c',
-    path: '/evaluation',
-    current: true
-  }
-]
-
-// 跳转工具
-const navigateToTool = (path: string) => {
-  router.push(path)
-}
+// 四功能切换栏（共享配置，current 由当前路由自动推导）
+const { tools, navigateToTool } = useToolNav()
 
 // 状态
 const inputMessage = ref('')
@@ -1507,11 +1477,14 @@ const sendMessage = async () => {
         // Skill 结果卡已经包含综合结论，正文不再重复显示。
         aiMessage.content = result.type === 'skill' || result.need_conclusion === false ? '' : stripMapAnnotationBlock(answerText)
         aiMessage.result = result
-        // 提取坐标并设置地图状态（来源1: final_answer 文本中的DMS格式坐标）
-        const textMapData = processMapData(answerText, query)
-        // 提取坐标（来源2: 查询结果数据中的经度/纬度数值列，每行=一个点，不做去重）
-        const resultGeoPoints = extractGeoFromResults(result)
-        // 合并：文本提取的坐标 + 数据库查询结果（不做去重，每个学生一个点）
+        // 提取坐标并设置地图状态
+        // 来源1: result.map_annotations（后端直接生成，优先级最高）
+        // 来源2: final_answer 文本中的 map_annotations/DMS格式坐标（兼容旧版）
+        const mapAnnotationsRaw = result.map_annotations || ''
+        const textMapData = processMapData(mapAnnotationsRaw || answerText, query)
+        // 来源3: rawResults 中的坐标（仅在 map_annotations 未提供时使用，避免重复）
+        const resultGeoPoints = (textMapData.hasAnnotations || mapAnnotationsRaw) ? [] : extractGeoFromResults(result)
+        // 合并：文本提取的坐标 + 数据库查询结果
         const allGeoPoints = textMapData.geoPoints.slice()
         for (const pt of resultGeoPoints) {
           allGeoPoints.push(pt)
@@ -1685,8 +1658,19 @@ const loadHistory = async (item: any) => {
     }
 
     if (!restoredMessages) throw new Error('会话没有可恢复的消息内容')
-    // 恢复历史消息中的地图状态 (第一处)
+    // 恢复历史消息中的地图状态
     restoredMessages.forEach((msg: any) => {
+      // 从服务端加载时 msg 没有地图数据，从 result 中重新提取
+      if (msg.result && (!msg.geoPoints || msg.geoPoints.length === 0 || !msg.routes || msg.routes.length === 0)) {
+        // 优先用 result.map_annotations（后端直接生成），兼容旧版从 final_answer 文本解析
+        const mapAnnotationsRaw = msg.result.map_annotations || ''
+        const mapData = processMapData(mapAnnotationsRaw || msg.result.final_answer || msg.result.summary || msg.result.answer || '', msg.result.question || '')
+        const resultGeoPoints = (mapData.hasAnnotations || mapAnnotationsRaw) ? [] : extractGeoFromResults(msg.result)
+        msg.geoPoints = [...mapData.geoPoints, ...resultGeoPoints]
+        msg.routes = mapData.routes
+        msg.areas = mapData.areas
+        msg.circles = mapData.circles
+      }
       if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0) {
         msg.showMap = true
         msg.showMapPrompt = false
@@ -2961,56 +2945,65 @@ onMounted(async () => {
 
 .tools-bar {
   display: flex;
-  gap: 0.75rem;
+  gap: 8px;
   justify-content: center;
   flex-wrap: wrap;
-  margin-bottom: 1rem;
+  margin-bottom: 14px;
 }
 
 .tools-bar .tool-item {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
-  padding: 0.5rem 1rem;
-  background: #f5f7fa;
-  border-radius: 6px;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--gray-50);
+  border-radius: 20px;
   cursor: pointer;
-  transition: all 0.2s ease;
-  border: 1px solid transparent;
+  transition: all 0.2s;
+  border: 1px solid var(--border-light);
 }
 
 .tools-bar .tool-item:hover {
-  background: #eff6ff;
-  border-color: #409eff;
+  background: white;
+  border-color: var(--primary-300);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
 }
 
 .tools-bar .tool-item.current {
-  background: #409eff;
-  border-color: #409eff;
+  background: var(--primary-500);
+  border-color: var(--primary-500);
   cursor: default;
 }
 
 .tools-bar .tool-icon {
-  width: 24px;
-  height: 24px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.8);
   display: flex;
   align-items: center;
   justify-content: center;
+  color: inherit;
 }
 
 .tools-bar .tool-item.current .tool-icon {
-  background: rgba(255, 255, 255, 0.2);
+  background: transparent;
 }
 
 .tools-bar .tool-name {
-  color: #606266;
-  font-size: 0.85rem;
+  font-size: 13px;
   font-weight: 500;
+  color: var(--text-secondary);
 }
 
 .tools-bar .tool-item.current .tool-name {
+  color: white;
+}
+
+.tools-bar .tool-item:hover .tool-name {
+  color: var(--primary-600);
+}
+
+.tools-bar .tool-item.current:hover .tool-name {
   color: white;
 }
 

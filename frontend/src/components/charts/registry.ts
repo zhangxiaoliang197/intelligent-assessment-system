@@ -5,7 +5,6 @@
  * 起步集覆盖 ECharts 常见图表，统一用 VueECharts 包装组件。
  * LLM 产出的 option 直接喂给 ECharts；buildOption 可做后处理（如统一配色）。
  */
-import { shallowRef } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -31,7 +30,7 @@ use([
 export interface ChartDefinition {
   type: string
   name: string                 // 中文名
-  component: any               // ECharts 包装组件
+  component: any               // ECharts 包装组件（组件对象本身，无需 ref 包裹）
   buildOption?: (spec: { option: any; title?: string }) => any
 }
 
@@ -73,5 +72,8 @@ const STARTER: Array<[string, string]> = [
   ['map', '地图染色'],
 ]
 STARTER.forEach(([type, name]) => {
-  registerChart({ type, name, component: shallowRef(VChart), buildOption: defaultBuild })
+  // 直接存 VChart 组件对象本身；勿用 ref/shallowRef 包裹，
+  // 否则 <component :is="chartDef.component"> 拿到的是 ref 对象而非组件，渲染为空。
+  registerChart({ type, name, component: VChart, buildOption: defaultBuild })
 })
+

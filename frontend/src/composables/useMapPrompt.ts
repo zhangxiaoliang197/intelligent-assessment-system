@@ -24,6 +24,8 @@ export interface MapDataResult {
   circles: CircleArea[]
   showMap: boolean
   showMapPrompt: boolean
+  /** true 表示使用了 map_annotations JSON（后端显式标注），应跳过 rawResults 的点提取 */
+  hasAnnotations: boolean
 }
 
 // ── 坐标列名模式 ──
@@ -31,8 +33,8 @@ export interface MapDataResult {
 const LNG_PATTERNS = /^(?:.*_)?(?:经度|lng|longitude|lon)(?:_|$)/i
 /** 纬度列名关键词 */
 const LAT_PATTERNS = /^(?:.*_)?(?:纬度|lat|latitude)(?:_|$)/i
-/** 地点/名称列名关键词 */
-const NAME_PATTERNS = /^(?:名称|地点|位置|区域|地区|城市|地名|name|location|place|region|city|site)$/i
+/** 地点/名称列名关键词（支持 name、名称 以及 *name、*名称 格式） */
+const NAME_PATTERNS = /^(?:.*_)?(?:名称|地点|位置|区域|地区|城市|地名|name|location|place|region|city|site)$/i
 
 /**
  * 从查询结果数据中提取坐标列
@@ -118,11 +120,22 @@ export function extractGeoFromResults(result: any): GeoPoint[] {
         name = `坐标点 ${geoPoints.length + 1}`
       }
 
+      // ── 提取非坐标、非名称的业务属性作为 props ──
+      const props: Record<string, any> = {}
+      for (let i = 0; i < columns.length; i++) {
+        if (i === lngIdx || i === latIdx || i === nameIdx) continue
+        const val = Array.isArray(row) ? row[i] : row[columns[i]]
+        if (val !== null && val !== undefined && val !== '') {
+          props[columns[i]] = typeof val === 'number' ? parseFloat(val.toFixed(2)) : val
+        }
+      }
+
       geoPoints.push({
         name,
         lng: lngVal,
         lat: latVal,
         raw: `${columns[lngIdx]}=${lngVal}, ${columns[latIdx]}=${latVal}`,
+        ...(Object.keys(props).length > 0 ? { props } : {}),
       })
     }
   }
@@ -154,19 +167,19 @@ export function processMapData(fullText: string, userQuery: string): MapDataResu
   const hasData = geoPoints.length > 0 || routes.length > 0 || areas.length > 0 || circles.length > 0
 
   if (!hasData) {
-    return { geoPoints: [], routes: [], areas: [], circles: [], showMap: false, showMapPrompt: false }
+    return { geoPoints: [], routes: [], areas: [], circles: [], showMap: false, showMapPrompt: false, hasAnnotations: false }
   }
 
   // 新 JSON 格式由 LLM 主动输出 → 直接显示，不弹提示
   if (result.source === 'json') {
-    return { geoPoints, routes, areas, circles, showMap: true, showMapPrompt: false }
+    return { geoPoints, routes, areas, circles, showMap: true, showMapPrompt: false, hasAnnotations: true }
   }
 
   // 旧文本格式：根据用户是否明确要求决定
   if (detectMapIntent(userQuery)) {
-    return { geoPoints, routes, areas, circles, showMap: true, showMapPrompt: false }
+    return { geoPoints, routes, areas, circles, showMap: true, showMapPrompt: false, hasAnnotations: false }
   }
 
   // 有坐标但未明确要求 → 弹出提示
-  return { geoPoints, routes, areas, circles, showMap: false, showMapPrompt: true }
+  return { geoPoints, routes, areas, circles, showMap: false, showMapPrompt: true, hasAnnotations: false }
 }
