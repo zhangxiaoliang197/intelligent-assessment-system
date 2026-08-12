@@ -489,26 +489,41 @@ def _merge_entities(all_entities: list) -> list:
     return [merged[k] for k in order]
 
 
-def _derive_concept_color(entity_type: str, meta_entity_types: list) -> str:
-    """根据概念的 entity_type 从元模型中查找对应颜色。
+def _derive_concept_color(entity_type: str, meta_entity_types: list, used_colors: Optional[set] = None) -> str:
+    """根据概念的 entity_type 推导颜色。
+
+    颜色来源优先级：
+    1. 元模型中该类型已配置的颜色（手动构建/模板场景保持用户选择）
+    2. 调色板轮转兜底：从 DEFAULT_COLORS 中选取一个本批未用过的颜色，
+       保证不同实体类型自动区分颜色；全部用过则从头循环
 
     Args:
         entity_type: 概念归属的元模型类型名
         meta_entity_types: 已确认的元模型实体类型 [{"name","color"}]
+        used_colors: 本批已分配的颜色集合（None 表示无状态，仅走元模型匹配）
 
     Returns:
-        颜色 hex 值，未匹配则返回默认色 #5470c6
+        颜色 hex 值
     """
     for t in meta_entity_types:
         if t.get("name") == entity_type:
             return t.get("color", "#5470c6")
-    return "#5470c6"
+    if used_colors is None:
+        return "#5470c6"
+    for c in build_prompts.DEFAULT_COLORS:
+        if c not in used_colors:
+            return c
+    # 调色板全部用过，从头循环（按已用数量取模，保持稳定）
+    return build_prompts.DEFAULT_COLORS[len(used_colors) % len(build_prompts.DEFAULT_COLORS)]
 
 
 def _enrich_concepts_with_color(concepts: list, meta_entity_types: list) -> list:
-    """为合并后的概念列表填充 color 字段（从 meta_entity_types 按 entity_type 推导）。
+    """为合并后的概念列表填充 color 字段。
 
-    LLM 输出概念时只给 entity_type，color 由后端统一推导，避免 LLM 输出不一致。
+    颜色优先级：
+    1. LLM 已输出 color（旧格式概念）则保留
+    2. 元模型按 entity_type 精确匹配
+    3. 调色板轮转分配（保证不同实体类型颜色不同，避免全部默认蓝色）
 
     Args:
         concepts: 合并去重后的概念列表
@@ -517,9 +532,11 @@ def _enrich_concepts_with_color(concepts: list, meta_entity_types: list) -> list
     Returns:
         填充 color 后的概念列表（原地修改并返回）
     """
+    used_colors = set()
     for c in concepts:
         if not c.get("color"):
-            c["color"] = _derive_concept_color(c.get("entity_type", ""), meta_entity_types)
+            c["color"] = _derive_concept_color(c.get("entity_type", ""), meta_entity_types, used_colors)
+        used_colors.add(c["color"])
     return concepts
 
 

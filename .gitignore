@@ -131,3 +131,9 @@ python/ontology-service/_scan_manual.py
 # 本体 OWL 导出产物（owl_builder 自动生成，可重新生成，不入库）
 python/ontology-service/data/ontologies/
 
+# Agent 工作区调试产物（测试 JSON 与附件，不入库）
+.agent_context/
+
+# 一次性调试复现工作区（node_modules/截图/脚本，不入库）
+.ws9-repro/
+

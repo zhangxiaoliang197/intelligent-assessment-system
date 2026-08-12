@@ -157,13 +157,13 @@
                   <el-button
                     size="small"
                     type="warning"
-                    :disabled="!foldedConceptIds.size"
-                    @click="resetFold"
+                    :disabled="!expandedTypeIds.size"
+                    @click="resetExpand"
                   >
-                    <el-icon><Fold /></el-icon> 重置折叠（{{ foldedConceptIds.size }}）
+                    <el-icon><Fold /></el-icon> 收起全部实例（{{ expandedTypeIds.size }}）
                   </el-button>
                 </div>
-                <div class="graph-hint">右键实体→折叠同类型为实体类型节点；左键实体类型→展开恢复</div>
+                <div class="graph-hint">左键实体类型→展开其实例（类型节点分解）；右键实例→收起所属类型；刷新恢复全部类型</div>
               </div>
             </template>
             <div class="graph-wrapper">
@@ -440,11 +440,12 @@ const layoutType = ref('force')
 const graphRef = ref<HTMLElement | null>(null)
 let chartInstance: echarts.ECharts | null = null
 
-// ── 图谱折叠（后续任务3：详细/粗略展示）──
-// rawGraphData 缓存后端原始图谱数据，foldedConceptIds 记录已折叠的概念 ID
-// 右键实体 → 折叠其所属概念的所有实体为概念节点；左键概念 → 展开恢复
+// ── 图谱实例分解（类型节点⇄实例节点两态切换）──
+// rawGraphData 缓存后端原始图谱数据，expandedTypeIds 记录处于「实例态」的类型 ID
+// 类型态：显示类型节点，其实例隐藏；实例态：类型节点消失，其全部实例原位出现
+// 左键类型 → 分解为实例；右键实例 → 收回为类型节点
 const rawGraphData = ref<{ nodes: any[]; links: any[] }>({ nodes: [], links: [] })
-const foldedConceptIds = ref<Set<string>>(new Set())
+const expandedTypeIds = ref<Set<string>>(new Set())
 
 // 对话框开关
 const showEditDialog = ref(false)
@@ -578,14 +579,10 @@ const loadRelations = async () => {
 const loadGraph = async () => {
   try {
     const res: any = await getGraphData(ontologyId)
-    // 缓存原始数据供折叠/展开重算
+    // 缓存原始数据供实例分解/收回重算
     rawGraphData.value = { nodes: res.data.nodes || [], links: res.data.links || [] }
-    // 默认折叠所有概念：初始视图只显示实体类型节点（与实体列表默认隐藏实例保持一致），
-    // 左键概念节点展开该类型的实体，右键实体可再次折叠
-    const allConceptIds = rawGraphData.value.nodes
-      .filter((n: any) => n.node_type === 'concept')
-      .map((n: any) => n.id)
-    foldedConceptIds.value = new Set(allConceptIds)
+    // 默认全部为类型态：只显示实体类型节点，左键类型展开（分解）为其实例
+    expandedTypeIds.value = new Set()
     renderGraph()
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '加载图谱失败')
@@ -597,7 +594,10 @@ const refreshData = async () => {
   ElMessage.success('数据已刷新')
 }
 
-// ── 图谱渲染（后续任务3：支持折叠/展开详细与粗略展示）──
+// ── 图谱渲染（实体类型实例分解：类型节点⇄实例节点两态切换）──
+// 统一「可见代表节点」模型：每条逻辑边连接两端各自的可见代表
+// - 实体-实体关系边：所属类型为类型态 → 代表为类型节点；实例态 → 代表为实例本身
+// - 类型级边（SUB_CONCEPT_OF / EntityTypeRelation）：任一端实例态即隐藏
 const renderGraph = () => {
   if (!graphRef.value) return
   if (!chartInstance) {
@@ -613,19 +613,21 @@ const renderGraph = () => {
   const raw = rawGraphData.value
   if (!raw.nodes.length) return
 
-  // 构建概念层级：有子概念的概念 ID（SUB_CONCEPT_OF 边的 source 是父概念）
+  const expanded = expandedTypeIds.value
+  const isExpanded = (typeId?: string) => !!typeId && expanded.has(typeId)
+
+  // 预索引：类型节点 / 实体节点
+  const typeNodes = raw.nodes.filter((n: any) => n.node_type === 'concept')
+  const entityNodes = raw.nodes.filter((n: any) => n.node_type === 'entity')
+  const typeNodeById: Record<string, any> = {}
+  for (const n of typeNodes) typeNodeById[n.id] = n
+  const entityById: Record<string, any> = {}
+  for (const e of entityNodes) entityById[e.id] = e
+
+  // 父类型集合（SUB_CONCEPT_OF 边的 source 是父类型），用于节点大小区分
   const parentConceptIds = new Set<string>()
   for (const l of raw.links) {
     if (l.relation === 'SUB_CONCEPT_OF') parentConceptIds.add(l.source)
-  }
-
-  // 折叠：移除已折叠概念的实体节点
-  const folded = foldedConceptIds.value
-  const removedEntityIds = new Set<string>()
-  for (const n of raw.nodes) {
-    if (n.node_type === 'entity' && n.concept_id && folded.has(n.concept_id)) {
-      removedEntityIds.add(n.id)
-    }
   }
 
   // 类别（颜色）映射，与列表/图例一致
@@ -637,70 +639,95 @@ const renderGraph = () => {
   const fallbackCatIndex = categories.length
   categories.push({ name: '[未分类]', itemStyle: { color: '#409eff' } })
 
-  // 全量 id→name 映射（含折叠实体，用于边重路由后解析名称）
+  // 全量 id→name 映射（含隐藏实体，用于边代表节点名称解析）
   const idToName: Record<string, string> = {}
   for (const n of raw.nodes) idToName[n.id] = n.name
 
-  // 显示节点：排除折叠实体，概念节点保留并放大
-  const displayNodes = raw.nodes
-    .filter(n => !removedEntityIds.has(n.id))
-    .map((n: any) => {
-      // 节点大小区分：实体 < 子概念 < 父概念 < 折叠概念
-      let symbolSize = 40
-      if (n.node_type === 'concept') {
-        symbolSize = parentConceptIds.has(n.id) ? 65 : 55
-        if (folded.has(n.id)) symbolSize += 10
-      }
-      return {
-        name: n.name,
-        id: n.id,
-        category: catIndex[n.type] ?? fallbackCatIndex,
-        symbolSize,
-        draggable: true,
-        // 自定义字段供事件处理识别
-        nodeType: n.node_type,
-        conceptId: n.concept_id || n.id,
-        // 概念节点加粗边框区分
-        itemStyle: n.node_type === 'concept'
-          ? { borderColor: '#333', borderWidth: 2 }
-          : undefined,
-        label: n.node_type === 'concept'
-          ? { fontWeight: 'bold' }
-          : undefined
-      }
-    })
+  // 每个类型拥有的实例数（类型节点 tooltip 用）
+  const instanceCount: Record<string, number> = {}
+  for (const e of entityNodes) {
+    if (e.concept_id) instanceCount[e.concept_id] = (instanceCount[e.concept_id] || 0) + 1
+  }
 
-  // 边：折叠实体的边重路由到概念节点，去重去自环
+  // ── 节点：类型态→类型节点；实例态→该类型全部实例节点（类型节点消失）──
+  const displayNodes: any[] = []
+  for (const n of typeNodes) {
+    if (isExpanded(n.id)) {
+      // 实例态：类型节点不展示，原位渲染其实例（同类型色，更小尺寸区分）
+      for (const e of entityNodes) {
+        if (e.concept_id === n.id) {
+          displayNodes.push({
+            name: e.name,
+            id: e.id,
+            category: catIndex[e.type] ?? fallbackCatIndex,
+            symbolSize: 32,
+            draggable: true,
+            // 自定义字段供事件处理识别
+            nodeType: 'entity',
+            conceptId: e.concept_id,
+            // 实例节点白细边，与类型节点粗黑边区分
+            itemStyle: { borderColor: '#fff', borderWidth: 1.5 }
+          })
+        }
+      }
+      continue
+    }
+    // 类型态：类型节点（父类型 > 子类型，加粗边框）
+    displayNodes.push({
+      name: n.name,
+      id: n.id,
+      category: catIndex[n.type] ?? fallbackCatIndex,
+      symbolSize: parentConceptIds.has(n.id) ? 65 : 55,
+      draggable: true,
+      nodeType: 'concept',
+      conceptId: n.id,
+      itemStyle: { borderColor: '#333', borderWidth: 2 },
+      label: { fontWeight: 'bold' }
+    })
+  }
+
+  // 可见节点集合：边两端代表节点必须在可见集合内才渲染
+  const visibleNodeIds = new Set(displayNodes.map(n => n.id))
+
+  // ── 边：连接两端各自的可见代表，去重去自环 ──
   const displayLinks: any[] = []
   const seenEdges = new Set<string>()
-  for (const l of raw.links) {
-    // 折叠后实体的 instance_of 边隐藏（概念→实体已无实体）
-    if (l.relation === 'instance_of' && removedEntityIds.has(l.target)) continue
-    // 重路由：被移除实体的端点替换为其概念 ID
-    let srcId = l.source
-    let tgtId = l.target
-    if (removedEntityIds.has(srcId)) {
-      const ent = raw.nodes.find(n => n.id === srcId)
-      srcId = ent?.concept_id || srcId
-    }
-    if (removedEntityIds.has(tgtId)) {
-      const ent = raw.nodes.find(n => n.id === tgtId)
-      tgtId = ent?.concept_id || tgtId
-    }
-    if (srcId === tgtId) continue  // 去自环（同概念内部边折叠后消失）
-    const edgeKey = `${srcId}-${tgtId}-${l.relation}`
-    if (seenEdges.has(edgeKey)) continue
+  const pushEdge = (srcId: string, tgtId: string, relation: string) => {
+    if (srcId === tgtId) return // 去自环（同类型折叠后内部边消失）
+    if (!visibleNodeIds.has(srcId) || !visibleNodeIds.has(tgtId)) return
+    const edgeKey = `${srcId}-${tgtId}-${relation}`
+    if (seenEdges.has(edgeKey)) return // 去重
     seenEdges.add(edgeKey)
     displayLinks.push({
       // ECharts graph 按 id 匹配节点建边，必须用节点 id（不能用 name）
       source: srcId,
       target: tgtId,
-      value: l.relation,
+      value: relation,
       // 额外保留名称用于 tooltip 展示，不影响边匹配
       sourceName: idToName[srcId] || srcId,
       targetName: idToName[tgtId] || tgtId,
       lineStyle: { type: 'solid' }
     })
+  }
+
+  for (const l of raw.links) {
+    const relation = l.relation
+    // 成员关系由节点颜色表达，不再渲染 instance_of 边
+    if (relation === 'instance_of') continue
+    // 类型级边（SUB_CONCEPT_OF / EntityTypeRelation）：仅两端均为类型态（类型节点可见）时渲染
+    if (typeNodeById[l.source] && typeNodeById[l.target]) {
+      if (isExpanded(l.source) || isExpanded(l.target)) continue
+      pushEdge(l.source, l.target, relation)
+      continue
+    }
+    // 实体-实体关系边：提升/降级到两端可见代表
+    const srcEntity = entityById[l.source]
+    const tgtEntity = entityById[l.target]
+    if (srcEntity && tgtEntity) {
+      const srcRep = isExpanded(srcEntity.concept_id) ? srcEntity.id : (srcEntity.concept_id || srcEntity.id)
+      const tgtRep = isExpanded(tgtEntity.concept_id) ? tgtEntity.id : (tgtEntity.concept_id || tgtEntity.id)
+      pushEdge(srcRep, tgtRep, relation)
+    }
   }
 
   const option = {
@@ -714,10 +741,10 @@ const renderGraph = () => {
         }
         const d = p.data
         if (d.nodeType === 'concept') {
-          const isFolded = folded.has(d.conceptId)
-          return `${d.name}（实体类型）${isFolded ? '<br/>已折叠，左键展开' : '<br/>右键实体可折叠同类型'}`
+          const cnt = instanceCount[d.conceptId] || 0
+          return `${d.name}（实体类型）<br/>${cnt} 个实例 · 左键展开实例`
         }
-        return `${d.name}<br/>右键可折叠所属类型`
+        return `${d.name}<br/>右键收起所属类型`
       }
     },
     series: [{
@@ -739,23 +766,25 @@ const renderGraph = () => {
   chartInstance.setOption(option, true)
 }
 
-// ── 图谱折叠/展开交互 ──
-/** 右键实体 → 折叠其所属概念（同类型实体消失，由概念节点代替） */
+// ── 图谱实例分解交互 ──
+/** 右键实例 → 收回其所属类型（实例消失，恢复为类型节点） */
 const handleGraphContextMenu = (params: any) => {
   if (params.dataType !== 'node' || !params.data) return
   const node = params.data
   if (node.nodeType === 'entity' && node.conceptId) {
-    foldConcept(node.conceptId)
+    collapseType(node.conceptId)
   }
 }
 
-/** 左键概念 → 展开（恢复实体）；左键实体 → 选中展示详情 */
+/** 左键类型 → 分解为实例（实例态）/ 收回（类型态）切换；左键实例 → 选中展示详情 */
 const handleGraphClick = (params: any) => {
   if (params.dataType !== 'node' || !params.data) return
   const node = params.data
   if (node.nodeType === 'concept') {
-    if (foldedConceptIds.value.has(node.conceptId)) {
-      unfoldConcept(node.conceptId)
+    if (expandedTypeIds.value.has(node.conceptId)) {
+      collapseType(node.conceptId)
+    } else {
+      expandType(node.conceptId)
     }
   } else if (node.nodeType === 'entity') {
     const entity = entities.value.find(e => e.name === node.name)
@@ -763,22 +792,32 @@ const handleGraphClick = (params: any) => {
   }
 }
 
-const foldConcept = (conceptId: string) => {
-  const newSet = new Set(foldedConceptIds.value)
-  newSet.add(conceptId)
-  foldedConceptIds.value = newSet
+/** 分解类型：类型节点消失，其实例原位出现；无实例的类型不可分解 */
+const expandType = (typeId: string) => {
+  const hasInstances = rawGraphData.value.nodes.some(
+    (n: any) => n.node_type === 'entity' && n.concept_id === typeId
+  )
+  if (!hasInstances) {
+    ElMessage.info('该类型暂无实体实例，无法展开')
+    return
+  }
+  const newSet = new Set(expandedTypeIds.value)
+  newSet.add(typeId)
+  expandedTypeIds.value = newSet
   renderGraph()
 }
 
-const unfoldConcept = (conceptId: string) => {
-  const newSet = new Set(foldedConceptIds.value)
-  newSet.delete(conceptId)
-  foldedConceptIds.value = newSet
+/** 收回类型：实例消失，恢复为类型节点 */
+const collapseType = (typeId: string) => {
+  const newSet = new Set(expandedTypeIds.value)
+  newSet.delete(typeId)
+  expandedTypeIds.value = newSet
   renderGraph()
 }
 
-const resetFold = () => {
-  foldedConceptIds.value = new Set()
+/** 收起全部实例：回到全类型态（等价刷新后的初始视图） */
+const resetExpand = () => {
+  expandedTypeIds.value = new Set()
   renderGraph()
 }
 

@@ -4,17 +4,23 @@
       <!-- 顶部 Header -->
       <div class="build-header">
         <div class="header-left">
-          <el-button @click="goBack" :icon="ArrowLeft">返回本体首页</el-button>
+          <el-button @click="goBack" :icon="ArrowLeft">返回</el-button>
           <h2>文档构建：{{ job?.name || '加载中...' }}</h2>
-          <el-tag :type="getStatusType(job?.status)" size="small" v-if="job">
-            {{ getStatusText(job?.status) }}
+          <el-tag v-if="job" :type="getStatusType(job.status)" size="small">
+            {{ getStatusText(job.status) }}
           </el-tag>
+          <el-tag v-if="job?.ontology_id" type="success" size="small">已生成本体</el-tag>
+        </div>
+        <div class="header-actions">
+          <el-button :icon="Refresh" @click="refreshAll">刷新</el-button>
+          <el-button @click="docCollapsed = !docCollapsed">
+            {{ docCollapsed ? '展开原文' : '收起原文' }}
+          </el-button>
         </div>
       </div>
 
-      <!-- 状态栏：真实进度时间线 + 步骤条 -->
+      <!-- 状态栏：运行进度 + 步骤条（含阶段耗时，可回看已确认步骤） -->
       <div class="status-bar" v-if="job">
-        <!-- 运行中：当前阶段文案 + 百分比（取自后端 progress，无假动画） -->
         <div class="status-progress" v-if="isRunning">
           <el-icon class="is-loading" :size="16"><Loading /></el-icon>
           <span class="status-text">{{ progressMessage }}</span>
@@ -25,33 +31,41 @@
             :show-text="false"
           />
           <span class="status-percent">{{ currentProgressPercent }}%</span>
-          <span class="status-hint">后台运行中，可随时离开</span>
         </div>
 
-        <!-- 阶段时间线：3 个 LLM 阶段的真实状态（progress_stages 驱动） -->
-        <div class="stage-timeline" v-if="hasStageTimeline">
-          <div
-            v-for="s in stageTimeline"
-            :key="s.stage"
-            :class="['stage-item', `stage-${s.status}`]"
-          >
-            <span class="stage-dot">
-              <el-icon v-if="s.status === 'running'" class="is-loading"><Loading /></el-icon>
-              <el-icon v-else-if="s.status === 'done'"><Check /></el-icon>
-              <el-icon v-else-if="s.status === 'failed'"><Close /></el-icon>
-              <span v-else class="stage-num">{{ s.stage }}</span>
-            </span>
-            <span class="stage-name">{{ s.name }}</span>
-            <span class="stage-time" v-if="s.elapsed">{{ s.elapsed }}</span>
-          </div>
-        </div>
-
-        <!-- 步骤指示（v3 四阶段） -->
         <el-steps :active="currentStep" finish-status="success" align-center class="build-steps">
-          <el-step title="配置" :status="getStepStatus(0)" />
-          <el-step title="实体类型" :status="getStepStatus(1)" />
-          <el-step title="实体+关系" :status="getStepStatus(2)" />
-          <el-step title="验证报告" :status="getStepStatus(3)" />
+          <el-step
+            title="配置"
+            :status="getStepStatus(0)"
+            :class="{ 'step-clickable': stepClickable(0) }"
+            @click="jumpToStep(0)"
+          >
+            <template #description>{{ stepDesc(0) }}</template>
+          </el-step>
+          <el-step
+            title="实体类型"
+            :status="getStepStatus(1)"
+            :class="{ 'step-clickable': stepClickable(1) }"
+            @click="jumpToStep(1)"
+          >
+            <template #description>{{ stepDesc(1) }}</template>
+          </el-step>
+          <el-step
+            title="实体+关系"
+            :status="getStepStatus(2)"
+            :class="{ 'step-clickable': stepClickable(2) }"
+            @click="jumpToStep(2)"
+          >
+            <template #description>{{ stepDesc(2) }}</template>
+          </el-step>
+          <el-step
+            title="验证报告"
+            :status="getStepStatus(3)"
+            :class="{ 'step-clickable': stepClickable(3) }"
+            @click="jumpToStep(3)"
+          >
+            <template #description>{{ stepDesc(3) }}</template>
+          </el-step>
         </el-steps>
       </div>
 
@@ -65,869 +79,1368 @@
         style="margin-bottom: 1rem"
       />
 
-      <!-- 步骤内容区 -->
-      <div class="step-content" v-loading="loading">
-        <!-- Step 0: 配置（粒度 + 阶段提示词 + 可选模板） -->
-        <div v-if="currentStep === 0" class="step-panel">
-          <el-card class="step-card">
-            <template #header>
-              <div class="step-header">
-                <h3>文档信息</h3>
-                <el-tag type="success" v-if="job?.meta_confirmed">配置已确认</el-tag>
-              </div>
+      <!-- 工作台：左原文 / 右审阅 -->
+      <div class="workspace" v-if="job" :style="workspaceGridStyle" :class="{ resizing: isResizing }">
+        <!-- 左：原文 + 出处高亮 -->
+        <aside class="doc-pane" v-if="!docCollapsed">
+          <div class="doc-pane-header">
+            <span class="doc-title">
+              <el-icon><Document /></el-icon>
+              {{ job.source_filename || '原文' }}
+            </span>
+            <span class="doc-chars">{{ job.char_count?.toLocaleString() }} 字</span>
+          </div>
+          <div class="doc-toolbar">
+            <el-input
+              v-model="docSearch"
+              size="small"
+              placeholder="搜索原文"
+              clearable
+              @keyup.enter="searchDoc"
+              @clear="searchDoc"
+            >
+              <template #prefix><el-icon><Search /></el-icon></template>
+            </el-input>
+            <el-button size="small" type="primary" plain @click="searchDoc">查找</el-button>
+          </div>
+          <div class="doc-nav" v-if="docMatches.length || highlightRange">
+            <el-button size="small" link :disabled="!docMatches.length" @click="gotoPrevMatch">
+              上一处
+            </el-button>
+            <span class="doc-match-count" v-if="docMatches.length">
+              {{ docMatchIndex + 1 }}/{{ docMatches.length }}
+            </span>
+            <el-button size="small" link :disabled="!docMatches.length" @click="gotoNextMatch">
+              下一处
+            </el-button>
+            <el-button size="small" link @click="clearHighlight">清除高亮</el-button>
+          </div>
+          <div class="doc-text">
+            <template v-if="docRenderParts.length">
+              <template v-for="(part, i) in docRenderParts" :key="i">
+                <span v-if="part.mark" :ref="setMarkRef" class="doc-hl">{{ part.text }}</span>
+                <span v-else>{{ part.text }}</span>
+              </template>
             </template>
-            <el-descriptions :column="2" border>
-              <el-descriptions-item label="本体名称">{{ job?.name }}</el-descriptions-item>
-              <el-descriptions-item label="源文档">{{ job?.source_filename }}</el-descriptions-item>
-              <el-descriptions-item label="字符数">{{ job?.char_count?.toLocaleString() }}</el-descriptions-item>
-              <el-descriptions-item label="创建时间">{{ formatTime(job?.create_time) }}</el-descriptions-item>
-              <el-descriptions-item label="描述" :span="2">{{ job?.description || '暂无描述' }}</el-descriptions-item>
-            </el-descriptions>
-          </el-card>
+            <el-empty v-else description="暂无原文内容" :image-size="80" />
+          </div>
+        </aside>
 
-          <el-card class="step-card">
-            <template #header>
-              <div class="step-header">
-                <h3>构建配置</h3>
-                <el-tag type="info" size="small">粒度 / 阶段提示词 / 可选模板</el-tag>
-              </div>
-            </template>
+        <!-- 拖拽分隔条：调整原文面板宽度（双击还原 380px） -->
+        <div
+          v-if="!docCollapsed"
+          class="doc-resizer"
+          @mousedown.prevent="startResize"
+          @dblclick="resetDocWidth"
+        ></div>
 
-            <div class="granularity-section">
-              <!-- 提取粒度 -->
-              <div class="granularity-row">
-                <span class="granularity-label">提取粒度：</span>
-                <el-radio-group v-model="metaForm.granularity" size="small" :disabled="job?.meta_confirmed">
-                  <el-radio-button value="coarse">粗（少量实体类型）</el-radio-button>
-                  <el-radio-button value="medium">中（适中）</el-radio-button>
-                  <el-radio-button value="fine">细（精细）</el-radio-button>
-                </el-radio-group>
-              </div>
-
-              <!-- 可选模板 -->
-              <div class="granularity-row template-row">
-                <span class="granularity-label">使用模板：</span>
-                <el-select
-                  v-model="metaForm.templateId"
-                  size="small"
-                  clearable
-                  placeholder="不使用模板"
-                  :disabled="job?.meta_confirmed"
-                  style="width: 240px"
-                >
-                  <el-option
-                    v-for="t in templates"
-                    :key="t.id"
-                    :label="`${t.name}${t.is_builtin ? '（内置）' : ''}`"
-                    :value="t.id"
-                  />
-                </el-select>
-                <el-radio-group
-                  v-if="metaForm.templateId"
-                  v-model="metaForm.templateMode"
-                  size="small"
-                  :disabled="job?.meta_confirmed"
-                  style="margin-left: 0.75rem"
-                >
-                  <el-radio-button value="skip_step1">跳过实体类型提取</el-radio-button>
-                  <el-radio-button value="soft_constraint">软约束（参考）</el-radio-button>
-                </el-radio-group>
-                <el-tag v-if="metaForm.templateId" size="small" type="info" style="margin-left: 0.5rem">
-                  {{ metaForm.templateMode === 'skip_step1' ? '直接使用模板实体类型' : 'AI 参考模板提取' }}
-                </el-tag>
-              </div>
-
-              <!-- 阶段提示词已移至各阶段开始时输入 -->
-              <el-alert
-                type="info"
-                :closable="false"
-                show-icon
-                style="margin-top: 0.5rem"
-              >
-                <template #default>
-                  <p>阶段提示词可在每个阶段开始前补充（可选）；阶段完成后也可填写修改意见，系统会携带意见自动返工重建。</p>
-                </template>
-              </el-alert>
-            </div>
-
-            <div class="step-actions">
-              <el-button @click="goBack">取消</el-button>
-              <el-button
-                type="primary"
-                :loading="submitting"
-                :disabled="job?.meta_confirmed"
-                @click="doConfirmMeta"
-              >
-                {{ job?.meta_confirmed ? '已确认' : '确认配置' }}
-              </el-button>
-            </div>
-          </el-card>
-        </div>
-
-        <!-- Step 1: 实体类型提取（EntityType 层级 + property_schema + 类型间关系） -->
-        <div v-if="currentStep === 1" class="step-panel">
-          <el-card class="step-card">
-            <template #header>
-              <div class="step-header">
-                <div class="step-header-title">
-                  <h3>实体类型提取</h3>
-                  <el-tag type="info" size="small">
-                    {{ isExtractingEntityTypes
-                      ? 'AI 正在提取，可实时编辑已生成部分'
-                      : (entityTypes.length ? 'AI 已提取以下实体类型，可编辑确认' : '可启动 AI 提取') }}
-                  </el-tag>
+        <!-- 右：分步审阅 -->
+        <section class="review-pane" v-loading="loading">
+          <!-- Step 0：配置 + 元模型审阅 -->
+          <div v-if="displayStep === 0" class="step-panel">
+            <el-card class="step-card">
+              <template #header>
+                <div class="step-header">
+                  <div class="step-header-title">
+                    <h3>文档信息</h3>
+                    <el-tag v-if="job?.meta_confirmed" type="success" size="small">配置已确认</el-tag>
+                  </div>
                 </div>
-                <el-button
-                  v-if="entityTypes.length || job?.step1_confirmed"
-                  size="small"
-                  type="warning"
-                  plain
-                  :icon="Refresh"
-                  :disabled="isRunning || submitting"
-                  @click="openRework(1)"
-                >
-                  返工重建
-                </el-button>
+              </template>
+              <el-descriptions :column="2" border>
+                <el-descriptions-item label="本体名称">{{ job.name }}</el-descriptions-item>
+                <el-descriptions-item label="源文档">{{ job.source_filename }}</el-descriptions-item>
+                <el-descriptions-item label="字符数">{{ job.char_count?.toLocaleString() }}</el-descriptions-item>
+                <el-descriptions-item label="创建时间">{{ formatTime(job.create_time) }}</el-descriptions-item>
+                <el-descriptions-item label="描述" :span="2">{{ job.description || '暂无描述' }}</el-descriptions-item>
+              </el-descriptions>
+            </el-card>
+
+            <el-card class="step-card">
+              <template #header>
+                <div class="step-header">
+                  <div class="step-header-title">
+                    <h3>构建配置</h3>
+                    <el-tag type="info" size="small">粒度 / 模板</el-tag>
+                  </div>
+                </div>
+              </template>
+              <div class="granularity-section">
+                <div class="granularity-row">
+                  <span class="granularity-label">提取粒度：</span>
+                  <el-radio-group v-model="metaForm.granularity" size="small" :disabled="job?.meta_confirmed">
+                    <el-radio-button value="coarse">粗（少量实体类型）</el-radio-button>
+                    <el-radio-button value="medium">中（适中）</el-radio-button>
+                    <el-radio-button value="fine">细（精细）</el-radio-button>
+                  </el-radio-group>
+                </div>
+                <div class="granularity-row template-row">
+                  <span class="granularity-label">使用模板：</span>
+                  <el-select
+                    v-model="metaForm.templateId"
+                    size="small"
+                    clearable
+                    placeholder="不使用模板"
+                    :disabled="job?.meta_confirmed"
+                    style="width: 240px"
+                  >
+                    <el-option
+                      v-for="t in templates"
+                      :key="t.id"
+                      :label="`${t.name}${t.is_builtin ? '（内置）' : ''}`"
+                      :value="t.id"
+                    />
+                  </el-select>
+                  <el-radio-group
+                    v-if="metaForm.templateId"
+                    v-model="metaForm.templateMode"
+                    size="small"
+                    :disabled="job?.meta_confirmed"
+                    style="margin-left: 0.5rem"
+                  >
+                    <el-radio-button value="skip_step1">跳过实体类型提取</el-radio-button>
+                    <el-radio-button value="soft_constraint">软约束（参考）</el-radio-button>
+                  </el-radio-group>
+                </div>
               </div>
-            </template>
+            </el-card>
 
-            <!-- 阶段提示词：开始前输入，注入本次 LLM 提取 -->
-            <div v-if="!isExtractingEntityTypes" class="stage-hint-box">
-              <el-input
-                v-model="stageHints[1]"
-                type="textarea"
-                :rows="2"
-                :placeholder="stageHintPlaceholders[1]"
-                :disabled="isRunning"
-              >
-                <template #prepend>{{ stageHintLabels[1] }}</template>
-              </el-input>
-              <div class="stage-hint-tip">提示词将注入 AI 提取过程；阶段完成后还可填写修改意见触发自动返工。</div>
-            </div>
-
-            <!-- 分批提取中途失败，可断点续作 -->
-            <div v-if="isStep1Resumable" class="extract-section">
-              <el-alert
-                :title="`第 ${job.step1_failed_batch + 1}/${job.step1_batches_total} 批提取失败，已成功 ${job.step1_batches_done} 批`"
-                type="warning"
-                :closable="false"
-                show-icon
-              >
-                <template #default>
-                  <p>{{ job?.error_message || '部分批次提取失败' }}</p>
-                  <p v-if="isEmptyResponseError" class="llm-hint">LLM 服务端偶发无响应，请点击"继续提取"重试，无需修改任何配置。</p>
-                  <p>点击"继续提取实体类型"从失败批次续跑，已成功批次不会重跑。</p>
-                </template>
-              </el-alert>
-              <div class="step-actions">
-                <el-button type="primary" :disabled="isRunning" @click="doExtractEntityTypes">
-                  继续提取实体类型
-                </el-button>
+            <div v-if="!job?.meta_confirmed" class="stage-input-area">
+              <div class="stage-input-wrapper">
+                <el-input
+                  v-model="stageNote0"
+                  type="textarea"
+                  :rows="2"
+                  placeholder="补充说明（可选）"
+                />
+                <div class="stage-input-actions">
+                  <el-button
+                    type="primary"
+                    :loading="submitting"
+                    :disabled="job?.meta_confirmed"
+                    @click="doConfirmMeta"
+                  >
+                    确认配置
+                  </el-button>
+                </div>
               </div>
             </div>
+          </div>
 
-            <!-- 未开始提取 -->
-            <div v-else-if="!isExtractingEntityTypes && !entityTypes.length" class="extract-section">
-              <el-alert
-                title="点击按钮启动实体类型提取"
-                type="info"
-                :closable="false"
-                show-icon
+          <!-- Step 1：实体类型审阅 -->
+          <div v-else-if="displayStep === 1" class="step-panel">
+            <el-card class="step-card">
+              <template #header>
+                <div class="step-header">
+                  <div class="step-header-title">
+                    <h3>实体类型提取</h3>
+                    <el-tag type="info" size="small">
+                      {{ isExtractingEntityTypes
+                        ? 'AI 正在提取，可实时审阅已生成部分'
+                        : (entityTypes.length ? 'AI 已提取，请逐项审阅后确认' : '可启动 AI 提取') }}
+                    </el-tag>
+                  </div>
+                  <el-button
+                    v-if="entityTypes.length || job?.step1_confirmed"
+                    size="small"
+                    type="warning"
+                    plain
+                    :icon="Refresh"
+                    :disabled="isRunning || submitting"
+                    @click="openRework(1)"
+                  >
+                    重新生成
+                  </el-button>
+                </div>
+              </template>
+
+              <!-- 初始类型约束：AI 预生成的类型骨架，提取前可编辑调整 -->
+              <div
+                v-if="!isExtractingEntityTypes && !isStep1Resumable && !entityTypes.length && !skipStep1Mode"
+                class="constraint-block"
               >
-                <template #default>
-                  <p>AI 将从文档提取 EntityType 层级（含父类型 parent_entity_type_name）、属性骨架 property_schema，以及类型间关系 EntityTypeRelation。</p>
-                  <p v-if="metaForm.templateId && metaForm.templateMode === 'skip_step1'" class="llm-hint">
-                    已选择模板「{{ selectedTemplateName }}」并设为"跳过实体类型提取"，将直接使用模板中的实体类型，无需调用 LLM。
-                  </p>
-                  <p v-else-if="metaForm.templateId" class="llm-hint">
-                    已选择模板「{{ selectedTemplateName }}」作为软约束，AI 提取时会参考模板。
-                  </p>
-                </template>
-              </el-alert>
-              <div class="step-actions">
-                <el-button type="primary" :disabled="isRunning" @click="doExtractEntityTypes">
-                  {{ (metaForm.templateId && metaForm.templateMode === 'skip_step1') ? '从模板加载实体类型' : '开始提取实体类型' }}
-                </el-button>
-              </div>
-            </div>
-
-            <!-- 提取中/已完成审核 -->
-            <div v-else class="entity-types-section">
-              <el-alert
-                v-if="isExtractingEntityTypes"
-                :title="batch1ProgressText"
-                type="info"
-                :closable="false"
-                show-icon
-                style="margin-bottom: 1rem"
-              />
-              <el-alert
-                v-else
-                title="实体类型提取完成，请审核确认"
-                type="success"
-                :closable="false"
-                show-icon
-                style="margin-bottom: 1rem"
-              />
-
-              <!-- 实体类型树（按 parent_entity_type_name 层级） -->
-              <div class="entity-types-block">
-                <h4>实体类型层级（{{ entityTypes.length }} 个）</h4>
-                <el-tree
-                  :data="entityTypeTree"
-                  node-key="name"
-                  default-expand-all
-                  :expand-on-click-node="false"
-                  :props="{ label: 'name', children: 'children' }"
-                >
-                  <template #default="{ data }">
-                    <div class="et-tree-node">
-                      <span class="et-tree-dot" :style="{ background: data.color || '#5470c6' }"></span>
-                      <span class="et-tree-name">{{ data.name || '(未命名)' }}</span>
-                      <el-tag size="small" type="info" v-if="data.parent_entity_type_name">
-                        父：{{ data.parent_entity_type_name }}
-                      </el-tag>
-                      <span class="et-tree-desc" v-if="data.description">{{ data.description }}</span>
-                      <el-button size="small" link type="danger" @click.stop="removeEntityType(data)">
+                <div class="review-block-head">
+                  <h4>初始类型约束 <el-text type="info" size="small">AI 预生成，提取前可调整</el-text></h4>
+                  <el-button size="small" link @click="constraintOpen = !constraintOpen">
+                    {{ constraintOpen ? '收起' : '编辑' }}
+                  </el-button>
+                </div>
+                <template v-if="constraintOpen">
+                  <div class="meta-block">
+                    <h4>实体类型（{{ constraintEntityTypes.length }}）</h4>
+                    <div v-for="(t, idx) in constraintEntityTypes" :key="idx" class="meta-type-row">
+                      <span class="meta-index">{{ idx + 1 }}</span>
+                      <el-input v-model="t.name" size="small" placeholder="类型名" style="width: 220px" />
+                      <el-color-picker v-model="t.color" size="small" />
+                      <el-button
+                        size="small"
+                        link
+                        type="danger"
+                        :icon="Delete"
+                        @click="constraintEntityTypes.splice(idx, 1)"
+                      >
                         删除
                       </el-button>
                     </div>
-                  </template>
-                </el-tree>
-              </div>
-
-              <!-- 属性骨架表格 -->
-              <div class="property-schema-block">
-                <h4>属性骨架（property_schema）</h4>
-                <el-table :data="entityTypes" stripe size="small" style="width: 100%">
-                  <el-table-column prop="name" label="类型名" width="140">
-                    <template #default="scope">
-                      <el-input v-model="scope.row.name" size="small" />
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="color" label="颜色" width="70">
-                    <template #default="scope">
-                      <el-color-picker v-model="scope.row.color" size="small" />
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="parent_entity_type_name" label="父类型" width="140">
-                    <template #default="scope">
-                      <el-select
-                        v-model="scope.row.parent_entity_type_name"
+                    <el-button
+                      size="small"
+                      :icon="Plus"
+                      @click="constraintEntityTypes.push({ name: '', color: '#5470c6' })"
+                    >
+                      添加实体类型
+                    </el-button>
+                  </div>
+                  <div class="meta-block">
+                    <h4>关系类型（{{ constraintRelationTypes.length }}）</h4>
+                    <div class="meta-tags">
+                      <el-tag
+                        v-for="(r, idx) in constraintRelationTypes"
+                        :key="idx"
+                        closable
                         size="small"
-                        clearable
-                        placeholder="顶层类型"
+                        effect="plain"
+                        @close="constraintRelationTypes.splice(idx, 1)"
                       >
-                        <el-option
-                          v-for="t in entityTypes.filter(x => x.name !== scope.row.name)"
-                          :key="t.name"
-                          :label="t.name"
-                          :value="t.name"
-                        />
-                      </el-select>
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="description" label="描述" min-width="180">
-                    <template #default="scope">
-                      <el-input v-model="scope.row.description" size="small" />
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="property_schema" label="属性骨架（JSON）" min-width="260">
-                    <template #default="scope">
+                        {{ r.name || '未命名' }}
+                      </el-tag>
+                    </div>
+                    <div class="meta-add-row">
                       <el-input
-                        v-model="scope.row.propertySchemaStr"
+                        v-model="newConstraintRelationType"
                         size="small"
-                        type="textarea"
-                        :rows="2"
-                        placeholder='[{"name":"属性名","category":"metric","unit":"%"}]'
+                        placeholder="新关系类型"
+                        style="width: 160px"
+                        @keyup.enter="addConstraintRelationType"
                       />
-                    </template>
-                  </el-table-column>
-                  <el-table-column label="操作" width="70" fixed="right">
-                    <template #default="scope">
-                      <el-button size="small" link type="danger" @click="entityTypes.splice(scope.$index, 1)">
-                        删除
-                      </el-button>
-                    </template>
-                  </el-table-column>
-                </el-table>
-                <div class="step-actions" style="margin-top: 0.5rem">
-                  <el-button size="small" @click="addEntityType">
-                    + 添加实体类型
-                  </el-button>
-                </div>
+                      <el-button size="small" :icon="Plus" @click="addConstraintRelationType">添加</el-button>
+                    </div>
+                  </div>
+                </template>
               </div>
 
-              <!-- 类型间关系列表 -->
-              <div class="entity-type-relations-block">
-                <h4>类型间关系（{{ entityTypeRelations.length }} 条）</h4>
-                <el-table :data="entityTypeRelations" stripe size="small" style="width: 100%">
-                  <el-table-column prop="source_type" label="源类型" width="160">
-                    <template #default="scope">
-                      <el-select v-model="scope.row.source_type" size="small" filterable>
-                        <el-option
-                          v-for="t in entityTypes"
-                          :key="t.name"
-                          :label="t.name"
-                          :value="t.name"
-                        />
-                      </el-select>
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="relation_type" label="关系类型" width="160">
-                    <template #default="scope">
-                      <el-input v-model="scope.row.relation_type" size="small" placeholder="如：包含/属于" />
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="target_type" label="目标类型" width="160">
-                    <template #default="scope">
-                      <el-select v-model="scope.row.target_type" size="small" filterable>
-                        <el-option
-                          v-for="t in entityTypes"
-                          :key="t.name"
-                          :label="t.name"
-                          :value="t.name"
-                        />
-                      </el-select>
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="description" label="说明" min-width="200">
-                    <template #default="scope">
-                      <el-input v-model="scope.row.description" size="small" />
-                    </template>
-                  </el-table-column>
-                  <el-table-column label="操作" width="70" fixed="right">
-                    <template #default="scope">
-                      <el-button size="small" link type="danger" @click="entityTypeRelations.splice(scope.$index, 1)">
-                        删除
-                      </el-button>
-                    </template>
-                  </el-table-column>
-                </el-table>
-                <div class="step-actions" style="margin-top: 0.5rem">
-                  <el-button size="small" @click="entityTypeRelations.push({ source_type: entityTypes[0]?.name || '', relation_type: '', target_type: '', description: '' })">
-                    + 添加类型间关系
-                  </el-button>
-                </div>
-              </div>
-
-              <!-- 阶段完成后的修改意见：填写后确认会先携带意见自动返工 -->
-              <div v-if="aiStep1Done && !job?.step1_confirmed" class="stage-feedback-box">
-                <el-input
-                  v-model="stageFeedback[1]"
-                  type="textarea"
-                  :rows="2"
-                  :placeholder="`${stageFeedbackLabels[1]}（填写后确认将自动返工重建）`"
-                />
-              </div>
-
-              <div class="step-actions">
-                <el-button @click="goBack">取消</el-button>
-                <el-button
-                  type="primary"
-                  :loading="submitting"
-                  :disabled="!aiStep1Done || job?.step1_confirmed"
-                  @click="confirmStageWithFeedback(1, doConfirmEntityTypes)"
-                >
-                  {{ job?.step1_confirmed ? '已确认' : (aiStep1Done ? '确认实体类型' : 'AI 提取中（可先编辑已生成部分）...') }}
-                </el-button>
-              </div>
-            </div>
-          </el-card>
-        </div>
-
-        <!-- Step 2: 实体 + 关系提取 -->
-        <div v-if="currentStep === 2" class="step-panel">
-          <el-card class="step-card">
-            <template #header>
-              <div class="step-header">
-                <div class="step-header-title">
-                  <h3>实体 + 关系提取</h3>
-                  <el-tag type="info" size="small">
-                    {{ isExtractingEntities
-                      ? 'AI 正在提取，可实时编辑已生成部分'
-                      : (entities.length || relations.length ? 'AI 已提取以下实体与关系，可编辑确认' : '可启动 AI 提取') }}
-                  </el-tag>
-                </div>
-                <el-button
-                  v-if="entities.length || relations.length || job?.step2_confirmed"
-                  size="small"
+              <div v-if="isStep1Resumable" class="resume-section">
+                <el-alert
+                  :title="`第 ${job.step1_failed_batch + 1}/${job.step1_batches_total} 批提取失败，已成功 ${job.step1_batches_done} 批`"
                   type="warning"
-                  plain
-                  :icon="Refresh"
-                  :disabled="isRunning || submitting"
-                  @click="openRework(2)"
+                  :closable="false"
+                  show-icon
                 >
-                  返工重建
-                </el-button>
-              </div>
-            </template>
-
-            <!-- 阶段提示词：开始前输入，注入本次 LLM 提取 -->
-            <div v-if="!isExtractingEntities" class="stage-hint-box">
-              <el-input
-                v-model="stageHints[2]"
-                type="textarea"
-                :rows="2"
-                :placeholder="stageHintPlaceholders[2]"
-                :disabled="isRunning"
-              >
-                <template #prepend>{{ stageHintLabels[2] }}</template>
-              </el-input>
-              <div class="stage-hint-tip">提示词将注入 AI 提取过程；阶段完成后还可填写修改意见触发自动返工。</div>
-            </div>
-
-            <!-- 提取中途失败，可断点续作 -->
-            <div v-if="isStep2Resumable" class="build-section">
-              <el-alert
-                :title="`第 ${job.step2_failed_batch + 1}/${job.step2_batches_total} 批提取失败，已成功 ${job.step2_batches_done} 批`"
-                type="warning"
-                :closable="false"
-                show-icon
-              >
-                <template #default>
-                  <p>{{ job?.error_message || '部分批次提取失败' }}</p>
-                  <p v-if="isEmptyResponseError" class="llm-hint">LLM 服务端偶发无响应，请点击"继续提取"重试，无需修改任何配置。</p>
-                  <p>点击"继续提取"从失败批次续跑，已成功批次不会重跑。</p>
-                </template>
-              </el-alert>
-              <div class="step-actions">
-                <el-button type="primary" :disabled="isRunning" @click="doExtractEntities">
-                  继续提取
-                </el-button>
-              </div>
-            </div>
-
-            <!-- 未开始提取 -->
-            <div v-else-if="!isExtractingEntities && !entities.length && !relations.length" class="build-section">
-              <el-alert
-                title="点击按钮启动实体+关系提取"
-                type="info"
-                :closable="false"
-                show-icon
-              >
-                <template #default>
-                  <p>AI 将基于已确认的实体类型，从文档提取具体 Entity 实例（按 property_schema 填充属性）和 Relation 实例间关系。</p>
-                  <p>长文档会分批提取，每批完成后实时显示在下方表格中。</p>
-                </template>
-              </el-alert>
-              <div class="step-actions">
-                <el-button type="primary" :disabled="isRunning" @click="doExtractEntities">
-                  开始提取
-                </el-button>
-              </div>
-            </div>
-
-            <!-- 提取中/已完成审核 -->
-            <div v-else class="structure-section">
-              <el-alert
-                v-if="isExtractingEntities"
-                :title="batch2ProgressText"
-                type="info"
-                :closable="false"
-                show-icon
-                style="margin-bottom: 1rem"
-              />
-              <el-alert
-                v-else
-                title="实体+关系提取完成，请审核确认"
-                type="success"
-                :closable="false"
-                show-icon
-                style="margin-bottom: 1rem"
-              />
-
-              <!-- 实体列表（按类型分组 el-collapse） -->
-              <div class="entity-view-controls">
-                <h4 style="margin: 0">实体列表（{{ entities.length }} 个，{{ entityTypeGroups.length }} 个类型）</h4>
-                <el-radio-group v-model="entityViewMode" size="small">
-                  <el-radio-button value="grouped">按类型分组</el-radio-button>
-                  <el-radio-button value="flat">平铺表格</el-radio-button>
-                </el-radio-group>
-                <el-button
-                  v-if="entityViewMode === 'grouped'"
-                  size="small"
-                  link
-                  @click="toggleAllEntityTypes"
-                >
-                  {{ allEntityTypesExpanded ? '全部收起' : '全部展开' }}
-                </el-button>
+                  <template #default>
+                    <p>{{ job?.error_message || '部分批次提取失败' }}</p>
+                    <p v-if="isEmptyResponseError">LLM 服务端偶发无响应，请点击"继续提取"重试，无需修改任何配置。</p>
+                    <p>点击"继续提取实体类型"从失败批次续跑，已成功批次不会重跑。</p>
+                  </template>
+                </el-alert>
+                <div class="step-actions">
+                  <el-button type="primary" :disabled="isRunning" @click="doExtractEntityTypes">
+                    继续提取实体类型
+                  </el-button>
+                </div>
               </div>
 
-              <!-- 分组视图 -->
-              <div v-if="entityViewMode === 'grouped'" class="entity-grouped-view">
-                <el-collapse v-model="expandedEntityTypeNames">
-                  <el-collapse-item
-                    v-for="g in entityTypeGroups"
-                    :key="g.typeName"
-                    :name="g.typeName"
+              <div v-else-if="!isExtractingEntityTypes && !entityTypes.length" class="start-section">
+                <el-alert title="AI 将提取实体类型层级、属性骨架与类型间关系" type="info" :closable="false" show-icon>
+                  <template #default>
+                    <p v-if="metaForm.templateId && metaForm.templateMode === 'skip_step1'" class="llm-hint">
+                      已选择模板「{{ selectedTemplateName }}」并设为"跳过实体类型提取"，将直接使用模板中的实体类型。
+                    </p>
+                    <p v-else-if="metaForm.templateId" class="llm-hint">
+                      已选择模板「{{ selectedTemplateName }}」作为软约束，AI 提取时会参考模板。
+                    </p>
+                  </template>
+                </el-alert>
+                <div class="step-actions">
+                  <el-button type="primary" :disabled="isRunning" @click="doExtractEntityTypes">
+                    {{ (metaForm.templateId && metaForm.templateMode === 'skip_step1') ? '从模板加载实体类型' : '开始提取实体类型' }}
+                  </el-button>
+                </div>
+              </div>
+
+              <div v-else class="review-section">
+                <el-alert
+                  v-if="isExtractingEntityTypes"
+                  :title="batch1ProgressText"
+                  type="info"
+                  :closable="false"
+                  show-icon
+                  style="margin-bottom: 1rem"
+                />
+                <el-alert
+                  v-else
+                  :title="`实体类型提取完成：${entityTypes.length} 个类型、${entityTypeRelations.length} 条类型间关系`"
+                  type="success"
+                  :closable="false"
+                  show-icon
+                  style="margin-bottom: 1rem"
+                />
+
+                <div class="review-bar">
+                  <span class="review-label">审阅进度</span>
+                  <el-progress
+                    :percentage="step1ReviewStats.percent"
+                    :stroke-width="8"
+                    :color="reviewBarColor"
+                    style="flex: 1"
+                  />
+                  <span class="review-count">
+                    待审 {{ step1PendingCount }} · 通过 {{ step1ApprovedCount }} · 拒绝 {{ step1RejectedCount }}
+                  </span>
+                </div>
+
+                <div class="review-block">
+                  <div class="review-block-head">
+                    <h4>实体类型层级（{{ keptEntityTypes.length }} 个）</h4>
+                    <el-button
+                      v-if="entityTypeTree.length"
+                      size="small"
+                      link
+                      @click="toggleAllTypeTree"
+                    >
+                      {{ allTypeTreeExpanded ? '全部收起' : '全部展开' }}
+                    </el-button>
+                  </div>
+
+                  <!-- 批量操作栏：勾选树节点后出现 -->
+                  <div v-if="checkedTypeCount" class="batch-bar">
+                    <span class="batch-label">已勾选 {{ checkedTypeCount }} 项</span>
+                    <el-button size="small" type="success" plain @click="batchApproveTypes">批量通过</el-button>
+                    <el-button size="small" type="danger" plain @click="batchRejectTypes">批量拒绝</el-button>
+                    <el-button size="small" link @click="clearTypeChecks">取消勾选</el-button>
+                  </div>
+
+                  <el-tree
+                    ref="typeTreeRef"
+                    :data="entityTypeTree"
+                    node-key="name"
+                    show-checkbox
+                    :expand-on-click-node="false"
+                    :props="{ label: 'name', children: 'children' }"
+                    @check="onTypeTreeCheck"
                   >
-                    <template #title>
-                      <span class="concept-dot" :style="{ background: g.color || '#5470c6' }"></span>
-                      <span class="concept-name">{{ g.typeName }}</span>
-                      <el-tag size="small" type="info">{{ g.entities.length }} 个实体</el-tag>
-                    </template>
-                    <el-table :data="g.entities" stripe size="small" style="width: 100%">
-                      <el-table-column prop="name" label="名称" width="160">
-                        <template #default="scope">
-                          <el-input v-model="scope.row.name" size="small" />
-                        </template>
-                      </el-table-column>
-                      <el-table-column prop="properties" label="属性（JSON）" min-width="260">
-                        <template #default="scope">
-                          <el-input
-                            v-model="scope.row.propertiesStr"
+                    <template #default="{ data }">
+                      <div class="et-tree-node">
+                        <span class="et-tree-dot" :style="{ background: data.color || '#5470c6' }"></span>
+                        <span class="et-tree-name">{{ data.name || '(未命名)' }}</span>
+                        <el-tag v-if="data.parent_entity_type_name" size="small" type="info">
+                          父：{{ data.parent_entity_type_name }}
+                        </el-tag>
+                        <el-tag v-if="data.property_schema?.length" size="small" type="success" effect="plain">
+                          {{ data.property_schema.length }} 属性
+                        </el-tag>
+                        <el-tooltip
+                          v-if="data.description"
+                          :content="data.description"
+                          placement="top"
+                          :show-after="300"
+                        >
+                          <span class="et-tree-desc">{{ data.description }}</span>
+                        </el-tooltip>
+                        <el-tag v-if="data.review === 'approved'" size="small" type="success" effect="plain">
+                          已通过
+                        </el-tag>
+                        <span class="et-tree-actions">
+                          <el-button
+                            v-if="data.review !== 'approved'"
                             size="small"
-                            type="textarea"
-                            :rows="2"
-                            placeholder='[{"name":"属性名","value":"值","category":"metric","unit":"%"}]'
-                          />
-                        </template>
-                      </el-table-column>
-                      <el-table-column prop="source_snippet" label="原文出处" min-width="160">
-                        <template #default="scope">
-                          <el-input
-                            v-model="scope.row.source_snippet"
-                            size="small"
-                            type="textarea"
-                            :rows="2"
-                            placeholder="从原文摘录"
-                          />
-                        </template>
-                      </el-table-column>
-                      <el-table-column label="操作" width="70">
-                        <template #default="scope">
-                          <el-button size="small" link type="danger" @click="removeEntityFromGroup(g, scope.$index)">
-                            删除
+                            link
+                            type="success"
+                            :icon="Check"
+                            @click.stop="approveItem(data)"
+                          >
+                            通过
                           </el-button>
-                        </template>
-                      </el-table-column>
-                    </el-table>
-                    <el-button size="small" @click="addEntityToType(g.typeName)" style="margin-top: 0.5rem">
-                      + 添加实体到此类型
-                    </el-button>
-                  </el-collapse-item>
-                </el-collapse>
-              </div>
+                          <el-button size="small" link type="danger" :icon="Close" @click.stop="rejectItem(data)">
+                            拒绝
+                          </el-button>
+                          <el-dropdown trigger="click" @command="(cmd: string) => onTypeAction(cmd, data)">
+                            <el-button size="small" link :icon="MoreFilled" />
+                            <template #dropdown>
+                              <el-dropdown-menu>
+                                <el-dropdown-item
+                                  v-if="data.review === 'approved'"
+                                  command="unapprove"
+                                  :icon="RefreshLeft"
+                                >
+                                  撤销通过
+                                </el-dropdown-item>
+                                <el-dropdown-item command="edit" :icon="Edit">编辑</el-dropdown-item>
+                                <el-dropdown-item command="delete" :icon="Delete" divided>删除</el-dropdown-item>
+                              </el-dropdown-menu>
+                            </template>
+                          </el-dropdown>
+                        </span>
+                      </div>
+                    </template>
+                  </el-tree>
+                  <el-button size="small" :icon="Plus" style="margin-top: 0.5rem" @click="openTypeEditor()">
+                    添加实体类型
+                  </el-button>
+                </div>
 
-              <!-- 平铺视图 -->
-              <el-table v-else :data="entities" stripe style="width: 100%; margin-bottom: 1.5rem">
-                <el-table-column prop="name" label="名称" width="140">
-                  <template #default="scope">
-                    <el-input v-model="scope.row.name" size="small" />
-                  </template>
-                </el-table-column>
-                <el-table-column prop="instance_of" label="所属类型" width="160">
-                  <template #default="scope">
-                    <el-select v-model="scope.row.instance_of" size="small" filterable>
-                      <el-option
-                        v-for="t in entityTypes"
-                        :key="t.name"
-                        :label="t.name"
-                        :value="t.name"
-                      />
-                    </el-select>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="properties" label="属性（JSON）" min-width="260">
-                  <template #default="scope">
-                    <el-input
-                      v-model="scope.row.propertiesStr"
-                      size="small"
-                      type="textarea"
-                      :rows="2"
-                      placeholder='[{"name":"属性名","value":"值","category":"metric","unit":"%"}]'
-                    />
-                  </template>
-                </el-table-column>
-                <el-table-column prop="source_snippet" label="原文出处" min-width="180">
-                  <template #default="scope">
-                    <el-input
-                      v-model="scope.row.source_snippet"
-                      size="small"
-                      type="textarea"
-                      :rows="2"
-                      placeholder="从原文摘录"
-                    />
-                  </template>
-                </el-table-column>
-                <el-table-column label="操作" width="70" fixed="right">
-                  <template #default="scope">
-                    <el-button size="small" link type="danger" @click="entities.splice(scope.$index, 1)">
-                      删除
-                    </el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
+                <div class="review-block">
+                  <h4>类型间关系（{{ keptEntityTypeRelations.length }} 条）</h4>
+                  <el-table :data="keptEntityTypeRelations" stripe size="small" style="width: 100%">
+                    <el-table-column prop="source_type" label="源类型" width="160" />
+                    <el-table-column prop="relation_type" label="关系类型" width="150" />
+                    <el-table-column prop="target_type" label="目标类型" width="160" />
+                    <el-table-column prop="description" label="说明" min-width="160" show-overflow-tooltip />
+                    <el-table-column label="状态" width="90">
+                      <template #default="scope">
+                        <el-tag
+                          :type="scope.row.review === 'approved' ? 'success' : 'warning'"
+                          size="small"
+                          effect="plain"
+                        >
+                          {{ scope.row.review === 'approved' ? '已通过' : '待审' }}
+                        </el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="200" fixed="right">
+                      <template #default="scope">
+                        <el-button
+                          v-if="scope.row.review !== 'approved'"
+                          size="small"
+                          link
+                          type="success"
+                          :icon="Check"
+                          @click="approveItem(scope.row)"
+                        >
+                          通过
+                        </el-button>
+                        <el-button v-else size="small" link @click="unapproveItem(scope.row)">撤销</el-button>
+                        <el-button size="small" link :icon="Edit" @click="openETRelationEditor(scope.row)">编辑</el-button>
+                        <el-button size="small" link type="danger" :icon="Close" @click="rejectItem(scope.row)">
+                          拒绝
+                        </el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                  <el-button size="small" :icon="Plus" style="margin-top: 0.5rem" @click="openETRelationEditor()">
+                    添加类型间关系
+                  </el-button>
+                </div>
 
-              <div v-if="entityViewMode === 'flat'" class="step-actions" style="margin-top: 0">
-                <el-button size="small" @click="entities.push({ name: '', instance_of: entityTypes[0]?.name || '', propertiesStr: '[]', source_snippet: '' })">
-                  + 添加实体
-                </el-button>
-              </div>
-
-              <!-- 关系列表 -->
-              <h4 style="margin-top: 1.5rem">关系列表（{{ relations.length }} 条）</h4>
-              <el-table :data="relations" stripe size="small" style="width: 100%; margin-bottom: 1rem">
-                <el-table-column prop="source" label="源实体" width="160">
-                  <template #default="scope">
-                    <el-select v-model="scope.row.source" size="small" filterable>
-                      <el-option
-                        v-for="e in entities"
-                        :key="e.name"
-                        :label="e.name"
-                        :value="e.name"
-                      />
-                    </el-select>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="relation_type" label="关系类型" width="140">
-                  <template #default="scope">
-                    <el-input v-model="scope.row.relation_type" size="small" placeholder="如：投资/任职" />
-                  </template>
-                </el-table-column>
-                <el-table-column prop="target" label="目标实体" width="160">
-                  <template #default="scope">
-                    <el-select v-model="scope.row.target" size="small" filterable>
-                      <el-option
-                        v-for="e in entities"
-                        :key="e.name"
-                        :label="e.name"
-                        :value="e.name"
-                      />
-                    </el-select>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="weight" label="权重" width="100">
-                  <template #default="scope">
-                    <el-input-number v-model="scope.row.weight" size="small" :min="0" :max="1" :step="0.1" controls-position="right" />
-                  </template>
-                </el-table-column>
-                <el-table-column prop="source_snippet" label="原文出处" min-width="180">
-                  <template #default="scope">
-                    <el-input
-                      v-model="scope.row.source_snippet"
-                      size="small"
-                      type="textarea"
-                      :rows="2"
-                      placeholder="从原文摘录"
-                    />
-                  </template>
-                </el-table-column>
-                <el-table-column label="操作" width="70" fixed="right">
-                  <template #default="scope">
-                    <el-button size="small" link type="danger" @click="relations.splice(scope.$index, 1)">
-                      删除
-                    </el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
-              <div class="step-actions" style="margin-top: 0">
-                <el-button size="small" @click="relations.push({ source: entities[0]?.name || '', target: '', relation_type: '', weight: 1.0, source_snippet: '' })">
-                  + 添加关系
-                </el-button>
-              </div>
-
-              <!-- 阶段完成后的修改意见：填写后确认会先携带意见自动返工 -->
-              <div v-if="aiStep2Done && !job?.step2_confirmed" class="stage-feedback-box">
-                <el-input
-                  v-model="stageFeedback[2]"
-                  type="textarea"
-                  :rows="2"
-                  :placeholder="`${stageFeedbackLabels[2]}（填写后确认将自动返工重建）`"
-                />
-              </div>
-
-              <div class="step-actions">
-                <el-button @click="goBack">取消</el-button>
-                <el-button
-                  type="primary"
-                  :loading="submitting"
-                  :disabled="!aiStep2Done || job?.step2_confirmed"
-                  @click="confirmStageWithFeedback(2, doConfirmEntities)"
+                <div
+                  v-if="rejectedEntityTypes.length || rejectedEntityTypeRelations.length"
+                  class="rejected-block"
                 >
-                  {{ job?.step2_confirmed ? '已确认' : (aiStep2Done ? '确认实体+关系' : 'AI 提取中（可先编辑已生成部分）...') }}
-                </el-button>
-              </div>
-            </div>
-          </el-card>
-        </div>
-
-        <!-- Step 3: 验证 + 报告 -->
-        <div v-if="currentStep === 3" class="step-panel">
-          <el-card class="step-card">
-            <template #header>
-              <div class="step-header">
-                <div class="step-header-title">
-                  <h3>验证 + 报告</h3>
-                  <el-tag type="info" size="small">
-                    {{ isVerifying ? 'AI 正在做自检验证...' : (job?.step3_verification ? '验证完成' : '可启动验证') }}
+                  <span class="rejected-title">已拒绝（点击标签恢复）</span>
+                  <el-tag
+                    v-for="t in rejectedEntityTypes"
+                    :key="'t' + t.name"
+                    size="small"
+                    type="danger"
+                    effect="plain"
+                    closable
+                    @close="restoreItem(t)"
+                  >
+                    {{ t.name || '(未命名类型)' }}
+                  </el-tag>
+                  <el-tag
+                    v-for="(r, idx) in rejectedEntityTypeRelations"
+                    :key="'r' + idx"
+                    size="small"
+                    type="danger"
+                    effect="plain"
+                    closable
+                    @close="restoreItem(r)"
+                  >
+                    {{ r.source_type }} → {{ r.target_type }}（{{ r.relation_type }}）
                   </el-tag>
                 </div>
-                <el-button
-                  v-if="job?.step3_verification || job?.step3_report"
-                  size="small"
+
+                <div v-if="!job?.step1_confirmed" class="stage-input-area">
+                  <div v-if="aiStep1Done && step1PendingCount" class="pending-hint">
+                    尚有 {{ step1PendingCount }} 项待审
+                  </div>
+                  <div class="stage-input-wrapper">
+                    <el-input
+                      v-model="stageFeedback[1]"
+                      type="textarea"
+                      :rows="2"
+                      :placeholder="stageFeedbackLabels[1] + '（填写后确认将重新生成）'"
+                    />
+                    <div class="stage-input-actions">
+                      <el-button
+                        type="primary"
+                        :loading="submitting"
+                        :disabled="!aiStep1Done || job?.step1_confirmed || !keptEntityTypes.length"
+                        @click="confirmStageWithFeedback(1, doConfirmEntityTypes)"
+                      >
+                        {{ aiStep1Done ? '确认实体类型' : 'AI 提取中（可先审阅已生成部分）...' }}
+                      </el-button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </el-card>
+          </div>
+
+          <!-- Step 2：实体 + 关系审阅 -->
+          <div v-else-if="displayStep === 2" class="step-panel">
+            <el-card class="step-card">
+              <template #header>
+                <div class="step-header">
+                  <div class="step-header-title">
+                    <h3>实体 + 关系提取</h3>
+                    <el-tag type="info" size="small">
+                      {{ isExtractingEntities
+                        ? 'AI 正在提取，可实时审阅已生成部分'
+                        : (entities.length || relations.length ? 'AI 已提取，请逐项审阅后确认' : '可启动 AI 提取') }}
+                    </el-tag>
+                  </div>
+                  <el-button
+                    v-if="entities.length || relations.length || job?.step2_confirmed"
+                    size="small"
+                    type="warning"
+                    plain
+                    :icon="Refresh"
+                    :disabled="isRunning || submitting"
+                    @click="openRework(2)"
+                  >
+                    重新生成
+                  </el-button>
+                </div>
+              </template>
+
+              <div v-if="isStep2Resumable" class="resume-section">
+                <el-alert
+                  :title="`第 ${job.step2_failed_batch + 1}/${job.step2_batches_total} 批提取失败，已成功 ${job.step2_batches_done} 批`"
                   type="warning"
-                  plain
-                  :icon="Refresh"
-                  :disabled="isRunning || submitting"
-                  @click="openRework(3)"
+                  :closable="false"
+                  show-icon
                 >
-                  返工重建
-                </el-button>
-              </div>
-            </template>
-
-            <!-- 阶段提示词：开始前输入，注入本次验证 -->
-            <div v-if="!isVerifying" class="stage-hint-box">
-              <el-input
-                v-model="stageHints[3]"
-                type="textarea"
-                :rows="2"
-                :placeholder="stageHintPlaceholders[3]"
-                :disabled="isRunning"
-              >
-                <template #prepend>{{ stageHintLabels[3] }}</template>
-              </el-input>
-              <div class="stage-hint-tip">提示词将注入 AI 验证过程；验证完成后还可填写修改意见触发自动返工。</div>
-            </div>
-
-            <!-- 验证中 -->
-            <div v-if="isVerifying" class="waiting-section">
-              <el-alert
-                title="AI 正在做自检验证，检查实体/属性/关系是否可溯源..."
-                type="info"
-                :closable="false"
-                show-icon
-              >
-                <template #default>
-                  <p>后台任务正在运行，请耐心等待。您可以随时离开此页面，稍后回来继续。</p>
-                </template>
-              </el-alert>
-            </div>
-
-            <!-- 未启动验证 -->
-            <div v-else-if="!job?.step3_verification && job?.status !== 'completed'" class="generate-section">
-              <el-alert
-                title="点击按钮启动 LLM 自检验证"
-                type="info"
-                :closable="false"
-                show-icon
-              >
-                <template #default>
-                  <p>AI 将逐项检查实体/属性/关系是否可溯源到原文，标记存疑项，并生成一份 markdown 结构化简报。</p>
-                </template>
-              </el-alert>
-              <div class="step-actions">
-                <el-button type="primary" :disabled="isRunning" @click="doVerify">
-                  启动验证
-                </el-button>
-              </div>
-            </div>
-
-            <!-- 验证完成 -->
-            <div v-else-if="job?.step3_verification" class="verify-section">
-              <el-alert
-                :title="`验证完成：${job.step3_verification.verified_count || 0} 项通过，${job.step3_verification.suspect_count || 0} 项存疑`"
-                :type="(job.step3_verification.suspect_count || 0) > 0 ? 'warning' : 'success'"
-                :closable="false"
-                show-icon
-                style="margin-bottom: 1rem"
-              />
-
-              <!-- 存疑项列表 -->
-              <div v-if="job.step3_verification.suspects?.length" class="suspects-block">
-                <h4>存疑项（{{ job.step3_verification.suspects.length }} 条）</h4>
-                <el-table :data="job.step3_verification.suspects" stripe size="small" style="width: 100%; margin-bottom: 1.5rem">
-                  <el-table-column prop="item_type" label="类型" width="90" />
-                  <el-table-column prop="item_id" label="标识" width="160" />
-                  <el-table-column prop="reason" label="存疑原因" min-width="280" />
-                </el-table>
+                  <template #default>
+                    <p>{{ job?.error_message || '部分批次提取失败' }}</p>
+                    <p v-if="isEmptyResponseError">LLM 服务端偶发无响应，请点击"继续提取"重试，无需修改任何配置。</p>
+                    <p>点击"继续提取"从失败批次续跑，已成功批次不会重跑。</p>
+                  </template>
+                </el-alert>
+                <div class="step-actions">
+                  <el-button type="primary" :disabled="isRunning" @click="doExtractEntities">
+                    继续提取
+                  </el-button>
+                </div>
               </div>
 
-              <!-- 简报 -->
-              <div v-if="job.step3_report" class="report-block">
-                <h4>生成简报（markdown）</h4>
-                <div class="report-content">{{ job.step3_report }}</div>
+              <div v-else-if="!isExtractingEntities && !entities.length && !relations.length" class="start-section">
+                <el-alert title="AI 将提取实体、属性与实体间关系，并附原文出处" type="info" :closable="false" show-icon />
+                <div class="step-actions">
+                  <el-button type="primary" :disabled="isRunning" @click="doExtractEntities">
+                    开始提取
+                  </el-button>
+                </div>
               </div>
 
-              <!-- 验证完成后的修改意见：填写后确认会先携带意见自动返工 -->
-              <div v-if="job?.status !== 'completed' && !job?.step3_confirmed" class="stage-feedback-box">
-                <el-input
-                  v-model="stageFeedback[3]"
-                  type="textarea"
-                  :rows="2"
-                  :placeholder="`${stageFeedbackLabels[3]}（填写后确认将自动返工重建）`"
+              <div v-else class="review-section">
+                <el-alert
+                  v-if="isExtractingEntities"
+                  :title="batch2ProgressText"
+                  type="info"
+                  :closable="false"
+                  show-icon
+                  style="margin-bottom: 1rem"
+                />
+                <el-alert
+                  v-else
+                  :title="`实体+关系提取完成：${entities.length} 个实体、${relations.length} 条关系`"
+                  type="success"
+                  :closable="false"
+                  show-icon
+                  style="margin-bottom: 1rem"
+                />
+
+                <div class="review-bar">
+                  <span class="review-label">审阅进度</span>
+                  <el-progress
+                    :percentage="step2ReviewStats.percent"
+                    :stroke-width="8"
+                    :color="reviewBarColor"
+                    style="flex: 1"
+                  />
+                  <span class="review-count">
+                    待审 {{ step2PendingCount }} · 通过 {{ step2ApprovedCount }} · 拒绝 {{ step2RejectedCount }}
+                  </span>
+                </div>
+
+                <div class="review-block">
+                  <div class="entity-view-controls">
+                    <h4 style="margin: 0">实体列表（{{ keptEntities.length }} 个）</h4>
+                    <el-radio-group v-model="entityViewMode" size="small">
+                      <el-radio-button value="grouped">按类型分组</el-radio-button>
+                      <el-radio-button value="flat">平铺表格</el-radio-button>
+                    </el-radio-group>
+                    <el-button
+                      v-if="entityViewMode === 'grouped'"
+                      size="small"
+                      link
+                      @click="toggleAllEntityTypes"
+                    >
+                      {{ allEntityTypesExpanded ? '全部收起' : '全部展开' }}
+                    </el-button>
+                  </div>
+
+                  <div v-if="entityViewMode === 'grouped'" class="entity-grouped-view">
+                    <el-collapse v-model="expandedEntityTypeNames">
+                      <el-collapse-item
+                        v-for="g in entityTypeGroups"
+                        :key="g.typeName"
+                        :name="g.typeName"
+                      >
+                        <template #title>
+                          <span class="concept-dot" :style="{ background: g.color || '#5470c6' }"></span>
+                          <span class="concept-name">{{ g.typeName }}</span>
+                          <el-tag size="small" type="info">{{ g.entities.length }} 个实体</el-tag>
+                        </template>
+                        <el-table :data="g.entities" stripe size="small" style="width: 100%">
+                          <el-table-column type="expand">
+                            <template #default="scope">
+                              <div class="entity-expand">
+                                <div class="entity-expand-row">
+                                  <span class="entity-expand-label">全部属性</span>
+                                  <div class="prop-chips">
+                                    <el-tag
+                                      v-for="(p, i) in scope.row.properties || []"
+                                      :key="i"
+                                      size="small"
+                                      type="info"
+                                      effect="plain"
+                                    >
+                                      {{ p.name }}: {{ p.value }}{{ p.unit || '' }}
+                                    </el-tag>
+                                    <el-text v-if="!scope.row.properties?.length" type="info" size="small">无属性</el-text>
+                                  </div>
+                                </div>
+                                <div v-if="scope.row.description" class="entity-expand-row">
+                                  <span class="entity-expand-label">描述</span>{{ scope.row.description }}
+                                </div>
+                                <div v-if="scope.row.source_snippet" class="entity-expand-row">
+                                  <span class="entity-expand-label">原文出处</span>{{ scope.row.source_snippet }}
+                                </div>
+                              </div>
+                            </template>
+                          </el-table-column>
+                          <el-table-column prop="name" label="名称" width="150">
+                            <template #default="scope">
+                              <span class="entity-name-cell">{{ scope.row.name }}</span>
+                            </template>
+                          </el-table-column>
+                          <el-table-column label="属性" min-width="180">
+                            <template #default="scope">
+                              <div class="prop-chips">
+                                <el-tag
+                                  v-for="(p, i) in (scope.row.properties || []).slice(0, 2)"
+                                  :key="i"
+                                  size="small"
+                                  type="info"
+                                  effect="plain"
+                                >
+                                  {{ p.name }}: {{ p.value }}{{ p.unit || '' }}
+                                </el-tag>
+                                <el-tag
+                                  v-if="(scope.row.properties || []).length > 2"
+                                  size="small"
+                                  type="info"
+                                  effect="plain"
+                                >
+                                  +{{ (scope.row.properties || []).length - 2 }} 项
+                                </el-tag>
+                                <el-text v-if="!scope.row.properties?.length" type="info" size="small">无属性</el-text>
+                              </div>
+                            </template>
+                          </el-table-column>
+                          <el-table-column label="原文出处" min-width="150">
+                            <template #default="scope">
+                              <div class="source-cell">
+                                <el-tooltip
+                                  v-if="scope.row.source_snippet"
+                                  :content="scope.row.source_snippet"
+                                  placement="top"
+                                  :show-after="300"
+                                  :enterable="false"
+                                >
+                                  <el-text type="info" size="small" class="source-snippet">
+                                    {{ scope.row.source_snippet }}
+                                  </el-text>
+                                </el-tooltip>
+                                <el-text v-else type="info" size="small">无出处</el-text>
+                                <el-button
+                                  v-if="scope.row.source_snippet"
+                                  size="small"
+                                  link
+                                  :icon="View"
+                                  @click="locateSnippet(scope.row.source_snippet)"
+                                >
+                                  定位原文
+                                </el-button>
+                              </div>
+                            </template>
+                          </el-table-column>
+                          <el-table-column label="状态" width="86">
+                            <template #default="scope">
+                              <el-tag
+                                :type="scope.row.review === 'approved' ? 'success' : 'warning'"
+                                size="small"
+                                effect="plain"
+                              >
+                                {{ scope.row.review === 'approved' ? '已通过' : '待审' }}
+                              </el-tag>
+                            </template>
+                          </el-table-column>
+                          <el-table-column label="操作" width="120" fixed="right">
+                            <template #default="scope">
+                              <el-button
+                                v-if="scope.row.review !== 'approved'"
+                                size="small"
+                                link
+                                type="success"
+                                :icon="Check"
+                                @click="approveItem(scope.row)"
+                              />
+                              <el-button v-else size="small" link :icon="RefreshLeft" @click="unapproveItem(scope.row)" />
+                              <el-button size="small" link :icon="Edit" @click="openEntityEditor(scope.row)" />
+                              <el-button size="small" link type="danger" :icon="Close" @click="rejectItem(scope.row)" />
+                            </template>
+                          </el-table-column>
+                        </el-table>
+                        <el-button size="small" :icon="Plus" style="margin-top: 0.5rem" @click="addEntityToType(g.typeName)">
+                          添加实体到此类型
+                        </el-button>
+                      </el-collapse-item>
+                    </el-collapse>
+                  </div>
+
+                  <el-table v-else :data="keptEntities" stripe size="small" style="width: 100%; margin-bottom: 1rem">
+                    <el-table-column type="expand">
+                      <template #default="scope">
+                        <div class="entity-expand">
+                          <div class="entity-expand-row">
+                            <span class="entity-expand-label">全部属性</span>
+                            <div class="prop-chips">
+                              <el-tag
+                                v-for="(p, i) in scope.row.properties || []"
+                                :key="i"
+                                size="small"
+                                type="info"
+                                effect="plain"
+                              >
+                                {{ p.name }}: {{ p.value }}{{ p.unit || '' }}
+                              </el-tag>
+                              <el-text v-if="!scope.row.properties?.length" type="info" size="small">无属性</el-text>
+                            </div>
+                          </div>
+                          <div v-if="scope.row.description" class="entity-expand-row">
+                            <span class="entity-expand-label">描述</span>{{ scope.row.description }}
+                          </div>
+                          <div v-if="scope.row.source_snippet" class="entity-expand-row">
+                            <span class="entity-expand-label">原文出处</span>{{ scope.row.source_snippet }}
+                          </div>
+                        </div>
+                      </template>
+                    </el-table-column>
+                    <el-table-column prop="name" label="名称" width="140" />
+                    <el-table-column label="所属类型" width="150">
+                      <template #default="scope">
+                        <span class="entity-type-cell" :style="{ color: entityTypeColor(scope.row.instance_of) }">
+                          {{ scope.row.instance_of }}
+                        </span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="属性" min-width="180">
+                      <template #default="scope">
+                        <div class="prop-chips">
+                          <el-tag
+                            v-for="(p, i) in (scope.row.properties || []).slice(0, 2)"
+                            :key="i"
+                            size="small"
+                            type="info"
+                            effect="plain"
+                          >
+                            {{ p.name }}: {{ p.value }}{{ p.unit || '' }}
+                          </el-tag>
+                          <el-tag
+                            v-if="(scope.row.properties || []).length > 2"
+                            size="small"
+                            type="info"
+                            effect="plain"
+                          >
+                            +{{ (scope.row.properties || []).length - 2 }} 项
+                          </el-tag>
+                          <el-text v-if="!scope.row.properties?.length" type="info" size="small">无属性</el-text>
+                        </div>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="原文出处" min-width="150">
+                      <template #default="scope">
+                        <div class="source-cell">
+                          <el-tooltip
+                            v-if="scope.row.source_snippet"
+                            :content="scope.row.source_snippet"
+                            placement="top"
+                            :show-after="300"
+                            :enterable="false"
+                          >
+                            <el-text type="info" size="small" class="source-snippet">
+                              {{ scope.row.source_snippet }}
+                            </el-text>
+                          </el-tooltip>
+                          <el-text v-else type="info" size="small">无出处</el-text>
+                          <el-button
+                            v-if="scope.row.source_snippet"
+                            size="small"
+                            link
+                            :icon="View"
+                            @click="locateSnippet(scope.row.source_snippet)"
+                          >
+                            定位原文
+                          </el-button>
+                        </div>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="状态" width="86">
+                      <template #default="scope">
+                        <el-tag
+                          :type="scope.row.review === 'approved' ? 'success' : 'warning'"
+                          size="small"
+                          effect="plain"
+                        >
+                          {{ scope.row.review === 'approved' ? '已通过' : '待审' }}
+                        </el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="120" fixed="right">
+                      <template #default="scope">
+                        <el-button
+                          v-if="scope.row.review !== 'approved'"
+                          size="small"
+                          link
+                          type="success"
+                          :icon="Check"
+                          @click="approveItem(scope.row)"
+                        />
+                        <el-button v-else size="small" link :icon="RefreshLeft" @click="unapproveItem(scope.row)" />
+                        <el-button size="small" link :icon="Edit" @click="openEntityEditor(scope.row)" />
+                        <el-button size="small" link type="danger" :icon="Close" @click="rejectItem(scope.row)" />
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                  <div v-if="entityViewMode === 'flat'" class="step-actions" style="margin-top: 0">
+                    <el-button size="small" :icon="Plus" @click="openEntityEditor()">添加实体</el-button>
+                  </div>
+                </div>
+
+                <div class="review-block">
+                  <h4><el-icon><Connection /></el-icon> 关系列表（{{ keptRelations.length }} 条）</h4>
+                  <el-table :data="keptRelations" stripe size="small" style="width: 100%">
+                    <el-table-column prop="source" label="源实体" width="150" />
+                    <el-table-column prop="relation_type" label="关系类型" width="140" />
+                    <el-table-column prop="target" label="目标实体" width="150" />
+                    <el-table-column label="原文出处" min-width="160">
+                      <template #default="scope">
+                        <div class="source-cell">
+                          <el-text type="info" size="small" class="source-snippet">
+                            {{ scope.row.source_snippet || '无出处' }}
+                          </el-text>
+                          <el-button
+                            v-if="scope.row.source_snippet"
+                            size="small"
+                            link
+                            :icon="View"
+                            @click="locateSnippet(scope.row.source_snippet)"
+                          >
+                            定位原文
+                          </el-button>
+                        </div>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="状态" width="86">
+                      <template #default="scope">
+                        <el-tag
+                          :type="scope.row.review === 'approved' ? 'success' : 'warning'"
+                          size="small"
+                          effect="plain"
+                        >
+                          {{ scope.row.review === 'approved' ? '已通过' : '待审' }}
+                        </el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="170" fixed="right">
+                      <template #default="scope">
+                        <el-button
+                          v-if="scope.row.review !== 'approved'"
+                          size="small"
+                          link
+                          type="success"
+                          :icon="Check"
+                          @click="approveItem(scope.row)"
+                        >
+                          通过
+                        </el-button>
+                        <el-button v-else size="small" link @click="unapproveItem(scope.row)">撤销</el-button>
+                        <el-button size="small" link :icon="Edit" @click="openRelationEditor(scope.row)">编辑</el-button>
+                        <el-button size="small" link type="danger" :icon="Close" @click="rejectItem(scope.row)">
+                          拒绝
+                        </el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                  <el-button size="small" :icon="Plus" style="margin-top: 0.5rem" @click="openRelationEditor()">
+                    添加关系
+                  </el-button>
+                </div>
+
+                <div v-if="rejectedEntities.length || rejectedRelations.length" class="rejected-block">
+                  <span class="rejected-title">已拒绝（点击标签恢复）</span>
+                  <el-tag
+                    v-for="e in rejectedEntities"
+                    :key="'e' + e.name"
+                    size="small"
+                    type="danger"
+                    effect="plain"
+                    closable
+                    @close="restoreItem(e)"
+                  >
+                    {{ e.name || '(未命名实体)' }}
+                  </el-tag>
+                  <el-tag
+                    v-for="(r, idx) in rejectedRelations"
+                    :key="'r' + idx"
+                    size="small"
+                    type="danger"
+                    effect="plain"
+                    closable
+                    @close="restoreItem(r)"
+                  >
+                    {{ r.source }} → {{ r.target }}（{{ r.relation_type }}）
+                  </el-tag>
+                </div>
+
+                <div v-if="!job?.step2_confirmed" class="stage-input-area">
+                  <div v-if="aiStep2Done && step2PendingCount" class="pending-hint">
+                    尚有 {{ step2PendingCount }} 项待审
+                  </div>
+                  <div class="stage-input-wrapper">
+                    <el-input
+                      v-model="stageFeedback[2]"
+                      type="textarea"
+                      :rows="2"
+                      :placeholder="stageFeedbackLabels[2] + '（填写后确认将重新生成）'"
+                    />
+                    <div class="stage-input-actions">
+                      <el-button
+                        type="primary"
+                        :loading="submitting"
+                        :disabled="!aiStep2Done || job?.step2_confirmed || !keptEntities.length"
+                        @click="confirmStageWithFeedback(2, doConfirmEntities)"
+                      >
+                        {{ aiStep2Done ? '确认实体+关系' : 'AI 提取中（可先审阅已生成部分）...' }}
+                      </el-button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </el-card>
+          </div>
+
+          <!-- Step 3：验证 + 报告 -->
+          <div v-else-if="displayStep === 3" class="step-panel">
+            <el-card class="step-card">
+              <template #header>
+                <div class="step-header">
+                  <div class="step-header-title">
+                    <h3>验证 + 报告</h3>
+                    <el-tag type="info" size="small">
+                      {{ isVerifying ? 'AI 正在做自检验证...' : (job?.step3_verification ? '验证完成' : '可启动验证') }}
+                    </el-tag>
+                  </div>
+                  <el-button
+                    v-if="job?.step3_verification || job?.step3_report"
+                    size="small"
+                    type="warning"
+                    plain
+                    :icon="Refresh"
+                    :disabled="isRunning || submitting"
+                    @click="openRework(3)"
+                  >
+                    重新生成
+                  </el-button>
+                </div>
+              </template>
+
+              <div v-if="isVerifying" class="waiting-section">
+                <el-alert
+                  title="AI 正在核查实体/属性/关系是否可溯源..."
+                  type="info"
+                  :closable="false"
+                  show-icon
                 />
               </div>
 
-              <!-- 确认生成最终本体 -->
-              <div class="step-actions" v-if="job?.status !== 'completed'">
-                <el-button @click="goBack">取消</el-button>
-                <el-button
-                  type="primary"
-                  :loading="submitting"
-                  :disabled="job?.step3_confirmed"
-                  @click="confirmStageWithFeedback(3, doConfirmVerification)"
-                >
-                  {{ job?.step3_confirmed ? '本体已生成' : '确认并生成最终本体' }}
-                </el-button>
+              <div v-else-if="!job?.step3_verification && job?.status !== 'completed'" class="generate-section">
+                <el-alert
+                  title="AI 将核查实体/属性/关系是否可溯源，标记存疑项并生成简报"
+                  type="info"
+                  :closable="false"
+                  show-icon
+                />
+                <div class="step-actions">
+                  <el-button type="primary" :disabled="isRunning" @click="doVerify">
+                    启动验证
+                  </el-button>
+                </div>
               </div>
 
-              <!-- 已完成 -->
-              <div v-else class="complete-content">
+              <div v-else-if="job?.step3_verification" class="verify-section">
+                <el-alert
+                  :title="`验证完成：${job.step3_verification.verified_count || 0} 项通过，${job.step3_verification.suspect_count || 0} 项存疑`"
+                  :type="(job.step3_verification.suspect_count || 0) > 0 ? 'warning' : 'success'"
+                  :closable="false"
+                  show-icon
+                  style="margin-bottom: 1rem"
+                />
+
+                <div v-if="job.step3_verification.suspects?.length" class="suspects-block">
+                  <h4>存疑项（{{ job.step3_verification.suspects.length }} 条）</h4>
+                  <el-table :data="job.step3_verification.suspects" stripe size="small" style="width: 100%; margin-bottom: 1.5rem">
+                    <el-table-column prop="item_type" label="类型" width="100" />
+                    <el-table-column prop="item_id" label="标识" width="180" />
+                    <el-table-column prop="reason" label="存疑原因" min-width="280" />
+                  </el-table>
+                </div>
+
+                <div v-if="job.step3_report" class="report-block">
+                  <div class="report-block-head">
+                    <h4>生成简报</h4>
+                    <div class="report-actions">
+                      <el-button size="small" link :icon="CopyDocument" @click="copyReport">复制内容</el-button>
+                      <el-button size="small" link :icon="Download" @click="downloadReport">下载 .md</el-button>
+                    </div>
+                  </div>
+                  <div class="report-content markdown-body" v-html="renderMarkdown(job.step3_report)"></div>
+                </div>
+
+                <div v-if="job?.status !== 'completed' && !job?.step3_confirmed" class="stage-input-area">
+                  <div class="stage-input-wrapper">
+                    <el-input
+                      v-model="stageFeedback[3]"
+                      type="textarea"
+                      :rows="2"
+                      :placeholder="stageFeedbackLabels[3] + '（填写后确认将重新生成）'"
+                    />
+                    <div class="stage-input-actions">
+                      <el-button
+                        type="primary"
+                        :loading="submitting"
+                        :disabled="job?.step3_confirmed"
+                        @click="confirmStageWithFeedback(3, doConfirmVerification)"
+                      >
+                        {{ job?.step3_confirmed ? '本体已生成' : '确认并生成最终本体' }}
+                      </el-button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </el-card>
+          </div>
+
+          <!-- 已完成 -->
+          <div v-else class="step-panel">
+            <el-card class="step-card">
+              <div class="complete-content">
                 <el-icon class="success-icon"><CircleCheck /></el-icon>
                 <h3>本体构建成功！</h3>
                 <el-descriptions :column="2" border style="margin: 1.5rem 0">
                   <el-descriptions-item label="本体名称">{{ job?.name }}</el-descriptions-item>
-                  <el-descriptions-item label="状态">
-                    <el-tag type="success">已完成</el-tag>
-                  </el-descriptions-item>
+                  <el-descriptions-item label="实体类型">{{ entityTypes.length }} 个</el-descriptions-item>
                   <el-descriptions-item label="实体数量">{{ entities.length }}</el-descriptions-item>
+                  <el-descriptions-item label="属性数量">{{ totalPropertyCount }}</el-descriptions-item>
                   <el-descriptions-item label="关系数量">{{ relations.length }}</el-descriptions-item>
+                  <el-descriptions-item label="构建耗时">{{ buildDuration }}</el-descriptions-item>
                 </el-descriptions>
                 <div class="step-actions" style="justify-content: center">
                   <el-button type="primary" @click="viewOntology">查看本体详情</el-button>
                   <el-button @click="goBack">返回首页</el-button>
                 </div>
               </div>
-            </div>
-          </el-card>
-        </div>
+            </el-card>
+          </div>
+        </section>
       </div>
 
-      <!-- 返工对话框（v3 新增：每步可重新调用 LLM 重建） -->
+      <!-- 实体类型编辑对话框 -->
+      <el-dialog
+        v-model="typeEditor.visible"
+        :title="typeEditor.mode === 'add' ? '添加实体类型' : '编辑实体类型'"
+        width="720px"
+        :close-on-click-modal="false"
+      >
+        <el-form label-width="110px">
+          <el-form-item label="类型名称" required>
+            <el-input v-model="typeEditor.name" placeholder="如：公司、人物、财务指标" />
+          </el-form-item>
+          <el-form-item label="父类型">
+            <el-select
+              v-model="typeEditor.parent_entity_type_name"
+              clearable
+              filterable
+              placeholder="顶层类型"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="t in entityTypes.filter(x => x.name !== typeEditor.name)"
+                :key="t.name"
+                :label="t.name"
+                :value="t.name"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="颜色">
+            <el-color-picker v-model="typeEditor.color" />
+          </el-form-item>
+          <el-form-item label="描述">
+            <el-input v-model="typeEditor.description" type="textarea" :rows="2" />
+          </el-form-item>
+          <el-form-item label="属性骨架">
+            <div class="schema-editor">
+              <el-table :data="typeEditor.schema" size="small" border>
+                <el-table-column label="属性名" min-width="120">
+                  <template #default="s"><el-input v-model="s.row.name" size="small" placeholder="属性名" /></template>
+                </el-table-column>
+                <el-table-column label="分类" width="110">
+                  <template #default="s">
+                    <el-select v-model="s.row.category" size="small">
+                      <el-option label="文本" value="text" />
+                      <el-option label="数值" value="metric" />
+                      <el-option label="时间" value="date" />
+                      <el-option label="枚举" value="enum" />
+                    </el-select>
+                  </template>
+                </el-table-column>
+                <el-table-column label="数据类型" width="110">
+                  <template #default="s"><el-input v-model="s.row.data_type" size="small" placeholder="string" /></template>
+                </el-table-column>
+                <el-table-column label="单位" width="90">
+                  <template #default="s"><el-input v-model="s.row.unit" size="small" placeholder="%" /></template>
+                </el-table-column>
+                <el-table-column label="说明" min-width="140">
+                  <template #default="s"><el-input v-model="s.row.description" size="small" placeholder="可选" /></template>
+                </el-table-column>
+                <el-table-column label="操作" width="60">
+                  <template #default="s">
+                    <el-button size="small" link type="danger" :icon="Delete" @click="typeEditor.schema.splice(s.$index, 1)" />
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-button
+                size="small"
+                :icon="Plus"
+                style="margin-top: 0.5rem"
+                @click="typeEditor.schema.push({ name: '', category: 'text', data_type: 'string', unit: '', description: '' })"
+              >
+                添加属性
+              </el-button>
+            </div>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="typeEditor.visible = false">取消</el-button>
+          <el-button type="primary" @click="saveType">保存</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- 实体编辑对话框 -->
+      <el-dialog
+        v-model="entityEditor.visible"
+        :title="entityEditor.index >= 0 ? '编辑实体' : '添加实体'"
+        width="760px"
+        :close-on-click-modal="false"
+      >
+        <el-form label-width="110px">
+          <el-form-item label="实体名称" required>
+            <el-input v-model="entityEditor.name" placeholder="如：贵州茅台" />
+          </el-form-item>
+          <el-form-item label="所属类型" required>
+            <el-select v-model="entityEditor.instance_of" filterable style="width: 100%">
+              <el-option v-for="t in keptEntityTypes" :key="t.name" :label="t.name" :value="t.name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="属性">
+            <div class="schema-editor">
+              <el-table :data="entityEditor.properties" size="small" border>
+                <el-table-column label="属性名" min-width="120">
+                  <template #default="s"><el-input v-model="s.row.name" size="small" placeholder="属性名" /></template>
+                </el-table-column>
+                <el-table-column label="值" min-width="150">
+                  <template #default="s"><el-input v-model="s.row.value" size="small" placeholder="值" /></template>
+                </el-table-column>
+                <el-table-column label="分类" width="100">
+                  <template #default="s">
+                    <el-select v-model="s.row.category" size="small">
+                      <el-option label="文本" value="text" />
+                      <el-option label="数值" value="metric" />
+                      <el-option label="时间" value="date" />
+                      <el-option label="枚举" value="enum" />
+                    </el-select>
+                  </template>
+                </el-table-column>
+                <el-table-column label="单位" width="80">
+                  <template #default="s"><el-input v-model="s.row.unit" size="small" placeholder="%" /></template>
+                </el-table-column>
+                <el-table-column label="操作" width="60">
+                  <template #default="s">
+                    <el-button size="small" link type="danger" :icon="Delete" @click="entityEditor.properties.splice(s.$index, 1)" />
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-button
+                size="small"
+                :icon="Plus"
+                style="margin-top: 0.5rem"
+                @click="entityEditor.properties.push({ name: '', value: '', category: 'text', unit: '' })"
+              >
+                添加属性
+              </el-button>
+            </div>
+          </el-form-item>
+          <el-form-item label="原文出处">
+            <div class="source-edit">
+              <el-input
+                v-model="entityEditor.source_snippet"
+                type="textarea"
+                :rows="2"
+                placeholder="从原文摘录支持该实体的片段"
+              />
+              <el-button
+                v-if="entityEditor.source_snippet"
+                size="small"
+                :icon="View"
+                @click="locateSnippet(entityEditor.source_snippet)"
+              >
+                定位原文
+              </el-button>
+            </div>
+          </el-form-item>
+          <el-form-item label="描述">
+            <el-input v-model="entityEditor.description" type="textarea" :rows="2" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="entityEditor.visible = false">取消</el-button>
+          <el-button type="primary" @click="saveEntity">保存</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- 关系编辑对话框 -->
+      <el-dialog
+        v-model="relationEditor.visible"
+        :title="relationEditor.index >= 0 ? '编辑关系' : '添加关系'"
+        width="600px"
+        :close-on-click-modal="false"
+      >
+        <el-form label-width="110px">
+          <el-form-item label="源实体" required>
+            <el-select v-model="relationEditor.source" filterable style="width: 100%">
+              <el-option v-for="e in keptEntities" :key="e.name" :label="e.name" :value="e.name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="关系类型" required>
+            <el-input v-model="relationEditor.relation_type" placeholder="如：投资 / 任职" />
+          </el-form-item>
+          <el-form-item label="目标实体" required>
+            <el-select v-model="relationEditor.target" filterable style="width: 100%">
+              <el-option v-for="e in keptEntities" :key="e.name" :label="e.name" :value="e.name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="权重">
+            <el-input-number v-model="relationEditor.weight" :min="0" :max="1" :step="0.1" controls-position="right" />
+          </el-form-item>
+          <el-form-item label="原文出处">
+            <div class="source-edit">
+              <el-input
+                v-model="relationEditor.source_snippet"
+                type="textarea"
+                :rows="2"
+                placeholder="从原文摘录支持该关系的片段"
+              />
+              <el-button
+                v-if="relationEditor.source_snippet"
+                size="small"
+                :icon="View"
+                @click="locateSnippet(relationEditor.source_snippet)"
+              >
+                定位原文
+              </el-button>
+            </div>
+          </el-form-item>
+          <el-form-item label="说明">
+            <el-input v-model="relationEditor.description" type="textarea" :rows="2" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="relationEditor.visible = false">取消</el-button>
+          <el-button type="primary" @click="saveRelation">保存</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- 类型间关系编辑对话框 -->
+      <el-dialog
+        v-model="etRelationEditor.visible"
+        :title="etRelationEditor.index >= 0 ? '编辑类型间关系' : '添加类型间关系'"
+        width="560px"
+        :close-on-click-modal="false"
+      >
+        <el-form label-width="110px">
+          <el-form-item label="源类型" required>
+            <el-select v-model="etRelationEditor.source_type" filterable style="width: 100%">
+              <el-option v-for="t in keptEntityTypes" :key="t.name" :label="t.name" :value="t.name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="关系类型" required>
+            <el-input v-model="etRelationEditor.relation_type" placeholder="如：包含 / 属于" />
+          </el-form-item>
+          <el-form-item label="目标类型" required>
+            <el-select v-model="etRelationEditor.target_type" filterable style="width: 100%">
+              <el-option v-for="t in keptEntityTypes" :key="t.name" :label="t.name" :value="t.name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="说明">
+            <el-input v-model="etRelationEditor.description" type="textarea" :rows="2" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="etRelationEditor.visible = false">取消</el-button>
+          <el-button type="primary" @click="saveETRelation">保存</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- 重新生成对话框（补充要求后重跑当前步骤） -->
       <el-dialog
         v-model="reworkDialogVisible"
-        :title="`返工 step${reworkTargetStep} — 重新调用 LLM 重建`"
+        :title="`重新生成 step${reworkTargetStep}`"
         width="560px"
         :close-on-click-modal="false"
       >
         <el-alert
-          :title="`返工将清空 step${reworkTargetStep} 的现有结果并重新调用 LLM 重建，后续已确认的步骤也需要重新执行。`"
+          :title="`重新生成将清空 step${reworkTargetStep} 的现有结果并重新调用 LLM，后续已确认的步骤也需重新执行。`"
           type="warning"
           :closable="false"
           show-icon
           style="margin-bottom: 1rem"
         />
         <el-form label-width="100px">
-          <el-form-item label="新提示词">
+          <el-form-item label="补充要求">
             <el-input
               v-model="reworkPrompt"
               type="textarea"
               :rows="5"
-              :placeholder="reworkPlaceholders[reworkTargetStep] || '请输入对当前步骤的补充说明或修改要求'"
+              :placeholder="reworkPlaceholders[reworkTargetStep] || '请输入对当前步骤的补充要求'"
             />
           </el-form-item>
         </el-form>
         <template #footer>
           <el-button @click="reworkDialogVisible = false">取消</el-button>
-          <el-button
-            type="primary"
-            :loading="reworkSubmitting"
-            @click="doRework"
-          >
-            开始返工
+          <el-button type="primary" :loading="reworkSubmitting" @click="doRework">
+            开始重新生成
           </el-button>
         </template>
       </el-dialog>
@@ -936,9 +1449,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, CircleCheck, Loading, Close, Check, Refresh } from '@element-plus/icons-vue'
+import {
+  ArrowLeft, CircleCheck, Loading, Close, Check, Refresh,
+  Search, Document, Plus, Edit, Delete, View, Connection,
+  CopyDocument, Download, MoreFilled, RefreshLeft
+} from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import Layout from '@/components/Layout.vue'
 import api from '@/services/api'
@@ -950,43 +1467,98 @@ import {
 } from '@/services/ontologyBuild'
 import { reworkBuildStep } from '@/services/ontology'
 import { getTemplateList } from '@/services/ontologyTemplate'
+import { renderMarkdown } from '@/utils/markdown'
 
 const route = useRoute()
 const router = useRouter()
 const jobId = route.params.jobId as string
+
+type ReviewStatus = 'pending' | 'approved' | 'rejected'
 
 // ── 响应式状态 ──
 const loading = ref(false)
 const submitting = ref(false)
 
 const job = ref<any>(null)
-const entityTypes = ref<any[]>([])          // v3: step1_entity_types（含 parent_entity_type_name / property_schema）
+const entityTypes = ref<any[]>([])          // v3: step1_entity_types（含 review 审阅状态）
 const entityTypeRelations = ref<any[]>([])  // v3: step1_entity_type_relations
-const entities = ref<any[]>([])             // v3: step2_entities（含 properties 属性赋值）
+const entities = ref<any[]>([])             // v3: step2_entities
 const relations = ref<any[]>([])            // v3: step2_relations
-const templates = ref<any[]>([])            // step0 可选模板列表
+const templates = ref<any[]>([])            // step0 可选模板
 
-// ── 实体视图：按类型分组（默认折叠隐藏实体实例）/ 平铺表格 ──
+// 初始类型约束（step1 提取前可编辑，作为 LLM 提取的起点；同步到 job.meta_entity_types）
+const constraintEntityTypes = ref<any[]>([])
+const constraintRelationTypes = ref<any[]>([])
+const newConstraintRelationType = ref('')
+const constraintOpen = ref(false)   // 约束编辑区默认折叠
+let constraintInitialized = false
+watch(job, (j) => {
+  if (!constraintInitialized && j) {
+    constraintEntityTypes.value = JSON.parse(JSON.stringify(j.meta_entity_types || []))
+    constraintRelationTypes.value = JSON.parse(JSON.stringify(j.meta_relation_types || []))
+    constraintInitialized = true
+  }
+}, { immediate: true })
+
+/** step1 提取前判断约束是否有修改 */
+const constraintDirty = computed(() =>
+  JSON.stringify(constraintEntityTypes.value) !== JSON.stringify(job.value?.meta_entity_types || []) ||
+  JSON.stringify(constraintRelationTypes.value) !== JSON.stringify(job.value?.meta_relation_types || [])
+)
+
+// 实体视图：按类型分组 / 平铺
 const entityViewMode = ref<'grouped' | 'flat'>('grouped')
 const expandedEntityTypeNames = ref<string[]>([])
 
-// ── step0 配置表单（v3：粒度 + 可选模板；阶段提示词改为各阶段开始时输入） ──
+// 原文面板
+const docCollapsed = ref(false)
+const docWidth = ref(460)            // 原文面板宽度，可拖拽调整（280~680）
+const isResizing = ref(false)        // 拖拽中禁用 grid 过渡动画
+const workspaceGridStyle = computed(() =>
+  docCollapsed.value
+    ? 'grid-template-columns: 0px minmax(0, 1fr)'
+    : `grid-template-columns: ${docWidth.value}px 6px minmax(0, 1fr)`
+)
+const resetDocWidth = () => { docWidth.value = 460 }
+
+/** 拖拽分隔条调整原文面板宽度 */
+const startResize = (e: MouseEvent) => {
+  const startX = e.clientX
+  const startW = docWidth.value
+  isResizing.value = true
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  const onMove = (ev: MouseEvent) => {
+    docWidth.value = Math.min(680, Math.max(280, startW + ev.clientX - startX))
+  }
+  const onUp = () => {
+    isResizing.value = false
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+const docSearch = ref('')
+const docMatches = ref<{ start: number; end: number }[]>([])
+const docMatchIndex = ref(0)
+const highlightRange = ref<{ start: number; end: number } | null>(null)
+const markEl = ref<HTMLElement | null>(null)
+
+// step0 配置表单
 const metaForm = ref({
   granularity: 'medium' as 'coarse' | 'medium' | 'fine',
   templateId: '' as string,
   templateMode: 'soft_constraint' as 'skip_step1' | 'soft_constraint'
 })
 
-// 各阶段开始时用户补充的提示词（持久化到后端 job.stage_hints，注入对应阶段 LLM 调用）
-const stageHints = ref<Record<number, string>>({ 1: '', 2: '', 3: '' })
-// 各阶段完成后用户输入的修改意见：确认时若有意见则先携带意见自动返工
+// 完成后修改意见（确认时可填写，触发重新生成）
 const stageFeedback = ref<Record<number, string>>({ 1: '', 2: '', 3: '' })
 
-const stageHintLabels: Record<number, string> = {
-  1: '实体类型提取提示',
-  2: '实体+关系提取提示',
-  3: '验证报告提示'
-}
+// step0 配置阶段的补充说明（可选）
+const stageNote0 = ref('')
 
 const stageFeedbackLabels: Record<number, string> = {
   1: '对实体类型结果的意见（可选）',
@@ -994,28 +1566,27 @@ const stageFeedbackLabels: Record<number, string> = {
   3: '对验证报告的意见（可选）'
 }
 
-const stageHintPlaceholders: Record<number, string> = {
-  1: '例如：重点关注财务指标，实体类型建议包含企业、人物、财务指标等',
-  2: '例如：实体粒度到公司层面即可，属性只保留原文有依据的字段',
-  3: '例如：重点核查资产负债率、营收等关键指标是否可溯源'
-}
-
 const selectedTemplateName = computed(() => {
   const t = templates.value.find(t => t.id === metaForm.value.templateId)
   return t?.name || ''
 })
 
-// AI 各阶段完成标记（收到 SSE step_done 后置 true，启用"确认"按钮）
+// 模板「跳过实体类型提取」模式：直接从模板加载类型，跳过 LLM 提取与初始约束
+const skipStep1Mode = computed(() =>
+  !!(metaForm.value.templateId && metaForm.value.templateMode === 'skip_step1')
+)
+
+// AI 各阶段完成标记
 const aiStep1Done = ref(false)
 const aiStep2Done = ref(false)
 
-// 轮询定时器（step3 验证用轮询；SSE 不可用时降级）
+// 轮询 / SSE
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let sseAbort: (() => void) | null = null
 let streamRetryCount = 0
 const STREAM_MAX_RETRY = 3
 
-// ── 返工对话框状态（v3 新增） ──
+// 返工
 const reworkDialogVisible = ref(false)
 const reworkTargetStep = ref(1)
 const reworkPrompt = ref('')
@@ -1026,13 +1597,92 @@ const reworkPlaceholders: Record<number, string> = {
   3: '例如：重点关注资产负债率与现金流是否可溯源'
 }
 
-// ── 实体类型树（按 parent_entity_type_name 构建层级） ──
+// 编辑器对话框状态
+const typeEditor = ref({
+  visible: false,
+  mode: 'add' as 'add' | 'edit',
+  index: -1,
+  name: '',
+  description: '',
+  color: '#5470c6',
+  parent_entity_type_name: '',
+  schema: [] as any[]
+})
+const entityEditor = ref({
+  visible: false,
+  index: -1,
+  name: '',
+  instance_of: '',
+  properties: [] as any[],
+  source_snippet: '',
+  description: ''
+})
+const relationEditor = ref({
+  visible: false,
+  index: -1,
+  source: '',
+  relation_type: '',
+  target: '',
+  weight: 1,
+  source_snippet: '',
+  description: ''
+})
+const etRelationEditor = ref({
+  visible: false,
+  index: -1,
+  source_type: '',
+  relation_type: '',
+  target_type: '',
+  description: ''
+})
+
+// ── 审阅状态工具 ──
+const approveItem = (item: any) => { item.review = 'approved' }
+const unapproveItem = (item: any) => { item.review = 'pending' }
+const rejectItem = (item: any) => { item.review = 'rejected' }
+const restoreItem = (item: any) => { item.review = 'approved' }
+
+const keptEntityTypes = computed(() => entityTypes.value.filter((t: any) => t.review !== 'rejected'))
+const rejectedEntityTypes = computed(() => entityTypes.value.filter((t: any) => t.review === 'rejected'))
+const keptEntityTypeRelations = computed(() =>
+  entityTypeRelations.value.filter((r: any) => r.review !== 'rejected'))
+const rejectedEntityTypeRelations = computed(() =>
+  entityTypeRelations.value.filter((r: any) => r.review === 'rejected'))
+const keptEntities = computed(() => entities.value.filter((e: any) => e.review !== 'rejected'))
+const rejectedEntities = computed(() => entities.value.filter((e: any) => e.review === 'rejected'))
+const keptRelations = computed(() => relations.value.filter((r: any) => r.review !== 'rejected'))
+const rejectedRelations = computed(() => relations.value.filter((r: any) => r.review === 'rejected'))
+
+const reviewStats = (items: any[]) => {
+  const total = items.length
+  const reviewed = items.filter((i: any) => i.review === 'approved' || i.review === 'rejected').length
+  return { total, reviewed, percent: total ? Math.round((reviewed / total) * 100) : 0 }
+}
+const step1ReviewStats = computed(() => reviewStats([...entityTypes.value, ...entityTypeRelations.value]))
+const step2ReviewStats = computed(() => reviewStats([...entities.value, ...relations.value]))
+
+// 审阅三态统计（待审 / 通过 / 拒绝），用于进度条与确认提示
+const step1ApprovedCount = computed(() =>
+  [...entityTypes.value, ...entityTypeRelations.value].filter((i: any) => i.review === 'approved').length)
+const step1RejectedCount = computed(() =>
+  [...entityTypes.value, ...entityTypeRelations.value].filter((i: any) => i.review === 'rejected').length)
+const step1PendingCount = computed(() =>
+  [...entityTypes.value, ...entityTypeRelations.value].filter((i: any) => i.review === 'pending').length)
+const step2ApprovedCount = computed(() =>
+  [...entities.value, ...relations.value].filter((i: any) => i.review === 'approved').length)
+const step2RejectedCount = computed(() =>
+  [...entities.value, ...relations.value].filter((i: any) => i.review === 'rejected').length)
+const step2PendingCount = computed(() =>
+  [...entities.value, ...relations.value].filter((i: any) => i.review === 'pending').length)
+const reviewBarColor = computed(() => {
+  const p = displayStep.value === 2 ? step2ReviewStats.value.percent : step1ReviewStats.value.percent
+  return p >= 100 ? '#67c23a' : '#409eff'
+})
+
+// ── 实体类型树 / 实体分组 ──
 const entityTypeTree = computed(() => {
   const map = new Map<string, any>()
-  const nodes = entityTypes.value.map(t => ({
-    ...t,
-    children: [] as any[]
-  }))
+  const nodes = keptEntityTypes.value.map(t => ({ ...t, children: [] as any[] }))
   for (const n of nodes) map.set(n.name, n)
   const roots: any[] = []
   for (const n of nodes) {
@@ -1046,23 +1696,84 @@ const entityTypeTree = computed(() => {
   return roots
 })
 
-// ── 实体按类型分组（v3 step2 展示） ──
+// ── 实体类型树：展开控制 / 批量操作 ──
+const typeTreeRef = ref<any>()
+const checkedTypeCount = ref(0)
+const allTypeTreeExpanded = ref(false)
+let typeTreeInitialized = false
+
+watch(entityTypeTree, () => {
+  if (!typeTreeInitialized && entityTypeTree.value.length) {
+    // 首次加载仅展开根层，避免类型多时页面过长
+    nextTick(() => {
+      typeTreeRef.value?.store?.setExpandedKeys(entityTypeTree.value.map(r => r.name))
+    })
+    typeTreeInitialized = true
+  }
+}, { flush: 'post' })
+
+const expandTypeTreeAll = (expand: boolean) => {
+  const tree = typeTreeRef.value
+  if (!tree) return
+  if (expand) {
+    tree.store.setExpandedKeys(keptEntityTypes.value.map(t => t.name))
+    allTypeTreeExpanded.value = true
+  } else {
+    tree.store.setExpandedKeys([])
+    allTypeTreeExpanded.value = false
+  }
+}
+const toggleAllTypeTree = () => expandTypeTreeAll(!allTypeTreeExpanded.value)
+
+const onTypeTreeCheck = () => {
+  checkedTypeCount.value = typeTreeRef.value?.getCheckedNodes(false, false).length || 0
+}
+const clearTypeChecks = () => {
+  typeTreeRef.value?.setCheckedKeys([])
+  checkedTypeCount.value = 0
+}
+const batchApproveTypes = () => {
+  const nodes = typeTreeRef.value?.getCheckedNodes(false, false) || []
+  for (const n of nodes) n.review = 'approved'
+  ElMessage.success(`已通过 ${nodes.length} 个类型`)
+  clearTypeChecks()
+}
+const batchRejectTypes = () => {
+  const nodes = typeTreeRef.value?.getCheckedNodes(false, false) || []
+  for (const n of nodes) n.review = 'rejected'
+  ElMessage.success(`已拒绝 ${nodes.length} 个类型`)
+  clearTypeChecks()
+}
+const onTypeAction = (cmd: string, data: any) => {
+  if (cmd === 'unapprove') unapproveItem(data)
+  else if (cmd === 'edit') openTypeEditor(data)
+  else if (cmd === 'delete') removeType(data)
+}
+
 const entityTypeGroups = computed(() => {
   const groups: any[] = []
-  for (const t of entityTypes.value) {
-    const list = entities.value.filter(e => e.instance_of === t.name)
+  for (const t of keptEntityTypes.value) {
+    const list = keptEntities.value.filter(e => e.instance_of === t.name)
     if (list.length) {
       groups.push({ typeName: t.name, color: t.color, entities: list })
     }
   }
-  // 未分类实体：instance_of 不在实体类型清单中
-  const known = new Set(entityTypes.value.map(t => t.name))
-  const unclassified = entities.value.filter(e => !known.has(e.instance_of))
+  const known = new Set(keptEntityTypes.value.map(t => t.name))
+  const unclassified = keptEntities.value.filter(e => !known.has(e.instance_of))
   if (unclassified.length) {
     groups.push({ typeName: '未分类', color: '#909399', entities: unclassified })
   }
   return groups
 })
+
+// 分组视图首次加载时默认全部展开，避免逐个展开
+let groupsAutoExpanded = false
+watch(entityTypeGroups, (groups) => {
+  if (!groupsAutoExpanded && groups.length) {
+    expandedEntityTypeNames.value = groups.map(g => g.typeName)
+    groupsAutoExpanded = true
+  }
+}, { immediate: true })
 
 const allEntityTypesExpanded = computed(
   () => entityTypeGroups.value.length > 0
@@ -1077,47 +1788,29 @@ const toggleAllEntityTypes = () => {
   }
 }
 
-const addEntityType = () => {
-  entityTypes.value.push({
-    name: '',
-    description: '',
-    color: '#5470c6',
-    property_schema: [],
-    propertySchemaStr: '[]',
-    parent_entity_type_name: ''
-  })
-}
+const entityTypeColor = (name: string) =>
+  entityTypes.value.find(t => t.name === name)?.color || '#5470c6'
 
-const removeEntityType = (data: any) => {
-  const idx = entityTypes.value.findIndex(t => t === data || t.name === data.name)
-  if (idx >= 0) entityTypes.value.splice(idx, 1)
-}
-
-const addEntityToType = (typeName: string) => {
-  entities.value.push({
-    name: '', instance_of: typeName,
-    propertiesStr: '[]', source_snippet: ''
-  })
-}
-
-const removeEntityFromGroup = (group: any, index: number) => {
-  const entity = group.entities[index]
-  const idx = entities.value.indexOf(entity)
-  if (idx >= 0) entities.value.splice(idx, 1)
-}
-
-// ── 计算属性 ──
-// v3 step 状态映射：0=待开始, 1=实体类型, 2=实体+关系, 3=验证报告, 4=已完成
+// ── 步骤状态机 ──
 const currentStep = computed(() => {
   if (!job.value) return 0
   if (job.value.status === 'completed' || job.value.step3_confirmed) return 4
-  if (job.value.step2_confirmed) return 3   // 进入验证阶段
-  if (job.value.step1_confirmed) return 2   // 实体+关系提取
-  if (job.value.meta_confirmed) return 1    // 实体类型提取
+  if (job.value.step2_confirmed) return 3
+  if (job.value.step1_confirmed) return 2
+  if (job.value.meta_confirmed) return 1
   return 0
 })
 
-// v3 running_step：-1=空闲, 1=实体类型提取, 2=实体+关系, 3=验证
+// 展示步骤：步骤条可点击回看已确认步骤，真实进度仍由 currentStep 驱动
+const viewStep = ref(0)
+const displayStep = computed(() => viewStep.value)
+watch(currentStep, (v) => { viewStep.value = v }, { immediate: true })
+
+const stepClickable = (step: number) => step <= currentStep.value
+const jumpToStep = (step: number) => {
+  if (step <= currentStep.value) viewStep.value = step
+}
+
 const isRunning = computed(() => {
   const rs = job.value?.running_step
   return rs !== undefined && rs >= 1 && rs <= 3
@@ -1138,37 +1831,42 @@ const progressMessage = computed(() => {
 
 const currentProgressPercent = computed(() => job.value?.progress ?? 0)
 
-// 空响应错误：LLM 服务端偶发无响应（非配置/代码问题），提示用户重试即可
+// 完成页统计：属性总数 / 构建耗时（create_time → update_time）
+const totalPropertyCount = computed(() =>
+  entities.value.reduce((s: number, e: any) => s + (e.properties?.length || 0), 0)
+)
+const buildDuration = computed(() => {
+  const j = job.value
+  if (!j?.create_time || !j?.update_time) return ''
+  const t0 = new Date(j.create_time).getTime()
+  const t1 = new Date(j.update_time).getTime()
+  if (!isFinite(t0) || !isFinite(t1) || t1 < t0) return ''
+  const sec = Math.round((t1 - t0) / 1000)
+  if (sec < 60) return `${sec} 秒`
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return s ? `${m} 分 ${s} 秒` : `${m} 分钟`
+})
+
 const isEmptyResponseError = computed(() =>
   !!job.value?.error_message && job.value.error_message.includes('空响应')
 )
 
-// ── 阶段时间线（progress_stages 真实进度，3 个 LLM 阶段） ──
-const hasStageTimeline = computed(() => {
-  const stages = job.value?.progress_stages || []
-  return stages.length > 0
+// 各阶段真实状态（progress_stages），步骤条描述展示用
+const stageInfo = computed<Record<number, any>>(() => {
+  const map: Record<number, any> = {}
+  for (const s of (job.value?.progress_stages || [])) map[s.stage] = s
+  return map
 })
 
-const stageTimeline = computed(() => {
-  const defaultStages = [
-    { stage: 1, name: '实体类型', status: 'pending', elapsed: '' },
-    { stage: 2, name: '实体+关系', status: 'pending', elapsed: '' },
-    { stage: 3, name: '验证报告', status: 'pending', elapsed: '' }
-  ]
-  const real = job.value?.progress_stages || []
-  const map: Record<number, any> = {}
-  for (const s of real) map[s.stage] = s
-  return defaultStages.map(a => {
-    const s = map[a.stage]
-    if (!s) return a
-    return {
-      stage: a.stage,
-      name: s.name || a.name,
-      status: s.status || 'pending',
-      elapsed: _calcElapsed(s.started_at, s.finished_at)
-    }
-  })
-})
+/** 步骤条每步描述：已完成 → 耗时，运行中 → 运行中，其余为空 */
+const stepDesc = (step: number): string => {
+  const s = stageInfo.value[step]
+  if (!s) return ''
+  if (s.status === 'done') return `✓ ${_calcElapsed(s.started_at, s.finished_at)}`
+  if (s.status === 'running') return '运行中'
+  return ''
+}
 
 function _calcElapsed(start?: string, end?: string): string {
   if (!start) return ''
@@ -1180,7 +1878,6 @@ function _calcElapsed(start?: string, end?: string): string {
   return `${Math.floor(sec / 60)}m${sec % 60}s`
 }
 
-// ── 实时进度文案 ──
 const batch1ProgressText = computed(() => {
   const j = job.value
   if (!j) return 'AI 正在提取实体类型...'
@@ -1201,7 +1898,6 @@ const batch2ProgressText = computed(() => {
   return `AI 正在提取实体+关系，已提取 ${done} 个实体/${relations.value.length} 条关系`
 })
 
-// ── 断点续作 ──
 const isStep1Resumable = computed(() =>
   !!job.value
   && job.value.step1_batches_total > 0
@@ -1217,7 +1913,6 @@ const isStep2Resumable = computed(() =>
   && job.value.step2_failed_batch >= 0
 )
 
-// ── 步骤条状态 ──
 const getStepStatus = (step: number): 'wait' | 'process' | 'finish' | 'error' => {
   if (!job.value) return 'wait'
   if (job.value.error_message && step === currentStep.value) return 'error'
@@ -1226,73 +1921,138 @@ const getStepStatus = (step: number): 'wait' | 'process' | 'finish' | 'error' =>
   return 'wait'
 }
 
+// ── 原文定位 / 高亮 ──
+function _findRange(source: string, snippet: string): { start: number; end: number } | null {
+  const q = (snippet || '').trim()
+  if (!q || !source) return null
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+  const m = new RegExp(escaped, 'i').exec(source)
+  return m ? { start: m.index, end: m.index + m[0].length } : null
+}
+
+const activeRange = computed(() =>
+  highlightRange.value || (docMatches.value.length ? docMatches.value[docMatchIndex.value] : null)
+)
+
+const docRenderParts = computed(() => {
+  const text = job.value?.source_text || ''
+  const r = activeRange.value
+  if (!r || r.start < 0 || r.end > text.length) return [{ text, mark: false }]
+  return [
+    { text: text.slice(0, r.start), mark: false },
+    { text: text.slice(r.start, r.end), mark: true },
+    { text: text.slice(r.end), mark: false }
+  ]
+})
+
+const setMarkRef = (el: any) => {
+  markEl.value = (el as HTMLElement) || null
+}
+
+watch(activeRange, async () => {
+  await nextTick()
+  if (markEl.value) markEl.value.scrollIntoView({ block: 'center', behavior: 'smooth' })
+})
+
+const searchDoc = () => {
+  const source = job.value?.source_text || ''
+  const q = (docSearch.value || '').trim()
+  highlightRange.value = null
+  if (!q) {
+    docMatches.value = []
+    docMatchIndex.value = 0
+    return
+  }
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+  const re = new RegExp(escaped, 'gi')
+  const matches: { start: number; end: number }[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(source)) !== null) {
+    matches.push({ start: m.index, end: m.index + m[0].length })
+    if (matches.length >= 200) break
+    if (m[0].length === 0) re.lastIndex++
+  }
+  docMatches.value = matches
+  docMatchIndex.value = 0
+}
+
+const gotoNextMatch = () => {
+  if (!docMatches.value.length) return
+  docMatchIndex.value = (docMatchIndex.value + 1) % docMatches.value.length
+  highlightRange.value = null
+}
+
+const gotoPrevMatch = () => {
+  if (!docMatches.value.length) return
+  docMatchIndex.value = (docMatchIndex.value - 1 + docMatches.value.length) % docMatches.value.length
+  highlightRange.value = null
+}
+
+const clearHighlight = () => {
+  highlightRange.value = null
+  docMatches.value = []
+  docMatchIndex.value = 0
+  docSearch.value = ''
+}
+
+const locateSnippet = (snippet: string) => {
+  if (!job.value?.source_text) {
+    ElMessage.info('任务暂无原文内容')
+    return
+  }
+  const range = _findRange(job.value.source_text, snippet)
+  if (!range) {
+    ElMessage.warning('未在原文中找到该片段（可能已被改写）')
+    return
+  }
+  docSearch.value = ''
+  docMatches.value = []
+  highlightRange.value = range
+}
+
 // ── 数据加载 ──
 const loadJob = async () => {
   try {
     const res: any = await getBuildJob(jobId)
     job.value = res.data
 
-    // 恢复配置：粒度 + 阶段提示词 + 模板
-    if (job.value.granularity) {
-      metaForm.value.granularity = job.value.granularity
-    }
-    if (job.value.stage_hints && typeof job.value.stage_hints === 'object') {
-      stageHints.value = { 1: '', 2: '', 3: '', ...job.value.stage_hints }
-    }
+    if (job.value.granularity) metaForm.value.granularity = job.value.granularity
     if (job.value.template_id) {
       metaForm.value.templateId = job.value.template_id
       metaForm.value.templateMode = job.value.template_mode || 'soft_constraint'
     }
 
-    // 恢复实体类型清单（v3: step1_entity_types）
-    if (job.value.step1_entity_types?.length) {
-      entityTypes.value = job.value.step1_entity_types.map((t: any) => ({
-        ...t,
-        propertySchemaStr: JSON.stringify(t.property_schema || [], null, 0)
-      }))
-    } else {
-      entityTypes.value = []
-    }
-
-    // 恢复实体类型间关系（v3: step1_entity_type_relations）
-    if (job.value.step1_entity_type_relations?.length) {
-      entityTypeRelations.value = JSON.parse(JSON.stringify(job.value.step1_entity_type_relations))
-    } else {
-      entityTypeRelations.value = []
-    }
-
-    // 恢复实体清单（v3: step2_entities）
-    if (job.value.step2_entities?.length) {
-      entities.value = job.value.step2_entities.map((e: any) => ({
-        ...e,
-        propertiesStr: JSON.stringify(e.properties || [], null, 0)
-      }))
-    } else {
-      entities.value = []
-    }
-
-    // 恢复关系清单（v3: step2_relations，原 step3_relations 已合并到 step2）
-    if (job.value.step2_relations?.length) {
-      relations.value = JSON.parse(JSON.stringify(job.value.step2_relations))
-    } else {
-      relations.value = []
-    }
+    entityTypes.value = (job.value.step1_entity_types || []).map((t: any) => ({
+      ...t,
+      review: (job.value.step1_confirmed ? 'approved' : 'pending') as ReviewStatus
+    }))
+    entityTypeRelations.value = (job.value.step1_entity_type_relations || []).map((r: any) => ({
+      ...r,
+      review: (job.value.step1_confirmed ? 'approved' : 'pending') as ReviewStatus
+    }))
+    entities.value = (job.value.step2_entities || []).map((e: any) => ({
+      ...e,
+      review: (job.value.step2_confirmed ? 'approved' : 'pending') as ReviewStatus
+    }))
+    relations.value = (job.value.step2_relations || []).map((r: any) => ({
+      ...r,
+      review: (job.value.step2_confirmed ? 'approved' : 'pending') as ReviewStatus
+    }))
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '加载任务失败')
   }
 }
 
-// 加载模板列表（step0 可选）
 const loadTemplates = async () => {
   try {
     const res: any = await getTemplateList()
     templates.value = res.data || []
   } catch {
-    // 静默失败：模板为可选配置，加载失败不阻断主流程
+    // 模板为可选配置，加载失败不阻断主流程
   }
 }
 
-// ── 轮询进度（step3 验证用；SSE 降级时也用） ──
+// ── 轮询（step3 验证；SSE 降级时兜底） ──
 const startPolling = () => {
   stopPolling()
   pollTimer = setInterval(async () => {
@@ -1301,7 +2061,6 @@ const startPolling = () => {
       const p = res.data
       if (job.value) {
         _applyProgress(p)
-        // 后台任务完成（running_step 回到 -1）或出错时，重新加载并停止轮询
         if (p.running_step === -1) {
           await loadJob()
           stopPolling()
@@ -1320,7 +2079,6 @@ const stopPolling = () => {
   }
 }
 
-/** 把 progress 端点返回的字段同步到 job（轮询/SSE 共用） */
 const _applyProgress = (p: any) => {
   if (!job.value) return
   job.value.running_step = p.running_step
@@ -1334,44 +2092,31 @@ const _applyProgress = (p: any) => {
   job.value.step2_confirmed = p.step2_confirmed
   job.value.step3_confirmed = p.step3_confirmed
   job.value.ontology_id = p.ontology_id
-  // 分批状态
   job.value.step1_batches_total = p.step1_batches_total
   job.value.step1_batches_done = p.step1_batches_done
   job.value.step1_failed_batch = p.step1_failed_batch
   job.value.step2_batches_total = p.step2_batches_total
   job.value.step2_batches_done = p.step2_batches_done
   job.value.step2_failed_batch = p.step2_failed_batch
-  // 验证结果（v3: step3_verification / step3_report）
   job.value.step3_verification = p.step3_verification
   job.value.step3_report = p.step3_report
-  // 真实进度时间线
   job.value.progress_stages = p.progress_stages
 }
 
-// ── SSE 实时订阅（step1/step2 批次级增量推送） ──
-// step1 推 batch_done 携带 entity_types / entity_type_relations
-// step2 推 batch_done 携带 entities / relations
-// step_done 在每步 AI 全部完成时触发，覆盖最终结果
-
-/** 名称归一化（与后端 _normalize_name 一致）：用于按名称去重 */
+// ── SSE 实时订阅 ──
 const _normName = (name: string) =>
   (name || '').trim().replace(/（/g, '(').replace(/）/g, ')').replace(/\u3000/g, ' ')
 
-/** 关系三元组去重 key */
 const _relKey = (r: any) => `${_normName(r.source)}|${r.relation_type}|${_normName(r.target)}`
-
-/** 类型间关系三元组去重 key */
 const _etRelKey = (r: any) =>
   `${_normName(r.source_type)}|${r.relation_type}|${_normName(r.target_type)}`
 
 const startStream = () => {
-  console.log('[Stream] startStream, jobId=', jobId)
   stopStream()
   stopPolling()
   streamRetryCount = 0
   sseAbort = streamBuildJob(jobId, {
     onBatchDone: (d) => {
-      // step1：实体类型按名称去重追加
       if (Array.isArray(d.entity_types)) {
         const existing = new Set(entityTypes.value.map(t => _normName(t.name)).filter(Boolean))
         const fresh = (d.entity_types || []).filter((t: any) => {
@@ -1379,17 +2124,13 @@ const startStream = () => {
           if (!n || existing.has(n)) return false
           existing.add(n)
           return true
-        }).map((t: any) => ({
-          ...t,
-          propertySchemaStr: JSON.stringify(t.property_schema || [], null, 0)
-        }))
+        }).map((t: any) => ({ ...t, review: 'pending' as ReviewStatus }))
         entityTypes.value.push(...fresh)
         if (job.value) {
           job.value.step1_batches_done = d.batches_done
           job.value.step1_batches_total = d.batches_total
         }
       }
-      // step1：类型间关系增量追加
       if (Array.isArray(d.entity_type_relations)) {
         const existRel = new Set(entityTypeRelations.value.map(_etRelKey))
         const fresh = (d.entity_type_relations || []).filter((r: any) => {
@@ -1397,10 +2138,9 @@ const startStream = () => {
           if (existRel.has(k)) return false
           existRel.add(k)
           return true
-        })
+        }).map((r: any) => ({ ...r, review: 'pending' as ReviewStatus }))
         entityTypeRelations.value.push(...fresh)
       }
-      // step2：实体按名称去重追加
       if (Array.isArray(d.entities)) {
         const existing = new Set(entities.value.map(e => _normName(e.name)).filter(Boolean))
         const fresh = (d.entities || []).filter((e: any) => {
@@ -1408,17 +2148,13 @@ const startStream = () => {
           if (!n || existing.has(n)) return false
           existing.add(n)
           return true
-        }).map((e: any) => ({
-          ...e,
-          propertiesStr: JSON.stringify(e.properties || [], null, 0)
-        }))
+        }).map((e: any) => ({ ...e, review: 'pending' as ReviewStatus }))
         entities.value.push(...fresh)
         if (job.value) {
           job.value.step2_batches_done = d.batches_done
           job.value.step2_batches_total = d.batches_total
         }
       }
-      // step2：关系增量追加
       if (Array.isArray(d.relations)) {
         const existRel = new Set(relations.value.map(_relKey))
         const fresh = (d.relations || []).filter((r: any) => {
@@ -1426,23 +2162,25 @@ const startStream = () => {
           if (existRel.has(k)) return false
           existRel.add(k)
           return true
-        })
+        }).map((r: any) => ({ ...r, review: 'pending' as ReviewStatus }))
         relations.value.push(...fresh)
       }
     },
     onStepDone: (d) => {
-      // AI 全部完成，启用对应"确认"按钮，并用后端权威数据覆盖
       if (d.step === 1) {
         aiStep1Done.value = true
         if (job.value) job.value.running_step = -1
         if (Array.isArray(d.entity_types)) {
           entityTypes.value = d.entity_types.map((t: any) => ({
             ...t,
-            propertySchemaStr: JSON.stringify(t.property_schema || [], null, 0)
+            review: 'pending' as ReviewStatus
           }))
         }
         if (Array.isArray(d.entity_type_relations)) {
-          entityTypeRelations.value = JSON.parse(JSON.stringify(d.entity_type_relations))
+          entityTypeRelations.value = d.entity_type_relations.map((r: any) => ({
+            ...r,
+            review: 'pending' as ReviewStatus
+          }))
         }
         ElMessage.success(`实体类型提取完成，共 ${entityTypes.value.length} 个`)
       } else if (d.step === 2) {
@@ -1451,11 +2189,14 @@ const startStream = () => {
         if (Array.isArray(d.entities)) {
           entities.value = d.entities.map((e: any) => ({
             ...e,
-            propertiesStr: JSON.stringify(e.properties || [], null, 0)
+            review: 'pending' as ReviewStatus
           }))
         }
         if (Array.isArray(d.relations)) {
-          relations.value = JSON.parse(JSON.stringify(d.relations))
+          relations.value = d.relations.map((r: any) => ({
+            ...r,
+            review: 'pending' as ReviewStatus
+          }))
         }
         ElMessage.success(`实体+关系提取完成，共 ${entities.value.length} 个实体/${relations.value.length} 条关系`)
       } else if (d.step === 3) {
@@ -1469,7 +2210,6 @@ const startStream = () => {
     },
     onError: (d) => {
       if (d.reconnect) {
-        console.log('[Stream] onError reconnect, retryCount=', streamRetryCount)
         retryStream()
       } else {
         if (d.message) ElMessage.error(d.message)
@@ -1493,7 +2233,6 @@ const stopStream = () => {
   }
 }
 
-/** 断线重连：最多 3 次，仍失败回退轮询 */
 const retryStream = () => {
   if (streamRetryCount >= STREAM_MAX_RETRY) {
     ElMessage.warning('实时连接不稳定，已切换到轮询模式')
@@ -1507,18 +2246,21 @@ const retryStream = () => {
 }
 
 // ── 步骤操作 ──
-// step0：确认配置（粒度 + 模板；阶段提示词在对应阶段开始时输入）
 const doConfirmMeta = async () => {
   submitting.value = true
   try {
     const fd = new FormData()
     fd.append('granularity', metaForm.value.granularity)
-    // 模板配置（可选）
     if (metaForm.value.templateId) {
       fd.append('template_id', metaForm.value.templateId)
       fd.append('template_mode', metaForm.value.templateMode)
     }
-
+    // 配置阶段的补充说明（可选），存入 stage_hints["0"] 供后续参考
+    if (stageNote0.value.trim()) {
+      fd.append('stage_hints', JSON.stringify({ 0: stageNote0.value.trim() }))
+    }
+    // 不传 entity_types/relation_types：后端沿用 upload 阶段 LLM 推荐的元模型，
+    // 其作为 step1 提取的初始类型约束（可在 step1 顶部编辑）
     await confirmMetaApi(jobId, fd)
     ElMessage.success('配置已确认，可执行实体类型提取')
     await loadJob()
@@ -1529,14 +2271,27 @@ const doConfirmMeta = async () => {
   }
 }
 
-// step1：启动实体类型提取（POST /ontology/build/{jobId}/step1）
 const doExtractEntityTypes = async () => {
   try {
-    const fd = new FormData()
-    // 始终提交 stage_hint 字段（空串也可），保证 multipart 请求体至少有一个 part，
-    // 否则空 FormData 会被 FastAPI 判定为 body 解析失败返回 400
-    fd.append('stage_hint', (stageHints.value[1] || '').trim())
-    await api.post(`/ontology/build/${jobId}/step1`, fd)
+    // 若初始类型约束有修改，先同步到元模型再启动提取
+    if (constraintDirty.value) {
+      const mfd = new FormData()
+      mfd.append('granularity', job.value?.granularity || metaForm.value.granularity)
+      const et = constraintEntityTypes.value
+        .filter((t: any) => t.name && t.name.trim())
+        .map((t: any) => ({ name: t.name.trim(), color: t.color }))
+      const rt = constraintRelationTypes.value
+        .filter((r: any) => r.name && r.name.trim())
+        .map((r: any) => ({ name: r.name.trim() }))
+      mfd.append('entity_types', JSON.stringify(et))
+      mfd.append('relation_types', JSON.stringify(rt))
+      if (job.value?.template_id) {
+        mfd.append('template_id', job.value.template_id)
+        mfd.append('template_mode', job.value.template_mode || 'soft_constraint')
+      }
+      await confirmMetaApi(jobId, mfd)
+    }
+    await api.post(`/ontology/build/${jobId}/step1`)
     if (job.value) {
       job.value.running_step = 1
       job.value.progress_message = '正在准备文档...'
@@ -1549,27 +2304,28 @@ const doExtractEntityTypes = async () => {
   }
 }
 
-// step1：确认实体类型 + 类型间关系（PUT /ontology/build/{jobId}/step1）
 const doConfirmEntityTypes = async () => {
   submitting.value = true
   try {
-    // 解析 propertySchemaStr 回数组
-    const parsedTypes = entityTypes.value.map(t => {
-      let schema: any = []
-      try {
-        schema = JSON.parse(t.propertySchemaStr || '[]')
-      } catch {
-        schema = []
-      }
-      const { propertySchemaStr, ...rest } = t
-      return { ...rest, property_schema: schema }
+    const types = keptEntityTypes.value.map((t: any) => {
+      const { review, children, ...rest } = t
+      void review
+      void children
+      return rest
     })
+    const rels = keptEntityTypeRelations.value.map((r: any) => {
+      const { review, ...rest } = r
+      void review
+      return rest
+    })
+    if (!types.length) {
+      ElMessage.warning('请至少保留一个实体类型')
+      return
+    }
     const fd = new FormData()
-    fd.append('entity_types', JSON.stringify(parsedTypes))
-    fd.append('entity_type_relations', JSON.stringify(entityTypeRelations.value))
-    await api.put(`/ontology/build/${jobId}/step1`, fd, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
+    fd.append('entity_types', JSON.stringify(types))
+    fd.append('entity_type_relations', JSON.stringify(rels))
+    await api.put(`/ontology/build/${jobId}/step1`, fd)
     ElMessage.success('实体类型已确认，可执行实体+关系提取')
     stopStream()
     await loadJob()
@@ -1580,14 +2336,9 @@ const doConfirmEntityTypes = async () => {
   }
 }
 
-// step2：启动实体+关系提取（POST /ontology/build/{jobId}/step2）
 const doExtractEntities = async () => {
   try {
-    const fd = new FormData()
-    // 始终提交 stage_hint 字段（空串也可），保证 multipart 请求体至少有一个 part，
-    // 否则空 FormData 会被 FastAPI 判定为 body 解析失败返回 400
-    fd.append('stage_hint', (stageHints.value[2] || '').trim())
-    await api.post(`/ontology/build/${jobId}/step2`, fd)
+    await api.post(`/ontology/build/${jobId}/step2`)
     if (job.value) {
       job.value.running_step = 2
       job.value.progress_message = '正在提取实体+关系...'
@@ -1600,27 +2351,27 @@ const doExtractEntities = async () => {
   }
 }
 
-// step2：确认实体 + 关系（PUT /ontology/build/{jobId}/step2）
 const doConfirmEntities = async () => {
   submitting.value = true
   try {
-    const parsedEntities = entities.value.map(e => {
-      let props: any = []
-      try {
-        const parsed = JSON.parse(e.propertiesStr || '[]')
-        props = Array.isArray(parsed) ? parsed : []
-      } catch {
-        props = []
-      }
-      const { propertiesStr, ...rest } = e
-      return { ...rest, properties: props }
+    const parsedEntities = keptEntities.value.map((e: any) => {
+      const { review, ...rest } = e
+      void review
+      return rest
     })
+    const parsedRelations = keptRelations.value.map((r: any) => {
+      const { review, ...rest } = r
+      void review
+      return rest
+    })
+    if (!parsedEntities.length) {
+      ElMessage.warning('请至少保留一个实体')
+      return
+    }
     const fd = new FormData()
     fd.append('entities', JSON.stringify(parsedEntities))
-    fd.append('relations', JSON.stringify(relations.value))
-    await api.put(`/ontology/build/${jobId}/step2`, fd, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
+    fd.append('relations', JSON.stringify(parsedRelations))
+    await api.put(`/ontology/build/${jobId}/step2`, fd)
     ElMessage.success('实体+关系已确认，可执行验证')
     stopStream()
     await loadJob()
@@ -1631,14 +2382,9 @@ const doConfirmEntities = async () => {
   }
 }
 
-// step3：启动验证（POST /ontology/build/{jobId}/step3）
 const doVerify = async () => {
   try {
-    const fd = new FormData()
-    // 始终提交 stage_hint 字段（空串也可），保证 multipart 请求体至少有一个 part，
-    // 否则空 FormData 会被 FastAPI 判定为 body 解析失败返回 400
-    fd.append('stage_hint', (stageHints.value[3] || '').trim())
-    await api.post(`/ontology/build/${jobId}/step3`, fd)
+    await api.post(`/ontology/build/${jobId}/step3`)
     if (job.value) {
       job.value.running_step = 3
       job.value.progress_message = '正在验证+生成报告...'
@@ -1650,7 +2396,6 @@ const doVerify = async () => {
   }
 }
 
-// step3：确认验证结果，生成正式本体（PUT /ontology/build/{jobId}/step3）
 const doConfirmVerification = async () => {
   submitting.value = true
   try {
@@ -1664,7 +2409,37 @@ const doConfirmVerification = async () => {
   }
 }
 
-// ── 返工（v3 新增） ──
+// ── 报告操作：复制 / 下载 ──
+const copyReport = async () => {
+  const text = job.value?.step3_report || ''
+  if (!text) {
+    ElMessage.warning('暂无报告内容')
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('报告已复制到剪贴板')
+  } catch {
+    ElMessage.error('复制失败，请手动选择复制')
+  }
+}
+
+const downloadReport = () => {
+  const text = job.value?.step3_report || ''
+  if (!text) {
+    ElMessage.warning('暂无报告内容')
+    return
+  }
+  const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${job.value?.name || '本体构建'}-验证简报.md`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+// ── 返工 ──
 const openRework = (step: number) => {
   reworkTargetStep.value = step
   reworkPrompt.value = ''
@@ -1675,31 +2450,24 @@ const doRework = async () => {
   reworkSubmitting.value = true
   try {
     await triggerRework(reworkTargetStep.value, reworkPrompt.value || '')
-    ElMessage.success(`step${reworkTargetStep.value} 返工已开始，结果将被替换`)
+    ElMessage.success(`step${reworkTargetStep.value} 重新生成已开始，结果将被替换`)
     reworkDialogVisible.value = false
   } catch (e: any) {
-    ElMessage.error(e.serverMessage || '返工失败')
+    ElMessage.error(e.serverMessage || '重新生成失败')
   } finally {
     reworkSubmitting.value = false
   }
 }
 
-/**
- * 触发指定步骤返工（携带用户提示词），并切换到对应的实时/轮询模式。
- * 供"返工对话框"与"阶段完成后的修改意见自动返工"共用。
- */
 const triggerRework = async (step: number, promptText: string) => {
   const fd = new FormData()
   fd.append('prompt', promptText || '')
   await reworkBuildStep(jobId, step, fd)
-  // 返工后该步结果被替换：重新加载任务状态，并按 running_step 启动 SSE/轮询
   await loadJob()
   const rs = job.value?.running_step
   if (rs >= 1 && rs <= 2) {
-    // step1/step2 返工走 SSE
     aiStep1Done.value = rs < 1
     aiStep2Done.value = rs < 2
-    // 清空当前步缓存（后端会重新生成）
     if (rs === 1) {
       entityTypes.value = []
       entityTypeRelations.value = []
@@ -1709,17 +2477,12 @@ const triggerRework = async (step: number, promptText: string) => {
     }
     startStream()
   } else if (rs === 3) {
-    // step3 返工走轮询
     job.value.step3_verification = null
     job.value.step3_report = null
     startPolling()
   }
 }
 
-/**
- * 阶段确认入口：若用户填了修改意见，则先携带意见自动返工（LLM 重跑该阶段），
- * 用户审阅返工结果后再次确认；未填意见则直接走原有确认逻辑。
- */
 const confirmStageWithFeedback = async (step: 1 | 2 | 3, confirmFn: () => Promise<void>) => {
   const feedback = (stageFeedback.value[step] || '').trim()
   if (feedback) {
@@ -1729,7 +2492,7 @@ const confirmStageWithFeedback = async (step: 1 | 2 | 3, confirmFn: () => Promis
       stageFeedback.value[step] = ''
       ElMessage.success(`已携带您的修改意见重新执行阶段 ${step}，请审阅新结果`)
     } catch (e: any) {
-      ElMessage.error(e.serverMessage || '返工失败')
+      ElMessage.error(e.serverMessage || '重新生成失败')
     } finally {
       submitting.value = false
     }
@@ -1738,13 +2501,247 @@ const confirmStageWithFeedback = async (step: 1 | 2 | 3, confirmFn: () => Promis
   await confirmFn()
 }
 
-// ── 导航 ──
+// ── 编辑器保存 ──
+const addConstraintRelationType = () => {
+  const name = newConstraintRelationType.value.trim()
+  if (!name) return
+  constraintRelationTypes.value.push({ name })
+  newConstraintRelationType.value = ''
+}
+
+const openTypeEditor = (t?: any) => {
+  if (t) {
+    const idx = entityTypes.value.findIndex(x => x.name === t.name)
+    typeEditor.value = {
+      visible: true,
+      mode: 'edit',
+      index: idx,
+      name: t.name || '',
+      description: t.description || '',
+      color: t.color || '#5470c6',
+      parent_entity_type_name: t.parent_entity_type_name || '',
+      schema: JSON.parse(JSON.stringify(t.property_schema || []))
+    }
+  } else {
+    typeEditor.value = {
+      visible: true,
+      mode: 'add',
+      index: -1,
+      name: '',
+      description: '',
+      color: '#5470c6',
+      parent_entity_type_name: '',
+      schema: []
+    }
+  }
+}
+
+const saveType = () => {
+  const name = typeEditor.value.name.trim()
+  if (!name) {
+    ElMessage.warning('请填写类型名称')
+    return
+  }
+  const data = {
+    name,
+    description: typeEditor.value.description.trim(),
+    color: typeEditor.value.color,
+    parent_entity_type_name: typeEditor.value.parent_entity_type_name,
+    property_schema: typeEditor.value.schema
+  }
+  if (typeEditor.value.mode === 'add') {
+    entityTypes.value.push({ ...data, review: 'approved' as ReviewStatus })
+  } else {
+    Object.assign(entityTypes.value[typeEditor.value.index], data, { review: 'approved' as ReviewStatus })
+  }
+  typeEditor.value.visible = false
+}
+
+const removeType = (data: any) => {
+  const idx = entityTypes.value.findIndex(t => t.name === data.name)
+  if (idx >= 0) entityTypes.value.splice(idx, 1)
+}
+
+const openEntityEditor = (e?: any) => {
+  if (e) {
+    entityEditor.value = {
+      visible: true,
+      index: entities.value.indexOf(e),
+      name: e.name || '',
+      instance_of: e.instance_of || '',
+      properties: JSON.parse(JSON.stringify(e.properties || [])),
+      source_snippet: e.source_snippet || '',
+      description: e.description || ''
+    }
+  } else {
+    entityEditor.value = {
+      visible: true,
+      index: -1,
+      name: '',
+      instance_of: keptEntityTypes.value[0]?.name || '',
+      properties: [],
+      source_snippet: '',
+      description: ''
+    }
+  }
+}
+
+const addEntityToType = (typeName: string) => {
+  entityEditor.value = {
+    visible: true,
+    index: -1,
+    name: '',
+    instance_of: typeName,
+    properties: [],
+    source_snippet: '',
+    description: ''
+  }
+}
+
+const saveEntity = () => {
+  const name = entityEditor.value.name.trim()
+  if (!name) {
+    ElMessage.warning('请填写实体名称')
+    return
+  }
+  if (!entityEditor.value.instance_of) {
+    ElMessage.warning('请选择所属类型')
+    return
+  }
+  const data = {
+    name,
+    instance_of: entityEditor.value.instance_of,
+    properties: entityEditor.value.properties,
+    source_snippet: entityEditor.value.source_snippet.trim(),
+    description: entityEditor.value.description.trim()
+  }
+  if (entityEditor.value.index >= 0) {
+    Object.assign(entities.value[entityEditor.value.index], data, { review: 'approved' as ReviewStatus })
+  } else {
+    entities.value.push({ ...data, review: 'approved' as ReviewStatus })
+  }
+  entityEditor.value.visible = false
+}
+
+const openRelationEditor = (r?: any) => {
+  if (r) {
+    relationEditor.value = {
+      visible: true,
+      index: relations.value.indexOf(r),
+      source: r.source || '',
+      relation_type: r.relation_type || '',
+      target: r.target || '',
+      weight: typeof r.weight === 'number' ? r.weight : 1,
+      source_snippet: r.source_snippet || '',
+      description: r.description || ''
+    }
+  } else {
+    relationEditor.value = {
+      visible: true,
+      index: -1,
+      source: keptEntities.value[0]?.name || '',
+      relation_type: '',
+      target: '',
+      weight: 1,
+      source_snippet: '',
+      description: ''
+    }
+  }
+}
+
+const saveRelation = () => {
+  const { source, relation_type, target } = relationEditor.value
+  if (!source || !target) {
+    ElMessage.warning('请选择源实体与目标实体')
+    return
+  }
+  if (!relation_type.trim()) {
+    ElMessage.warning('请填写关系类型')
+    return
+  }
+  const data = {
+    source,
+    relation_type: relation_type.trim(),
+    target,
+    weight: relationEditor.value.weight,
+    source_snippet: relationEditor.value.source_snippet.trim(),
+    description: relationEditor.value.description.trim()
+  }
+  if (relationEditor.value.index >= 0) {
+    Object.assign(relations.value[relationEditor.value.index], data, { review: 'approved' as ReviewStatus })
+  } else {
+    relations.value.push({ ...data, review: 'approved' as ReviewStatus })
+  }
+  relationEditor.value.visible = false
+}
+
+const openETRelationEditor = (r?: any) => {
+  if (r) {
+    etRelationEditor.value = {
+      visible: true,
+      index: entityTypeRelations.value.indexOf(r),
+      source_type: r.source_type || '',
+      relation_type: r.relation_type || '',
+      target_type: r.target_type || '',
+      description: r.description || ''
+    }
+  } else {
+    etRelationEditor.value = {
+      visible: true,
+      index: -1,
+      source_type: keptEntityTypes.value[0]?.name || '',
+      relation_type: '',
+      target_type: '',
+      description: ''
+    }
+  }
+}
+
+const saveETRelation = () => {
+  const { source_type, relation_type, target_type } = etRelationEditor.value
+  if (!source_type || !target_type) {
+    ElMessage.warning('请选择源类型与目标类型')
+    return
+  }
+  if (!relation_type.trim()) {
+    ElMessage.warning('请填写关系类型')
+    return
+  }
+  const data = {
+    source_type,
+    relation_type: relation_type.trim(),
+    target_type,
+    description: etRelationEditor.value.description.trim()
+  }
+  if (etRelationEditor.value.index >= 0) {
+    Object.assign(entityTypeRelations.value[etRelationEditor.value.index], data, { review: 'approved' as ReviewStatus })
+  } else {
+    entityTypeRelations.value.push({ ...data, review: 'approved' as ReviewStatus })
+  }
+  etRelationEditor.value.visible = false
+}
+
+// ── 导航 / 刷新 ──
 const viewOntology = () => {
   if (job.value?.ontology_id) {
     router.push(`/ontology/${job.value.ontology_id}`)
   } else {
     goBack()
   }
+}
+
+const refreshAll = async () => {
+  loading.value = true
+  stopStream()
+  stopPolling()
+  await loadJob()
+  const rs = job.value?.running_step
+  if (rs >= 1 && rs <= 2) {
+    startStream()
+  } else if (rs === 3) {
+    startPolling()
+  }
+  loading.value = false
 }
 
 const goBack = () => {
@@ -1783,12 +2780,14 @@ const formatTime = (time: string) => {
 
 // ── 生命周期 ──
 onMounted(async () => {
+  // 窄屏默认收起原文面板，聚焦审阅区
+  if (window.matchMedia('(max-width: 1280px)').matches) {
+    docCollapsed.value = true
+  }
   loading.value = true
-  // 模板列表与任务详情可并行加载
   await Promise.all([loadJob(), loadTemplates()])
   loading.value = false
 
-  // 恢复 AI 完成标记（断线重连/刷新页面恢复场景：已提取但未确认）
   if (job.value?.step1_entity_types?.length && !job.value?.step1_confirmed) {
     aiStep1Done.value = true
   }
@@ -1796,7 +2795,6 @@ onMounted(async () => {
     aiStep2Done.value = true
   }
 
-  // 若有后台任务在运行：step1/step2 用 SSE 实时推送，step3（验证）用轮询
   const rs = job.value?.running_step
   if (rs >= 1 && rs <= 2) {
     startStream()
@@ -1814,8 +2812,10 @@ onUnmounted(() => {
 <style scoped>
 .ontology-build {
   height: 100%;
-  padding: 1.5rem;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem;
+  overflow: hidden;
 }
 
 .build-header {
@@ -1823,34 +2823,46 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 1rem;
+  flex-shrink: 0;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 0.875rem;
+  gap: 0.75rem;
+  min-width: 0;
 }
 
 .header-left h2 {
   margin: 0;
   color: var(--text-primary);
-  font-size: 1.35rem;
+  font-size: 1.25rem;
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .status-bar {
   background: white;
   border-radius: 10px;
-  padding: 1rem 1.25rem;
+  padding: 0.9rem 1.25rem;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-  margin-bottom: 1.25rem;
+  margin-bottom: 1rem;
+  flex-shrink: 0;
 }
 
 .status-progress {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.6rem;
 }
 
 .status-text {
@@ -1872,83 +2884,140 @@ onUnmounted(() => {
   text-align: right;
 }
 
-.status-hint {
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  white-space: nowrap;
+/* 步骤条：可点击回看已完成步骤 */
+.step-clickable {
+  cursor: pointer;
 }
 
-/* 阶段时间线：3 个 LLM 阶段的真实状态 */
-.stage-timeline {
-  display: flex;
-  gap: 1.5rem;
-  margin-bottom: 1rem;
-  padding: 0.75rem 0;
-  border-bottom: 1px dashed var(--border-color, #e4e7ed);
-  flex-wrap: wrap;
-}
-
-.stage-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.82rem;
-}
-
-.stage-dot {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--bg-secondary, #f0f2f5);
-  color: var(--text-secondary, #909399);
-  font-size: 0.7rem;
-}
-
-.stage-item.stage-running .stage-dot {
-  background: var(--primary-100, #ecf5ff);
-  color: var(--primary-500, #409eff);
-}
-
-.stage-item.stage-done .stage-dot {
-  background: var(--success-100, #f0f9eb);
-  color: var(--success-500, #67c23a);
-}
-
-.stage-item.stage-failed .stage-dot {
-  background: var(--el-color-danger-light-9, #fef0f0);
-  color: var(--el-color-danger, #f56c6c);
-}
-
-.stage-name {
-  color: var(--text-secondary, #606266);
-}
-
-.stage-item.stage-running .stage-name,
-.stage-item.stage-done .stage-name {
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
-.stage-time {
-  font-size: 0.72rem;
-  color: var(--text-secondary, #909399);
+.step-clickable:hover :deep(.el-step__head) {
+  transform: scale(1.04);
+  transition: transform 0.15s ease;
 }
 
 .build-steps {
   margin: 0;
 }
 
-.step-content {
-  min-height: 300px;
+/* ── 工作台：左原文 / 右审阅 ── */
+.workspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 0.5rem;
+  transition: grid-template-columns 0.2s ease;
+}
+
+.workspace.resizing {
+  transition: none;
+  user-select: none;
+  cursor: col-resize;
+}
+
+.doc-resizer {
+  width: 6px;
+  cursor: col-resize;
+  border-radius: 3px;
+  transition: background 0.15s ease;
+}
+
+.doc-resizer:hover,
+.workspace.resizing .doc-resizer {
+  background: var(--primary-300, #79bbff);
+}
+
+.doc-pane {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+}
+
+.doc-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-color, #e4e7ed);
+}
+
+.doc-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-chars {
+  font-size: 0.75rem;
+  color: var(--text-secondary, #909399);
+  white-space: nowrap;
+}
+
+.doc-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--border-color, #e4e7ed);
+}
+
+.doc-toolbar .el-input {
+  flex: 1;
+}
+
+.doc-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 1rem;
+  border-bottom: 1px solid var(--border-color, #e4e7ed);
+  background: var(--bg-secondary, #f8f9fb);
+  font-size: 0.78rem;
+}
+
+.doc-match-count {
+  color: var(--text-secondary, #606266);
+  min-width: 40px;
+  text-align: center;
+}
+
+.doc-text {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  font-size: 0.82rem;
+  line-height: 1.9;
+  color: var(--text-primary, #303133);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg-secondary, #fafbfc);
+}
+
+.doc-hl {
+  background: #ffe58f;
+  border-radius: 3px;
+  padding: 1px 2px;
+  box-shadow: 0 0 0 2px rgba(255, 229, 143, 0.5);
+}
+
+.review-pane {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .step-panel {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1.25rem;
 }
 
 .step-card {
@@ -1956,13 +3025,15 @@ onUnmounted(() => {
 }
 
 .step-card :deep(.el-card__body) {
-  padding: 1.5rem;
+  padding: 1.25rem;
 }
 
 .step-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .step-header-title {
@@ -1978,9 +3049,22 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
-/* 粒度 + 模板 + 阶段提示词 */
+.step-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+/* 确认按钮旁的待审提示 */
+.pending-hint {
+  font-size: 0.78rem;
+  color: var(--el-color-warning, #e6a23c);
+  align-self: center;
+}
+
+/* 配置 */
 .granularity-section {
-  margin-bottom: 1.25rem;
   padding: 1rem 1.25rem;
   background: var(--bg-secondary, #f5f7fa);
   border-radius: 8px;
@@ -1991,12 +3075,12 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin-bottom: 1rem;
+  margin-bottom: 0.9rem;
   flex-wrap: wrap;
 }
 
-.template-row {
-  flex-wrap: wrap;
+.granularity-row:last-child {
+  margin-bottom: 0;
 }
 
 .granularity-label {
@@ -2006,66 +3090,193 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.stage-hint-box {
-  margin-bottom: 1rem;
+.meta-block {
+  margin-bottom: 1.25rem;
 }
 
-.stage-hint-box :deep(.el-input-group__prepend) {
-  width: 150px;
-  font-size: 0.85rem;
+.meta-block:last-child {
+  margin-bottom: 0;
 }
 
-.stage-hint-tip {
-  margin-top: 0.35rem;
-  font-size: 0.78rem;
-  color: var(--text-secondary);
-}
-
-.stage-feedback-box {
-  margin-top: 1rem;
-}
-
-.stage-feedback-box :deep(.el-textarea__inner) {
-  border-style: dashed;
-  border-color: var(--el-color-warning);
-}
-
-.waiting-section,
-.extract-section,
-.build-section,
-.generate-section {
-  padding: 0.5rem 0;
-}
-
-.entity-types-section,
-.structure-section {
-  padding: 0.5rem 0;
-}
-
-.entity-types-section h4,
-.structure-section h4 {
-  margin: 1.5rem 0 0.75rem 0;
-  font-size: 0.95rem;
+.meta-block h4 {
+  margin: 0 0 0.6rem;
+  font-size: 0.92rem;
   font-weight: 600;
   color: var(--text-primary);
 }
 
-/* 实体类型树 */
-.entity-types-block {
+.meta-type-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.meta-index {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg-secondary, #f0f2f5);
+  color: var(--text-secondary, #909399);
+  font-size: 0.72rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.meta-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.meta-add-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* 阶段底部输入条（指标分析样式）：意见输入 + 确认按钮一体 */
+.stage-input-area {
+  margin-top: 1.25rem;
+}
+
+.stage-input-wrapper {
+  position: relative;
+}
+
+.stage-input-wrapper :deep(.el-textarea__inner) {
+  border-radius: 16px;
+  border-color: var(--border-normal);
+  padding: 14px 120px 14px 18px;
+  font-size: 15px;
+  line-height: 1.6;
+  transition: all 0.2s;
+  background: var(--gray-50);
+  resize: none;
+}
+
+.stage-input-wrapper :deep(.el-textarea__inner:hover) {
+  border-color: var(--primary-400);
+  background: white;
+}
+
+.stage-input-wrapper :deep(.el-textarea__inner:focus) {
+  border-color: var(--primary-500);
+  background: white;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+}
+
+.stage-input-actions {
+  position: absolute;
+  bottom: 14px;
+  right: 16px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.stage-input-actions .el-button {
+  height: 38px;
+  padding: 0 22px;
+  border-radius: 10px;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.resume-section,
+.start-section,
+.waiting-section,
+.generate-section,
+.review-section,
+.verify-section {
+  padding: 0.25rem 0;
+}
+
+/* 审阅 */
+.review-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+  padding: 0.7rem 1rem;
+  background: var(--bg-secondary, #f5f7fa);
+  border-radius: 8px;
+  border: 1px solid var(--border-color, #e4e7ed);
+}
+
+.review-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.review-count {
+  font-size: 0.8rem;
+  color: var(--text-secondary, #606266);
+  white-space: nowrap;
+}
+
+.review-block {
   margin-bottom: 1.5rem;
 }
 
-.entity-types-block :deep(.el-tree) {
+.review-block h4 {
+  margin: 0 0 0.7rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* 审阅块标题行：标题 + 全部展开/收起 */
+.review-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.7rem;
+}
+
+.review-block-head h4 {
+  margin: 0;
+}
+
+/* 批量操作栏：勾选树节点后出现 */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+  padding: 0.45rem 0.75rem;
+  background: var(--primary-100, #ecf5ff);
+  border: 1px solid var(--primary-200, #b3d8ff);
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+
+.batch-label {
+  font-weight: 500;
+  color: var(--primary-500, #409eff);
+  margin-right: auto;
+}
+
+.review-block :deep(.el-tree) {
   background: var(--bg-secondary, #f5f7fa);
   border-radius: 8px;
   padding: 0.75rem;
   border: 1px solid var(--border-color, #e4e7ed);
 }
 
-.entity-types-block :deep(.el-tree-node__content) {
+.review-block :deep(.el-tree-node__content) {
   height: auto;
   min-height: 32px;
-  padding: 0.25rem 0;
+  padding: 0.2rem 0;
 }
 
 .et-tree-node {
@@ -2073,12 +3284,11 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.5rem;
   flex: 1;
-  padding: 0.25rem 0;
+  min-width: 0;
   flex-wrap: wrap;
 }
 
 .et-tree-dot {
-  display: inline-block;
   width: 10px;
   height: 10px;
   border-radius: 50%;
@@ -2086,112 +3296,184 @@ onUnmounted(() => {
 }
 
 .et-tree-name {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary);
 }
 
 .et-tree-desc {
-  color: var(--text-secondary);
-  font-size: 0.8rem;
-  flex: 1;
-  min-width: 0;
+  font-size: 0.78rem;
+  color: var(--text-secondary, #909399);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 220px;
 }
 
-.property-schema-block,
-.entity-type-relations-block {
-  margin-bottom: 1.5rem;
-}
-
-/* 实体视图控制栏 */
-.entity-view-controls {
+.et-tree-actions {
+  margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 1rem;
-  margin-bottom: 1rem;
-  flex-wrap: wrap;
-}
-
-/* 实体分组视图 */
-.entity-grouped-view {
-  margin-bottom: 1.5rem;
-}
-
-.entity-grouped-view .concept-dot {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  margin-right: 0.5rem;
+  gap: 0.2rem;
   flex-shrink: 0;
 }
 
-.entity-grouped-view .concept-name {
-  font-weight: 600;
+.entity-view-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.concept-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
   margin-right: 0.4rem;
+  display: inline-block;
 }
 
-/* 验证报告 */
-.verify-section {
-  padding: 0.5rem 0;
+.concept-name {
+  font-weight: 500;
+  margin-right: 0.5rem;
 }
 
-.suspects-block h4,
+.prop-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+/* 展开行：全部属性 / 描述 / 出处 */
+.entity-expand {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem 1.5rem 0.6rem 3rem;
+  font-size: 0.82rem;
+  line-height: 1.7;
+}
+
+.entity-expand-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.entity-expand-label {
+  flex-shrink: 0;
+  min-width: 64px;
+  font-weight: 500;
+  color: var(--text-secondary, #606266);
+  padding-top: 1px;
+}
+
+.source-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.3rem;
+}
+
+.source-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.entity-name-cell {
+  font-weight: 500;
+}
+
+.entity-type-cell {
+  font-weight: 500;
+}
+
+.rejected-block {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.7rem 1rem;
+  background: var(--el-color-danger-light-9, #fef0f0);
+  border-radius: 8px;
+  border: 1px dashed var(--el-color-danger-light-5, #fbc4c4);
+}
+
+.rejected-title {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--el-color-danger, #f56c6c);
+}
+
+/* 报告 */
+.report-block {
+  margin-top: 1.25rem;
+}
+
 .report-block h4 {
-  margin: 1rem 0 0.75rem 0;
+  margin: 0 0 0.7rem;
   font-size: 0.95rem;
   font-weight: 600;
-  color: var(--text-primary);
 }
 
-.report-block {
-  margin: 1.5rem 0;
+/* 报告标题行：标题 + 复制/下载操作 */
+.report-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.7rem;
+}
+
+.report-block-head h4 {
+  margin: 0;
+}
+
+.report-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
 }
 
 .report-content {
   padding: 1rem 1.25rem;
-  background: var(--bg-secondary, #f5f7fa);
+  background: var(--bg-secondary, #f8f9fb);
   border-radius: 8px;
   border: 1px solid var(--border-color, #e4e7ed);
-  white-space: pre-wrap;
-  font-size: 0.88rem;
-  line-height: 1.7;
-  color: var(--text-primary);
-  max-height: 480px;
+  max-height: 420px;
   overflow-y: auto;
-}
-
-.step-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  margin-top: 1.5rem;
-}
-
-/* LLM 服务端偶发无响应的专属提示 */
-.llm-hint {
-  margin: 0.25rem 0;
-  color: var(--el-color-warning);
-  font-weight: 600;
 }
 
 .complete-content {
   text-align: center;
-  padding: 2rem 1.5rem;
-}
-
-.success-icon {
-  font-size: 3.5rem;
-  color: var(--success-500);
-  margin-bottom: 1rem;
+  padding: 2rem 0;
 }
 
 .complete-content h3 {
-  margin: 0 0 0.75rem 0;
-  font-size: 1.35rem;
-  font-weight: 600;
+  margin: 0.75rem 0 0;
+  font-size: 1.15rem;
   color: var(--text-primary);
+}
+
+.success-icon {
+  font-size: 56px;
+  color: var(--el-color-success, #67c23a);
+}
+
+.schema-editor {
+  width: 100%;
+}
+
+.source-edit {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.llm-hint {
+  color: var(--el-color-primary, #409eff);
 }
 </style>

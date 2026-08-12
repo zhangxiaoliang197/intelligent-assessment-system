@@ -61,9 +61,9 @@ VERIFICATION_MAX_DOC_CHARS = int(os.getenv("VERIFICATION_MAX_DOC_CHARS", "20000"
 # reasoning 模型（如 deepseek-v4-flash / deepseek-reasoner）会优先消耗 token 做思考链
 # （reasoning_content），再输出正式 content。max_tokens 需同时容纳 reasoning + content，
 # 否则 reasoning 耗尽上限后 content 会被截断为空（finish_reason=length）。
-# 复杂文学/叙事文档的 reasoning 可达 6K-15K token，8000 明显不足，提到 24000。
+# 复杂文学/叙事文档的 reasoning 可达 6K-15K token，24000 仍可能不够，提到 32000。
 # 可通过环境变量 LLM_MAX_TOKENS 覆盖。
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "24000"))
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "32000"))
 
 # ── 粒度预设（step0 用户选择，注入 step1/step2 prompt 控制提取数量）──
 # coarse（粗）：仅核心概念，适合快速概览
