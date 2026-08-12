@@ -423,8 +423,8 @@
               v-model="inputMessage"
               type="textarea"
               :rows="3"
-              placeholder="输入指标需求，Enter 发送，Shift+Enter 换行"
-              @keydown="sendMessageOnEnter($event, () => analyzeIndicator())"
+              placeholder="输入指标需求，如：帮我分析火力打击任务完成度指标..."
+              @keydown.enter.exact.prevent="() => analyzeIndicator()"
             />
             <div class="input-actions">
               <el-tooltip :content="isListening ? '停止录音' : '语音输入'" placement="top">
@@ -593,17 +593,16 @@
 import { ref, onMounted, computed, nextTick, watch } from 'vue'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useRouter } from 'vue-router'
-import { Search, Collection, Box, PieChart, Plus, Delete, ArrowRight, ArrowDown, Microphone, CircleCheck, CircleClose, Loading, Clock, Close, Cpu, Promotion, Setting } from '@element-plus/icons-vue'
+import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete, ArrowRight, ArrowDown, Microphone, CircleCheck, CircleClose, Loading, Clock, Close, Cpu, Promotion, Setting, MapLocation } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
-import { useToolNav } from '@/composables/useToolNav'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData } from '@/composables/useMapPrompt'
 import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
 import api from '@/services/api'
 import { renderMarkdown } from '@/utils/markdown'
-import { sendMessageOnEnter } from '@/utils/messageInput'
+import { useToolNav } from '@/composables/useToolNav'
 
 const router = useRouter()
 
@@ -664,6 +663,7 @@ const chatArea = ref<HTMLElement | null>(null)
 const treeChartRefs = ref<HTMLElement[]>([])
 let activeAbortController: AbortController | null = null
 let cancelRequested = false
+let _newSessionPending = false  // 防止新会话创建期间发送消息到旧会话
 
 // ── 右侧执行面板状态 ──
 const showExecutionPanel = ref(false)
@@ -684,12 +684,9 @@ const panelState = ref({
   generatedSql: '',
   rawResults: null as any[] | null,
   indicators: null as any[] | null,
-  preflight: null as any | null,
-  queryPlan: null as any | null,
   activeSkillName: '',
   sections: {
     steps: false,  // collapsed=false 表示展开
-    plan: true,
     indicators: true,  // collapsed=true 表示折叠
     sql: true,
     data: true
@@ -703,7 +700,7 @@ const hasExecutionData = computed(() => {
     (panelState.value.indicators && panelState.value.indicators.length > 0)
 })
 
-const togglePanel = (section: 'steps' | 'indicators' | 'sql' | 'data' | 'plan') => {
+const togglePanel = (section: 'steps' | 'indicators' | 'sql' | 'data') => {
   panelState.value.sections[section] = !panelState.value.sections[section]
 }
 
@@ -748,6 +745,7 @@ const startResize = (e: MouseEvent) => {
   document.body.style.userSelect = 'none'
 }
 
+// 持久化辅助函数（仅保存 session_id 和执行面板状态）
 const persistState = () => {
   localStorage.setItem(LS_SESSION_ID, sessionId.value)
   localStorage.setItem(LS_HISTORY_LIST, JSON.stringify(historyList.value))
@@ -766,6 +764,49 @@ const persistState = () => {
     }
     localStorage.setItem(LS_SESSION_EXEC, JSON.stringify(execMap))
   }
+}
+
+// ── 从服务端 API 加载数据 ──
+const fetchHistoryList = async () => {
+  try {
+    const res = await fetch('/api/indicator/sessions')
+    const data = await res.json()
+    if (data.sessions) {
+      historyList.value = data.sessions.map((s: any) => ({
+        id: s.id, title: s.title, time: s.time,
+        message_count: s.message_count, last_active: s.last_active
+      }))
+    }
+  } catch (e) { /* 静默处理 */ }
+}
+
+const fetchSessionMessages = async (sid: string) => {
+  try {
+    const res = await fetch(`/api/indicator/history?session_id=${sid}`)
+    const data = await res.json()
+    if (data.messages) {
+      sessionMessages.value[sid] = data.messages
+    }
+  } catch (e) { /* 静默处理 */ }
+}
+
+fetchHistoryList()
+if (sessionId.value) {
+  fetchSessionMessages(sessionId.value).then(() => {
+    const msgs = sessionMessages.value[sessionId.value]
+    if (msgs) {
+      // 恢复地图显示状态（历史加载时后端已剥离 map_annotations 并提取 geo 数据）
+      msgs.forEach(msg => {
+        if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0) {
+          msg.showMap = true
+          msg.showMapPrompt = false
+        }
+      })
+      messages.value = [...msgs]
+    }
+    restoreExecutionState(sessionId.value)
+    nextTick(() => { setTimeout(() => renderTreesForMessages(), 300) })
+  })
 }
 
 const recommendedIndicators = [
@@ -806,10 +847,11 @@ const restoreExecutionState = (sid: string) => {
   }
 }
 
-const loadHistory = (item: any) => {
-  if (sessionMessages.value[item.id]) {
-    messages.value = [...sessionMessages.value[item.id]]
-    // 恢复历史消息中的地图状态
+const loadHistory = async (item: any) => {
+  await fetchSessionMessages(item.id)
+  const msgs = sessionMessages.value[item.id]
+  if (msgs && msgs.length > 0) {
+    messages.value = [...msgs]
     messages.value.forEach(msg => {
       if (msg.geoPoints && msg.geoPoints.length > 0) {
         msg.showMap = true
@@ -820,32 +862,62 @@ const loadHistory = (item: any) => {
     restoreExecutionState(item.id)
     persistState()
     ElMessage.success('已加载历史记录')
-    nextTick(() => { renderTreesForMessages() })
+    nextTick(() => { setTimeout(() => renderTreesForMessages(), 300) })
   } else {
     ElMessage.warning('暂无该历史记录内容')
   }
 }
 
-const newSession = () => {
+const newSession = async () => {
+  // 立即中止可能正在运行的请求并清空状态
+  stopAnalysis()
+  _newSessionPending = true
   sessionId.value = ''
   messages.value = []
   executionSteps.value = []
-  panelState.value = { generatedSql: '', rawResults: null, indicators: null, preflight: null, queryPlan: null, activeSkillName: '', sections: { steps: false, plan: true, indicators: true, sql: true, data: true } }
+  panelState.value = { generatedSql: '', rawResults: null, indicators: null, activeSkillName: '', sections: { steps: false, indicators: true, sql: true, data: true } }
   showExecutionPanel.value = false
   activeAbortController = null
   cancelRequested = false
   persistState()
+
+  // 向后端请求全新会话 ID，确保不会复用旧会话
+  try {
+    const res = await fetch('/api/indicator/session/new', { method: 'POST' })
+    const data = await res.json()
+    if (data.success && data.session_id) {
+      sessionId.value = data.session_id
+    }
+  } catch { /* sessionId 保持空值，发送时后端会自行生成 */ }
+
+  _newSessionPending = false
+  persistState()
   ElMessage.success('已创建新会话')
 }
 
-const deleteHistory = (id: string) => {
+const deleteHistory = async (id: string) => {
+  try {
+    const res = await fetch(`/api/indicator/session/${id}`, { method: 'DELETE' })
+    if (!res.ok) {
+      ElMessage.error('删除会话失败')
+      return
+    }
+    const data = await res.json()
+    if (!data.success) {
+      ElMessage.error('删除会话失败')
+      return
+    }
+  } catch (e) {
+    ElMessage.error('删除会话失败，服务不可用')
+    return
+  }
   delete sessionMessages.value[id]
   historyList.value = historyList.value.filter(item => item.id !== id)
   if (sessionId.value === id) {
     sessionId.value = ''
     messages.value = []
     executionSteps.value = []
-    panelState.value = { generatedSql: '', rawResults: null, indicators: null, preflight: null, queryPlan: null, activeSkillName: '', sections: { steps: false, plan: true, indicators: true, sql: true, data: true } }
+    panelState.value = { generatedSql: '', rawResults: null, indicators: null, activeSkillName: '', sections: { steps: false, indicators: true, sql: true, data: true } }
     showExecutionPanel.value = false
     activeAbortController = null
     cancelRequested = false
@@ -940,8 +1012,16 @@ const stopAnalysis = () => {
 }
 
 const analyzeIndicator = async (selectedNames?: string[]) => {
+  if (_newSessionPending) {
+    ElMessage.warning('正在创建新会话，请稍候')
+    return
+  }
   if (!inputMessage.value.trim()) {
     ElMessage.warning('请输入指标需求')
+    return
+  }
+  if (analyzing.value) {
+    ElMessage.warning('正在分析中，请稍候')
     return
   }
 
@@ -1076,8 +1156,6 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
             if (data.generatedSql) panelState.value.generatedSql = data.generatedSql
             if (data.rawResults) panelState.value.rawResults = data.rawResults
             if (data.indicators) panelState.value.indicators = data.indicators
-            if (data.preflight) panelState.value.preflight = data.preflight
-            if (data.queryPlan) panelState.value.queryPlan = data.queryPlan
 
             if (data.session_id) {
               if (!sessionId.value) {

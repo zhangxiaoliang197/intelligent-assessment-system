@@ -27,21 +27,29 @@
           <h3 class="sidebar-title">历史记录</h3>
           <div class="history-list custom-scroll">
             <div
-              v-for="item in historyList"
+              v-for="item in filteredHistoryList"
               :key="item.id"
               :class="['history-item', { active: item.id === sessionId }]"
             >
               <div class="history-item-main" @click="loadHistory(item)">
                 <el-icon><Document /></el-icon>
                 <div class="history-item-content">
-                  <span class="history-item-title">{{ item.title ? (item.title.length > 20 ? item.title.substring(0, 20) + '...' : item.title) : (item.query ? (item.query.length > 20 ? item.query.substring(0, 20) + '...' : item.query) : '') }}</span>
-                  <span class="history-item-time">{{ item.time || formatTime(item.timestamp || item.last_active) }}</span>
+                  <span class="history-item-title">{{ item.title }}</span>
+                  <span class="history-item-time">{{ item.time }}</span>
                 </div>
               </div>
               <el-button class="history-delete-btn" size="small" text type="danger" @click.stop="deleteHistory(item.id)">
                 <el-icon><Delete /></el-icon>
               </el-button>
             </div>
+          </div>
+          <div class="search-bar history-search">
+            <el-input
+              v-model="searchQuery"
+              placeholder="搜索历史记录..."
+              :prefix-icon="Search"
+              clearable
+            />
           </div>
         </div>
       </div>
@@ -685,6 +693,7 @@ import {
   MagicStick,
   Plus,
   Delete,
+  Search,
   ArrowRight,
   Microphone
 } from '@element-plus/icons-vue'
@@ -729,10 +738,8 @@ const toggleSpeech = () => {
   }
 }
 
-// localStorage 持久化 key
+// localStorage 持久化 key（仅保留 session_id）
 const LS_SESSION_ID = 'solution_session_id'
-const LS_HISTORY_LIST = 'solution_history_list'
-const LS_SESSION_MSGS = 'solution_session_msgs'
 
 // 工具配置
 // 四功能切换栏（共享配置，current 由当前路由自动推导）
@@ -742,9 +749,17 @@ const { tools, navigateToTool } = useToolNav()
 const inputMessage = ref('')
 const analyzing = ref(false)
 const messages = ref<Array<any>>([])
-const historyList = ref<Array<any>>(JSON.parse(localStorage.getItem(LS_HISTORY_LIST) || '[]'))
-const sessionMessages = ref<Record<string, Array<any>>>(JSON.parse(localStorage.getItem(LS_SESSION_MSGS) || '{}'))
+const historyList = ref<Array<any>>([])
+const searchQuery = ref('')
+const filteredHistoryList = computed(() => {
+  if (!searchQuery.value.trim()) return historyList.value
+  return historyList.value.filter(item =>
+    item.title.toLowerCase().includes(searchQuery.value.toLowerCase())
+  )
+})
+const sessionMessages = ref<Record<string, Array<any>>>({})
 const sessionId = ref(localStorage.getItem(LS_SESSION_ID) || '')
+let _newSessionPending = false  // 防止新会话创建期间发送消息到旧会话
 
 console.log('[SolutionEvaluation] component loaded')
 
@@ -837,57 +852,9 @@ const startResize = (e: MouseEvent) => {
   document.body.style.userSelect = 'none'
 }
 
-// 持久化辅助函数
-const storageReplacer = (_key: string, value: any) => {
-  if (typeof value === 'string' && value.length > 4000) return value.slice(0, 4000) + '…'
-  if (Array.isArray(value) && value.length > 500) return value.slice(0, 500)
-  return value
-}
-
+// 持久化辅助函数（仅保存 session_id）
 const persistState = () => {
-  let retainedLocalOnly = 0
-  const retainedHistory = historyList.value
-    .filter(item => {
-      if (item.serverBacked) return true
-      if (sessionMessages.value[item.id] && retainedLocalOnly < 20) {
-        retainedLocalOnly += 1
-        return true
-      }
-      return false
-    })
-    .slice(0, 50)
-  const retainedSessionIds = new Set([
-    ...retainedHistory.slice(0, 20).map(item => item.id),
-    ...retainedHistory.filter(item => !item.serverBacked).map(item => item.id)
-  ])
-  const retainedMessages = Object.fromEntries(
-    Object.entries(sessionMessages.value).filter(([id]) => retainedSessionIds.has(id))
-  )
-  historyList.value = retainedHistory
-  sessionMessages.value = retainedMessages
-
-  try {
-    localStorage.setItem(LS_SESSION_ID, sessionId.value)
-    localStorage.setItem(LS_HISTORY_LIST, JSON.stringify(retainedHistory))
-    localStorage.setItem(LS_SESSION_MSGS, JSON.stringify(retainedMessages, storageReplacer))
-  } catch (error) {
-    console.warn('Evaluation history storage quota reached, keeping the latest 5 sessions.', error)
-    const fallbackHistory = retainedHistory.slice(0, 5)
-    const fallbackIds = new Set(fallbackHistory.map(item => item.id))
-    const fallbackMessages = Object.fromEntries(
-      Object.entries(retainedMessages).filter(([id]) => fallbackIds.has(id))
-    )
-    historyList.value = fallbackHistory
-    sessionMessages.value = fallbackMessages
-    try {
-      localStorage.setItem(LS_HISTORY_LIST, JSON.stringify(fallbackHistory))
-      localStorage.setItem(LS_SESSION_MSGS, JSON.stringify(fallbackMessages, (_key, value) =>
-        typeof value === 'string' && value.length > 800 ? value.slice(0, 800) + '…' : value
-      ))
-    } catch (fallbackError) {
-      console.error('Unable to persist evaluation history:', fallbackError)
-    }
-  }
+  localStorage.setItem(LS_SESSION_ID, sessionId.value)
 }
 
 // 制空权分析示例
@@ -1336,6 +1303,10 @@ const stopAnalysis = async () => {
 }
 
 const sendMessage = async () => {
+  if (_newSessionPending) {
+    ElMessage.warning('正在创建新会话，请稍候')
+    return
+  }
   if (!inputMessage.value.trim()) {
     ElMessage.warning('请输入评估需求')
     return
@@ -1687,10 +1658,25 @@ const loadHistory = async (item: any) => {
   }
 }
 
-const newSession = () => {
+const newSession = async () => {
+  // 立即中止可能正在运行的请求并清空状态
+  stopAnalysis()
+  _newSessionPending = true
   sessionId.value = ''
   messages.value = []
   executionSteps.value = []
+  persistState()
+
+  // 向后端请求全新会话 ID，确保不会复用旧会话
+  try {
+    const res = await fetch('/api/evaluation/session/new', { method: 'POST' })
+    const data = await res.json()
+    if (data.success && data.session_id) {
+      sessionId.value = data.session_id
+    }
+  } catch { /* sessionId 保持空值，发送时后端会自行生成 */ }
+
+  _newSessionPending = false
   persistState()
   ElMessage.success('已创建新会话')
 }
@@ -1793,19 +1779,15 @@ const initData = async () => {
 }
 
 onMounted(async () => {
-  // 恢复上次会话的消息
-  if (sessionId.value && sessionMessages.value[sessionId.value]) {
-    messages.value = [...sessionMessages.value[sessionId.value]]
-    // 恢复历史消息中的地图状态 (第二处)
-    messages.value.forEach((msg: any) => {
-      if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0) {
-        msg.showMap = true
-        msg.showMapPrompt = false
-      }
-    })
-    restoreSessionContext()
-  }
   await initData()
+  // 恢复上次会话（从服务端加载，如果 sessionId 在历史列表中）
+  if (sessionId.value && historyList.value.some((h: any) => h.id === sessionId.value)) {
+    try {
+      await loadHistory({ id: sessionId.value })
+    } catch (e) {
+      console.warn('Failed to restore evaluation session:', e)
+    }
+  }
   if (messages.value.length) restoreSessionContext()
 
   const routeSkillId = typeof route.query.skillId === 'string' ? route.query.skillId : ''

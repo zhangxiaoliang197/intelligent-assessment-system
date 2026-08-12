@@ -35,6 +35,9 @@
                   <span class="history-item-time">{{ formatTime(item.createTime) }}</span>
                 </div>
               </div>
+              <el-button class="history-delete-btn" size="small" text type="danger" @click.stop="deleteHistory(item.reportId)">
+                <el-icon><Delete /></el-icon>
+              </el-button>
             </div>
             <el-empty v-if="!filteredHistory.length" description="暂无历史" :image-size="56" />
           </div>
@@ -394,7 +397,7 @@ import { ElMessage } from 'element-plus'
 import {
   Plus, Collection, Box, List, Search, MapLocation, Promotion, Loading,
   FullScreen, Share, Download, CircleClose, CircleCheck, Close, ArrowRight,
-  PieChart, TrendCharts, DataAnalysis, Setting, MagicStick, Document
+  PieChart, TrendCharts, DataAnalysis, Setting, MagicStick, Document, Delete
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
 import { useToolNav } from '@/composables/useToolNav'
@@ -814,7 +817,17 @@ function formatTime(t: string): string {
   if (!t) return ''
   const d = new Date(t)
   if (isNaN(d.getTime())) return t
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+async function deleteHistory(targetId: string) {
+  try {
+    await store.deleteHistory(targetId)
+    ElMessage.success('已删除')
+  } catch (e: any) {
+    ElMessage.error('删除失败：' + (e?.serverMessage || e?.message || ''))
+  }
 }
 </script>
 
@@ -848,6 +861,8 @@ function formatTime(t: string): string {
 .history-item-main { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
 .history-item .el-icon { font-size: 16px; flex-shrink: 0; color: var(--text-muted); }
 .history-item.active .el-icon { color: #8b5cf6; }
+.history-delete-btn { opacity: 0; transition: opacity 0.2s; flex-shrink: 0; }
+.history-item:hover .history-delete-btn { opacity: 1; }
 .history-item-content { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .history-item-title { font-size: 13px; font-weight: 500; color: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .history-item-time { font-size: 11px; color: var(--text-muted); }

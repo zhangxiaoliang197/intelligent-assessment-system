@@ -49,6 +49,11 @@ from models import (
 from repository import get_repository
 repo = get_repository()
 
+# ---------- 统一日志 ----------
+from logging_config import setup_logging
+setup_logging("ontology-service")
+logger = logging.getLogger("ontology-service")
+
 # ---------- OWL 2 导出（Phase 2：Pydantic → OWL/RDF）----------
 # 懒加载：owlready2 较重，仅在首次导出时初始化
 try:
@@ -58,11 +63,6 @@ except Exception as _owl_import_err:  # owlready2 未安装或损坏时降级
     logger.warning(f"OWL 导出模块加载失败，相关接口将不可用: {_owl_import_err}")
     _owl_available = False
     export_ontology_to_owl = None  # type: ignore
-
-# ---------- 统一日志 ----------
-from logging_config import setup_logging
-setup_logging("ontology-service")
-logger = logging.getLogger("ontology-service")
 
 app = FastAPI(
     title="本体模型服务",

@@ -334,10 +334,8 @@ const onImageChange = async (event: Event) => {
 // 四功能切换栏（共享配置，current 由当前路由自动推导）
 const { tools, navigateToTool } = useToolNav()
 
-// localStorage 持久化 key
+// localStorage 持久化 key（仅保留 session_id，其余数据通过 API 从 MySQL 读取）
 const LS_SESSION_ID = 'qa_session_id'
-const LS_HISTORY_LIST = 'qa_history_list'
-const LS_SESSION_MSGS = 'qa_session_msgs'
 
 const searchQuery = ref('')
 const inputMessage = ref('')
@@ -345,6 +343,7 @@ const sessionId = ref(localStorage.getItem(LS_SESSION_ID) || '')
 const messages = ref<Array<any>>([])
 const chatArea = ref<HTMLElement | null>(null)
 const citeTooltipRef = ref<HTMLElement | null>(null)
+let _newSessionPending = false  // 防止新会话创建期间发送消息到旧会话
 
 // ── 引用 tooltip 状态 ──
 const citeTooltip = ref<{
@@ -397,8 +396,46 @@ const onCiteOut = (e: MouseEvent) => {
   }, 150)
 }
 
-const historyList = ref<Array<any>>(JSON.parse(localStorage.getItem(LS_HISTORY_LIST) || '[]'))
-const sessionMessages = ref<Record<string, Array<any>>>(JSON.parse(localStorage.getItem(LS_SESSION_MSGS) || '{}'))
+const historyList = ref<Array<any>>([])
+const sessionMessages = ref<Record<string, Array<any>>>({})
+
+// ── 从服务端 API 加载数据 ──
+const fetchHistoryList = async () => {
+  try {
+    const res = await fetch('/api/qa/history/list')
+    const data = await res.json()
+    if (data.items) {
+      historyList.value = data.items
+    }
+  } catch (e) { /* 静默处理 */ }
+}
+
+const fetchSessionMessages = async (sid: string) => {
+  try {
+    const res = await fetch(`/api/qa/history?session_id=${sid}`)
+    const data = await res.json()
+    if (data.messages) {
+      sessionMessages.value[sid] = data.messages
+    }
+  } catch (e) { /* 静默处理 */ }
+}
+
+// 页面加载时恢复数据
+fetchHistoryList()
+if (sessionId.value) {
+  fetchSessionMessages(sessionId.value).then(() => {
+    const msgs = sessionMessages.value[sessionId.value]
+    if (msgs) {
+      messages.value = [...msgs]
+      messages.value.forEach(msg => {
+        if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0) {
+          msg.showMap = true
+          msg.showMapPrompt = false
+        }
+      })
+    }
+  })
+}
 
 // ── 知识分类筛选 ──
 const selectedCategory = ref('')
@@ -416,11 +453,9 @@ const fetchCategories = async () => {
   }
 }
 
-// 持久化辅助函数
+// 持久化辅助函数（仅保存 session_id）
 const persistState = () => {
   localStorage.setItem(LS_SESSION_ID, sessionId.value)
-  localStorage.setItem(LS_HISTORY_LIST, JSON.stringify(historyList.value))
-  localStorage.setItem(LS_SESSION_MSGS, JSON.stringify(sessionMessages.value))
 }
 
 const recommendedQuestions = [
@@ -486,10 +521,12 @@ const goTo = (path: string) => {
   router.push(path)
 }
 
-const loadHistory = (item: any) => {
-  if (sessionMessages.value[item.id]) {
-    messages.value = [...sessionMessages.value[item.id]]
-    // 恢复历史消息中的地图状态
+const loadHistory = async (item: any) => {
+  // 从服务端加载会话消息
+  await fetchSessionMessages(item.id)
+  const msgs = sessionMessages.value[item.id]
+  if (msgs && msgs.length > 0) {
+    messages.value = [...msgs]
     messages.value.forEach(msg => {
       if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0) {
         msg.showMap = true
@@ -504,14 +541,31 @@ const loadHistory = (item: any) => {
   }
 }
 
-const newSession = () => {
+const newSession = async () => {
+  // 新建会话期间封锁发送，避免消息跑到旧会话
+  _newSessionPending = true
   sessionId.value = ''
   messages.value = []
+  persistState()
+
+  // 向后端请求全新会话 ID，确保不会复用旧会话
+  try {
+    const res = await fetch('/api/qa/session/new', { method: 'POST' })
+    const data = await res.json()
+    if (data.success && data.session_id) {
+      sessionId.value = data.session_id
+    }
+  } catch { /* sessionId 保持空值，发送时后端会自行生成 */ }
+
+  _newSessionPending = false
   persistState()
   ElMessage.success('已创建新会话')
 }
 
-const deleteHistory = (id: string) => {
+const deleteHistory = async (id: string) => {
+  try {
+    await fetch(`/api/qa/session/${id}`, { method: 'DELETE' })
+  } catch (e) { /* 静默处理 */ }
   delete sessionMessages.value[id]
   historyList.value = historyList.value.filter(item => item.id !== id)
   if (sessionId.value === id) {
@@ -590,6 +644,10 @@ const scrollToBottom = () => {
 watch(() => messages.value.length, () => scrollToBottom())
 
 const sendMessage = async () => {
+  if (_newSessionPending) {
+    ElMessage.warning('正在创建新会话，请稍候')
+    return
+  }
   if (!inputMessage.value.trim()) {
     ElMessage.warning('请输入问题')
     return
