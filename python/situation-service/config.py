@@ -70,6 +70,9 @@ DRAFT_TTL = int(os.getenv("DRAFT_TTL", "3600"))
 # ── 跨服务 HTTP 调用超时（秒）──
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "20"))
 
+# SQL 执行（LLM 生成的精确查询）可能较慢，单独放宽超时（与评估分析对齐）
+SQL_QUERY_TIMEOUT = int(os.getenv("SQL_QUERY_TIMEOUT", "120"))
+
 # ── Phase 1 mock 流式模拟间隔（秒）；Phase 2 接入真实 Agent 后移除 ──
 MOCK_STREAM_INTERVAL = float(os.getenv("MOCK_STREAM_INTERVAL", "0.6"))
 

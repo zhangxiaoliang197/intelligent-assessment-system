@@ -655,7 +655,7 @@ function bearing(lat1: number, lng1: number, lat2: number, lng2: number): number
 function addRoutes() {
   if (!map || !props.routes) return
   clearRoutes()
-  props.routes.forEach((route, ri) => {
+  props.routes.forEach((route) => {
     const latlngs = route.points.map(p => {
       const [lat, lng] = transformCoord(p.lng, p.lat)
       return [lat, lng] as L.LatLngTuple
@@ -708,7 +708,7 @@ function clearRoutes() {
 function addAreas() {
   if (!map || !props.areas) return
   clearAreas()
-  props.areas.forEach((area, ai) => {
+  props.areas.forEach((area) => {
     const latlngs = area.points.map(p => {
       const [lat, lng] = transformCoord(p.lng, p.lat)
       return [lat, lng] as L.LatLngTuple
@@ -742,7 +742,7 @@ function clearAreas() {
 function addCircles() {
   if (!map || !props.circles) return
   clearCircles()
-  props.circles.forEach((c, ci) => {
+  props.circles.forEach((c) => {
     const [lat, lng] = transformCoord(c.center.lng, c.center.lat)
     const radiusMeters = c.radiusKm * 1000
     const color = getColorByName(c.name)

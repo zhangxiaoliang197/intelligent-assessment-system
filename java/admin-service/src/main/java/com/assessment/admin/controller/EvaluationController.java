@@ -124,6 +124,38 @@ public class EvaluationController {
     }
 
     /**
+     * 态势图专用：在数据集关联的数据库上执行 LLM 生成的只读 SQL。
+     * POST /api/admin/dataset/{datasetId}/execute-query
+     * 与 execute-sql（仅管理员临时 SQL）不同，本端点走服务身份 + 数据集授权，
+     * 供 situation-service 在取数阶段复用评估分析的 Text-to-SQL 能力，
+     * 用 LLM 生成的精确 SQL（WHERE/聚合/GROUP BY）替代整表拉取。
+     */
+    @PostMapping("/dataset/{datasetId}/execute-query")
+    public ResponseEntity<Map<String, Object>> executeQueryForSituation(
+            @PathVariable String datasetId,
+            @RequestHeader(value = "X-Service-Token", required = false) String serviceToken,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-Team-Ids", required = false) String teamIds,
+            @RequestHeader(value = "X-User-Role", required = false) String role,
+            @RequestBody(required = false) Map<String, String> body) {
+        if (!Objects.equals(internalServiceToken, serviceToken)) {
+            return ResponseEntity.status(401).body(Map.of("success", false, "message", "服务身份校验失败"));
+        }
+        Optional<Dataset> dataset = datasetRepository.findById(datasetId);
+        if (dataset.isEmpty()) {
+            return ResponseEntity.status(404).body(Map.of("success", false, "message", "数据集不存在"));
+        }
+        if (!canRead(dataset.get(), userId, teamIds, role)) {
+            return ResponseEntity.status(403).body(Map.of("success", false, "message", "无权读取该数据集"));
+        }
+        String sql = body == null ? null : body.get("sql");
+        if (sql == null || sql.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "SQL不能为空"));
+        }
+        return ResponseEntity.ok(sqlExecutionService.executeSql(datasetId, sql));
+    }
+
+    /**
      * 在数据库配置上执行 SQL 查询
      * POST /api/admin/database/{dbId}/execute-sql
      */

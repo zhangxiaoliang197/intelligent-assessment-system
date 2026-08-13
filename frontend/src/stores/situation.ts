@@ -21,6 +21,7 @@ export interface ChartSpec {
   option: any
   explanation?: string
   datasetRef?: string
+  fieldMapping?: { xField?: string; yFields?: string[] }
 }
 
 export interface MapLayer {
@@ -30,6 +31,14 @@ export interface MapLayer {
   areas?: any[]
   circles?: any[]
   layerConfig: Record<string, any>
+  datasetRef?: string
+  fieldMapping?: {
+    lngField?: string
+    latField?: string
+    nameField?: string
+    routeIdField?: string
+    orderField?: string
+  }
 }
 
 export interface DatasetSummary {
@@ -37,6 +46,8 @@ export interface DatasetSummary {
   source: string
   summary: string
   rows: number
+  columns?: string[]
+  data?: any[]
 }
 
 export interface Narrative {
@@ -70,6 +81,99 @@ export interface ReportMeta {
 }
 
 export type SituationStatus = 'idle' | 'generating' | 'ready' | 'partial' | 'failed'
+
+// ── 全量渲染重建：用完整数据集 + LLM 字段映射重建图表/地图，替代 LLM 内联样本 ──
+function toNum(v: any): number {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+
+function rebuildChartOption(
+  chart: { type: string; option: any; fieldMapping?: { xField?: string; yFields?: string[] } },
+  ds: DatasetSummary,
+): any {
+  const fm = chart.fieldMapping
+  if (!fm || !fm.xField || !ds.data?.length) return chart.option
+  const rows = ds.data
+  const xField = fm.xField
+  const yFields = fm.yFields || []
+  const opt = JSON.parse(JSON.stringify(chart.option || {}))
+  const type = chart.type
+
+  if (type === 'pie') {
+    const yf = yFields[0]
+    if (yf) {
+      opt.series = [{
+        type: 'pie',
+        data: rows.map((r) => ({ name: String(r[xField] ?? ''), value: toNum(r[yf]) })),
+      }]
+    }
+    return opt
+  }
+  if (type === 'scatter') {
+    const yf = yFields[0]
+    if (yf) {
+      opt.series = [{
+        type: 'scatter',
+        data: rows.map((r) => [toNum(r[xField]), toNum(r[yf])]),
+      }]
+    }
+    return opt
+  }
+  // bar / line / 其它分类轴图表
+  if (yFields.length) {
+    const categories = rows.map((r) => String(r[xField] ?? ''))
+    if (opt.xAxis && typeof opt.xAxis === 'object') opt.xAxis.data = categories
+    else opt.xAxis = { type: 'category', data: categories }
+    opt.series = yFields.map((yf: string) => ({
+      name: yf,
+      type: type === 'line' ? 'line' : 'bar',
+      data: rows.map((r) => toNum(r[yf])),
+    }))
+  }
+  return opt
+}
+
+function rebuildMapLayer(layer: MapLayer, ds: DatasetSummary | undefined): MapLayer {
+  const fm = layer.fieldMapping
+  if (!fm || !fm.lngField || !fm.latField || !ds?.data?.length) return layer
+  const rows = ds.data
+  const { lngField, latField, nameField, routeIdField, orderField } = fm
+  const clone: MapLayer = JSON.parse(JSON.stringify(layer))
+
+  if (routeIdField) {
+    // 轨迹数据：按轨迹ID分组，组内按排序字段排序，生成 routes
+    const groups = new Map<string, any[]>()
+    for (const r of rows) {
+      const rid = String(r[routeIdField] ?? 'default')
+      if (!groups.has(rid)) groups.set(rid, [])
+      groups.get(rid)!.push(r)
+    }
+    const routes: any[] = []
+    for (const [rid, pts] of groups) {
+      if (orderField) {
+        pts.sort((a, b) => toNum(a[orderField]) - toNum(b[orderField]))
+      }
+      const name = nameField ? String(pts[0]?.[nameField] ?? rid) : rid
+      routes.push({
+        name,
+        points: pts.map((p) => ({ lng: toNum(p[lngField]), lat: toNum(p[latField]) })),
+      })
+    }
+    clone.routes = routes
+    clone.points = []
+  } else {
+    // 标点数据：逐行生成 points
+    const nf = nameField ?? ''
+    clone.points = rows.map((r) => ({
+      name: nf ? String(r[nf] ?? '') : '',
+      lng: toNum(r[lngField]),
+      lat: toNum(r[latField]),
+      raw: String(r[nf] ?? `${r[lngField]},${r[latField]}`),
+    }))
+  }
+  return clone
+}
 
 export const useSituationStore = defineStore('situation', () => {
   // ── 元数据 ──
@@ -182,11 +286,23 @@ export const useSituationStore = defineStore('situation', () => {
     } : null
     skillParameters.value = snapshot.skillParameters || {}
     status.value = (data.status || snapshot.status || 'ready') as SituationStatus
-    charts.value = snapshot.charts || []
-    mapLayers.value = snapshot.map?.layers || snapshot.mapLayers || []
+    datasets.value = snapshot.datasets || []
+    // 历史产物：用完整数据集 + fieldMapping 重建图表/地图，替代 LLM 内联样本
+    const dsMap = new Map(datasets.value.map((d) => [d.datasetId, d]))
+    charts.value = (snapshot.charts || []).map((c: any) => {
+      const ds = dsMap.get(c.datasetRef)
+      const fieldMapping = c.fieldMapping || undefined
+      const option = fieldMapping && ds?.data?.length
+        ? rebuildChartOption({ type: c.type, option: c.option, fieldMapping }, ds)
+        : c.option
+      return { ...c, option, fieldMapping }
+    })
+    mapLayers.value = (snapshot.map?.layers || snapshot.mapLayers || []).map((l: any) => {
+      const ds = dsMap.get(l.datasetRef)
+      return rebuildMapLayer(l, ds)
+    })
     narrative.value = snapshot.narrative || { intro: '', explanations: [] }
     mapExplanation.value = snapshot.map?.explanation || snapshot.mapExplanation || ''
-    datasets.value = snapshot.datasets || []
     executionSteps.value = []   // 历史产物不回放步骤
     if (datasets.value.length && !activeDatasetId.value) {
       activeDatasetId.value = datasets.value[0].datasetId
@@ -260,38 +376,52 @@ export const useSituationStore = defineStore('situation', () => {
           source: data.source,
           summary: data.summary,
           rows: data.rows || 0,
+          columns: data.columns || [],
+          data: data.data || [],
         }
         datasets.value.push(ds)
         if (!activeDatasetId.value) activeDatasetId.value = ds.datasetId
         pushStep('dataset', `获取数据集 ${ds.datasetId}（${ds.rows} 行）`, 'completed', ds.summary)
         break
       }
-      case 'chart':
+      case 'chart': {
+        const ds = datasets.value.find((d) => d.datasetId === data.datasetRef)
+        const fieldMapping = data.fieldMapping || undefined
+        const option = fieldMapping && ds?.data?.length
+          ? rebuildChartOption({ type: data.type, option: data.option, fieldMapping }, ds)
+          : data.option
         charts.value.push({
           chartId: data.chartId,
           type: data.type,
           title: data.title,
-          option: data.option,
+          option,
           datasetRef: data.datasetRef || '',
+          fieldMapping,
         })
         pushStep('chart', `生成图表：${data.title || data.chartId}`, 'completed')
         break
+      }
       case 'chart_update': {
         const c = charts.value.find((x) => x.chartId === data.chartId)
         if (c) c.option = data.option
         break
       }
-      case 'map_layer':
-        mapLayers.value.push({
+      case 'map_layer': {
+        const ds = datasets.value.find((d) => d.datasetId === data.datasetRef)
+        const layer = rebuildMapLayer({
           layerId: data.layerId,
           points: data.points || [],
           routes: data.routes || [],
           areas: data.areas || [],
           circles: data.circles || [],
           layerConfig: data.layerConfig || {},
-        })
+          datasetRef: data.datasetRef || '',
+          fieldMapping: data.fieldMapping || undefined,
+        }, ds)
+        mapLayers.value.push(layer)
         pushStep('map_layer', `生成地图图层：${data.layerId}`, 'completed')
         break
+      }
       case 'map_update': {
         const lyr = mapLayers.value.find((x) => x.layerId === data.layerId)
         if (lyr) {

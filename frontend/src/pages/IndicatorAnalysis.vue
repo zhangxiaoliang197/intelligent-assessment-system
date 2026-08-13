@@ -593,7 +593,7 @@
 import { ref, onMounted, computed, nextTick, watch } from 'vue'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useRouter } from 'vue-router'
-import { Search, Collection, Box, PieChart, ChatDotRound, Document, Plus, Delete, ArrowRight, ArrowDown, Microphone, CircleCheck, CircleClose, Loading, Clock, Close, Cpu, Promotion, Setting, MapLocation } from '@element-plus/icons-vue'
+import { Search, Collection, Box, PieChart, Plus, Delete, ArrowRight, ArrowDown, Microphone, CircleCheck, CircleClose, Loading, Clock, Close, Cpu, Promotion, Setting } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
@@ -685,11 +685,14 @@ const panelState = ref({
   rawResults: null as any[] | null,
   indicators: null as any[] | null,
   activeSkillName: '',
+  preflight: null as any,
+  queryPlan: null as any,
   sections: {
     steps: false,  // collapsed=false 表示展开
     indicators: true,  // collapsed=true 表示折叠
     sql: true,
-    data: true
+    data: true,
+    plan: true
   }
 })
 
@@ -700,7 +703,7 @@ const hasExecutionData = computed(() => {
     (panelState.value.indicators && panelState.value.indicators.length > 0)
 })
 
-const togglePanel = (section: 'steps' | 'indicators' | 'sql' | 'data') => {
+const togglePanel = (section: 'steps' | 'indicators' | 'sql' | 'data' | 'plan') => {
   panelState.value.sections[section] = !panelState.value.sections[section]
 }
 
@@ -875,7 +878,7 @@ const newSession = async () => {
   sessionId.value = ''
   messages.value = []
   executionSteps.value = []
-  panelState.value = { generatedSql: '', rawResults: null, indicators: null, activeSkillName: '', sections: { steps: false, indicators: true, sql: true, data: true } }
+  panelState.value = { generatedSql: '', rawResults: null, indicators: null, activeSkillName: '', preflight: null, queryPlan: null, sections: { steps: false, indicators: true, sql: true, data: true, plan: true } }
   showExecutionPanel.value = false
   activeAbortController = null
   cancelRequested = false
@@ -917,7 +920,7 @@ const deleteHistory = async (id: string) => {
     sessionId.value = ''
     messages.value = []
     executionSteps.value = []
-    panelState.value = { generatedSql: '', rawResults: null, indicators: null, activeSkillName: '', sections: { steps: false, indicators: true, sql: true, data: true } }
+    panelState.value = { generatedSql: '', rawResults: null, indicators: null, activeSkillName: '', preflight: null, queryPlan: null, sections: { steps: false, indicators: true, sql: true, data: true, plan: true } }
     showExecutionPanel.value = false
     activeAbortController = null
     cancelRequested = false

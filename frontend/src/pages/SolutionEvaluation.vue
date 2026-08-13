@@ -1148,12 +1148,6 @@ const showDataSourceDialog = () => {
   dataSourceDialogVisible.value = true
 }
 
-// 格式化时间
-const formatTime = (time: string) => {
-  const date = new Date(time)
-  return date.toLocaleString()
-}
-
 // 获取步骤状态类名
 const getStepStatusClass = (status: string) => {
   const statusMap: Record<string, string> = {

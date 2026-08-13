@@ -55,6 +55,8 @@ const mergedPoints = computed<GeoPoint[]>(() => {
         lng: p.lng ?? 0,
         lat: p.lat ?? 0,
         raw: p.raw || `${p.lng}, ${p.lat}`,
+        props: p.props,
+        routeName: p.routeName,
         color,
       } as any)
     }
@@ -109,6 +111,7 @@ const mergedCircles = computed<CircleArea[]>(() => {
         name: c.name || '',
         center: { lng: c.center?.lng ?? 0, lat: c.center?.lat ?? 0 },
         radiusKm: c.radiusKm || 50,
+        props: c.props,
       })
     }
   }

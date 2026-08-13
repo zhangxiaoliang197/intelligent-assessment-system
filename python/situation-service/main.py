@@ -557,6 +557,7 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
             "option": data.get("option", {}),
             "explanation": "",
             "datasetRef": data.get("datasetRef", ""),
+            "fieldMapping": data.get("fieldMapping") or {},
         })
     elif event_type == "map_layer":
         layers = report.map.setdefault("layers", [])
@@ -567,6 +568,8 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
             "areas": data.get("areas", []),
             "circles": data.get("circles", []),
             "layerConfig": data.get("layerConfig", {}),
+            "datasetRef": data.get("datasetRef", ""),
+            "fieldMapping": data.get("fieldMapping") or {},
         })
     elif event_type == "narrative":
         report.narrative = {
@@ -588,6 +591,8 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
             "source": data.get("source", ""),
             "summary": data.get("summary", ""),
             "rows": data.get("rows", 0),
+            "columns": data.get("columns", []),
+            "data": data.get("data", []),
         })
 
 
