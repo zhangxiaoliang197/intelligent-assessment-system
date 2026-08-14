@@ -53,7 +53,7 @@ def _custom_definition() -> dict:
     assert source is not None
     fields = {
         "name", "description", "category", "triggers", "recommendedQuestions",
-        "inputHints", "steps", "dataSources", "chartTypes", "mapLayerTypes",
+        "inputHints", "steps", "chartTypes", "mapLayerTypes",
         "focusMetrics", "analysisGoal", "featured",
     }
     definition = {key: source[key] for key in fields if key in source}

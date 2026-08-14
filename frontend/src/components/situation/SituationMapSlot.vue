@@ -12,7 +12,7 @@
       @draw-end="(p: any) => emit('draw-end', p)"
       @viewport-change="(p: any) => emit('viewport-change', p)"
     />
-    <div v-if="explanation" class="map-explain">
+    <div v-if="showExplanation !== false && explanation" class="map-explain">
       <el-icon><InfoFilled /></el-icon>
       <span>{{ explanation }}</span>
     </div>
@@ -36,6 +36,8 @@ const props = defineProps<{
   timeRange: [number, number] | null
   filters: Record<string, any>
   explanation?: string
+  /** 是否显示地图说明（默认显示）；打开态势图等纯展示场景传 false 关闭 */
+  showExplanation?: boolean
 }>()
 
 const emit = defineEmits<{

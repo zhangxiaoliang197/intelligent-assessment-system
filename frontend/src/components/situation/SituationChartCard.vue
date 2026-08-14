@@ -13,7 +13,7 @@
       />
       <el-empty v-else description="不支持的图表类型" :image-size="60" />
     </div>
-    <div v-if="spec.explanation" class="chart-card-explain">
+    <div v-if="showExplanation !== false && spec.explanation" class="chart-card-explain">
       <el-icon><InfoFilled /></el-icon>
       <span>{{ spec.explanation }}</span>
     </div>
@@ -32,6 +32,8 @@ const props = defineProps<{
   index?: number
   /** 图表主体高度（px），提问页单列较大、详情页缩小布局较小 */
   bodyHeight?: number
+  /** 是否显示图表说明（默认显示）；打开态势图等纯展示场景传 false 关闭 */
+  showExplanation?: boolean
 }>()
 
 const highlighted = ref(false)

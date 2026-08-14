@@ -20,6 +20,8 @@
 
     <properties>
         <java.version>17</java.version>
+        <!-- 统一源码/编译编码为 UTF-8，避免 Windows 平台默认 GBK 导致中文注释编译失败 -->
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
     <dependencies>

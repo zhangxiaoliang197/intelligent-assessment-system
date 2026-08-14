@@ -30,7 +30,7 @@
         >
           <div v-if="store.charts.length" class="chart-side">
             <h3 class="section-label">统计图表</h3>
-            <SituationChartGrid :charts="store.charts" :cols="chartLayout.cols" :body-height="230" :row-min-height="300" />
+            <SituationChartGrid :charts="store.charts" :cols="chartLayout.cols" :body-height="230" :row-min-height="300" :show-explanation="false" />
           </div>
 
           <div v-if="store.mapLayers.length" class="map-side">
@@ -44,6 +44,7 @@
                 :time-range="store.selectedTimeRange"
                 :filters="store.filters"
                 :explanation="store.mapExplanation"
+                :show-explanation="false"
                 @region-select="onRegionSelect"
                 @marker-click="onMarkerClick"
                 @layer-toggle="onLayerToggle"

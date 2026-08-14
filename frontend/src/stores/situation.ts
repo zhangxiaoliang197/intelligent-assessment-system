@@ -54,7 +54,10 @@ export interface DatasetSummary {
   datasetId: string
   source: string
   summary: string
-  rows: number
+  /** 行数组（供图表/地图渲染取数，勿当行数用） */
+  rows?: any[]
+  /** 行数（步骤展示用；旧快照可能缺失，需用 rows.length 兜底） */
+  rowCount?: number
   physicalDatasetId?: string
   schemaVersion?: number
   truncated?: boolean
@@ -357,7 +360,11 @@ export const useSituationStore = defineStore('situation', () => {
     } : null
     skillParameters.value = snapshot.skillParameters || {}
     status.value = (data.status || snapshot.status || 'ready') as SituationStatus
-    datasets.value = snapshot.datasets || []
+    // 旧快照 dataset 可能缺 rowCount（历史 bug：rows 曾被存为数组），此处补齐行数兜底
+    datasets.value = (snapshot.datasets || []).map((d: any) => ({
+      ...d,
+      rowCount: d.rowCount ?? (Array.isArray(d.rows) ? d.rows.length : (typeof d.rows === 'number' ? d.rows : 0)),
+    }))
     // 历史产物：用完整数据集 + fieldMapping 重建图表/地图，替代 LLM 内联样本
     const dsMap = new Map(datasets.value.map((d) => [d.datasetId, d]))
     charts.value = (snapshot.charts || []).map((c: any) => {
@@ -490,24 +497,36 @@ export const useSituationStore = defineStore('situation', () => {
         break
       }
       case 'dataset': {
+        // rows 是行数组（非行数）；rowCount 才是行数。旧数据可能缺 rowCount，用 rows.length 兜底
+        const rowsArr: any[] = Array.isArray(data.rows) ? data.rows : []
+        const rowCount: number = data.rowCount ?? rowsArr.length
         const ds: DatasetSummary = {
           datasetId: data.datasetId,
           source: data.source,
           summary: data.summary,
-          rows: data.rows || 0,
+          rows: rowsArr,
+          rowCount,
           physicalDatasetId: data.physicalDatasetId || '',
           schemaVersion: data.schemaVersion,
           truncated: Boolean(data.truncated),
           evidenceHash: data.evidenceHash || '',
           execution: data.execution || {},
           columns: data.columns || [],
-          data: data.data || [],
+          data: Array.isArray(data.data) ? data.data : rowsArr,
         }
         const existingIndex = datasets.value.findIndex((item) => item.datasetId === ds.datasetId)
         if (existingIndex >= 0) datasets.value.splice(existingIndex, 1, ds)
         else datasets.value.push(ds)
         if (!activeDatasetId.value) activeDatasetId.value = ds.datasetId
-        if (existingIndex < 0) pushStep('dataset', `获取数据集 ${ds.datasetId}（${ds.rows} 行）`, 'completed', ds.summary)
+        if (existingIndex < 0) {
+          // 步骤只展示一行摘要：数据集名（行数 × 字段数）；详细统计仍存于 ds.summary 供面板查看
+          const label = ds.source || ds.datasetId
+          const fieldCount = ds.columns?.length || 0
+          const sizeText = fieldCount > 0
+            ? `${rowCount} 行 × ${fieldCount} 字段`
+            : `${rowCount} 行`
+          pushStep('dataset', `获取数据集 ${label}（${sizeText}）`, 'completed')
+        }
         break
       }
       case 'chart': {

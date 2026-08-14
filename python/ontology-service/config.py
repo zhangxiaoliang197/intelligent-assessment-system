@@ -66,9 +66,7 @@ VERIFICATION_MAX_DOC_CHARS = int(os.getenv("VERIFICATION_MAX_DOC_CHARS", "20000"
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "32000"))
 
 # ── LLM 各阶段独立参数 ──
-# 本体构建是「深度抽取」场景，step1/step2/step3 保留推理与大上下文；
-# meta（元模型推荐）轻量关闭推理，step4（验证报告）保留推理以判断可疑项。
-# 全部可通过环境变量 ONTOLOGY_LLM_<阶段>_MAX_TOKENS / ONTOLOGY_LLM_<阶段>_THINKING 覆盖。
+
 LLM_STAGE_PROFILES = {
     "meta": {
         "max_tokens": int(os.getenv("ONTOLOGY_LLM_META_MAX_TOKENS", "4000")),
@@ -79,20 +77,20 @@ LLM_STAGE_PROFILES = {
         "thinking": os.getenv("ONTOLOGY_LLM_STEP1_THINKING", "enabled"),
     },
     "step2": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP2_MAX_TOKENS", "16000")),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP2_MAX_TOKENS", "32000")),
         "thinking": os.getenv("ONTOLOGY_LLM_STEP2_THINKING", "enabled"),
     },
     "step3_group": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP3_GROUP_MAX_TOKENS", "12000")),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP3_GROUP_MAX_TOKENS", "32000")),
         "thinking": os.getenv("ONTOLOGY_LLM_STEP3_GROUP_THINKING", "enabled"),
     },
     "step3_cross": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP3_CROSS_MAX_TOKENS", "8000")),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP3_CROSS_MAX_TOKENS", "32000")),
         "thinking": os.getenv("ONTOLOGY_LLM_STEP3_CROSS_THINKING", "enabled"),
     },
     "step4": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP4_MAX_TOKENS", "8000")),
-        "thinking": os.getenv("ONTOLOGY_LLM_STEP4_THINKING", "enabled"),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP4_MAX_TOKENS", "16000")),
+        "thinking": os.getenv("ONTOLOGY_LLM_STEP4_THINKING", "disabled"),
     },
 }
 

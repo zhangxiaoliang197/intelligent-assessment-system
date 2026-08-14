@@ -279,3 +279,207 @@ def call_llm_json(messages: list, temperature: float = 0.3, max_tokens: int = 40
         f"大模型多次调用均无法返回有效 JSON（已尝试 {attempt + 1} 次）。"
         f"最后响应前 200 字: {raw[:200] if raw else '(空响应)'}"
     )
+
+
+# ──────────────────────────────────────────────────────────────────
+# 原生 function-calling（tools 协议）
+# 设计目标：替代 JSON 协议伪 tool-call，复用 OpenAI 兼容标准协议，
+# 消除 _extract_json_block 的解析兜底。供 Planner/Executor/Writer 使用。
+# 参见方案文档 §5.1。
+# ──────────────────────────────────────────────────────────────────
+
+
+def _build_llm_request_payload(
+    messages: list,
+    temperature: float,
+    max_tokens: int,
+    thinking_type: str,
+    tools: list = None,
+    tool_choice=None,
+) -> dict:
+    """构造 OpenAI 兼容请求体；不发起 HTTP，便于 call_llm_with_tools 复用安全检查。"""
+    body_dict = {
+        "model": "",  # 由调用方在调用前注入
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": False,
+    }
+    if thinking_type in ("enabled", "disabled"):
+        body_dict["thinking"] = {"type": thinking_type}
+    if tools:
+        body_dict["tools"] = tools
+    if tool_choice is not None:
+        body_dict["tool_choice"] = tool_choice
+    return body_dict
+
+
+def call_llm_with_tools(
+    messages: list,
+    tools: list,
+    tool_choice=None,
+    temperature: float = 0.3,
+    max_tokens: int = 4000,
+    thinking_type: str = "",
+):
+    """调用 LLM 并返回原生 function-calling 结果（OpenAI tools 协议）。
+
+    与 call_llm_json 的区别：把"输出 JSON"交给模型层的 tool_calls 通道，
+    不再依赖正则从 markdown 抠 JSON。LLM 通过 tool_call 返回结构化参数，
+    调用方按 tools schema 严格解析。
+
+    Args:
+        messages: OpenAI 格式的消息列表
+        tools: OpenAI tools schema 列表，形如
+            [{"type": "function", "function": {"name": "...", "description": "...",
+              "parameters": {JSON Schema}}}]
+        tool_choice: "auto"（默认）/ "required" / {"type":"function","function":{"name":"..."}}
+        temperature: 结构化输出建议 0.2-0.3
+        max_tokens: 最大输出 token 数
+        thinking_type: 推理开关；空字符串表示保持模型默认
+
+    Returns:
+        dict 形如：
+        {
+          "content": "可选的伴随文本，可能为空",
+          "tool_calls": [
+            {"id": "call_xxx", "name": "emit_research_plan",
+             "arguments": <解析后的 JSON 参数 dict>}
+          ],
+          "finish_reason": "tool_calls",
+          "raw_usage": {...}
+        }
+
+    Raises:
+        RuntimeError: 模型未返回 tool_calls（finish_reason != tool_calls）或调用失败
+        ValueError: tool_call.arguments 无法解析为 JSON
+    """
+    llm_cfg = load_llm_config()
+    llm_type = llm_cfg.get("type", "deepseek")
+    api_key = llm_cfg.get("apiKey", "")
+    api_url = llm_cfg.get("apiUrl", "https://api.deepseek.com/v1").rstrip("/")
+    model = llm_cfg.get("model", "deepseek-chat")
+
+    parsed_url = urllib.parse.urlparse(api_url)
+    if parsed_url.scheme not in {"https", "http"} or not parsed_url.hostname:
+        raise RuntimeError("大模型 API 地址无效")
+    hostname = parsed_url.hostname.lower()
+    if hostname not in config.LLM_ALLOWED_HOSTS:
+        raise RuntimeError(
+            f"大模型 API 主机不在允许清单中: {hostname}；"
+            "请通过 SITUATION_LLM_ALLOWED_HOSTS 由部署管理员显式授权"
+        )
+    allow_insecure_http = os.getenv("LLM_ALLOW_INSECURE_HTTP", "false").lower() in {
+        "1", "true", "yes", "on",
+    }
+    if parsed_url.scheme != "https" and not (
+        allow_insecure_http and hostname in {"localhost", "127.0.0.1", "::1"}
+    ):
+        raise RuntimeError("大模型 API 必须使用 HTTPS；本地 HTTP 需显式开启 LLM_ALLOW_INSECURE_HTTP")
+    if not api_key and llm_type != "vllm":
+        raise RuntimeError("大模型 API Key 未配置，请在「基础管理 → 大模型配置」中设置")
+
+    body_dict = _build_llm_request_payload(
+        messages, temperature, max_tokens, thinking_type, tools, tool_choice,
+    )
+    body_dict["model"] = model
+
+    url = f"{api_url}/chat/completions"
+    ca_file = os.getenv("LLM_CA_FILE", "").strip() or None
+    ssl_ctx = ssl.create_default_context(cafile=ca_file)
+
+    def _do_request(payload_body: dict):
+        request = urllib.request.Request(url, data=json.dumps(payload_body).encode("utf-8"), method="POST")
+        request.add_header("Content-Type", "application/json")
+        request.add_header("Authorization", f"Bearer {api_key}")
+        return urllib.request.urlopen(request, timeout=120, context=ssl_ctx)
+
+    try:
+        with _do_request(body_dict) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="ignore")
+        try:
+            err = json.loads(err_body)
+            msg = err.get("error", {}).get("message", err_body)
+        except Exception:
+            msg = err_body
+        # 兼容 thinking 模式：部分模型（如 DeepSeek 推理模式）不允许 tool_choice
+        # 指定具体 function，只支持 "auto"/"none"。首次失败时自动降级为 auto 重试一次，
+        # 由 system prompt 约束模型必须调用指定工具。
+        if isinstance(tool_choice, dict) and (
+            "tool_choice" in msg.lower() or "thinking" in msg.lower()
+        ):
+            logger.warning("tool_choice 指定 function 被拒，降级为 auto 重试: %s", msg[:200])
+            body_dict.pop("tool_choice", None)  # 不传 == auto
+            try:
+                with _do_request(body_dict) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+            except Exception as exc2:
+                if isinstance(exc2, RuntimeError):
+                    raise
+                raise RuntimeError(f"大模型调用失败 (auto 重试): {str(exc2)[:500]}") from exc2
+        else:
+            raise RuntimeError(f"大模型调用失败 (HTTP {e.code}): {msg[:500]}")
+    except Exception as e:
+        if isinstance(e, RuntimeError):
+            raise
+        raise RuntimeError(f"大模型调用失败: {str(e)[:500]}")
+
+    choice = data["choices"][0]
+    message = choice.get("message", {}) or {}
+    finish_reason = choice.get("finish_reason")
+    content = message.get("content") or ""
+    raw_tool_calls = message.get("tool_calls") or []
+
+    # 解析每个 tool_call 的 arguments（JSON 字符串 → dict）
+    parsed_tool_calls = []
+    parse_errors = []
+    for tc in raw_tool_calls:
+        if not isinstance(tc, dict):
+            continue
+        function = tc.get("function", {}) or {}
+        name = function.get("name", "")
+        raw_args = function.get("arguments", "")
+        try:
+            # OpenAI 兼容协议：arguments 是 JSON 字符串；少数国产模型会直接给 dict
+            if isinstance(raw_args, str):
+                args = json.loads(raw_args) if raw_args.strip() else {}
+            elif isinstance(raw_args, dict):
+                args = raw_args
+            else:
+                args = {}
+        except json.JSONDecodeError as e:
+            parse_errors.append({"id": tc.get("id", ""), "name": name, "error": str(e)})
+            args = None
+        if args is None:
+            continue
+        parsed_tool_calls.append({
+            "id": tc.get("id", ""),
+            "name": name,
+            "arguments": args,
+        })
+
+    if not parsed_tool_calls:
+        # 未返回 tool_calls：可能模型不支持 tools 协议或思考耗尽
+        detail = ""
+        if parse_errors:
+            detail = f"；tool_call.arguments 解析失败: {parse_errors}"
+        if finish_reason == "length":
+            usage = data.get("usage", {}) or {}
+            raise RuntimeError(
+                f"大模型思考链耗尽 max_tokens 上限未输出 tool_calls"
+                f"（completion_tokens={usage.get('completion_tokens', '未知')}，"
+                f"max_tokens={max_tokens}）。请增大 LLM_MAX_TOKENS 或换用非 reasoning 模型。"
+            )
+        raise RuntimeError(
+            f"大模型未返回 tool_calls（finish_reason={finish_reason}）。"
+            f"原始 content 前 200 字: {content[:200]}{detail}"
+        )
+
+    return {
+        "content": content,
+        "tool_calls": parsed_tool_calls,
+        "finish_reason": finish_reason,
+        "raw_usage": data.get("usage", {}) or {},
+    }

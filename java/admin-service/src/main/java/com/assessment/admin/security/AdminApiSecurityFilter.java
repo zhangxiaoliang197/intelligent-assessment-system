@@ -90,6 +90,8 @@ public class AdminApiSecurityFilter extends OncePerRequestFilter {
         // 管理面则通过 X-Admin-Token 访问，二者均属可信调用，不应被默认拒绝。
         if (path.startsWith("/api/admin/chat/")) return true;
         if ("GET".equalsIgnoreCase(method)) {
+            // /api/admin/export/for-llm 为只读元数据导出（数据集 schema + 指标定义），
+            // 供 situation-service 运行时做 SQL 规划，与 dataset/list 同级放行服务身份。
             return path.equals("/api/admin/database/list")
                     || path.matches("/api/admin/database/[^/]+/tables")
                     || path.matches("/api/admin/database/[^/]+/table-structure")
@@ -99,7 +101,8 @@ public class AdminApiSecurityFilter extends OncePerRequestFilter {
                     || path.matches("/api/admin/dataset/[^/]+/data")
                     || path.equals("/api/admin/indicator/list")
                     || path.matches("/api/admin/indicator/[^/]+")
-                    || path.matches("/api/admin/indicator/[^/]+/linkage");
+                    || path.matches("/api/admin/indicator/[^/]+/linkage")
+                    || path.equals("/api/admin/export/for-llm");
         }
         return "POST".equalsIgnoreCase(method)
                 && (path.matches("/api/admin/database/[^/]+/execute-sql")

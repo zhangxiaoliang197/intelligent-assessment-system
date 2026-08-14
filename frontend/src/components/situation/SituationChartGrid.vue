@@ -16,6 +16,7 @@
         :spec="c"
         :index="index"
         :body-height="bodyHeight"
+        :show-explanation="showExplanation"
       />
     </div>
   </div>
@@ -35,6 +36,8 @@ const props = defineProps<{
   bodyHeight?: number
   /** 网格每行最小高度（px），单列时保证卡片不被压扁 */
   rowMinHeight?: number
+  /** 是否显示图表说明（默认显示）；打开态势图等纯展示场景传 false 关闭 */
+  showExplanation?: boolean
 }>()
 
 // 指定列数时用等宽 1fr（minmax(0,1fr) 防止内容溢出撑宽）

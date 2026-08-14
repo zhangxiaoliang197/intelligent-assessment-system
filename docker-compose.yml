@@ -192,13 +192,8 @@ services:
     # 独立于本体/向量库：不配置 ONTOLOGY_SERVICE_URL / QDRANT_URL（ADR-01/05）
     environment:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
-      - QA_SERVICE_URL=http://assessment-qa:10253
-      - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
-      - INDICATOR_SERVICE_URL=http://assessment-indicator:10254
-      - SITUATION_GENERATION_MODE=real
       - SITUATION_ALLOW_DATA_FALLBACK=true
       - SITUATION_DATA_ROW_LIMIT=200
-      - SITUATION_AUTO_DATASET_LIMIT=2
       - SITUATION_STREAM_REPLAY_TTL=300
       - SITUATION_MAX_INFLIGHT=${SITUATION_MAX_INFLIGHT:-8}
       - SITUATION_MAX_CONCURRENT=${SITUATION_MAX_CONCURRENT:-2}

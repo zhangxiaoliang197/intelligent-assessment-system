@@ -1,16 +1,13 @@
-"""LLM Agent 工具集（Phase 2 启用）。
+"""LLM Agent 工具集（V2 Agent 架构专用）。
 
-每个工具对应一个数据/产出接口，供 tool-calling 循环派发。
-Phase 1 仅提供桩实现与下游调用封装，不被 mock 编排器使用。
+态势图服务仅依赖 admin-service 与 LLM API：
+- query_datasets_meta：取数据集 schema + 指标定义，供 LLM 规划
+- query_admin_dataset：执行数据集查询，返回真实记录
 
-工具清单（与 docs/situation-map/03 §2 一致）：
-  query_knowledge / get_indicators / get_evaluation / query_admin_data
-  fetch_external_data（预留）
-  render_chart / render_map_layer / write_narrative（产出工具）
+不再提供 knowledge/qa/indicator 的直连工具，避免跨服务耦合（ADR-01/05）。
 """
 import json
 import logging
-import re
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -125,18 +122,6 @@ def query_datasets_meta(database_id: str = "") -> dict:
     return _http_get(url, timeout=config.HTTP_TIMEOUT)
 
 
-def query_admin_data(dataset_id: str, limit: int = 200) -> dict:
-    """执行数据集查询，返回数据行（调 admin-service /dataset/{id}/data）。
-
-    通用能力：执行数据集定义的 sql_text（或回退 SELECT * FROM tableName），
-    返回 {columns, rows, total}。数据集自带 databaseId，执行时自动连对应数据源。
-    """
-    return _http_get(
-        f"{config.ADMIN_SERVICE_URL}/api/admin/dataset/{dataset_id}/data?limit={limit}",
-        timeout=config.HTTP_TIMEOUT,
-    )
-
-
 def execute_dataset_sql(dataset_id: str, sql: str) -> dict:
     """在数据集关联的数据库上执行 LLM 生成的只读 SQL（态势图专用端点）。
 
@@ -151,38 +136,6 @@ def execute_dataset_sql(dataset_id: str, sql: str) -> dict:
         {"sql": sql},
         timeout=config.SQL_QUERY_TIMEOUT,
     )
-
-
-def query_knowledge(query: str, top_k: int = 5) -> dict:
-    """调用知识库的真实混合检索接口。
-
-    知识库首次请求会加载向量模型（sentence-transformers），冷启动可能超过默认
-    HTTP_TIMEOUT，因此单独放宽超时，避免首次提问被误判为超时失败。
-    """
-    return _http_json(
-        "POST",
-        f"{config.KNOWLEDGE_SERVICE_URL}/knowledge/search",
-        {"query": query, "top_k": max(1, min(int(top_k), 20))},
-        timeout=max(config.HTTP_TIMEOUT, 60),
-    )
-
-
-def get_indicators(indicator_ids: list = None) -> dict:
-    """读取真实指标目录，并按上下文中的指标 ID 过滤。"""
-    result = _http_get(f"{config.INDICATOR_SERVICE_URL}/indicator/list")
-    if indicator_ids and isinstance(result.get("indicators"), list):
-        wanted = {str(item) for item in indicator_ids}
-        result["indicators"] = [
-            item for item in result["indicators"]
-            if str(item.get("id", "")) in wanted or str(item.get("name", "")) in wanted
-        ]
-    return result
-
-
-def get_evaluation(evaluation_id: str) -> dict:
-    """读取评估分析会话快照。"""
-    safe_id = urllib.parse.quote(str(evaluation_id), safe="")
-    return _http_get(f"{config.QA_SERVICE_URL}/evaluation/session/{safe_id}")
 
 
 def get_dataset_meta(dataset_id: str) -> dict:
@@ -219,11 +172,6 @@ def fetch_dataset_structure(dataset_id: str) -> dict:
     }
 
 
-def list_admin_datasets() -> dict:
-    """读取当前执行身份获授权的真实数据集。"""
-    return _http_get(f"{config.ADMIN_SERVICE_URL}/api/admin/dataset/authorized-list")
-
-
 def query_admin_dataset(dataset: dict, row_limit: int = None) -> dict:
     """在注册数据集上执行只读查询并返回真实记录。
 
@@ -256,28 +204,3 @@ def query_admin_dataset(dataset: dict, row_limit: int = None) -> dict:
         "sensitiveColumns": dataset.get("sensitiveColumns") or [],
     }
     return result
-
-
-def fetch_external_data(adapter: str, params: dict = None) -> dict:
-    """外部实时数据源适配器（预留，Q-03 待定规范）。Phase 2+ 启用。"""
-    logger.info("外部数据源适配器调用: adapter=%s（预留）", adapter)
-    return {"success": False, "message": "外部数据源适配器尚未配置"}
-
-
-# ── 产出工具（Phase 2 由编排器调用，同时通过 SSE 推送事件）──
-def render_chart(chart_id: str, chart_type: str, title: str, option: dict, dataset_ref: str = "") -> dict:
-    """产出单个图表（ECharts option）。Phase 2 由编排器派发。"""
-    return {"chartId": chart_id, "type": chart_type, "title": title,
-            "option": option, "datasetRef": dataset_ref}
-
-
-def render_map_layer(layer_id: str, points: list = None, routes: list = None,
-                     areas: list = None, layer_config: dict = None) -> dict:
-    """产出地图图层（WGS84 坐标）。Phase 2 由编排器派发。"""
-    return {"layerId": layer_id, "points": points or [], "routes": routes or [],
-            "areas": areas or [], "layerConfig": layer_config or {}}
-
-
-def write_narrative(intro: str, map_explanation: str = "") -> dict:
-    """产出态势介绍 + 地图说明（逐图说明已随图表 explanation 字段生成）。"""
-    return {"intro": intro, "mapExplanation": map_explanation}

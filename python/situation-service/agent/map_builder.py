@@ -7,6 +7,7 @@
 输出结构对齐态势图 map_layer 契约（points/routes/areas/circles）。
 """
 import logging
+import re
 
 logger = logging.getLogger("situation-service")
 
@@ -23,6 +24,9 @@ _PALETTE = [
     "#1abc9c", "#e67e22", "#2980b9", "#27ae60", "#8e44ad",
     "#d35400", "#c0392b",
 ]
+
+# 坐标列正则：匹配以经度/纬度关键词结尾的列名，供 _make_props 排除坐标字段
+_COORD_PATTERN = re.compile(r'(lng|lon|longitude|经度|lat|latitude|纬度)$', re.IGNORECASE)
 
 
 def _color_for(index: int) -> str:
@@ -48,7 +52,11 @@ def _make_props(row, columns):
     """从行中提取非坐标、非标识的业务字段作为 props（供前端弹窗展示）。"""
     props = {}
     for key in columns:
-        if key.lower() in _EXCLUDE:
+        key_lower = key.lower()
+        if key_lower in _EXCLUDE:
+            continue
+        # 排除任何以坐标关键词结尾的列（如 origin_lng, dest_lat, geolocation_lng 等）
+        if _COORD_PATTERN.search(str(key)):
             continue
         value = row.get(key)
         if value is None or value == "":
@@ -57,6 +65,104 @@ def _make_props(row, columns):
             value = round(value, 2)
         props[key] = value
     return props if props else None
+
+
+# 路线命名候选字段（按优先级排序）：名称 → 编号/航班号 → 型号/类型 → 标识
+_ROUTE_NAME_KEYS = (
+    "name", "title", "label", "名称", "标题",
+    "flight_no", "flightno", "航班号", "车次", "train_no", "班次",
+    "route_id", "routeid", "线路号", "线路编号",
+    "no", "code", "number", "编号", "编码", "序号",
+    "model", "型号", "机型", "aircraft_model",
+    "type", "类型", "类别",
+    "id", "aircraft_id", "标识",
+)
+
+
+def _pick_route_name(row, columns, index):
+    """从行数据中智能选取路线名称。
+
+    优先级：名称类 → 编号/航班号 → 型号/类型 → 标识；
+    所有候选列均无值时兜底为「路线N」（N 从 1 开始）。
+    避免数据无 name 列时全部退化为同一种兜底命名。
+    """
+    cols_lower = {str(k).lower(): k for k in columns}
+    for key in _ROUTE_NAME_KEYS:
+        col = cols_lower.get(key)
+        if col is None:
+            continue
+        value = row.get(col)
+        if value not in (None, ""):
+            return str(value)
+    return f"路线{index + 1}"
+
+
+def discover_coordinate_columns(columns):
+    """从列名列表中自动发现所有经纬度列，按前缀配对。
+
+    支持子串匹配：任何以 _lng / _lon / _longitude / _经度 结尾的字段识别为经度，
+    任何以 _lat / _latitude / _纬度 结尾的字段识别为纬度。
+    按前缀（尾部关键词之前的部分）配对，支持同一数据源中的多对经纬度。
+
+    示例：
+        ["origin_lng", "origin_lat", "dest_lng", "dest_lat"]
+        -> [{"prefix": "origin_", "lng": "origin_lng", "lat": "origin_lat"},
+            {"prefix": "dest_",   "lng": "dest_lng",   "lat": "dest_lat"}]
+
+        ["geolocation_lng", "geolocation_lat"]
+        -> [{"prefix": "geolocation_", "lng": "geolocation_lng", "lat": "geolocation_lat"}]
+
+        ["lng", "lat"]
+        -> [{"prefix": "", "lng": "lng", "lat": "lat"}]
+
+        ["longitude", "latitude"]
+        -> [{"prefix": "", "lng": "longitude", "lat": "latitude"}]
+
+    Args:
+        columns: 列名列表（字符串）
+
+    Returns:
+        list[dict]: 每个元素包含 prefix（前缀）、lng（经度列名）、lat（纬度列名）。
+                    如果没有可用配对，返回空列表。
+    """
+    if not columns:
+        return []
+
+    # 正则：匹配以经度/纬度关键词结尾的列名，捕获前缀部分
+    # 注意：longitude 必须排在 lon 前面，否则 lon 会先匹配 longitude 的前 3 个字符
+    lng_pattern = re.compile(r'^(.+_)?(lng|longitude|lon|经度)$', re.IGNORECASE)
+    lat_pattern = re.compile(r'^(.+_)?(lat|latitude|纬度)$', re.IGNORECASE)
+
+    # 收集所有经度列和纬度列：(规范化前缀, 原始列名)
+    lng_entries = []  # [(prefix, original_key), ...]
+    lat_entries = []  # [(prefix, original_key), ...]
+
+    for col in columns:
+        col_str = str(col).strip()
+        if not col_str:
+            continue
+        m = lng_pattern.match(col_str)
+        if m:
+            prefix = (m.group(1) or "").rstrip('_')
+            lng_entries.append((prefix, col_str))
+            continue
+        m = lat_pattern.match(col_str)
+        if m:
+            prefix = (m.group(1) or "").rstrip('_')
+            lat_entries.append((prefix, col_str))
+
+    # 按前缀配对：遍历经度列，查找同前缀的纬度列
+    lat_by_prefix = {prefix: key for prefix, key in lat_entries}
+    pairs = []
+    for prefix, lng_key in lng_entries:
+        lat_key = lat_by_prefix.get(prefix)
+        if lat_key:
+            pairs.append({
+                "prefix": prefix,
+                "lng": lng_key,
+                "lat": lat_key,
+            })
+    return pairs
 
 
 def build_map_annotations(rows):
@@ -72,12 +178,18 @@ def build_map_annotations(rows):
     if not columns:
         return {}
 
-    cols_lower = {k.lower(): k for k in columns}
-
-    lng_key = next((cols_lower[c] for c in ("lng", "lon", "longitude") if c in cols_lower), None)
-    lat_key = next((cols_lower[c] for c in ("lat", "latitude") if c in cols_lower), None)
-    if not lng_key or not lat_key:
+    # 自动发现所有经纬度列对（支持 origin_lng/dest_lng/geolocation_lng 等前缀变体）
+    pairs = discover_coordinate_columns(columns)
+    if not pairs:
         return {}
+
+    # 选择主坐标对：优先空前缀（裸 lng/lat），否则用第一个
+    primary = next((p for p in pairs if p["prefix"] == ""), pairs[0])
+    lng_key = primary["lng"]
+    lat_key = primary["lat"]
+
+    # 保留 cols_lower 用于后续精确匹配（radius_km / seq 等非坐标字段）
+    cols_lower = {k.lower(): k for k in columns}
 
     result = {"points": [], "routes": [], "areas": [], "circles": []}
 
@@ -156,7 +268,90 @@ def build_map_annotations(rows):
                 result["points"].append(point)
         return result
 
-    # 默认标记点（无半径、无轨迹）
+    # 检查是否存在 origin+dest 配对（常用于物流/运输数据）
+    origin_prefixes = {"origin", "起点", "from", "start", "src"}
+    dest_prefixes = {"dest", "destination", "终点", "to", "end", "dst"}
+
+    origin_pair = next((p for p in pairs if p["prefix"].lower() in origin_prefixes), None)
+    dest_pair = next((p for p in pairs if p["prefix"].lower() in dest_prefixes), None)
+
+    if origin_pair and dest_pair:
+        # 为每行数据生成从 origin 到 dest 的路线，以及起/终点标记
+        for index, row in enumerate(rows):
+            origin_lng = _to_float(row.get(origin_pair["lng"]))
+            origin_lat = _to_float(row.get(origin_pair["lat"]))
+            dest_lng = _to_float(row.get(dest_pair["lng"]))
+            dest_lat = _to_float(row.get(dest_pair["lat"]))
+
+            # 跳过坐标无效的行
+            if not (-180 <= origin_lng <= 180 and -90 <= origin_lat <= 90):
+                continue
+            if not (-180 <= dest_lng <= 180 and -90 <= dest_lat <= 90):
+                continue
+
+            name = _pick_route_name(row, columns, index)
+            color = _color_for(len(result["routes"]))
+            props = _make_props(row, columns)
+
+            # 生成路线（origin -> dest）
+            result["routes"].append({
+                "name": name,
+                "color": color,
+                "points": [
+                    {"lng": origin_lng, "lat": origin_lat},
+                    {"lng": dest_lng, "lat": dest_lat},
+                ],
+            })
+
+            # 起点标记
+            origin_point = {
+                "name": f"{name}-起点",
+                "lng": origin_lng,
+                "lat": origin_lat,
+                "routeName": name,
+                "color": color,
+            }
+            if props:
+                origin_point["props"] = props
+            result["points"].append(origin_point)
+
+            # 终点标记
+            dest_point = {
+                "name": f"{name}-终点",
+                "lng": dest_lng,
+                "lat": dest_lat,
+                "routeName": name,
+                "color": color,
+            }
+            if props:
+                dest_point["props"] = props
+            result["points"].append(dest_point)
+
+        # 如果有额外的非 origin/dest 坐标对（如 geolocation_lng/lat），也生成标点
+        extra_pairs = [p for p in pairs if p["prefix"].lower() not in origin_prefixes
+                       and p["prefix"].lower() not in dest_prefixes
+                       and p["prefix"] != primary["prefix"]]
+        for extra in extra_pairs:
+            for index, row in enumerate(rows):
+                elng = _to_float(row.get(extra["lng"]))
+                elat = _to_float(row.get(extra["lat"]))
+                if not (-180 <= elng <= 180 and -90 <= elat <= 90):
+                    continue
+                extra_name = str(row.get("name", row.get("aircraft_name", f"点位{index+1}")))
+                extra_point = {
+                    "name": extra_name,
+                    "lng": elng,
+                    "lat": elat,
+                    "routeName": extra_name,
+                    "color": _color_for(index),
+                }
+                extra_props = _make_props(row, columns)
+                if extra_props:
+                    extra_point["props"] = extra_props
+                result["points"].append(extra_point)
+        return result
+
+    # 默认标记点（无半径、无轨迹、无 origin+dest）
     for index, row in enumerate(rows):
         name = str(row.get("name", row.get("aircraft_name", "")))
         point = {

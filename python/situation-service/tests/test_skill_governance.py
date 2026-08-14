@@ -41,7 +41,7 @@ class SituationSkillGovernanceTests(unittest.TestCase):
             key: value for key, value in source.items()
             if key in {
                 "name", "description", "category", "triggers", "recommendedQuestions",
-                "inputHints", "steps", "dataSources", "chartTypes", "mapLayerTypes",
+                "inputHints", "steps", "chartTypes", "mapLayerTypes",
                 "focusMetrics", "analysisGoal", "featured",
             }
         }
@@ -96,16 +96,19 @@ class SituationSkillGovernanceTests(unittest.TestCase):
         self.assertEqual(recommendations[0]["id"], custom["id"])
         self.assertIn("已收藏", recommendations[0]["recommendationReason"])
 
-    @patch("skills.preflight._probe_health", return_value=True)
     @patch("skills.preflight.admin_client.list_datasets")
-    def test_preflight_validates_parameters_and_registered_sources(self, list_datasets, _probe):
+    def test_preflight_validates_parameters_and_authorized_datasets(self, list_datasets):
         skill = get_skill("force-readiness")
         assert skill is not None
+        # 不再依赖固定 dataSources 列表；只要用户在选定数据源下有任意已授权数据集即可。
         list_datasets.return_value = {
             "success": True,
-            "datasets": [{"tableName": source} for source in skill["dataSources"]],
+            "datasets": [{"tableName": "t_force", "databaseId": "db_a"}],
         }
-        result = preflight_skill("force-readiness", "检查战备", {"区域": "A"})
+        result = preflight_skill(
+            "force-readiness", "检查战备", {"区域": "A"},
+            data_source_id="db_a",
+        )
         self.assertTrue(result["ready"])
         self.assertTrue(result["complete"])
         self.assertTrue(all(check["label"] for check in result["checks"]))

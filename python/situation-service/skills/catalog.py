@@ -46,7 +46,7 @@ _CHART_TYPES = {
 _MAP_LAYER_TYPES = {"points", "routes", "areas", "coverage", "clusters", "flow"}
 _REQUIRED_FIELDS = {
     "order", "id", "name", "description", "category", "triggers",
-    "recommendedQuestions", "inputHints", "steps", "dataSources",
+    "recommendedQuestions", "inputHints", "steps",
     "chartTypes", "mapLayerTypes", "focusMetrics", "analysisGoal",
 }
 _GENERIC_BIGRAMS = {"分析", "评估", "情况", "当前", "展示", "生成", "对比", "态势"}
@@ -173,7 +173,6 @@ def _validate_skill(skill: Any, seen: set[str]) -> None:
     )
     _validate_string_list(skill["inputHints"], f"Skill {skill_id} inputHints", maximum=8, item_maximum=40)
     _validate_string_list(skill["steps"], f"Skill {skill_id} steps", minimum=2, maximum=8)
-    _validate_string_list(skill["dataSources"], f"Skill {skill_id} dataSources", maximum=10, item_maximum=80)
     _validate_string_list(skill["chartTypes"], f"Skill {skill_id} chartTypes", maximum=5, item_maximum=20)
     _validate_string_list(
         skill["mapLayerTypes"], f"Skill {skill_id} mapLayerTypes", maximum=5, item_maximum=20
@@ -673,7 +672,6 @@ def build_skill_context(
         f"使用「{skill['name']}」分析用户问题：{normalized_query}{parameter_text}。"
         f"分析目标：{skill['analysisGoal']}"
         f"依次执行：{'；'.join(skill['steps'])}。"
-        f"优先使用数据源：{'、'.join(skill['dataSources'])}；"
         f"优先输出图表：{'、'.join(skill['chartTypes'])}；"
         f"地图图层：{'、'.join(skill['mapLayerTypes'])}。"
     )
@@ -688,7 +686,6 @@ def build_skill_context(
             {"sequence": index, "name": step}
             for index, step in enumerate(skill["steps"], start=1)
         ],
-        "dataSources": skill["dataSources"],
         "chartTypes": skill["chartTypes"],
         "mapLayerTypes": skill["mapLayerTypes"],
         "focusMetrics": skill["focusMetrics"],

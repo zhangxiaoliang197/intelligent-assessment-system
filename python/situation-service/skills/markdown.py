@@ -103,7 +103,6 @@ def _default_body(skill: Dict[str, Any]) -> str:
         f"## 分析目标\n\n{skill.get('analysisGoal', '')}\n\n"
         f"## 执行步骤\n\n{steps}\n\n"
         "## 数据与输出\n\n"
-        f"- 数据源：{'、'.join(skill.get('dataSources', []))}\n"
         f"- 重点指标：{'、'.join(skill.get('focusMetrics', []))}\n"
         f"- 图表类型：{'、'.join(skill.get('chartTypes', []))}\n"
         f"- 地图图层：{'、'.join(skill.get('mapLayerTypes', []))}"

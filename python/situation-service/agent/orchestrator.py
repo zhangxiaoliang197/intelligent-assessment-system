@@ -1,8 +1,15 @@
-"""态势生成编排器。
+"""态势生成编排器（V2 Agent 架构）。
 
-Phase 1：mock_generate 用 canned 数据按文档时序流式推送事件，
-验证前端管线（图表先出 → 地图 → 文本，非结论先行，ADR-08）。
-Phase 2：替换为 real_generate，走 LLM tool-calling 循环（见 tools.py / prompts.py）。
+五阶段流程：PLAN → RESEARCH → WRITE(chart+map 并行) → VERIFY → NARRATIVE → EMIT
+入口 `generate` 直接调用本模块的 `real_generate_v2`。
+
+本模块包含：
+- V2 编排主体（Planner/Executor/Writer/Verifier/Narrative 串联）
+- V2 复用的工具函数：profile 适配、数据降级图表/地图、坐标校验、
+  ECharts/Map 安全校验、聚合统计与证据摘要
+
+V1 的 mock_generate / real_generate / _collect_real_data / _run_llm_orchestration
+已移除，不再依赖 knowledge/qa/indicator 服务（ADR-01/05）。
 """
 import asyncio
 import datetime as dt
@@ -11,12 +18,14 @@ import json
 import logging
 import math
 import re
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from stream.sse import SSEEvent
 import config
-from agent import prompts, tools
-from llm_client import call_llm_json
+from agent import map_builder, tools, executor, writer, verifier
+from agent.evidence_store import EvidenceStore
+from agent.planner import Planner
+from agent.state_machine import Stage, StateMachine
 
 logger = logging.getLogger("situation-service")
 
@@ -25,15 +34,11 @@ _DEFAULT_PROFILE = {
     "skillId": "",
     "skillName": "通用态势分析",
     "category": "综合态势",
-    "dataSources": ["admin", "indicator", "knowledge"],
-    "chartTypes": ["line", "pie", "radar"],
-    "mapLayerTypes": ["points"],
-    "focusMetrics": ["近30天损耗趋势", "装备类型分布", "战备维度对比"],
-    "executionPlan": [
-        {"sequence": 1, "name": "汇聚态势数据"},
-        {"sequence": 2, "name": "生成图表与地图"},
-        {"sequence": 3, "name": "撰写态势说明"},
-    ],
+    # 未选 Skill 时不约束图表/地图类型与指标，由 LLM 基于用户问题与数据集 schema 自由决策。
+    "chartTypes": [],
+    "mapLayerTypes": [],
+    "focusMetrics": [],
+    "executionPlan": [],
 }
 
 
@@ -41,7 +46,7 @@ def _skill_profile(skill_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     profile = dict(_DEFAULT_PROFILE)
     if skill_context:
         for field in (
-            "skillId", "skillName", "category", "dataSources", "chartTypes",
+            "skillId", "skillName", "category", "chartTypes",
             "mapLayerTypes", "focusMetrics", "executionPlan", "analysisGoal",
             "workflow", "parameterBindings", "revision", "version", "contentHash",
         ):
@@ -60,19 +65,6 @@ def _restrict_profile_to_database(profile: Dict[str, Any], context: Dict[str, An
     return constrained
 
 
-def _coerce_datetime(value: Any) -> Optional[dt.datetime]:
-    if isinstance(value, dt.datetime):
-        return value
-    text = str(value or "").strip().replace("Z", "+00:00")
-    if not text:
-        return None
-    try:
-        parsed = dt.datetime.fromisoformat(text)
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
-    except ValueError:
-        return None
-
-
 def _resolve_field(rows: list, requested: str) -> Optional[str]:
     if not rows:
         return None
@@ -83,457 +75,9 @@ def _resolve_field(rows: list, requested: str) -> Optional[str]:
     return next((field for field in fields if lowered and lowered in field.lower()), None)
 
 
-def _resolve_temporal_field(rows: list, requested: str) -> Optional[str]:
-    field = _resolve_field(rows, requested)
-    if field:
-        return field
-    fields = list(dict.fromkeys(str(key) for row in rows for key in row))
-    priorities = (
-        "update_time", "record_time", "detect_time", "warning_time", "start_time",
-        "issue_time", "eval_date", "discovered_time", "planned_time", "created_at",
-    )
-    for candidate in priorities:
-        matched = next((item for item in fields if item.lower() == candidate), None)
-        if matched:
-            return matched
-    return next(
-        (item for item in fields if any(token in item.lower() for token in ("time", "date", "时间", "日期"))),
-        None,
-    )
-
-
-def _time_window_days(value: Any) -> Optional[int]:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return max(1, int(math.ceil(float(value))))
-    text = str(value or "").strip().lower()
-    matched = re.search(r"(\d+(?:\.\d+)?)", text)
-    if not matched:
-        return None
-    amount = float(matched.group(1))
-    if any(token in text for token in ("小时", "hour")):
-        amount = amount / 24
-    elif any(token in text for token in ("周", "week")):
-        amount = amount * 7
-    elif any(token in text for token in ("月", "month")):
-        amount = amount * 30
-    elif any(token in text for token in ("年", "year")):
-        amount = amount * 365
-    return max(1, int(math.ceil(amount)))
-
-
-def _apply_execution_plan(bundles: list, profile: dict, context: dict) -> list[dict]:
-    """Execute parameter bindings deterministically before any evidence reaches the LLM."""
-    parameters = ((context.get("skill") or {}).get("parameters") or {})
-    bindings = profile.get("parameterBindings") or {}
-    execution = []
-    handled_parameters = set()
-    no_filter_values = {"全部", "红蓝双方", "所有", "不限"}
-    for bundle in bundles:
-        rows = _rows_from_payload(bundle.get("payload"))
-        schema_rows = list(rows)
-        input_count = len(rows)
-        applied = []
-        for key, value in parameters.items():
-            binding = bindings.get(key) or {"operator": "equals", "field": key}
-            operator = binding.get("operator")
-            requested_field = str(binding.get("field") or key)
-            field = (
-                _resolve_temporal_field(schema_rows, requested_field)
-                if operator == "time-window"
-                else _resolve_field(schema_rows, requested_field)
-            )
-            if str(value).strip() in no_filter_values:
-                handled_parameters.add(key)
-                applied.append({"parameter": key, "operator": operator, "value": value, "skipped": "all"})
-                continue
-            if operator == "limit":
-                rows = rows[:max(1, min(int(value), config.SITUATION_DATA_ROW_LIMIT))]
-                applied.append({"parameter": key, "operator": operator, "value": value})
-                handled_parameters.add(key)
-            elif operator == "equals" and field:
-                wanted = {str(item) for item in value} if isinstance(value, list) else {str(value)}
-                rows = [row for row in rows if str(row.get(field)) in wanted]
-                applied.append({"parameter": key, "operator": operator, "field": field, "value": value})
-                handled_parameters.add(key)
-            elif operator == "contains" and field:
-                wanted = [str(item).strip() for item in value] if isinstance(value, list) else [str(value).strip()]
-                rows = [row for row in rows if any(item in str(row.get(field, "")) for item in wanted)]
-                applied.append({"parameter": key, "operator": operator, "field": field, "value": value})
-                handled_parameters.add(key)
-            elif operator == "numeric-threshold" and field:
-                threshold = _as_number(value)
-                if threshold is not None:
-                    rows = [
-                        row for row in rows
-                        if (number := _as_number(row.get(field))) is not None and number >= threshold
-                    ]
-                    applied.append({"parameter": key, "operator": operator, "field": field, "value": threshold})
-                    handled_parameters.add(key)
-            elif operator == "time-window" and field:
-                days = _time_window_days(value)
-                if days:
-                    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=max(1, days))
-                    rows = [row for row in rows if (stamp := _coerce_datetime(row.get(field))) and stamp >= cutoff]
-                    applied.append({"parameter": key, "operator": operator, "field": field, "days": days})
-                    handled_parameters.add(key)
-            elif operator == "map-radius":
-                radius = _as_number(value)
-                if radius is not None:
-                    applied.append({"parameter": key, "operator": operator, "radiusKm": radius})
-                    handled_parameters.add(key)
-            elif operator == "analysis-control":
-                applied.append({"parameter": key, "operator": operator, "value": value})
-                handled_parameters.add(key)
-        payload = dict(bundle.get("payload") or {})
-        payload["rows"] = rows
-        if not any(key in payload for key in ("results", "indicators", "datasets", "items", "history")):
-            payload["rowCount"] = len(rows)
-        transformed = {**bundle, "payload": payload, "rows": len(rows)}
-        transformed["execution"] = {
-            "inputRows": input_count,
-            "outputRows": len(rows),
-            "operators": applied,
-            "steps": profile.get("workflow") or profile.get("executionPlan") or [],
-        }
-        execution.append(transformed)
-    unbound = sorted(set(parameters) - handled_parameters)
-    if unbound:
-        raise ValueError(f"Skill 参数未绑定到可执行字段或控制器: {', '.join(unbound)}")
-    return execution
-
-
-def _time_window_parameter_keys(profile: dict) -> list:
-    """收集绑定到 time-window 过滤的参数键。"""
-    bindings = profile.get("parameterBindings") or {}
-    return [
-        key for key, binding in bindings.items()
-        if isinstance(binding, dict) and binding.get("operator") == "time-window"
-    ]
-
-
-def _relax_empty_time_windows(bundles: list, profile: dict, context: dict) -> tuple[list, Optional[str]]:
-    """时间窗过滤结果为空时按 近7天 → 近30天 → 近90天 → 不限 依次放宽。
-
-    bundles 必须是执行计划应用前的原始采集结果（过滤后的 payload 行已被替换，
-    无法再次解析字段）。演示/作战数据的采集时间可能整体早于所选时间窗（例如
-    默认的近 24 小时），此时直接失败会让推荐问题不可用。任一档位有行匹配即
-    返回放宽结果与提示；全部落空（被其他过滤条件排空）时保持原结果，由调用
-    方继续报错。
-    """
-    time_keys = _time_window_parameter_keys(profile)
-    if not time_keys:
-        return bundles, None
-    skill_context = dict(context.get("skill") or {})
-    parameters = dict(skill_context.get("parameters") or {})
-    for days in (7, 30, 90):
-        relaxed = {key: (days if key in time_keys else value) for key, value in parameters.items()}
-        attempt = _apply_execution_plan(
-            bundles, profile, {**context, "skill": {**skill_context, "parameters": relaxed}},
-        )
-        if any(_rows_from_payload(bundle.get("payload")) for bundle in attempt):
-            return attempt, f"所选时间范围无匹配数据，已自动放宽为近 {days} 天"
-    dropped = {key: value for key, value in parameters.items() if key not in time_keys}
-    attempt = _apply_execution_plan(
-        bundles, profile, {**context, "skill": {**skill_context, "parameters": dropped}},
-    )
-    if any(_rows_from_payload(bundle.get("payload")) for bundle in attempt):
-        return attempt, "所选时间范围无匹配数据，已忽略时间过滤"
-    return bundles, None
-
-
-def _workflow_events(profile: dict, bundles: list) -> list[dict]:
-    """Materialize workflow stages with deterministic input/output facts."""
-    input_rows = sum(int((bundle.get("execution") or {}).get("inputRows", 0)) for bundle in bundles)
-    output_rows = sum(int((bundle.get("execution") or {}).get("outputRows", 0)) for bundle in bundles)
-    applied_operators = [
-        operator
-        for bundle in bundles
-        for operator in ((bundle.get("execution") or {}).get("operators") or [])
-    ]
-    events = []
-    for step in profile.get("workflow") or []:
-        operator = str(step.get("operator") or "transform")
-        stage = {
-            "sequence": step.get("sequence"),
-            "name": step.get("name"),
-            "operator": operator,
-            "status": "completed",
-            "datasets": [bundle.get("source") for bundle in bundles],
-            "inputRows": input_rows,
-            "outputRows": output_rows,
-        }
-        if operator == "collect":
-            stage["outputRows"] = input_rows
-        elif operator == "filter":
-            stage["appliedOperators"] = applied_operators
-        elif operator == "visualize":
-            stage["plannedCharts"] = len(profile.get("chartTypes") or [])
-            stage["plannedMapLayers"] = len(profile.get("mapLayerTypes") or [])
-        elif operator == "transform":
-            stage["focusMetrics"] = list(profile.get("focusMetrics") or [])
-        else:
-            raise ValueError(f"Skill workflow operator 不支持: {operator}")
-        events.append(stage)
-    return events
-
-
-def _chart_option(chart_type: str, index: int, metric: str) -> Dict[str, Any]:
-    """生成覆盖注册表类型的合法演示 option；真实阶段由 LLM 按数据替换。"""
-    labels = ["A区域", "B区域", "C区域", "D区域", "E区域"]
-    values = [72 + index * 2, 64 + index * 3, 81 - index, 58 + index * 4, 69 + index]
-    if chart_type == "line":
-        return {
-            "tooltip": {"trigger": "axis"},
-            "xAxis": {"type": "category", "data": [f"D{i}" for i in range(1, 15)]},
-            "yAxis": {"type": "value", "name": metric},
-            "series": [{
-                "name": metric, "type": "line", "smooth": True, "areaStyle": {},
-                "data": [48, 52, 51, 57, 61, 59, 64, 68, 66, 72, 70, 76, 79, 81],
-            }],
-        }
-    if chart_type == "pie":
-        return {
-            "tooltip": {"trigger": "item"},
-            "legend": {"bottom": 0},
-            "series": [{
-                "name": metric,
-                "type": "pie",
-                "radius": ["38%", "68%"],
-                "data": [{"name": label, "value": value} for label, value in zip(labels, values)],
-            }],
-        }
-    if chart_type == "radar":
-        return {
-            "tooltip": {},
-            "radar": {"indicator": [{"name": label, "max": 100} for label in labels]},
-            "series": [{
-                "name": metric,
-                "type": "radar",
-                "data": [
-                    {"value": values, "name": "当前"},
-                    {"value": [65, 62, 70, 61, 66], "name": "基线"},
-                ],
-            }],
-        }
-    if chart_type == "gauge":
-        return {
-            "tooltip": {"formatter": "{b}: {c}%"},
-            "series": [{
-                "name": metric,
-                "type": "gauge",
-                "progress": {"show": True},
-                "detail": {"valueAnimation": True, "formatter": "{value}%"},
-                "data": [{"name": metric, "value": values[index % len(values)]}],
-            }],
-        }
-    if chart_type == "scatter":
-        return {
-            "tooltip": {"trigger": "item"},
-            "xAxis": {"name": "影响度", "type": "value"},
-            "yAxis": {"name": metric, "type": "value"},
-            "series": [{
-                "name": metric,
-                "type": "scatter",
-                "symbolSize": 16,
-                "data": [[20, 48], [35, 62], [46, 58], [60, 77], [75, 83], [86, 72]],
-            }],
-        }
-    if chart_type == "heatmap":
-        return {
-            "tooltip": {"position": "top"},
-            "xAxis": {"type": "category", "data": ["00时", "06时", "12时", "18时"]},
-            "yAxis": {"type": "category", "data": labels[:4]},
-            "visualMap": {"min": 0, "max": 100, "calculable": True, "orient": "horizontal", "left": "center"},
-            "series": [{
-                "name": metric,
-                "type": "heatmap",
-                "data": [[x, y, 35 + ((x * 17 + y * 13 + index * 7) % 60)] for y in range(4) for x in range(4)],
-            }],
-        }
-    if chart_type == "relation":
-        return {
-            "tooltip": {},
-            "series": [{
-                "type": "graph",
-                "layout": "force",
-                "roam": True,
-                "label": {"show": True},
-                "data": [{"name": label, "symbolSize": 28 + value / 5} for label, value in zip(labels, values)],
-                "links": [{"source": labels[i], "target": labels[i + 1], "value": values[i]} for i in range(4)],
-            }],
-        }
-    if chart_type == "sankey":
-        return {
-            "tooltip": {"trigger": "item"},
-            "series": [{
-                "type": "sankey",
-                "data": [{"name": label} for label in labels],
-                "links": [{"source": labels[i], "target": labels[i + 1], "value": 12 + i * 5} for i in range(4)],
-                "lineStyle": {"color": "gradient", "curveness": 0.5},
-            }],
-        }
-    return {
-        "tooltip": {"trigger": "axis"},
-        "xAxis": {"type": "category", "data": labels},
-        "yAxis": {"type": "value", "name": metric},
-        "series": [{"name": metric, "type": "bar", "data": values}],
-    }
-
-
-def _map_payload(profile: Dict[str, Any]) -> Dict[str, Any]:
-    layer_types = profile["mapLayerTypes"]
-    layer_id = f"skill_{profile['skillId'] or 'general'}"
-    points = [
-        {"name": "A 区域", "lng": 116.40, "lat": 39.90, "value": 82, "raw": "A区域态势点", "_layerId": layer_id},
-        {"name": "B 区域", "lng": 121.47, "lat": 31.23, "value": 67, "raw": "B区域态势点", "_layerId": layer_id},
-        {"name": "C 区域", "lng": 113.27, "lat": 23.13, "value": 74, "raw": "C区域态势点", "_layerId": layer_id},
-        {"name": "D 区域", "lng": 108.95, "lat": 34.27, "value": 59, "raw": "D区域态势点", "_layerId": layer_id},
-    ]
-    routes = []
-    if any(layer_type in {"routes", "flow"} for layer_type in layer_types):
-        routes = [{"name": "主要态势链路", "points": [points[0], points[3], points[2]]}]
-    areas = []
-    if any(layer_type in {"areas", "coverage"} for layer_type in layer_types):
-        areas = [{
-            "name": "重点关注区域",
-            "_regionId": "focus-area-1",
-            "points": [
-                {"name": "边界1", "lng": 115.6, "lat": 40.4},
-                {"name": "边界2", "lng": 117.1, "lat": 40.2},
-                {"name": "边界3", "lng": 117.0, "lat": 39.2},
-                {"name": "边界4", "lng": 115.7, "lat": 39.3},
-            ],
-        }]
-    circles = []
-    if any(layer_type in {"circles", "coverage", "radar"} for layer_type in layer_types):
-        circles = [{
-            "name": "C 区域雷达覆盖",
-            "center": {"lng": 113.27, "lat": 23.13},
-            "radiusKm": 120,
-        }]
-    return {
-        "layerId": layer_id,
-        "points": points,
-        "routes": routes,
-        "areas": areas,
-        "circles": circles,
-        "layerConfig": {
-            "name": profile["skillName"],
-            "type": layer_types[0],
-            "supportedTypes": layer_types,
-            "color": "#e74c3c",
-            "opacity": 0.85,
-            "visible": True,
-        },
-    }
-
-
-async def mock_generate(
-    query: str,
-    report_id: str,
-    skill_context: Optional[Dict[str, Any]] = None,
-) -> AsyncIterator[SSEEvent]:
-    """Phase 1 mock 生成器。
-
-    按时序 yield 事件：
-      plan → dataset → chart(逐个) → map_layer → narrative → done
-    图表先于文本，满足 ADR-08。
-    """
-    interval = config.MOCK_STREAM_INTERVAL
-    profile = _skill_profile(skill_context)
-    data_sources = profile["dataSources"][:4]
-    chart_types = profile["chartTypes"][:3]
-    focus_metrics = profile["focusMetrics"][:3]
-
-    # ── 1. plan ──
-    await asyncio.sleep(interval)
-    yield "plan", {
-        "skill": {
-            "id": profile["skillId"],
-            "name": profile["skillName"],
-            "category": profile["category"],
-        },
-        "steps": profile["executionPlan"],
-        "datasets": data_sources,
-        "chartsPlan": [
-            {"type": chart_type, "title": metric}
-            for chart_type, metric in zip(chart_types, focus_metrics)
-        ],
-        "mapPlan": [{"layerId": f"skill_{profile['skillId'] or 'general'}", "types": profile["mapLayerTypes"]}],
-    }
-
-    # ── 2. dataset（可多条）──
-    for index, source in enumerate(data_sources[:2], start=1):
-        await asyncio.sleep(interval)
-        yield "dataset", {
-            "datasetId": f"ds_{index}",
-            "source": source,
-            "summary": f"「{profile['skillName']}」基于 {source} 获取的态势数据",
-            "rows": 30 if index == 1 else 12,
-        }
-
-    # ── 3. chart（逐个产出，先于文本）──
-    for index, (chart_type, metric) in enumerate(zip(chart_types, focus_metrics), start=1):
-        await asyncio.sleep(interval)
-        yield "chart", {
-            "chartId": f"c_{index}",
-            "type": chart_type,
-            "title": metric,
-            "option": _chart_option(chart_type, index - 1, metric),
-            "datasetRef": f"ds_{1 + ((index - 1) % min(2, len(data_sources)))}",
-        }
-
-    # ── 4. map_layer（WGS84 坐标，前端 gcoord 转 GCJ02）──
-    await asyncio.sleep(interval)
-    map_payload = _map_payload(profile)
-    yield "map_layer", map_payload
-
-    # ── 5. narrative（态势介绍 + 逐图说明，最后产出）──
-    await asyncio.sleep(interval)
-    yield "narrative", {
-        "intro": (
-            f"已使用「{profile['skillName']}」围绕「{query}」组织当前态势。"
-            f"分析从 {', '.join(focus_metrics)} 三个重点维度展开，并将关键对象映射到地图；"
-            f"当前为演示数据管线，正式环境应结合数据时间和来源置信度解读。"
-        ),
-        "explanations": [
-            {
-                "chartId": f"c_{index}",
-                "text": f"该图用于展示「{metric}」，请结合时间范围、数据来源和地图位置进行联动分析。",
-            }
-            for index, metric in enumerate(focus_metrics, start=1)
-        ],
-        "mapExplanation": (
-            f"该地图用于展示「{query}」相关关键对象的空间分布（"
-            f"{len(map_payload.get('points', []))} 个标点、{len(map_payload.get('routes', []))} 条路线、"
-            f"{len(map_payload.get('areas', []))} 个区域、{len(map_payload.get('circles', []))} 个圆形区域），"
-            f"请结合各图表与地图位置进行联动分析。"
-        ),
-    }
-
-    # ── 6. done ──
-    await asyncio.sleep(interval)
-    yield "done", {
-        "reportId": report_id,
-        "status": "ready",
-        "partial": False,
-        "skillId": profile["skillId"],
-        "skillName": profile["skillName"],
-    }
-    logger.info("mock 生成完成: reportId=%s skillId=%s", report_id, profile["skillId"] or "general")
-
-
 def _safe_id(value: Any) -> str:
     text = "".join(char if str(char).isalnum() else "_" for char in str(value or ""))
     return text.strip("_")[:40] or "source"
-
-
-def _datasets_from_response(response: dict) -> list:
-    datasets = response.get("datasets", []) if isinstance(response, dict) else []
-    if not isinstance(datasets, list):
-        data = response.get("data", {}) if isinstance(response, dict) else {}
-        datasets = data.get("datasets", []) if isinstance(data, dict) else data
-    return datasets if isinstance(datasets, list) else []
 
 
 def _rows_from_payload(payload: Any) -> list:
@@ -554,243 +98,6 @@ def _rows_from_payload(payload: Any) -> list:
         if isinstance(value, dict):
             return [value]
     return [payload] if payload else []
-
-
-def _source_result(source: str, query: str, context: dict, datasets: list) -> dict:
-    actor = context.get("_actor") or {}
-    with tools.actor_context(actor):
-        return _source_result_as_actor(source, query, context, datasets)
-
-
-def _source_result_as_actor(source: str, query: str, context: dict, datasets: list) -> dict:
-    if source.startswith("dataset:") or source.startswith("ds_") or source.startswith("t_"):
-        if source.startswith("dataset:"):
-            requested_id = source.split(":", 1)[1]
-            matches = [item for item in datasets if str(item.get("id", "")).strip() == requested_id]
-        elif source.startswith("ds_"):
-            matches = [item for item in datasets if str(item.get("id", "")).strip() == source]
-        else:
-            # Legacy built-ins use physical names. Refuse ambiguous bindings and always persist
-            # the resolved datasetId/schemaVersion in provenance.
-            matches = [
-                item for item in datasets
-                if str(item.get("tableName", "")).strip() == source
-            ]
-        if len(matches) != 1:
-            message = "未找到已授权数据集" if not matches else "数据源绑定不唯一，请改用 dataset:<id>"
-            return {"success": False, "message": message}
-        matched = matches[0]
-        schema = dict(matched)
-        schema.setdefault("datasetName", schema.get("name", ""))
-        # authorized-list 不带字段元数据；按需读取物理表结构，使 Text-to-SQL 分支可用。
-        if not schema.get("fields"):
-            structure = tools.fetch_dataset_structure(str(matched.get("id") or ""))
-            if structure.get("fields"):
-                schema.update(structure)
-        # schema 含字段元数据时优先 LLM 生成精确 SQL 取数，失败回退预定义查询/整表
-        if schema.get("fields"):
-            try:
-                sql_result = _query_dataset_with_sql(
-                    str(matched.get("id") or ""), query, schema, "",
-                    config.SITUATION_DATA_ROW_LIMIT,
-                )
-                if isinstance(sql_result, dict) and sql_result.get("success") is not False:
-                    sql_result["dataset"] = matched
-                    return sql_result
-                logger.warning("SQL 取数未成功，回退数据集预定义查询: dataset=%s", matched.get("id"))
-            except Exception as exc:
-                logger.warning("SQL 取数异常，回退数据集预定义查询: dataset=%s err=%s", matched.get("id"), exc)
-        return tools.query_admin_dataset(matched, config.SITUATION_DATA_ROW_LIMIT)
-    if source == "knowledge":
-        return tools.query_knowledge(query, top_k=8)
-    if source == "indicator":
-        return tools.get_indicators(context.get("indicatorIds") or [])
-    if source == "evaluation":
-        evaluation_id = context.get("evaluationId") or context.get("sessionId")
-        if not evaluation_id:
-            return {"success": False, "message": "当前上下文未提供评估会话 ID"}
-        return tools.get_evaluation(str(evaluation_id))
-    if source == "admin":
-        return _query_admin_source(query, context, datasets)
-    return {"success": False, "message": "尚未配置该数据源的只读适配器"}
-
-
-def _query_admin_source(query: str, context: dict, datasets: list) -> dict:
-    """admin 数据源：按问题精确选表 + Text-to-SQL 取数（对齐评估分析查表能力）。
-
-    关键点：优先使用 /export/for-llm 的字段标注（businessMeaning/annotation）作为
-    SQL 生成 schema，这样 LLM 才能理解“机型/高度/速度/状态”等业务列并生成全字段
-    SELECT，从而让地图节点携带完整 props 与 routeName（决定节点颜色）。
-    """
-    if not datasets:
-        return {"success": False, "message": "已注册数据集未返回可用记录"}
-
-    schemas_by_id: Dict[str, dict] = {}
-    # 1a. 富字段元数据（含业务含义标注），对齐合并前的原始实现（原 query_datasets_meta 流程）。
-    meta = tools.query_datasets_meta(str(context.get("dataSourceId") or ""))
-    if isinstance(meta, dict):
-        for s in (meta.get("data") or {}).get("schemas") or []:
-            if isinstance(s, dict) and s.get("datasetId"):
-                ds_id = str(s["datasetId"])
-                schema = dict(s)
-                schema.setdefault("id", ds_id)
-                schema.setdefault("name", s.get("datasetName", ""))
-                schema.setdefault("schemaVersion", 1)
-                schema.setdefault("sensitiveColumns", [])
-                schemas_by_id[ds_id] = schema
-
-    # 1b. 无字段标注的数据集回退物理表结构（仅列名/类型/注释）。
-    if not schemas_by_id:
-        for dataset in datasets:
-            ds_id = str(dataset.get("id") or "").strip()
-            if not ds_id:
-                continue
-            structure = tools.fetch_dataset_structure(ds_id)
-            if not isinstance(structure, dict):
-                structure = {}
-            fields = structure.get("fields") or []
-            schemas_by_id[ds_id] = {
-                "id": ds_id,
-                "datasetId": ds_id,
-                "name": dataset.get("name", ""),
-                "datasetName": dataset.get("name", ""),
-                "tableName": structure.get("tableName") or dataset.get("tableName", ""),
-                "description": dataset.get("description", ""),
-                "schemaVersion": dataset.get("schemaVersion", 1),
-                "sensitiveColumns": dataset.get("sensitiveColumns") or [],
-                "fields": list(fields),
-            }
-
-    schema_list = list(schemas_by_id.values())
-    if not schema_list:
-        return {"success": False, "message": "已注册数据集未返回可用记录"}
-
-    # 2. LLM 规划：从全部数据集中挑选与问题相关的表。
-    from llm_client import call_llm_json
-    from agent import prompts
-
-    plan_meta = {"success": True, "data": {"schemas": schema_list, "indicators": []}}
-    selected: list = []
-    try:
-        plan = call_llm_json(
-            prompts.build_plan_messages(query, plan_meta),
-            temperature=0.2,
-            max_tokens=min(config.LLM_MAX_TOKENS, 6000),
-        )
-        if isinstance(plan, dict):
-            raw = plan.get("datasets")
-            if isinstance(raw, list):
-                for item in raw:
-                    if isinstance(item, dict) and str(item.get("datasetId", "")) in schemas_by_id:
-                        selected.append(item)
-    except Exception as exc:
-        logger.warning("admin 数据源 LLM 规划失败，回退按序取数: %s", exc)
-
-    if not selected:
-        selected = [
-            {"datasetId": str(s.get("id") or s.get("datasetId", "")), "intent": ""}
-            for s in schema_list
-        ]
-    selected = selected[:max(1, min(config.SITUATION_AUTO_DATASET_LIMIT, 5))]
-
-    # 3. 对选中的数据集执行 Text-to-SQL 精确取数，失败回退预定义查询。
-    combined_rows = []
-    sampled = []
-    for item in selected:
-        ds_id = str(item.get("datasetId") or "").strip()
-        schema = schemas_by_id.get(ds_id)
-        if not schema:
-            continue
-        intent = str(item.get("intent") or "")
-        try:
-            limit = max(1, int(item.get("limit") or config.SITUATION_DATA_ROW_LIMIT))
-        except (TypeError, ValueError):
-            limit = config.SITUATION_DATA_ROW_LIMIT
-        try:
-            result = _query_dataset_with_sql(ds_id, query, schema, intent, limit)
-        except Exception as exc:
-            logger.warning("admin 数据源 Text-to-SQL 异常，回退预定义查询: dataset=%s err=%s", ds_id, exc)
-            result = {"success": False, "message": str(exc)[:200]}
-        if not isinstance(result, dict) or result.get("success") is not True:
-            result = tools.query_admin_dataset(schema, limit)
-        if not isinstance(result, dict) or result.get("success") is not True:
-            continue
-        table_name = str(schema.get("tableName") or schema.get("datasetName") or "dataset")
-        sampled.append(table_name)
-        for row in result.get("rows", []):
-            if isinstance(row, dict):
-                combined_rows.append({"_dataset": table_name, **row})
-
-    if not combined_rows:
-        return {"success": False, "message": "已注册数据集未返回可用记录"}
-    return {
-        "success": True,
-        "rows": combined_rows,
-        "rowCount": len(combined_rows),
-        "sampledDatasets": sampled,
-    }
-
-
-def _result_ok(source: str, result: dict) -> bool:
-    if not isinstance(result, dict) or result.get("success") is False:
-        return False
-    if source == "indicator":
-        return isinstance(result.get("indicators"), list) and bool(result["indicators"])
-    if source == "knowledge":
-        return isinstance(result.get("results"), list) and bool(result["results"])
-    return bool(_rows_from_payload(result))
-
-
-async def _collect_real_data(query: str, profile: dict, context: dict) -> tuple[list, list]:
-    sources = list(dict.fromkeys(str(item).strip() for item in profile["dataSources"] if str(item).strip()))
-    needs_catalog = any(
-        source.startswith(("t_", "ds_", "dataset:")) or source == "admin"
-        for source in sources
-    )
-    actor = context.get("_actor") or {}
-    if needs_catalog:
-        with tools.actor_context(actor):
-            catalog_response = await asyncio.to_thread(tools.list_admin_datasets)
-    else:
-        catalog_response = {}
-    datasets = _datasets_from_response(catalog_response)
-    selected_database = str(context.get("dataSourceId") or profile.get("dataSourceId") or "").strip()
-    if selected_database:
-        datasets = [
-            item for item in datasets
-            if str(item.get("databaseId") or item.get("dataSourceId") or "").strip() == selected_database
-        ]
-    tasks = [
-        asyncio.to_thread(_source_result, source, query, context, datasets)
-        for source in sources
-    ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    bundles, failures = [], []
-    for source, result in zip(sources, results):
-        if isinstance(result, Exception):
-            failures.append({"source": source, "message": str(result)[:200]})
-            continue
-        if not _result_ok(source, result):
-            message = result.get("message") if isinstance(result, dict) else "数据响应格式无效"
-            failures.append({"source": source, "message": str(message or "未返回可用记录")[:200]})
-            continue
-        rows = _rows_from_payload(result)
-        row_count = int(result.get("rowCount", len(rows))) if isinstance(result, dict) else len(rows)
-        if source.startswith(("t_", "ds_", "dataset:")):
-            dataset_meta = result.get("dataset", {})
-            label = dataset_meta.get("name") or source
-        else:
-            label = source
-        bundles.append({
-            "source": source,
-            "summary": f"真实数据源「{label}」返回 {row_count} 条可用记录",
-            "rows": row_count,
-            "payload": result,
-            "physicalDatasetId": str((result.get("dataset") or {}).get("id") or ""),
-            "schemaVersion": int((result.get("dataset") or {}).get("schemaVersion") or 1),
-            "truncated": bool(result.get("truncated")),
-        })
-    return bundles, failures
 
 
 def _sensitive_column(name: Any, bundle: dict) -> bool:
@@ -895,127 +202,6 @@ def _aggregate_evidence(bundle: dict) -> dict:
     }
 
 
-def _prompt_payload(bundles: list) -> list:
-    return [_aggregate_evidence(bundle) for bundle in bundles]
-
-
-def _run_llm_orchestration(query: str, profile: dict, context: dict, bundles: list) -> dict:
-    """保留五阶段 LLM 协议，但所有模型阶段只接收聚合脱敏证据。"""
-    aggregated = _prompt_payload(bundles)
-    allowed_ids = {item["datasetId"] for item in aggregated}
-    meta = {"success": True, "data": {"schemas": [{
-        "datasetId": item["datasetId"], "datasetName": item["source"],
-        "description": item["summary"],
-        "fields": [{"column": column, "type": "aggregated", "businessMeaning": "聚合可验证字段"}
-                   for column in item["columns"]],
-    } for item in aggregated], "indicators": []}}
-
-    parameters = ((context.get("skill") or {}).get("parameters") or {})
-    effective_query = query
-    if parameters:
-        controls = "，".join(f"{key}={value}" for key, value in parameters.items())
-        effective_query = f"{query}\n必须遵循的 Skill 执行参数：{controls}"
-
-    plan = call_llm_json(
-        prompts.build_plan_messages(effective_query, meta), temperature=0.2,
-        max_tokens=min(config.LLM_MAX_TOKENS, 6000),
-    )
-    if not isinstance(plan, dict):
-        plan = {}
-    datasets_plan = [
-        item for item in plan.get("datasets", [])[:len(allowed_ids)]
-        if isinstance(item, dict) and str(item.get("datasetId")) in allowed_ids
-    ] if isinstance(plan.get("datasets"), list) else []
-    if not datasets_plan:
-        datasets_plan = [{"datasetId": item["datasetId"], "intent": item["summary"]} for item in aggregated]
-    allowed_chart_types = set(profile.get("chartTypes") or _CHART_TYPES)
-    charts_plan = [
-        item for item in plan.get("chartsPlan", [])[:5]
-        if isinstance(item, dict) and str(item.get("type") or "bar").lower() in allowed_chart_types
-    ] if isinstance(plan.get("chartsPlan"), list) else []
-    if not charts_plan:
-        charts_plan = [
-            {"type": chart_type, "title": metric, "intent": profile.get("analysisGoal", "")}
-            for chart_type, metric in zip(profile["chartTypes"][:3], profile["focusMetrics"][:3])
-        ]
-    # 图表类型去重：规划阶段可能重复给出 bar，这里按类型保留首个，避免最终产出多个同类型图表
-    deduped_plan, seen_types = [], set()
-    for item in charts_plan:
-        chart_type = str(item.get("type") or "bar").lower()
-        if chart_type in seen_types:
-            continue
-        seen_types.add(chart_type)
-        deduped_plan.append(item)
-    charts_plan = deduped_plan
-    safe_plan = {
-        "datasets": datasets_plan, "chartsPlan": charts_plan,
-        "mapPlan": plan.get("mapPlan", [])[:3] if isinstance(plan.get("mapPlan"), list) else [],
-        "needKnowledge": False, "knowledgeQuery": "",
-    }
-
-    # 用单行“聚合数据集”适配原有阶段提示词；这里不包含业务原始行。
-    data_context = {}
-    for item in aggregated:
-        aggregate_row = {
-            "rowCount": item["rowCount"], "numericStats": item["numericStats"],
-            "categoryCounts": item["categoryCounts"], "groupedStats": item["groupedStats"],
-            "evidenceHash": item["evidenceHash"],
-            **({"samples": item["samples"]} if item["samples"] else {}),
-        }
-        data_context[item["datasetId"]] = {
-            "success": True, "columns": list(aggregate_row), "rows": [aggregate_row], "total": 1,
-        }
-
-    # 图表与地图互不依赖，并行生成以省掉一次 LLM 往返延迟。
-    from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        charts_future = pool.submit(
-            call_llm_json,
-            prompts.build_chart_messages(effective_query, data_context, safe_plan),
-            temperature=0.2,
-            max_tokens=config.LLM_MAX_TOKENS,
-        )
-        map_future = pool.submit(
-            call_llm_json,
-            prompts.build_map_messages(effective_query, data_context),
-            temperature=0.2,
-            max_tokens=min(config.LLM_MAX_TOKENS, 8000),
-        )
-        charts = charts_future.result()
-        map_layer = map_future.result()
-    if isinstance(charts, dict):
-        charts = charts.get("charts") or [charts]
-    if not isinstance(charts, list):
-        raise ValueError("LLM 产图阶段未返回数组")
-    if not isinstance(map_layer, dict):
-        map_layer = {}
-    # 数值预校验 + 纠错重试：LLM 常估算数值而非复制证据，把拒因喂回去定向重写。
-    for attempt in range(2):
-        chart_failures = _chart_value_failures(charts, profile, bundles)
-        if not chart_failures:
-            break
-        logger.warning("图表数值校验未通过，进行第 %d 次纠错重试: %s", attempt + 1, chart_failures[:1])
-        charts = call_llm_json(
-            prompts.build_chart_correction_messages(effective_query, data_context, safe_plan, chart_failures),
-            temperature=0.2,
-            max_tokens=config.LLM_MAX_TOKENS,
-        )
-        if isinstance(charts, dict):
-            charts = charts.get("charts") or [charts]
-        if not isinstance(charts, list):
-            break
-    narrative = call_llm_json(
-        prompts.build_narrative_messages(effective_query, charts, map_layer), temperature=0.3,
-        max_tokens=min(config.LLM_MAX_TOKENS, 6000),
-    )
-    if not isinstance(narrative, dict):
-        narrative = {}
-    return {"plan": safe_plan, "charts": charts, "mapLayer": map_layer, "narrative": narrative}
-
-
-_CHART_TYPES = {"bar", "line", "pie", "radar", "gauge", "scatter", "heatmap", "relation", "sankey", "map"}
-
-
 def _valid_coord(value: Any, minimum: float, maximum: float) -> bool:
     try:
         number = float(value)
@@ -1028,32 +214,12 @@ def _safe_text(value: Any, limit: int = 160) -> str:
     return re.sub(r"[<>\x00-\x1f]", "", str(value or ""))[:limit]
 
 
-def _safe_props(value: Any) -> dict:
-    """清洗业务字段（props），仅保留可安全序列化的标量，供前端弹窗展示。"""
-    if not isinstance(value, dict):
-        return {}
-    props = {}
-    for key, item in value.items():
-        if not isinstance(key, str) or not key or len(key) > 60:
-            continue
-        if item is None or item == "":
-            continue
-        if isinstance(item, bool):
-            props[key] = item
-        elif isinstance(item, (int, float)):
-            props[key] = item
-        else:
-            props[key] = _safe_text(item, 200)
-    return props
-
-
 def _safe_point(value: Any) -> Optional[dict]:
     if not isinstance(value, dict) or not (
         _valid_coord(value.get("lng"), -180, 180)
         and _valid_coord(value.get("lat"), -90, 90)
     ):
         return None
-    props = _safe_props(value.get("props"))
     point = {
         "name": _safe_text(value.get("name") or "点位"),
         "lng": float(value["lng"]),
@@ -1066,8 +232,6 @@ def _safe_point(value: Any) -> Optional[dict]:
     color = value.get("color")
     if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
         point["color"] = color
-    if props:
-        point["props"] = props
     if value.get("featureId"):
         point["featureId"] = _safe_id(value.get("featureId"))
     if value.get("datasetRef"):
@@ -1076,16 +240,19 @@ def _safe_point(value: Any) -> Optional[dict]:
 
 
 def _coordinate_evidence(bundles: list) -> set[tuple[float, float]]:
+    """从数据包中收集所有坐标证据（用于校验 LLM 产出的地图坐标是否真实存在）。"""
     evidence: set[tuple[float, float]] = set()
-    lng_names = {"lng", "lon", "longitude", "经度"}
-    lat_names = {"lat", "latitude", "纬度"}
     for bundle in bundles:
         for row in _rows_from_payload(bundle.get("payload")):
-            lowered = {str(key).strip().lower(): value for key, value in row.items()}
-            lng = next((lowered[name] for name in lng_names if name in lowered), None)
-            lat = next((lowered[name] for name in lat_names if name in lowered), None)
-            if _valid_coord(lng, -180, 180) and _valid_coord(lat, -90, 90):
-                evidence.add((round(float(lng), 6), round(float(lat), 6)))
+            # 使用共享工具自动发现所有经纬度列对（支持 origin_lng/dest_lng 等前缀变体）
+            pairs = map_builder.discover_coordinate_columns(list(row.keys()))
+            if not pairs:
+                continue
+            for pair in pairs:
+                lng = row.get(pair["lng"])
+                lat = row.get(pair["lat"])
+                if _valid_coord(lng, -180, 180) and _valid_coord(lat, -90, 90):
+                    evidence.add((round(float(lng), 6), round(float(lat), 6)))
     return evidence
 
 
@@ -1156,9 +323,6 @@ def _sanitize_map_layer(value: Any, profile: dict, context: Optional[dict] = Non
                 "center": {"lng": center["lng"], "lat": center["lat"]},
                 "radiusKm": radius,
             }
-            props = _safe_props(item.get("props"))
-            if props:
-                circle["props"] = props
             color = item.get("color")
             if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
                 circle["color"] = color
@@ -1315,122 +479,6 @@ def _verification(chart: dict, bundle: dict, transform: dict) -> dict:
     }
 
 
-def _chart_value_failures(raw_charts: list, profile: dict, bundles: list) -> list:
-    """轻量预校验：按与 _validate_llm_result 相同的口径找出无法由证据复算的图表。"""
-    if not isinstance(raw_charts, list):
-        return []
-    dataset_ids = {bundle["datasetId"] for bundle in bundles}
-    bundle_by_id = {bundle["datasetId"]: bundle for bundle in bundles}
-    if not bundle_by_id:
-        return []
-    fallback_dataset = bundles[0]["datasetId"]
-    failures = []
-    for index, value in enumerate(raw_charts[:5], start=1):
-        if not isinstance(value, dict) or not isinstance(value.get("option"), dict):
-            continue
-        chart_id = _safe_id(value.get("chartId") or f"c_{index}")
-        dataset_ref = str(value.get("datasetRef") or fallback_dataset)
-        if dataset_ref not in dataset_ids:
-            dataset_ref = fallback_dataset
-        transform = value.get("transform") if isinstance(value.get("transform"), dict) else {}
-        transform = {
-            "operation": str(transform.get("operation") or "evidence-membership")[:80],
-            "groupBy": str(transform.get("groupBy") or "")[:80],
-            "metric": str(transform.get("metric") or "")[:80],
-        }
-        chart = {
-            "chartId": chart_id,
-            "type": "bar",
-            "title": "",
-            "option": _safe_echarts(value["option"]),
-            "datasetRef": dataset_ref,
-        }
-        verification = _verification(chart, bundle_by_id[dataset_ref], transform)
-        if not verification["verified"]:
-            failures.append({
-                "chartId": chart_id,
-                "datasetRef": dataset_ref,
-                "mismatches": verification.get("mismatches", []),
-            })
-    return failures
-
-
-def _validate_llm_result(result: dict, profile: dict, bundles: list) -> tuple[list, dict, dict]:
-    raw_charts = result.get("charts")
-    if not isinstance(raw_charts, list) or not raw_charts:
-        raise ValueError("LLM 结果缺少 charts")
-    dataset_ids = {bundle["datasetId"] for bundle in bundles}
-    bundle_by_id = {bundle["datasetId"]: bundle for bundle in bundles}
-    fallback_dataset = bundles[0]["datasetId"]
-    charts, seen = [], set()
-    for index, value in enumerate(raw_charts[:5], start=1):
-        if not isinstance(value, dict) or not isinstance(value.get("option"), dict):
-            continue
-        chart_id = _safe_id(value.get("chartId") or f"c_{index}")
-        if chart_id in seen:
-            chart_id = f"{chart_id}_{index}"
-        seen.add(chart_id)
-        chart_type = str(value.get("type") or "bar").lower()
-        allowed_chart_types = set(profile.get("chartTypes") or _CHART_TYPES).intersection(_CHART_TYPES)
-        if chart_type not in allowed_chart_types:
-            chart_type = next(
-                (item for item in profile.get("chartTypes", []) if item in allowed_chart_types),
-                "bar",
-            )
-        dataset_ref = str(value.get("datasetRef") or fallback_dataset)
-        if dataset_ref not in dataset_ids:
-            dataset_ref = fallback_dataset
-        option = _safe_echarts(value["option"])
-        transform = value.get("transform") if isinstance(value.get("transform"), dict) else {}
-        transform = {
-            "operation": str(transform.get("operation") or "evidence-membership")[:80],
-            "groupBy": str(transform.get("groupBy") or "")[:80],
-            "metric": str(transform.get("metric") or "")[:80],
-        }
-        chart = {
-            "chartId": chart_id,
-            "type": chart_type,
-            "title": str(value.get("title") or profile["focusMetrics"][(index - 1) % len(profile["focusMetrics"])]),
-            "option": option,
-            "datasetRef": dataset_ref,
-            "fieldMapping": value.get("fieldMapping") or {},
-            "provenance": {
-                "datasetId": dataset_ref,
-                "physicalDatasetId": bundle_by_id[dataset_ref].get("physicalDatasetId", ""),
-                "schemaVersion": bundle_by_id[dataset_ref].get("schemaVersion", 1),
-                "transform": transform,
-                "truncated": bundle_by_id[dataset_ref].get("truncated", False),
-            },
-        }
-        chart["verification"] = _verification(chart, bundle_by_id[dataset_ref], transform)
-        if not chart["verification"]["verified"]:
-            details = "；".join(chart["verification"].get("mismatches", [])[:3])
-            raise ValueError(f"图表 {chart_id} 的数值无法由证据重算验证" + (f"（{details}）" if details else ""))
-        charts.append(chart)
-    if not charts:
-        raise ValueError("LLM 未生成可用图表")
-    raw_map = result.get("mapLayer")
-    if not raw_map and isinstance(result.get("mapLayers"), list) and result["mapLayers"]:
-        raw_map = result["mapLayers"][0]
-    map_layer = _verify_map_coordinates(_sanitize_map_layer(raw_map, profile, result.get("context")), bundles)
-    raw_narrative = result.get("narrative") if isinstance(result.get("narrative"), dict) else {}
-    chart_ids = {chart["chartId"] for chart in charts}
-    explanations = []
-    for item in raw_narrative.get("explanations", []) if isinstance(raw_narrative.get("explanations"), list) else []:
-        if isinstance(item, dict) and str(item.get("chartId")) in chart_ids:
-            explanations.append({"chartId": str(item["chartId"]), "text": str(item.get("text") or "")})
-    exp_ids = {item["chartId"] for item in explanations}
-    for chart in charts:
-        if chart["chartId"] not in exp_ids:
-            explanations.append({"chartId": chart["chartId"], "text": f"该图使用 {chart['datasetRef']} 的真实数据生成。"})
-    narrative = {
-        "intro": str(raw_narrative.get("intro") or f"已围绕“{profile['skillName']}”汇聚真实数据并生成当前态势。"),
-        "explanations": explanations,
-        "mapExplanation": str(raw_narrative.get("mapExplanation") or ""),
-    }
-    return charts, map_layer, narrative
-
-
 def _as_number(value: Any) -> Optional[float]:
     try:
         text = str(value).strip().replace(",", "").rstrip("%")
@@ -1534,19 +582,31 @@ def _fallback_option(chart_type: str, rows: list, metric: str) -> tuple[str, dic
 
 
 def _fallback_map(profile: dict, bundles: list, context: Optional[dict] = None) -> dict:
-    lng_keys = {"lng", "lon", "longitude", "经度"}
-    lat_keys = {"lat", "latitude", "纬度"}
+    """当 LLM 编排失败时，使用真实数据构建降级地图。"""
     name_keys = {"name", "title", "region", "location", "名称", "区域", "地点"}
     points = []
     for bundle in bundles:
         for row in _rows_from_payload(bundle["payload"]):
-            lowered = {str(key).strip().lower(): value for key, value in row.items()}
-            lng = next((lowered[key] for key in lng_keys if key in lowered), None)
-            lat = next((lowered[key] for key in lat_keys if key in lowered), None)
+            # 使用共享工具自动发现坐标列（支持 origin_lng/dest_lng 等前缀变体）
+            pairs = map_builder.discover_coordinate_columns(list(row.keys()))
+            if not pairs:
+                continue
+            # 使用第一个坐标对（主坐标）
+            primary = pairs[0]
+            lng = row.get(primary["lng"])
+            lat = row.get(primary["lat"])
             if not (_valid_coord(lng, -180, 180) and _valid_coord(lat, -90, 90)):
                 continue
-            name = next((lowered[key] for key in name_keys if key in lowered), bundle["source"])
-            points.append({"name": str(name), "lng": float(lng), "lat": float(lat), "raw": bundle["source"]})
+            name = next(
+                (row[key] for key in name_keys if key in row and row[key] not in (None, "")),
+                bundle["source"],
+            )
+            points.append({
+                "name": str(name),
+                "lng": float(lng),
+                "lat": float(lat),
+                "raw": bundle["source"],
+            })
     return _sanitize_map_layer({
         "layerId": f"skill_{profile['skillId'] or 'general'}",
         "points": points,
@@ -1554,10 +614,31 @@ def _fallback_map(profile: dict, bundles: list, context: Optional[dict] = None) 
     }, profile, context)
 
 
+def _infer_metrics_from_bundles(bundles: list, limit: int = 3) -> list:
+    """未选 Skill 时，从 bundles 的数值字段推断指标名（用于数据降级图表标题）。"""
+    metrics: list = []
+    for bundle in bundles:
+        rows = _rows_from_payload(bundle.get("payload"))
+        if not rows:
+            continue
+        for column in dict.fromkeys(str(key) for row in rows for key in row):
+            if any(_as_number(row.get(column)) is not None for row in rows):
+                # 优先用 bundle 的 summary 或 dataset name 作前缀，避免与数据集字段名重复
+                metrics.append(column)
+                if len(metrics) >= limit:
+                    return metrics
+    return metrics[:limit]
+
+
 def _data_fallback(query: str, profile: dict, bundles: list, context: Optional[dict] = None) -> tuple[list, dict, dict]:
     charts = []
-    metrics = profile["focusMetrics"][:3]
-    requested_types = profile["chartTypes"][:3]
+    metrics = profile.get("focusMetrics") or []
+    if not metrics:
+        # 未选 Skill 时从 bundles 推断数值字段作为指标
+        metrics = _infer_metrics_from_bundles(bundles, limit=3) or ["核心指标 1", "核心指标 2", "核心指标 3"]
+    metrics = metrics[:3]
+    requested_types = profile.get("chartTypes") or ["bar", "line", "pie"]
+    requested_types = requested_types[:3]
     for index, metric in enumerate(metrics, start=1):
         bundle = bundles[(index - 1) % len(bundles)]
         chart_type, option, effective_metric = _fallback_option(
@@ -1591,227 +672,435 @@ def _data_fallback(query: str, profile: dict, bundles: list, context: Optional[d
     return charts, _fallback_map(profile, bundles, context), narrative
 
 
-def _query_dataset_with_sql(
-    ds_id: str,
-    query: str,
-    schema: Optional[Dict[str, Any]],
-    intent: str,
-    limit: int,
-) -> Dict[str, Any]:
-    """Phase 2 取数：优先用 LLM 生成精确 SQL 执行，失败回退整表查询。
-
-    复用评估分析 Text-to-SQL 能力（LLM 生成 WHERE/聚合/GROUP BY），
-    只有 schema 无字段元数据或 SQL 生成/执行失败时才回退原 query_admin_data，
-    保证态势图整体流程（5 阶段）不因取数方式升级而中断。
-    """
-    from agent import tools
-
-    # 无 schema 或字段元数据 → 直接回退原整表/预定义查询
-    if not schema or not schema.get("fields"):
-        return tools.query_admin_data(ds_id, limit)
-
-    from llm_client import call_llm_json
-    from agent import prompts
-
+async def _fetch_meta(profile: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    """获取可用数据集元数据（供 Planner 决策）。"""
+    database_id = str(profile.get("dataSourceId") or context.get("dataSourceId") or "").strip()
     try:
-        sql_result = call_llm_json(
-            prompts.build_sql_messages(query, schema, intent),
-            0.3,
-            config.LLM_MAX_TOKENS,
-        )
-        sql = ""
-        if isinstance(sql_result, dict):
-            sql = str(sql_result.get("sql") or "").strip()
-        elif isinstance(sql_result, str):
-            sql = sql_result.strip()
-        if not sql:
-            logger.warning("LLM 未生成 SQL，回退整表查询: datasetId=%s", ds_id)
-            return tools.query_admin_data(ds_id, limit)
+        meta = await asyncio.to_thread(tools.query_datasets_meta, database_id)
     except Exception as exc:
-        logger.warning("SQL 生成失败，回退整表查询: datasetId=%s err=%s", ds_id, exc)
-        return tools.query_admin_data(ds_id, limit)
-
-    data = tools.execute_dataset_sql(ds_id, sql)
-    if not data.get("success"):
-        logger.warning(
-            "SQL 执行失败，回退整表查询: datasetId=%s sql=%s err=%s",
-            ds_id, sql[:200], data.get("message", "")[:200],
-        )
-        return tools.query_admin_data(ds_id, limit)
-
-    # 统一字段：execute-sql 返回 rowCount，而 /dataset/{id}/data 返回 total，
-    # 补齐 total 供下游（dataset 事件 / _format_data）统一读取。
-    if "total" not in data and "rowCount" in data:
-        data["total"] = data["rowCount"]
-    return data
+        logger.warning("V2 取数据集元数据失败: %s", exc)
+        meta = {"success": False, "message": str(exc)[:200]}
+    return meta if isinstance(meta, dict) else {"success": False}
 
 
-async def real_generate(
+def _build_profile_for_v2(
+    skill_context: Optional[Dict[str, Any]],
+    context: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """构造 Skill profile（沿用 _skill_profile + 数据源约束）。"""
+    profile = _skill_profile(skill_context)
+    runtime_context = dict(context or {})
+    return _restrict_profile_to_database(profile, runtime_context)
+
+
+def _plan_to_legacy_safe_plan(plan: Dict[str, Any], profile: Dict[str, Any]) -> Dict[str, Any]:
+    """把 Planner 输出转换为兼容原 SSE plan 事件的格式。
+
+    原 plan 事件结构：
+        {"skill": {...}, "steps": [...], "datasets": [...],
+         "chartsPlan": [...], "mapPlan": [...], "mode": "real"}
+    """
+    chart_specs = plan.get("chartSpecs") or []
+    map_specs = plan.get("mapSpecs") or []
+    sub_questions = plan.get("subQuestions") or []
+
+    return {
+        "skill": {
+            "id": profile.get("skillId", ""),
+            "name": profile.get("skillName", ""),
+            "category": profile.get("category", ""),
+        },
+        "steps": profile.get("executionPlan") or [
+            {"sequence": 1, "name": "汇聚态势数据"},
+            {"sequence": 2, "name": "生成图表与地图"},
+            {"sequence": 3, "name": "撰写态势说明"},
+        ],
+        "datasets": [
+            {"datasetId": sq.get("datasetId", ""), "intent": sq.get("question", "")}
+            for sq in sub_questions if sq.get("datasetId")
+        ],
+        "chartsPlan": [
+            {"type": cs.get("type", "bar"), "title": cs.get("title", ""), "intent": cs.get("intent", "")}
+            for cs in chart_specs
+        ],
+        "mapPlan": [
+            {"layerId": ms.get("id", ""), "types": [ms.get("layerType", "points")]}
+            for ms in map_specs
+        ] or [{"layerId": f"skill_{profile.get('skillId') or 'general'}", "types": profile.get("mapLayerTypes", ["points"])}],
+        "mode": "real",
+        "_fallback": plan.get("_fallback", False),
+    }
+
+
+def _evidences_to_dataset_events(store: EvidenceStore) -> List[Dict[str, Any]]:
+    """把 EvidenceStore 转换为 SSE dataset 事件列表（兼容原 dataset 事件结构）。"""
+    events = []
+    for index, ev in enumerate(store.list_evidences(), start=1):
+        dataset_id = f"real_{index}_{_safe_id(ev.source)}"
+        events.append({
+            "datasetId": dataset_id,
+            "source": ev.source or ev.dataset_ref,
+            "summary": ev.summary,
+            # rows 为行数组（供图表/地图渲染取数）；rowCount 为行数（供前端步骤展示）
+            "rows": ev.rows,
+            "rowCount": len(ev.rows),
+            "realData": True,
+            "physicalDatasetId": ev.dataset_ref,
+            "schemaVersion": 1,
+            "truncated": ev.meta.get("truncated", False),
+            "execution": {
+                "filters": ev.meta.get("filters") or {},
+                "aggregation": ev.meta.get("aggregation") or "",
+            },
+            "evidenceHash": ev.hash or _evidence_digest(ev.rows),
+            "columns": ev.columns,
+            "data": ev.rows,
+        })
+    return events
+
+
+def _post_process_map(
+    map_layer: Optional[Dict[str, Any]],
+    profile: Dict[str, Any],
+    context: Dict[str, Any],
+    store: EvidenceStore,
+) -> Optional[Dict[str, Any]]:
+    """对 map_layer 做坐标校验（沿用原 _verify_map_coordinates）。"""
+    if not map_layer:
+        return None
+    sanitized = _sanitize_map_layer(map_layer, profile, context)
+    # v2 用 EvidenceStore 替代 bundles：从证据数据收集坐标证据，供 _verify_map_coordinates 校验。
+    # 注意不能传空 list——_coordinate_evidence([]) 返回空集合会触发"无坐标证据"分支，
+    # 把 points/routes/areas/circles 全部清空，导致地图图层无内容可渲染。
+    bundles = [{"payload": {"rows": ev.rows}} for ev in store.list_evidences()]
+    return _verify_map_coordinates(sanitized, bundles)
+
+
+async def real_generate_v2(
     query: str,
     report_id: str,
     skill_context: Optional[Dict[str, Any]] = None,
     context: Optional[Dict[str, Any]] = None,
 ) -> AsyncIterator[SSEEvent]:
-    """基于注册数据源和当前 LLM 配置生成态势产物。
+    """V2 入口：基于 Agent 架构的态势生成。
 
-    数据访问由受控工具完成，LLM 只负责规划可视化和说明，不能生成 SQL 或直接
-    访问数据源。这样既能使用真实记录，也保留服务端的只读查询边界。
+    五阶段流程：PLAN → RESEARCH → WRITE(chart+map 并行) → VERIFY → NARRATIVE → EMIT
     """
-    profile = _skill_profile(skill_context)
     runtime_context = dict(context or {})
-    profile = _restrict_profile_to_database(profile, runtime_context)
-    yield "plan", {
-        "skill": {
-            "id": profile["skillId"],
-            "name": profile["skillName"],
-            "category": profile["category"],
-        },
-        "steps": profile["executionPlan"],
-        "datasets": profile["dataSources"],
-        "chartsPlan": [
-            {"type": chart_type, "title": metric}
-            for chart_type, metric in zip(profile["chartTypes"][:3], profile["focusMetrics"][:3])
-        ],
-        "mapPlan": [{
-            "layerId": f"skill_{profile['skillId'] or 'general'}",
-            "types": profile["mapLayerTypes"],
-        }],
-        "mode": "real",
+    # 绑定终端用户身份到下游调用（与 legacy 路径一致）。main.py 会把 _actor 写入
+    # context；未传入时回退到本地管理员身份，保证 Executor 取数请求带上有效 ACL。
+    actor = runtime_context.get("_actor") or {
+        "userId": "local-admin", "teamIds": [], "role": "admin",
     }
+    with tools.actor_context(actor):
+        async for event_type, data in _real_generate_v2_body(
+            query, report_id, skill_context, runtime_context,
+        ):
+            yield event_type, data
 
-    bundles, failures = await _collect_real_data(query, profile, runtime_context)
-    for failure in failures:
+
+async def _real_generate_v2_body(
+    query: str,
+    report_id: str,
+    skill_context: Optional[Dict[str, Any]] = None,
+    runtime_context: Optional[Dict[str, Any]] = None,
+) -> AsyncIterator[SSEEvent]:
+    """V2 主体：五阶段流程（PLAN → RESEARCH → WRITE → VERIFY → NARRATIVE → EMIT）。
+
+    actor 身份由 real_generate_v2 包装器注入 tools 上下文，本函数不做身份处理。
+    """
+    runtime_context = dict(runtime_context or {})
+    profile = _build_profile_for_v2(skill_context, runtime_context)
+    store = EvidenceStore(report_id)
+    sm = StateMachine(report_id)
+
+    # ───── 阶段 1：PLAN ─────
+    await sm.enter(Stage.PLAN)
+    try:
+        meta = await _fetch_meta(profile, runtime_context)
+        # 处理用户在 context 里传的 Skill 参数（拼接到 query 中供 Planner 使用）
+        parameters = ((runtime_context.get("skill") or {}).get("parameters") or {})
+        effective_query = query
+        if parameters:
+            controls = "，".join(f"{key}={value}" for key, value in parameters.items())
+            effective_query = f"{query}\n必须遵循的 Skill 执行参数：{controls}"
+
+        planner = Planner(profile, meta)
+        plan = await planner.plan(effective_query)
+        await sm.exit(Stage.PLAN, success=True, meta={
+            "planner_fallback": plan.get("_fallback", False),
+            "planner_error": plan.get("_planner_error", ""),
+            "sub_questions": len(plan.get("subQuestions") or []),
+            "chart_specs": len(plan.get("chartSpecs") or []),
+        })
+    except Exception as exc:
+        await sm.exit(Stage.PLAN, success=False, error=str(exc)[:200])
+        raise
+
+    # 推送 plan SSE 事件
+    safe_plan = _plan_to_legacy_safe_plan(plan, profile)
+    yield "plan", safe_plan
+    if safe_plan.get("_fallback"):
         yield "error", {
-            "stage": "data",
-            "source": failure["source"],
-            "message": failure["message"],
+            "stage": "plan",
+            "message": f"Planner 降级为 Skill 模板: {plan.get('_planner_error', '')[:120]}",
             "fatal": False,
         }
-    if not bundles:
+
+    # ───── 阶段 2：RESEARCH ─────
+    await sm.enter(Stage.RESEARCH)
+    try:
+        sub_questions = plan.get("subQuestions") or []
+        evidences = await executor.execute_all(sub_questions, store)
+        await sm.exit(Stage.RESEARCH, success=True, meta={"evidences": len(evidences)})
+    except Exception as exc:
+        await sm.exit(Stage.RESEARCH, success=False, error=str(exc)[:200])
+        raise
+
+    # 时间窗放宽：所有证据为空且 sub_questions 含时间过滤时，剔除时间过滤重试一次。
+    # 复用 V1 的「近 N 天无匹配数据 → 放宽」语义，但 V2 不依赖参数绑定，直接剔除
+    # 时间字段过滤后让 Text-to-SQL 重新生成无时间约束的 SQL。
+    relaxed_notice = None
+    if not any(ev.rows for ev in store.list_evidences()):
+        if executor._any_sub_question_has_time_filter(sub_questions):
+            logger.warning(
+                "V2 时间窗过滤无匹配数据，剔除时间过滤重试: reportId=%s", report_id,
+            )
+            await sm.enter(Stage.RESEARCH, meta={"relax": "time-window"})
+            try:
+                relaxed_sub_questions = executor._strip_time_filters(sub_questions)
+                # EvidenceStore.add_evidence 同 id 视为更新，重试会覆盖之前的空证据
+                evidences = await executor.execute_all(relaxed_sub_questions, store)
+                await sm.exit(Stage.RESEARCH, success=True, meta={
+                    "evidences": len(evidences),
+                    "relaxed": "time-window",
+                })
+                if any(ev.rows for ev in store.list_evidences()):
+                    relaxed_notice = "所选时间范围无匹配数据，已自动放宽时间过滤"
+            except Exception as exc:
+                logger.warning("V2 时间窗放宽重试失败: %s", exc)
+                await sm.exit(Stage.RESEARCH, success=False, error=str(exc)[:200])
+
+    # 证据为空则失败
+    if not any(ev.rows for ev in store.list_evidences()):
         raise RuntimeError("没有取得可用于态势分析的真实数据，请检查 Skill 数据源和相关服务")
 
-    collected = bundles
-    bundles = _apply_execution_plan(collected, profile, runtime_context)
-    relaxed_notice = None
-    if not any(_rows_from_payload(bundle.get("payload")) for bundle in bundles):
-        bundles, relaxed_notice = _relax_empty_time_windows(collected, profile, runtime_context)
-        if relaxed_notice:
-            logger.warning("时间窗过滤无匹配数据，已放宽: reportId=%s %s", report_id, relaxed_notice)
-            yield "error", {
-                "stage": "filter",
-                "message": relaxed_notice,
-                "fatal": False,
-            }
-    if not any(_rows_from_payload(bundle.get("payload")) for bundle in bundles):
-        raise RuntimeError("Skill 参数执行后没有匹配数据，请调整过滤条件")
-
-    for step_event in _workflow_events(profile, bundles):
-        yield "step", step_event
-
-    for index, bundle in enumerate(bundles, start=1):
-        bundle["datasetId"] = f"real_{index}_{_safe_id(bundle['source'])}"
-        payload = bundle.get("payload")
-        rows = _rows_from_payload(payload)
-        columns = payload.get("columns") if isinstance(payload, dict) else []
-        if not columns and rows and isinstance(rows[0], dict):
-            columns = list(rows[0].keys())
-        yield "dataset", {
-            "datasetId": bundle["datasetId"],
-            "source": bundle["source"],
-            "summary": bundle["summary"],
-            "rows": bundle["rows"],
-            "realData": True,
-            "physicalDatasetId": bundle.get("physicalDatasetId", ""),
-            "schemaVersion": bundle.get("schemaVersion", 1),
-            "truncated": bundle.get("truncated", False),
-            "execution": bundle.get("execution", {}),
-            "evidenceHash": _evidence_digest(rows),
-            # 远端特性：全量数据下发，前端用 fieldMapping 全量渲染（替代 LLM 内联样本）
-            "columns": columns,
-            "data": rows,
-        }
-
-    llm_fallback = False
-    try:
-        result = await asyncio.to_thread(_run_llm_orchestration, query, profile, runtime_context, bundles)
-        result["context"] = runtime_context
-        charts, map_layer, narrative = _validate_llm_result(result, profile, bundles)
-    except Exception as exc:
-        if not config.SITUATION_ALLOW_DATA_FALLBACK:
-            raise
-        llm_fallback = True
-        logger.warning("LLM 编排失败，使用真实数据降级渲染: reportId=%s error=%s", report_id, exc)
+    # 推送时间窗放宽提示（非致命，前端可选展示）
+    if relaxed_notice:
         yield "error", {
-            "stage": "llm",
-            "message": f"LLM 编排暂不可用，已基于真实数据降级生成：{str(exc)[:160]}",
+            "stage": "filter",
+            "message": relaxed_notice,
             "fatal": False,
         }
-        charts, map_layer, narrative = _data_fallback(query, profile, bundles, runtime_context)
-    partial = llm_fallback or bool(relaxed_notice)
 
-    # 远端特性：优先用 map_builder 从全量真实数据自动标注（确定性、无需 LLM 产图）；
-    # 无地理列或坐标未通过证据校验时保留 LLM 地图（其坐标已通过同一证据校验）。
-    builder_layer = None
+    # 推送 dataset SSE 事件（兼容原事件结构）
+    for ds_event in _evidences_to_dataset_events(store):
+        yield "dataset", ds_event
+
+    # ───── 阶段 3：WRITE (chart + map 并行) ─────
+    chart_specs = plan.get("chartSpecs") or []
+    map_specs = plan.get("mapSpecs") or []
+
+    partial = False
+    charts: List[Dict[str, Any]] = []
+    map_layer: Optional[Dict[str, Any]] = None
+
+    await sm.enter(Stage.WRITE)
     try:
-        from agent import map_builder
-        for bundle in bundles:
-            ann = map_builder.build_map_annotations(_rows_from_payload(bundle.get("payload")))
-            if ann and (ann.get("points") or ann.get("routes") or ann.get("areas") or ann.get("circles")):
-                candidate = _verify_map_coordinates(_sanitize_map_layer({
-                    "layerId": f"ds_{bundle.get('datasetId', '')}",
-                    "datasetRef": bundle.get("datasetId", ""),
-                    "points": ann.get("points", []),
-                    "routes": ann.get("routes", []),
-                    "areas": ann.get("areas", []),
-                    "circles": ann.get("circles", []),
-                    "layerConfig": {
-                        "name": f"数据集 {bundle.get('source', '')}",
-                        "type": "points",
-                        "supportedTypes": ["points", "routes", "areas", "circles"],
-                        "color": "#8b5cf6",
-                        "opacity": 0.85,
-                        "visible": True,
-                    },
-                }, profile, runtime_context), bundles)
-                if candidate.get("points") or candidate.get("routes") or candidate.get("areas") or candidate.get("circles"):
-                    builder_layer = candidate
-                    break
-    except Exception as exc:
-        logger.warning("map_builder 自动标注失败，保留 LLM 地图: %s", exc)
-    if builder_layer:
-        map_layer = builder_layer
+        # chart 与 map 并行
+        chart_task = writer.write_charts_parallel(
+            effective_query, chart_specs, store, profile,
+        )
+        # 只在有 mapSpecs 或 evidences 含地理列时调 map
+        map_task = writer.write_map(effective_query, store, profile)
 
+        charts_result, map_result = await asyncio.gather(chart_task, map_task, return_exceptions=True)
+
+        if isinstance(charts_result, Exception):
+            logger.warning("V2 chart 并行整体失败: %s", charts_result)
+            charts = []
+        else:
+            charts = charts_result or []
+
+        if isinstance(map_result, Exception):
+            logger.warning("V2 map 调用失败: %s", map_result)
+            map_layer = None
+        else:
+            map_layer_raw, _ = map_result if isinstance(map_result, tuple) else (None, "")
+            map_layer = _post_process_map(map_layer_raw, profile, runtime_context, store)
+
+        await sm.exit(Stage.WRITE, success=True, meta={
+            "charts": len(charts),
+            "map_present": map_layer is not None,
+        })
+    except Exception as exc:
+        await sm.exit(Stage.WRITE, success=False, error=str(exc)[:200])
+        if not config.SITUATION_ALLOW_DATA_FALLBACK:
+            raise
+        partial = True
+        yield "error", {
+            "stage": "write",
+            "message": f"产图阶段失败，使用真实数据降级：{str(exc)[:160]}",
+            "fatal": False,
+        }
+
+    # ───── 阶段 4：VERIFY + Reflection ─────
+    await sm.enter(Stage.VERIFY)
+    try:
+        verify_result = verifier.verify_all(
+            charts,
+            None,  # narrative 还没生成，先只校验 charts
+            store,
+            min_charts=config.SITUATION_MIN_CHARTS,
+        )
+        await sm.exit(Stage.VERIFY, success=True, meta={"passed": verify_result["passed"]})
+    except Exception as exc:
+        await sm.exit(Stage.VERIFY, success=False, error=str(exc)[:200])
+        verify_result = {"passed": False, "summary": f"校验异常: {exc}"}
+
+    # Reflection：chart 数值/适配校验失败时重写，上限 SITUATION_REFLECTION_MAX_ROUNDS
+    reflection_round = 0
+    while (
+        not verify_result["passed"]
+        and reflection_round < config.SITUATION_REFLECTION_MAX_ROUNDS
+        and any(
+            f["stage"] in ("type_fit", "value_evidence")
+            for f in verify_result.get("chart_result", {}).get("failures", [])
+        )
+    ):
+        reflection_round += 1
+        sm.increment_reflection(Stage.WRITE)
+        logger.info(
+            "V2 Reflection 第 %s 轮重写失败图表: %s",
+            reflection_round,
+            [f["chartId"] for f in verify_result["chart_result"]["failures"]],
+        )
+
+        # 找出失败的 chartSpec（按 chartId 匹配），只重写这部分
+        failed_chart_ids = {
+            f["chartId"] for f in verify_result["chart_result"]["failures"]
+            if f["stage"] in ("type_fit", "value_evidence")
+        }
+        rewrite_specs = [
+            cs for cs in chart_specs
+            if str(cs.get("id")) in failed_chart_ids
+        ]
+        if not rewrite_specs:
+            break
+
+        try:
+            await sm.enter(Stage.WRITE, meta={"reflection": reflection_round})
+            rewritten = await writer.write_charts_parallel(
+                effective_query, rewrite_specs, store, profile,
+            )
+            await sm.exit(Stage.WRITE, success=True, meta={"rewritten": len(rewritten)})
+
+            # 用重写结果替换原 charts 中对应的项
+            charts_by_id = {c.get("chartId"): c for c in charts}
+            for new_chart in rewritten:
+                cid = new_chart.get("chartId")
+                if cid:
+                    charts_by_id[cid] = new_chart
+            charts = list(charts_by_id.values())
+
+            # 重新校验
+            await sm.enter(Stage.VERIFY, meta={"reflection": reflection_round})
+            verify_result = verifier.verify_all(
+                charts,
+                None,
+                store,
+                min_charts=config.SITUATION_MIN_CHARTS,
+            )
+            await sm.exit(Stage.VERIFY, success=verify_result["passed"], meta={"passed": verify_result["passed"]})
+        except Exception as exc:
+            logger.warning("V2 Reflection 第 %s 轮失败: %s", reflection_round, exc)
+            break
+
+    if not verify_result["passed"] and not partial:
+        partial = True
+        yield "error", {
+            "stage": "verify",
+            "message": f"部分校验未通过，输出可能不完整: {verify_result.get('summary', '')[:160]}",
+            "fatal": False,
+        }
+
+    # ───── 阶段 5：NARRATIVE（最后串行） ─────
+    await sm.enter(Stage.NARRATIVE)
+    try:
+        narrative = await writer.write_narrative(effective_query, store, map_layer)
+        await sm.exit(Stage.NARRATIVE, success=True, meta={
+            "explanations": len(narrative.get("explanations") or []),
+        })
+    except Exception as exc:
+        await sm.exit(Stage.NARRATIVE, success=False, error=str(exc)[:200])
+        if not config.SITUATION_ALLOW_DATA_FALLBACK:
+            raise
+        partial = True
+        narrative = {
+            "intro": f"态势生成过程中遇到问题（{str(exc)[:100]}），已基于真实数据降级输出。",
+            "explanations": [],
+            "mapExplanation": "",
+        }
+
+    # ───── 阶段 6：EMIT（推送产物） ─────
+    await sm.enter(Stage.EMIT)
+
+    # narrative 生成后再补一次引用校验（WRITE 阶段只校验 charts，narrative 当时尚未生成）
+    narrative_check = verifier.verify_narrative(narrative, store)
+    if not narrative_check["passed"] and not partial:
+        partial = True
+        logger.warning("V2 narrative 校验未通过: %s", narrative_check.get("summary", ""))
+
+    # 推送 chart 事件
     for chart in charts:
         yield "chart", chart
+    # 推送 map_layer 事件
     if map_layer:
         yield "map_layer", map_layer
+    # 推送 narrative 事件
     yield "narrative", narrative
+    # 推送 verify 事件（前端可选展示）
+    yield "verify", {
+        "passed": verify_result["passed"] and narrative_check["passed"],
+        "summary": (
+            f"{verify_result.get('summary', '')} | narrative: {narrative_check.get('summary', '')}"
+        ),
+        "reflectionRounds": reflection_round,
+        "failures": verify_result.get("chart_result", {}).get("failures", []),
+    }
+    # 推送 done 事件
     yield "done", {
         "reportId": report_id,
         "status": "partial" if partial else "ready",
         "partial": partial,
-        "skillId": profile["skillId"],
-        "skillName": profile["skillName"],
+        "skillId": profile.get("skillId", ""),
+        "skillName": profile.get("skillName", ""),
         "dataMode": "real",
-        "orchestration": "data-fallback" if llm_fallback else "llm",
+        "orchestration": "v2",
+        "stateMachine": sm.snapshot(),
     }
+    await sm.exit(Stage.EMIT, success=True)
+
     logger.info(
-        "真实态势生成完成: reportId=%s datasets=%s charts=%s partial=%s",
-        report_id, len(bundles), len(charts), partial,
+        "V2 态势生成完成: reportId=%s charts=%s map=%s narrative=%s partial=%s reflection=%s",
+        report_id, len(charts), bool(map_layer),
+        len(narrative.get("explanations") or []), partial, reflection_round,
     )
 
 
-# 对外入口：Phase 1 用 mock，Phase 2 切换为 real
 async def generate(
     query: str,
     report_id: str,
     skill_context: Optional[Dict[str, Any]] = None,
     context: Optional[Dict[str, Any]] = None,
 ) -> AsyncIterator[SSEEvent]:
-    """态势生成入口；mock 只能通过环境变量显式启用。"""
-    if config.SITUATION_GENERATION_MODE == "mock":
-        async for evt in mock_generate(query, report_id, skill_context):
-            yield evt
-        return
-    async for evt in real_generate(query, report_id, skill_context, context):
+    """态势生成入口；统一走 V2 Agent 架构（Planner/Executor/Writer/Verifier/Narrative）。
+
+    V1 的 mock_generate / real_generate 路径已移除：不再依赖 knowledge/qa/indicator
+    服务，所有数据均来自 admin-service 的数据集 schema + 查询接口（ADR-01/05）。
+    """
+    async for evt in real_generate_v2(query, report_id, skill_context, context):
         yield evt
+
+
+__all__ = ["generate", "real_generate_v2"]

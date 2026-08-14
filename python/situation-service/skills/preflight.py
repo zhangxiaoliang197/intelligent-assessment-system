@@ -1,15 +1,15 @@
-"""态势 Skill 执行前检查：定义、参数、发布状态与数据源可用性。"""
+"""态势 Skill 执行前检查：定义、参数、发布状态与已授权数据集。
+
+不再检查固定 dataSources 列表的连通性：V2 Agent 架构下，LLM 基于前端选定的
+数据源下所有已授权数据集 schema 动态决策，无需在执行前逐一探活外部服务。
+"""
 
 from __future__ import annotations
 
-import json
 import threading
 import time
-import urllib.error
-import urllib.request
 from typing import Any, Dict, List, Optional
 
-import config
 from store import admin_client
 
 from .catalog import SkillCatalogError, get_skill, validate_skill_parameters
@@ -17,10 +17,6 @@ from .catalog import SkillCatalogError, get_skill, validate_skill_parameters
 
 _CACHE_LOCK = threading.Lock()
 _SOURCE_CACHE: Dict[str, Dict[str, Any]] = {}
-
-# 服务探活短缓存：服务不可达时单次探活最多卡 1.5s，多个服务源串行探测会明显拖慢 preflight。
-_PROBE_TTL = 5.0
-_probe_cache: Dict[str, tuple[float, bool]] = {}
 
 
 def _actor_cache_key(actor: Dict[str, Any] = None) -> str:
@@ -62,66 +58,6 @@ def _dataset_snapshot(actor: Dict[str, Any] = None) -> Dict[str, Any]:
     with _CACHE_LOCK:
         _SOURCE_CACHE[cache_key] = snapshot
     return snapshot
-
-
-def _probe_health(base_url: str) -> bool:
-    request = urllib.request.Request(f"{base_url.rstrip('/')}/health", method="GET")
-    try:
-        with urllib.request.urlopen(request, timeout=1.5) as response:
-            if response.status >= 400:
-                return False
-            body = json.loads(response.read().decode("utf-8"))
-            return str(body.get("status") or "healthy").lower() in {"healthy", "ok"}
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
-        return False
-
-
-def _cached_probe_health(base_url: str) -> bool:
-    """带短 TTL 的探活：5 秒内同一地址复用上次结果，避免不可达服务反复拖慢 preflight。"""
-    now = time.monotonic()
-    with _CACHE_LOCK:
-        cached = _probe_cache.get(base_url)
-        if cached and cached[0] > now:
-            return cached[1]
-    ready = _probe_health(base_url)
-    with _CACHE_LOCK:
-        _probe_cache[base_url] = (now + _PROBE_TTL, ready)
-    return ready
-
-
-def _source_check(source: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
-    if source.startswith("t_"):
-        matched = source in snapshot["tables"]
-        return {
-            "source": source,
-            "status": "passed" if matched else "error",
-            "message": "已匹配注册数据集" if matched else "未找到对应物理数据集",
-        }
-    if source == "admin":
-        ready = bool(snapshot["adminReady"])
-        return {
-            "source": source,
-            "status": "passed" if ready else "error",
-            "message": "管理数据服务可用" if ready else "管理数据服务不可用",
-        }
-    service_urls = {
-        "knowledge": config.KNOWLEDGE_SERVICE_URL,
-        "indicator": config.INDICATOR_SERVICE_URL,
-        "evaluation": config.QA_SERVICE_URL,
-    }
-    if source in service_urls:
-        ready = _cached_probe_health(service_urls[source])
-        return {
-            "source": source,
-            # 外围服务不可用给出警告；物理数据仍可支持降级执行。
-            "status": "passed" if ready else "warning",
-            "message": "服务连接正常" if ready else "服务当前不可达，将降级使用其他数据源",
-        }
-    return {
-        "source": source,
-        "status": "warning",
-        "message": "未配置专用连通性检查器",
-    }
 
 
 def preflight_skill(
@@ -186,13 +122,17 @@ def preflight_skill(
                 if selected_datasets else "选定数据源没有当前用户可访问的数据集"
             ),
         })
-    source_checks = [_source_check(source, snapshot) for source in skill["dataSources"]]
-    for item in source_checks:
+    else:
+        # 未指定数据源时，校验当前用户是否有任意已授权数据集。
+        any_authorized = bool(snapshot.get("datasets"))
         checks.append({
-            "key": f"source:{item['source']}",
-            "label": "数据源",
-            "status": item["status"],
-            "message": f"{item['source']}：{item['message']}",
+            "key": "database",
+            "label": "数据集授权",
+            "status": "passed" if any_authorized else "warning",
+            "message": (
+                f"当前用户共有 {len(snapshot.get('datasets') or [])} 个已授权数据集可用"
+                if any_authorized else "当前用户没有任何已授权数据集，LLM 将无法生成方案"
+            ),
         })
 
     errors = [check["message"] for check in checks if check["status"] == "error"]
@@ -211,5 +151,4 @@ def preflight_skill(
             {"sequence": index, "name": step}
             for index, step in enumerate(skill["steps"], start=1)
         ],
-        "dataSources": source_checks,
     }

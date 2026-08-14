@@ -7,14 +7,40 @@
       "name": "综合战场态势总览",
       "description": "融合兵力、装备、任务、威胁与保障数据，快速形成全局态势总览。",
       "category": "综合态势",
-      "triggers": ["综合态势", "战场全景", "总体情况", "态势总览"],
-      "recommendedQuestions": ["生成当前全域综合战场态势总览", "汇总各区域兵力、威胁、任务和保障状态"],
-      "inputHints": ["时间范围", "关注区域", "参战方"],
-      "steps": ["汇聚多源态势数据并统一时间基准", "对比关键指标并识别异常区域", "生成图表、图层与态势说明"],
-      "dataSources": ["t_deployment", "t_mission", "t_threat", "t_supply"],
-      "chartTypes": ["radar", "bar", "pie"],
-      "mapLayerTypes": ["points", "areas"],
-      "focusMetrics": ["综合态势指数", "区域力量对比", "任务状态构成"],
+      "triggers": [
+        "综合态势",
+        "战场全景",
+        "总体情况",
+        "态势总览"
+      ],
+      "recommendedQuestions": [
+        "生成当前全域综合战场态势总览",
+        "汇总各区域兵力、威胁、任务和保障状态"
+      ],
+      "inputHints": [
+        "时间范围",
+        "关注区域",
+        "参战方"
+      ],
+      "steps": [
+        "汇聚多源态势数据并统一时间基准",
+        "对比关键指标并识别异常区域",
+        "生成图表、图层与态势说明"
+      ],
+      "chartTypes": [
+        "radar",
+        "bar",
+        "pie"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "areas"
+      ],
+      "focusMetrics": [
+        "综合态势指数",
+        "区域力量对比",
+        "任务状态构成"
+      ],
       "analysisGoal": "从全局视角描述兵力、威胁、行动和保障之间的关系，标明数据时间与重点关注区域。",
       "featured": true
     },
@@ -24,14 +50,41 @@
       "name": "区域兵力部署分析",
       "description": "按区域、军兵种和单位展示兵力与装备部署密度及可部署水平。",
       "category": "综合态势",
-      "triggers": ["兵力部署", "部队分布", "部署密度", "兵力分布"],
-      "recommendedQuestions": ["展示各区域兵力和装备部署情况", "对比 A、B 区域可部署兵力密度"],
-      "inputHints": ["区域", "军兵种", "时间点"],
-      "steps": ["读取单位与部署记录", "按区域和兵种聚合兵力装备", "映射部署点并比较密度"],
-      "dataSources": ["t_deployment", "t_force", "t_unit_master"],
-      "chartTypes": ["bar", "pie", "radar"],
-      "mapLayerTypes": ["points", "clusters", "areas"],
-      "focusMetrics": ["可部署兵力", "兵种构成", "区域战备水平"],
+      "triggers": [
+        "兵力部署",
+        "部队分布",
+        "部署密度",
+        "兵力分布"
+      ],
+      "recommendedQuestions": [
+        "展示各区域兵力和装备部署情况",
+        "对比 A、B 区域可部署兵力密度"
+      ],
+      "inputHints": [
+        "区域",
+        "军兵种",
+        "时间点"
+      ],
+      "steps": [
+        "读取单位与部署记录",
+        "按区域和兵种聚合兵力装备",
+        "映射部署点并比较密度"
+      ],
+      "chartTypes": [
+        "bar",
+        "pie",
+        "radar"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "clusters",
+        "areas"
+      ],
+      "focusMetrics": [
+        "可部署兵力",
+        "兵种构成",
+        "区域战备水平"
+      ],
       "analysisGoal": "呈现区域兵力分布、编现比和装备配套情况，识别过密、薄弱或部署失衡区域。",
       "featured": true
     },
@@ -41,14 +94,41 @@
       "name": "关键区域控制分析",
       "description": "综合驻守力量、防护能力、威胁与交通条件评估关键区域控制态势。",
       "category": "综合态势",
-      "triggers": ["关键区域", "区域控制", "控制能力", "要地态势"],
-      "recommendedQuestions": ["分析当前关键区域的控制与防护态势", "哪些要地区域存在控制薄弱点"],
-      "inputHints": ["关键区域", "控制阈值", "参战方"],
-      "steps": ["圈定关键区域及驻守单位", "关联防护和威胁数据", "计算控制强弱并标注薄弱区"],
-      "dataSources": ["t_deployment", "t_defense", "t_threat"],
-      "chartTypes": ["gauge", "bar", "radar"],
-      "mapLayerTypes": ["areas", "points", "coverage"],
-      "focusMetrics": ["区域控制指数", "防护覆盖率", "威胁压力"],
+      "triggers": [
+        "关键区域",
+        "区域控制",
+        "控制能力",
+        "要地态势"
+      ],
+      "recommendedQuestions": [
+        "分析当前关键区域的控制与防护态势",
+        "哪些要地区域存在控制薄弱点"
+      ],
+      "inputHints": [
+        "关键区域",
+        "控制阈值",
+        "参战方"
+      ],
+      "steps": [
+        "圈定关键区域及驻守单位",
+        "关联防护和威胁数据",
+        "计算控制强弱并标注薄弱区"
+      ],
+      "chartTypes": [
+        "gauge",
+        "bar",
+        "radar"
+      ],
+      "mapLayerTypes": [
+        "areas",
+        "points",
+        "coverage"
+      ],
+      "focusMetrics": [
+        "区域控制指数",
+        "防护覆盖率",
+        "威胁压力"
+      ],
       "analysisGoal": "对关键区域的控制、支援和受威胁程度进行分层描述，并解释薄弱点来源。"
     },
     {
@@ -57,14 +137,40 @@
       "name": "多源态势融合校验",
       "description": "对知识、指标、评估和业务数据进行时空对齐，揭示一致结论与冲突信息。",
       "category": "综合态势",
-      "triggers": ["多源融合", "信息融合", "数据冲突", "交叉验证"],
-      "recommendedQuestions": ["融合多源数据生成当前态势并标出冲突", "校验指标、评估和业务记录是否一致"],
-      "inputHints": ["数据来源", "时间容差", "空间范围"],
-      "steps": ["建立来源清单和可信度", "执行时间空间实体对齐", "输出共识态势与冲突项"],
-      "dataSources": ["knowledge", "indicator", "evaluation", "admin"],
-      "chartTypes": ["sankey", "bar", "scatter"],
-      "mapLayerTypes": ["points", "areas"],
-      "focusMetrics": ["来源一致度", "冲突项数量", "证据可信度"],
+      "triggers": [
+        "多源融合",
+        "信息融合",
+        "数据冲突",
+        "交叉验证"
+      ],
+      "recommendedQuestions": [
+        "融合多源数据生成当前态势并标出冲突",
+        "校验指标、评估和业务记录是否一致"
+      ],
+      "inputHints": [
+        "数据来源",
+        "时间容差",
+        "空间范围"
+      ],
+      "steps": [
+        "建立来源清单和可信度",
+        "执行时间空间实体对齐",
+        "输出共识态势与冲突项"
+      ],
+      "chartTypes": [
+        "sankey",
+        "bar",
+        "scatter"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "areas"
+      ],
+      "focusMetrics": [
+        "来源一致度",
+        "冲突项数量",
+        "证据可信度"
+      ],
       "analysisGoal": "区分已被多源证据支持的信息与待核实冲突，不把单一来源推断当作确定事实。"
     },
     {
@@ -73,14 +179,40 @@
       "name": "行动节奏快照",
       "description": "围绕指定时间窗展示任务批次、出动强度、指令频率与资源消耗节奏。",
       "category": "综合态势",
-      "triggers": ["行动节奏", "作战节奏", "态势快照", "出动强度"],
-      "recommendedQuestions": ["生成近 24 小时行动节奏快照", "对比本周各日任务和资源消耗强度"],
-      "inputHints": ["时间窗", "任务类型", "单位"],
-      "steps": ["按时间窗提取任务与指令", "聚合出动和资源消耗", "标注节奏突变时段"],
-      "dataSources": ["t_mission", "t_command_order", "t_resource_consume"],
-      "chartTypes": ["line", "bar", "heatmap"],
-      "mapLayerTypes": ["points", "routes"],
-      "focusMetrics": ["任务批次", "出动强度", "资源消耗速率"],
+      "triggers": [
+        "行动节奏",
+        "作战节奏",
+        "态势快照",
+        "出动强度"
+      ],
+      "recommendedQuestions": [
+        "生成近 24 小时行动节奏快照",
+        "对比本周各日任务和资源消耗强度"
+      ],
+      "inputHints": [
+        "时间窗",
+        "任务类型",
+        "单位"
+      ],
+      "steps": [
+        "按时间窗提取任务与指令",
+        "聚合出动和资源消耗",
+        "标注节奏突变时段"
+      ],
+      "chartTypes": [
+        "line",
+        "bar",
+        "heatmap"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "routes"
+      ],
+      "focusMetrics": [
+        "任务批次",
+        "出动强度",
+        "资源消耗速率"
+      ],
       "analysisGoal": "描述行动节奏的峰谷、持续性和资源匹配程度，突出异常加速或中断。"
     },
     {
@@ -89,14 +221,40 @@
       "name": "红蓝力量平衡对比",
       "description": "按区域对比双方兵力、装备、空中能力、防护与支援条件。",
       "category": "综合态势",
-      "triggers": ["红蓝对比", "敌我对比", "力量平衡", "双方态势"],
-      "recommendedQuestions": ["对比红蓝双方在各区域的力量平衡", "分析 A 区域敌我优势与短板"],
-      "inputHints": ["区域", "双方标识", "对比维度"],
-      "steps": ["统一双方单位和指标口径", "计算分区域力量比值", "定位优势与劣势维度"],
-      "dataSources": ["t_deployment", "t_air_overall", "t_defense"],
-      "chartTypes": ["radar", "bar", "gauge"],
-      "mapLayerTypes": ["points", "areas"],
-      "focusMetrics": ["兵力比", "装备比", "综合优势指数"],
+      "triggers": [
+        "红蓝对比",
+        "敌我对比",
+        "力量平衡",
+        "双方态势"
+      ],
+      "recommendedQuestions": [
+        "对比红蓝双方在各区域的力量平衡",
+        "分析 A 区域敌我优势与短板"
+      ],
+      "inputHints": [
+        "区域",
+        "双方标识",
+        "对比维度"
+      ],
+      "steps": [
+        "统一双方单位和指标口径",
+        "计算分区域力量比值",
+        "定位优势与劣势维度"
+      ],
+      "chartTypes": [
+        "radar",
+        "bar",
+        "gauge"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "areas"
+      ],
+      "focusMetrics": [
+        "兵力比",
+        "装备比",
+        "综合优势指数"
+      ],
       "analysisGoal": "客观展示双方力量差异及其地理分布，避免仅以总量替代区域和能力结构判断。"
     },
     {
@@ -105,14 +263,40 @@
       "name": "区域威胁热力分析",
       "description": "根据目标等级、活跃状态、距离和告警数据生成威胁热点与分级清单。",
       "category": "威胁预警",
-      "triggers": ["威胁热力", "威胁分布", "危险区域", "热点区域"],
-      "recommendedQuestions": ["生成当前区域威胁热力图", "展示高威胁目标聚集区域及数量"],
-      "inputHints": ["区域", "威胁等级", "时间范围"],
-      "steps": ["筛选有效威胁和告警", "计算位置权重与热点", "输出热区和高威胁目标"],
-      "dataSources": ["t_threat", "t_warning_event", "t_recon_intelligence"],
-      "chartTypes": ["heatmap", "bar", "pie"],
-      "mapLayerTypes": ["points", "areas"],
-      "focusMetrics": ["威胁热度", "高威胁目标数", "告警等级构成"],
+      "triggers": [
+        "威胁热力",
+        "威胁分布",
+        "危险区域",
+        "热点区域"
+      ],
+      "recommendedQuestions": [
+        "生成当前区域威胁热力图",
+        "展示高威胁目标聚集区域及数量"
+      ],
+      "inputHints": [
+        "区域",
+        "威胁等级",
+        "时间范围"
+      ],
+      "steps": [
+        "筛选有效威胁和告警",
+        "计算位置权重与热点",
+        "输出热区和高威胁目标"
+      ],
+      "chartTypes": [
+        "heatmap",
+        "bar",
+        "pie"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "areas"
+      ],
+      "focusMetrics": [
+        "威胁热度",
+        "高威胁目标数",
+        "告警等级构成"
+      ],
       "analysisGoal": "描述威胁热点、目标集聚和等级构成，清楚区分已核验与未核验信息。",
       "featured": true
     },
@@ -122,14 +306,40 @@
       "name": "威胁演化趋势预警",
       "description": "跟踪威胁目标与告警等级随时间的变化，识别持续升高和快速突变。",
       "category": "威胁预警",
-      "triggers": ["威胁趋势", "威胁演化", "风险上升", "趋势预警"],
-      "recommendedQuestions": ["分析近 7 天威胁等级演化趋势", "哪些目标的风险正在快速上升"],
-      "inputHints": ["时间范围", "目标类型", "预警阈值"],
-      "steps": ["构建目标时间序列", "计算等级变化和变化率", "标记持续升高与突变目标"],
-      "dataSources": ["t_threat", "t_warning_event"],
-      "chartTypes": ["line", "scatter", "bar"],
-      "mapLayerTypes": ["points", "routes"],
-      "focusMetrics": ["威胁等级", "风险变化率", "升级目标数"],
+      "triggers": [
+        "威胁趋势",
+        "威胁演化",
+        "风险上升",
+        "趋势预警"
+      ],
+      "recommendedQuestions": [
+        "分析近 7 天威胁等级演化趋势",
+        "哪些目标的风险正在快速上升"
+      ],
+      "inputHints": [
+        "时间范围",
+        "目标类型",
+        "预警阈值"
+      ],
+      "steps": [
+        "构建目标时间序列",
+        "计算等级变化和变化率",
+        "标记持续升高与突变目标"
+      ],
+      "chartTypes": [
+        "line",
+        "scatter",
+        "bar"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "routes"
+      ],
+      "focusMetrics": [
+        "威胁等级",
+        "风险变化率",
+        "升级目标数"
+      ],
       "analysisGoal": "突出威胁变化方向、速度与持续时间，说明预警依据和时间范围。"
     },
     {
@@ -138,14 +348,41 @@
       "name": "侦察预警覆盖分析",
       "description": "评估侦察发现率、识别置信度、预警响应时间及空间覆盖盲区。",
       "category": "威胁预警",
-      "triggers": ["侦察预警", "预警覆盖", "探测能力", "覆盖盲区"],
-      "recommendedQuestions": ["评估当前侦察预警覆盖与盲区", "对比各侦察手段的发现率和响应速度"],
-      "inputHints": ["侦察手段", "区域", "覆盖半径"],
-      "steps": ["汇总侦察和告警记录", "比较发现置信度与响应时间", "叠加覆盖范围并识别盲区"],
-      "dataSources": ["t_recon_intelligence", "t_warning_event"],
-      "chartTypes": ["radar", "bar", "gauge"],
-      "mapLayerTypes": ["coverage", "points", "areas"],
-      "focusMetrics": ["发现率", "平均响应时间", "空间覆盖率"],
+      "triggers": [
+        "侦察预警",
+        "预警覆盖",
+        "探测能力",
+        "覆盖盲区"
+      ],
+      "recommendedQuestions": [
+        "评估当前侦察预警覆盖与盲区",
+        "对比各侦察手段的发现率和响应速度"
+      ],
+      "inputHints": [
+        "侦察手段",
+        "区域",
+        "覆盖半径"
+      ],
+      "steps": [
+        "汇总侦察和告警记录",
+        "比较发现置信度与响应时间",
+        "叠加覆盖范围并识别盲区"
+      ],
+      "chartTypes": [
+        "radar",
+        "bar",
+        "gauge"
+      ],
+      "mapLayerTypes": [
+        "coverage",
+        "points",
+        "areas"
+      ],
+      "focusMetrics": [
+        "发现率",
+        "平均响应时间",
+        "空间覆盖率"
+      ],
       "analysisGoal": "评估探测、识别、告警三个环节的完整性，标出覆盖盲区和延迟环节。"
     },
     {
@@ -154,14 +391,40 @@
       "name": "异常活动聚类分析",
       "description": "从任务、目标、告警和部署变化中识别时空聚集、离群点与异常活动模式。",
       "category": "威胁预警",
-      "triggers": ["异常活动", "异常聚集", "离群目标", "聚类分析"],
-      "recommendedQuestions": ["识别近期异常活动聚集区域", "查找与常态分布明显不同的目标或任务"],
-      "inputHints": ["基准周期", "异常阈值", "对象类型"],
-      "steps": ["建立常态基线", "计算时空密度和离群程度", "聚合异常簇并回溯关联事件"],
-      "dataSources": ["t_threat", "t_warning_event", "t_mission", "t_deployment"],
-      "chartTypes": ["scatter", "heatmap", "line"],
-      "mapLayerTypes": ["clusters", "points"],
-      "focusMetrics": ["异常分数", "聚集密度", "关联事件数"],
+      "triggers": [
+        "异常活动",
+        "异常聚集",
+        "离群目标",
+        "聚类分析"
+      ],
+      "recommendedQuestions": [
+        "识别近期异常活动聚集区域",
+        "查找与常态分布明显不同的目标或任务"
+      ],
+      "inputHints": [
+        "基准周期",
+        "异常阈值",
+        "对象类型"
+      ],
+      "steps": [
+        "建立常态基线",
+        "计算时空密度和离群程度",
+        "聚合异常簇并回溯关联事件"
+      ],
+      "chartTypes": [
+        "scatter",
+        "heatmap",
+        "line"
+      ],
+      "mapLayerTypes": [
+        "clusters",
+        "points"
+      ],
+      "focusMetrics": [
+        "异常分数",
+        "聚集密度",
+        "关联事件数"
+      ],
       "analysisGoal": "将统计异常与业务事件关联展示，并明确异常不等同于已确认威胁。"
     },
     {
@@ -170,14 +433,40 @@
       "name": "目标优先级排序",
       "description": "综合威胁、价值、时效、可达性与行动约束生成目标优先级和空间分布。",
       "category": "威胁预警",
-      "triggers": ["目标优先级", "重点目标", "目标排序", "先处置谁"],
-      "recommendedQuestions": ["按综合威胁生成目标优先级清单", "筛选当前最需关注的前十个目标"],
-      "inputHints": ["排序指标", "目标类型", "Top N"],
-      "steps": ["筛选候选目标", "统一指标并计算综合得分", "排序并映射高优先级目标"],
-      "dataSources": ["t_threat", "t_recon_intelligence", "t_combat_result"],
-      "chartTypes": ["bar", "radar", "scatter"],
-      "mapLayerTypes": ["points", "clusters"],
-      "focusMetrics": ["综合优先级", "威胁价值", "信息置信度"],
+      "triggers": [
+        "目标优先级",
+        "重点目标",
+        "目标排序",
+        "先处置谁"
+      ],
+      "recommendedQuestions": [
+        "按综合威胁生成目标优先级清单",
+        "筛选当前最需关注的前十个目标"
+      ],
+      "inputHints": [
+        "排序指标",
+        "目标类型",
+        "Top N"
+      ],
+      "steps": [
+        "筛选候选目标",
+        "统一指标并计算综合得分",
+        "排序并映射高优先级目标"
+      ],
+      "chartTypes": [
+        "bar",
+        "radar",
+        "scatter"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "clusters"
+      ],
+      "focusMetrics": [
+        "综合优先级",
+        "威胁价值",
+        "信息置信度"
+      ],
       "analysisGoal": "解释每个高优先级目标的得分构成、证据置信度与数据时效，不替代人工决策。"
     },
     {
@@ -186,14 +475,41 @@
       "name": "空中优势态势评估",
       "description": "融合制空、打击、侦察、预警和可用装备，展示分区域空中优势。",
       "category": "作战效能",
-      "triggers": ["空中优势", "制空权", "空战能力", "空中态势"],
-      "recommendedQuestions": ["评估当前各区域空中优势态势", "对比各航空兵单位的制空与支援能力"],
-      "inputHints": ["区域", "参战方", "评估日期"],
-      "steps": ["汇总空中能力与装备可用率", "按区域计算能力指数", "关联任务战果验证优势"],
-      "dataSources": ["t_air_overall", "t_air_capability", "t_equipment", "t_combat_result"],
-      "chartTypes": ["radar", "gauge", "bar"],
-      "mapLayerTypes": ["coverage", "points", "areas"],
-      "focusMetrics": ["空中优势指数", "装备可用率", "任务贡献度"],
+      "triggers": [
+        "空中优势",
+        "制空权",
+        "空战能力",
+        "空中态势"
+      ],
+      "recommendedQuestions": [
+        "评估当前各区域空中优势态势",
+        "对比各航空兵单位的制空与支援能力"
+      ],
+      "inputHints": [
+        "区域",
+        "参战方",
+        "评估日期"
+      ],
+      "steps": [
+        "汇总空中能力与装备可用率",
+        "按区域计算能力指数",
+        "关联任务战果验证优势"
+      ],
+      "chartTypes": [
+        "radar",
+        "gauge",
+        "bar"
+      ],
+      "mapLayerTypes": [
+        "coverage",
+        "points",
+        "areas"
+      ],
+      "focusMetrics": [
+        "空中优势指数",
+        "装备可用率",
+        "任务贡献度"
+      ],
       "analysisGoal": "展示空中优势的能力构成、区域差异和任务验证结果，避免只引用单一综合分。",
       "featured": true
     },
@@ -203,14 +519,40 @@
       "name": "武器系统效能分析",
       "description": "关联武器能力、命中摧毁、故障维修和资源消耗，比较各型号实际效能。",
       "category": "作战效能",
-      "triggers": ["武器效能", "装备效能", "武器系统", "型号对比"],
-      "recommendedQuestions": ["对比各型武器系统的实际作战效能", "分析命中效果、可靠性和资源成本"],
-      "inputHints": ["武器型号", "任务范围", "效能口径"],
-      "steps": ["读取武器能力和使用记录", "关联战果与资源消耗", "结合故障维修计算综合效能"],
-      "dataSources": ["t_weapon", "t_combat_result", "t_resource_consume", "t_maintenance"],
-      "chartTypes": ["bar", "scatter", "radar"],
-      "mapLayerTypes": ["points", "routes"],
-      "focusMetrics": ["命中摧毁效率", "任务贡献度", "保障成本"],
+      "triggers": [
+        "武器效能",
+        "装备效能",
+        "武器系统",
+        "型号对比"
+      ],
+      "recommendedQuestions": [
+        "对比各型武器系统的实际作战效能",
+        "分析命中效果、可靠性和资源成本"
+      ],
+      "inputHints": [
+        "武器型号",
+        "任务范围",
+        "效能口径"
+      ],
+      "steps": [
+        "读取武器能力和使用记录",
+        "关联战果与资源消耗",
+        "结合故障维修计算综合效能"
+      ],
+      "chartTypes": [
+        "bar",
+        "scatter",
+        "radar"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "routes"
+      ],
+      "focusMetrics": [
+        "命中摧毁效率",
+        "任务贡献度",
+        "保障成本"
+      ],
       "analysisGoal": "比较武器型号的效果、可靠性和成本，说明样本量和任务环境差异。"
     },
     {
@@ -219,14 +561,41 @@
       "name": "火力打击效果分析",
       "description": "按任务、单位、武器与目标类型分析命中、摧毁和目标达成效果。",
       "category": "作战效能",
-      "triggers": ["打击效果", "火力打击", "命中率", "摧毁率"],
-      "recommendedQuestions": ["分析近期火力打击任务的命中和摧毁效果", "对比不同单位对各类目标的打击效能"],
-      "inputHints": ["任务", "目标类型", "武器类型"],
-      "steps": ["筛选打击任务和目标", "聚合命中摧毁与达成情况", "比较单位武器组合效果"],
-      "dataSources": ["t_mission", "t_combat_result", "t_weapon"],
-      "chartTypes": ["bar", "pie", "scatter"],
-      "mapLayerTypes": ["points", "routes", "areas"],
-      "focusMetrics": ["命中率", "摧毁率", "目标达成率"],
+      "triggers": [
+        "打击效果",
+        "火力打击",
+        "命中率",
+        "摧毁率"
+      ],
+      "recommendedQuestions": [
+        "分析近期火力打击任务的命中和摧毁效果",
+        "对比不同单位对各类目标的打击效能"
+      ],
+      "inputHints": [
+        "任务",
+        "目标类型",
+        "武器类型"
+      ],
+      "steps": [
+        "筛选打击任务和目标",
+        "聚合命中摧毁与达成情况",
+        "比较单位武器组合效果"
+      ],
+      "chartTypes": [
+        "bar",
+        "pie",
+        "scatter"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "routes",
+        "areas"
+      ],
+      "focusMetrics": [
+        "命中率",
+        "摧毁率",
+        "目标达成率"
+      ],
       "analysisGoal": "按任务和目标类型解释打击效果，标注样本范围并识别效果偏低环节。"
     },
     {
@@ -235,14 +604,41 @@
       "name": "防护与生存能力评估",
       "description": "融合防护范围、系统在线率、战损与威胁压力，评估区域防护和生存能力。",
       "category": "作战效能",
-      "triggers": ["防护能力", "生存能力", "防空覆盖", "防御态势"],
-      "recommendedQuestions": ["评估各区域防护与生存能力", "识别防护覆盖不足且威胁较高的区域"],
-      "inputHints": ["区域", "防护类型", "威胁等级"],
-      "steps": ["提取防护系统和覆盖范围", "叠加威胁与战损记录", "评估在线率、冗余和薄弱区"],
-      "dataSources": ["t_defense", "t_threat", "t_combat_loss"],
-      "chartTypes": ["gauge", "radar", "bar"],
-      "mapLayerTypes": ["coverage", "areas", "points"],
-      "focusMetrics": ["防护覆盖率", "系统在线率", "生存能力指数"],
+      "triggers": [
+        "防护能力",
+        "生存能力",
+        "防空覆盖",
+        "防御态势"
+      ],
+      "recommendedQuestions": [
+        "评估各区域防护与生存能力",
+        "识别防护覆盖不足且威胁较高的区域"
+      ],
+      "inputHints": [
+        "区域",
+        "防护类型",
+        "威胁等级"
+      ],
+      "steps": [
+        "提取防护系统和覆盖范围",
+        "叠加威胁与战损记录",
+        "评估在线率、冗余和薄弱区"
+      ],
+      "chartTypes": [
+        "gauge",
+        "radar",
+        "bar"
+      ],
+      "mapLayerTypes": [
+        "coverage",
+        "areas",
+        "points"
+      ],
+      "focusMetrics": [
+        "防护覆盖率",
+        "系统在线率",
+        "生存能力指数"
+      ],
       "analysisGoal": "呈现防护覆盖、系统可用性与实际威胁之间的匹配关系，突出高风险空白区。"
     },
     {
@@ -251,14 +647,40 @@
       "name": "指挥响应效率分析",
       "description": "分析指令下达、响应、执行状态和任务启动之间的时延与阻塞。",
       "category": "作战效能",
-      "triggers": ["指挥效率", "响应时间", "命令执行", "指挥时延"],
-      "recommendedQuestions": ["分析各级指挥指令的响应效率", "哪些命令存在响应迟缓或执行阻塞"],
-      "inputHints": ["指挥层级", "时间范围", "响应阈值"],
-      "steps": ["匹配指令与执行记录", "计算响应和完成时延", "识别层级与环节阻塞"],
-      "dataSources": ["t_command_order", "t_mission"],
-      "chartTypes": ["bar", "line", "pie"],
-      "mapLayerTypes": ["points", "flow"],
-      "focusMetrics": ["平均响应时间", "按时执行率", "阻塞指令数"],
+      "triggers": [
+        "指挥效率",
+        "响应时间",
+        "命令执行",
+        "指挥时延"
+      ],
+      "recommendedQuestions": [
+        "分析各级指挥指令的响应效率",
+        "哪些命令存在响应迟缓或执行阻塞"
+      ],
+      "inputHints": [
+        "指挥层级",
+        "时间范围",
+        "响应阈值"
+      ],
+      "steps": [
+        "匹配指令与执行记录",
+        "计算响应和完成时延",
+        "识别层级与环节阻塞"
+      ],
+      "chartTypes": [
+        "bar",
+        "line",
+        "pie"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "flow"
+      ],
+      "focusMetrics": [
+        "平均响应时间",
+        "按时执行率",
+        "阻塞指令数"
+      ],
       "analysisGoal": "按层级和状态描述指挥响应效率，区分未完成、无响应数据和真实超时。"
     },
     {
@@ -267,14 +689,41 @@
       "name": "联合作战协同分析",
       "description": "分析多单位、多兵种任务协同关系、时序衔接和支援依赖。",
       "category": "作战效能",
-      "triggers": ["联合作战", "协同效率", "兵种协同", "任务协同"],
-      "recommendedQuestions": ["评估近期联合作战任务协同情况", "展示单位间支援依赖和协同薄弱环节"],
-      "inputHints": ["任务", "参战单位", "协同环节"],
-      "steps": ["构建任务单位关系", "还原协同时间线和依赖", "评估衔接效率与关键节点"],
-      "dataSources": ["t_mission", "t_unit_master", "t_command_order", "t_supply"],
-      "chartTypes": ["relation", "sankey", "bar"],
-      "mapLayerTypes": ["flow", "routes", "points"],
-      "focusMetrics": ["协同单位数", "衔接及时率", "关键依赖度"],
+      "triggers": [
+        "联合作战",
+        "协同效率",
+        "兵种协同",
+        "任务协同"
+      ],
+      "recommendedQuestions": [
+        "评估近期联合作战任务协同情况",
+        "展示单位间支援依赖和协同薄弱环节"
+      ],
+      "inputHints": [
+        "任务",
+        "参战单位",
+        "协同环节"
+      ],
+      "steps": [
+        "构建任务单位关系",
+        "还原协同时间线和依赖",
+        "评估衔接效率与关键节点"
+      ],
+      "chartTypes": [
+        "relation",
+        "sankey",
+        "bar"
+      ],
+      "mapLayerTypes": [
+        "flow",
+        "routes",
+        "points"
+      ],
+      "focusMetrics": [
+        "协同单位数",
+        "衔接及时率",
+        "关键依赖度"
+      ],
       "analysisGoal": "展示任务协同网络、关键依赖与时间衔接，识别单点依赖和支援迟滞。"
     },
     {
@@ -283,14 +732,40 @@
       "name": "任务进展跟踪",
       "description": "按时间、区域和单位展示任务计划、执行中、完成及异常中断状态。",
       "category": "任务行动",
-      "triggers": ["任务进展", "任务状态", "执行进度", "行动跟踪"],
-      "recommendedQuestions": ["展示当前所有任务的执行进展", "哪些任务延期、中断或尚未达成目标"],
-      "inputHints": ["时间范围", "任务类型", "单位"],
-      "steps": ["读取任务计划与状态", "关联指令、战果和资源记录", "形成时间线并标出异常任务"],
-      "dataSources": ["t_mission", "t_command_order", "t_combat_result"],
-      "chartTypes": ["bar", "pie", "line"],
-      "mapLayerTypes": ["points", "routes"],
-      "focusMetrics": ["任务完成率", "执行中任务数", "异常任务数"],
+      "triggers": [
+        "任务进展",
+        "任务状态",
+        "执行进度",
+        "行动跟踪"
+      ],
+      "recommendedQuestions": [
+        "展示当前所有任务的执行进展",
+        "哪些任务延期、中断或尚未达成目标"
+      ],
+      "inputHints": [
+        "时间范围",
+        "任务类型",
+        "单位"
+      ],
+      "steps": [
+        "读取任务计划与状态",
+        "关联指令、战果和资源记录",
+        "形成时间线并标出异常任务"
+      ],
+      "chartTypes": [
+        "bar",
+        "pie",
+        "line"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "routes"
+      ],
+      "focusMetrics": [
+        "任务完成率",
+        "执行中任务数",
+        "异常任务数"
+      ],
       "analysisGoal": "按任务状态和时间线描述进展，明确尚无结果与执行失败的区别。",
       "featured": true
     },
@@ -300,14 +775,41 @@
       "name": "任务成功复盘",
       "description": "综合目标达成、战果、损失、资源消耗和指挥响应复盘任务成功度。",
       "category": "任务行动",
-      "triggers": ["任务复盘", "成功率", "任务成效", "行动复盘"],
-      "recommendedQuestions": ["复盘近期已完成任务的成功度和代价", "比较各类任务的目标达成率与损耗"],
-      "inputHints": ["任务范围", "成功判据", "代价口径"],
-      "steps": ["筛选已完成任务", "关联战果损失消耗和指令", "评估达成度、代价与可复用经验"],
-      "dataSources": ["t_mission", "t_combat_result", "t_combat_loss", "t_resource_consume"],
-      "chartTypes": ["radar", "scatter", "bar"],
-      "mapLayerTypes": ["points", "routes", "areas"],
-      "focusMetrics": ["目标达成率", "损耗交换比", "单位资源产出"],
+      "triggers": [
+        "任务复盘",
+        "成功率",
+        "任务成效",
+        "行动复盘"
+      ],
+      "recommendedQuestions": [
+        "复盘近期已完成任务的成功度和代价",
+        "比较各类任务的目标达成率与损耗"
+      ],
+      "inputHints": [
+        "任务范围",
+        "成功判据",
+        "代价口径"
+      ],
+      "steps": [
+        "筛选已完成任务",
+        "关联战果损失消耗和指令",
+        "评估达成度、代价与可复用经验"
+      ],
+      "chartTypes": [
+        "radar",
+        "scatter",
+        "bar"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "routes",
+        "areas"
+      ],
+      "focusMetrics": [
+        "目标达成率",
+        "损耗交换比",
+        "单位资源产出"
+      ],
       "analysisGoal": "同时呈现任务效果与代价，区分事实、指标计算和经验性判断。"
     },
     {
@@ -316,14 +818,40 @@
       "name": "部队战备状态分析",
       "description": "综合人员编现、可部署兵力、装备完好和保障状态评估单位战备水平。",
       "category": "战备保障",
-      "triggers": ["战备状态", "战备水平", "可部署兵力", "部队准备度"],
-      "recommendedQuestions": ["评估各单位当前战备状态", "哪些单位存在人员或装备战备短板"],
-      "inputHints": ["单位", "区域", "战备阈值"],
-      "steps": ["汇总人员与可部署兵力", "关联装备完好和库存保障", "计算战备维度并识别短板"],
-      "dataSources": ["t_force", "t_equipment", "t_inventory", "t_deployment"],
-      "chartTypes": ["radar", "gauge", "bar"],
-      "mapLayerTypes": ["points", "areas"],
-      "focusMetrics": ["综合战备率", "人员到位率", "装备完好率"],
+      "triggers": [
+        "战备状态",
+        "战备水平",
+        "可部署兵力",
+        "部队准备度"
+      ],
+      "recommendedQuestions": [
+        "评估各单位当前战备状态",
+        "哪些单位存在人员或装备战备短板"
+      ],
+      "inputHints": [
+        "单位",
+        "区域",
+        "战备阈值"
+      ],
+      "steps": [
+        "汇总人员与可部署兵力",
+        "关联装备完好和库存保障",
+        "计算战备维度并识别短板"
+      ],
+      "chartTypes": [
+        "radar",
+        "gauge",
+        "bar"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "areas"
+      ],
+      "focusMetrics": [
+        "综合战备率",
+        "人员到位率",
+        "装备完好率"
+      ],
       "analysisGoal": "按人员、装备和保障分解战备水平，避免用单一平均值掩盖单位短板。",
       "featured": true
     },
@@ -333,14 +861,40 @@
       "name": "装备健康度分析",
       "description": "统计装备总量、可用、故障、在线状态及型号分布，识别健康度下降单位。",
       "category": "战备保障",
-      "triggers": ["装备健康", "装备完好", "故障装备", "在线率"],
-      "recommendedQuestions": ["分析各单位装备健康度和完好率", "找出故障率最高的装备型号与单位"],
-      "inputHints": ["单位", "装备型号", "时间点"],
-      "steps": ["汇总装备状态", "按单位型号计算健康指标", "关联维修记录定位故障压力"],
-      "dataSources": ["t_equipment", "t_maintenance"],
-      "chartTypes": ["bar", "gauge", "pie"],
-      "mapLayerTypes": ["points", "clusters"],
-      "focusMetrics": ["装备完好率", "在线率", "故障率"],
+      "triggers": [
+        "装备健康",
+        "装备完好",
+        "故障装备",
+        "在线率"
+      ],
+      "recommendedQuestions": [
+        "分析各单位装备健康度和完好率",
+        "找出故障率最高的装备型号与单位"
+      ],
+      "inputHints": [
+        "单位",
+        "装备型号",
+        "时间点"
+      ],
+      "steps": [
+        "汇总装备状态",
+        "按单位型号计算健康指标",
+        "关联维修记录定位故障压力"
+      ],
+      "chartTypes": [
+        "bar",
+        "gauge",
+        "pie"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "clusters"
+      ],
+      "focusMetrics": [
+        "装备完好率",
+        "在线率",
+        "故障率"
+      ],
       "analysisGoal": "比较单位和型号健康度，说明在修、待件和不可用装备对战备的影响。"
     },
     {
@@ -349,14 +903,40 @@
       "name": "维修保障压力分析",
       "description": "跟踪故障、维修时长、备件状态与积压任务，评估维修保障压力。",
       "category": "战备保障",
-      "triggers": ["维修保障", "维修压力", "备件短缺", "维修积压"],
-      "recommendedQuestions": ["分析当前维修保障压力和积压", "哪些装备因备件或维修时长影响可用率"],
-      "inputHints": ["装备型号", "单位", "超时阈值"],
-      "steps": ["读取故障和维修记录", "计算维修周期与积压", "关联备件状态并定位瓶颈"],
-      "dataSources": ["t_maintenance", "t_equipment", "t_inventory"],
-      "chartTypes": ["bar", "line", "pie"],
-      "mapLayerTypes": ["points", "flow"],
-      "focusMetrics": ["在修数量", "平均维修时长", "备件缺口"],
+      "triggers": [
+        "维修保障",
+        "维修压力",
+        "备件短缺",
+        "维修积压"
+      ],
+      "recommendedQuestions": [
+        "分析当前维修保障压力和积压",
+        "哪些装备因备件或维修时长影响可用率"
+      ],
+      "inputHints": [
+        "装备型号",
+        "单位",
+        "超时阈值"
+      ],
+      "steps": [
+        "读取故障和维修记录",
+        "计算维修周期与积压",
+        "关联备件状态并定位瓶颈"
+      ],
+      "chartTypes": [
+        "bar",
+        "line",
+        "pie"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "flow"
+      ],
+      "focusMetrics": [
+        "在修数量",
+        "平均维修时长",
+        "备件缺口"
+      ],
       "analysisGoal": "识别维修能力、备件和故障结构造成的瓶颈，量化其对装备可用率的影响。"
     },
     {
@@ -365,14 +945,41 @@
       "name": "资源保障能力分析",
       "description": "综合库存、消耗、补给进度和运输能力评估任务资源保障水平。",
       "category": "战备保障",
-      "triggers": ["资源保障", "保障能力", "物资保障", "资源缺口"],
-      "recommendedQuestions": ["评估当前资源保障能力和主要缺口", "按任务区域分析库存、消耗与补给匹配度"],
-      "inputHints": ["资源类型", "任务", "保障天数"],
-      "steps": ["汇总库存和任务消耗", "关联补给计划与运输能力", "测算可支撑时长和缺口"],
-      "dataSources": ["t_inventory", "t_resource_consume", "t_supply", "t_mission"],
-      "chartTypes": ["radar", "bar", "gauge"],
-      "mapLayerTypes": ["points", "routes", "flow"],
-      "focusMetrics": ["保障满足率", "预计支撑天数", "资源缺口"],
+      "triggers": [
+        "资源保障",
+        "保障能力",
+        "物资保障",
+        "资源缺口"
+      ],
+      "recommendedQuestions": [
+        "评估当前资源保障能力和主要缺口",
+        "按任务区域分析库存、消耗与补给匹配度"
+      ],
+      "inputHints": [
+        "资源类型",
+        "任务",
+        "保障天数"
+      ],
+      "steps": [
+        "汇总库存和任务消耗",
+        "关联补给计划与运输能力",
+        "测算可支撑时长和缺口"
+      ],
+      "chartTypes": [
+        "radar",
+        "bar",
+        "gauge"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "routes",
+        "flow"
+      ],
+      "focusMetrics": [
+        "保障满足率",
+        "预计支撑天数",
+        "资源缺口"
+      ],
       "analysisGoal": "展示库存、消耗和在途补给的动态平衡，标出测算假设和关键缺口。"
     },
     {
@@ -381,14 +988,40 @@
       "name": "弹药库存与消耗预警",
       "description": "按弹药品类跟踪库存、任务消耗、在途补给和安全库存预警。",
       "category": "战备保障",
-      "triggers": ["弹药库存", "弹药消耗", "库存预警", "安全库存"],
-      "recommendedQuestions": ["展示各类弹药库存与消耗预警", "按当前消耗速度预测弹药可支撑时长"],
-      "inputHints": ["弹药类型", "预测周期", "安全库存"],
-      "steps": ["汇总弹药库存与消耗", "纳入补给计划和在途数量", "预测耗尽时间并触发分级预警"],
-      "dataSources": ["t_inventory", "t_resource_consume", "t_supply"],
-      "chartTypes": ["line", "gauge", "bar"],
-      "mapLayerTypes": ["points", "routes"],
-      "focusMetrics": ["当前库存", "日均消耗", "预计支撑天数"],
+      "triggers": [
+        "弹药库存",
+        "弹药消耗",
+        "库存预警",
+        "安全库存"
+      ],
+      "recommendedQuestions": [
+        "展示各类弹药库存与消耗预警",
+        "按当前消耗速度预测弹药可支撑时长"
+      ],
+      "inputHints": [
+        "弹药类型",
+        "预测周期",
+        "安全库存"
+      ],
+      "steps": [
+        "汇总弹药库存与消耗",
+        "纳入补给计划和在途数量",
+        "预测耗尽时间并触发分级预警"
+      ],
+      "chartTypes": [
+        "line",
+        "gauge",
+        "bar"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "routes"
+      ],
+      "focusMetrics": [
+        "当前库存",
+        "日均消耗",
+        "预计支撑天数"
+      ],
       "analysisGoal": "按品类给出库存趋势和预警等级，清楚区分实有、在途与预测数量。"
     },
     {
@@ -397,14 +1030,41 @@
       "name": "补给计划进度分析",
       "description": "对比计划量、送达量、进度、运输能力和任务需求，跟踪补给兑现情况。",
       "category": "战备保障",
-      "triggers": ["补给进度", "补给计划", "物资送达", "补给延误"],
-      "recommendedQuestions": ["展示当前补给计划执行进度", "哪些补给任务存在延误或运力不足"],
-      "inputHints": ["计划编号", "资源类型", "截止时间"],
-      "steps": ["读取补给计划与送达量", "比较计划进度和任务需求", "识别延误、短交和运力瓶颈"],
-      "dataSources": ["t_supply", "t_inventory", "t_mission"],
-      "chartTypes": ["bar", "gauge", "line"],
-      "mapLayerTypes": ["routes", "points", "flow"],
-      "focusMetrics": ["计划完成率", "送达差额", "运输能力"],
+      "triggers": [
+        "补给进度",
+        "补给计划",
+        "物资送达",
+        "补给延误"
+      ],
+      "recommendedQuestions": [
+        "展示当前补给计划执行进度",
+        "哪些补给任务存在延误或运力不足"
+      ],
+      "inputHints": [
+        "计划编号",
+        "资源类型",
+        "截止时间"
+      ],
+      "steps": [
+        "读取补给计划与送达量",
+        "比较计划进度和任务需求",
+        "识别延误、短交和运力瓶颈"
+      ],
+      "chartTypes": [
+        "bar",
+        "gauge",
+        "line"
+      ],
+      "mapLayerTypes": [
+        "routes",
+        "points",
+        "flow"
+      ],
+      "focusMetrics": [
+        "计划完成率",
+        "送达差额",
+        "运输能力"
+      ],
       "analysisGoal": "按计划解释补给兑现程度和延误原因，展示其对应任务与区域影响。"
     },
     {
@@ -413,14 +1073,40 @@
       "name": "保障路线风险分析",
       "description": "叠加补给路线、威胁点、区域风险与运输能力，识别保障通道风险。",
       "category": "战备保障",
-      "triggers": ["保障路线", "补给路线", "运输风险", "通道风险"],
-      "recommendedQuestions": ["分析当前补给路线的威胁与中断风险", "找出高风险保障通道和受影响任务"],
-      "inputHints": ["路线", "资源类型", "风险半径"],
-      "steps": ["构建补给起止点和路线", "叠加威胁与异常区域", "评估路线暴露、运力和替代性"],
-      "dataSources": ["t_supply", "t_threat", "t_warning_event"],
-      "chartTypes": ["bar", "scatter", "gauge"],
-      "mapLayerTypes": ["routes", "points"],
-      "focusMetrics": ["路线风险指数", "受威胁路段数", "替代通道能力"],
+      "triggers": [
+        "保障路线",
+        "补给路线",
+        "运输风险",
+        "通道风险"
+      ],
+      "recommendedQuestions": [
+        "分析当前补给路线的威胁与中断风险",
+        "找出高风险保障通道和受影响任务"
+      ],
+      "inputHints": [
+        "路线",
+        "资源类型",
+        "风险半径"
+      ],
+      "steps": [
+        "构建补给起止点和路线",
+        "叠加威胁与异常区域",
+        "评估路线暴露、运力和替代性"
+      ],
+      "chartTypes": [
+        "bar",
+        "scatter",
+        "gauge"
+      ],
+      "mapLayerTypes": [
+        "routes",
+        "points"
+      ],
+      "focusMetrics": [
+        "路线风险指数",
+        "受威胁路段数",
+        "替代通道能力"
+      ],
       "analysisGoal": "描述路线风险及证据来源，标记高风险路段和替代通道条件，不直接给出行动指令。"
     },
     {
@@ -429,14 +1115,40 @@
       "name": "战损分布评估",
       "description": "按时间、区域、单位和装备类型展示战损与人员伤亡分布及影响。",
       "category": "损耗复盘",
-      "triggers": ["战损评估", "损失分布", "人员伤亡", "装备损失"],
-      "recommendedQuestions": ["评估近期各区域和单位战损分布", "展示装备损失与人员伤亡的主要类型"],
-      "inputHints": ["时间范围", "区域", "损失类型"],
-      "steps": ["汇总战损与任务记录", "按区域单位装备分组", "分析损失结构及战备影响"],
-      "dataSources": ["t_combat_loss", "t_mission", "t_equipment", "t_force"],
-      "chartTypes": ["bar", "pie", "line"],
-      "mapLayerTypes": ["points", "areas"],
-      "focusMetrics": ["装备损失量", "人员伤亡量", "战备影响度"],
+      "triggers": [
+        "战损评估",
+        "损失分布",
+        "人员伤亡",
+        "装备损失"
+      ],
+      "recommendedQuestions": [
+        "评估近期各区域和单位战损分布",
+        "展示装备损失与人员伤亡的主要类型"
+      ],
+      "inputHints": [
+        "时间范围",
+        "区域",
+        "损失类型"
+      ],
+      "steps": [
+        "汇总战损与任务记录",
+        "按区域单位装备分组",
+        "分析损失结构及战备影响"
+      ],
+      "chartTypes": [
+        "bar",
+        "pie",
+        "line"
+      ],
+      "mapLayerTypes": [
+        "points",
+        "areas"
+      ],
+      "focusMetrics": [
+        "装备损失量",
+        "人员伤亡量",
+        "战备影响度"
+      ],
       "analysisGoal": "准确描述损失规模、结构、时间与空间分布，并区分原始记录与推算影响。",
       "featured": true
     },
@@ -446,14 +1158,39 @@
       "name": "损耗趋势与拐点分析",
       "description": "跟踪战损、资源消耗和装备故障趋势，检测突增、拐点及持续高位。",
       "category": "损耗复盘",
-      "triggers": ["损耗趋势", "损失趋势", "消耗拐点", "损耗上升"],
-      "recommendedQuestions": ["分析近 30 天损耗趋势和关键拐点", "哪些单位或装备的损耗持续上升"],
-      "inputHints": ["时间范围", "损耗类型", "单位"],
-      "steps": ["构建损耗时间序列", "计算移动趋势与异常点", "关联任务和故障解释拐点"],
-      "dataSources": ["t_combat_loss", "t_resource_consume", "t_maintenance"],
-      "chartTypes": ["line", "scatter", "bar"],
-      "mapLayerTypes": ["points"],
-      "focusMetrics": ["损耗量", "环比变化率", "异常拐点数"],
+      "triggers": [
+        "损耗趋势",
+        "损失趋势",
+        "消耗拐点",
+        "损耗上升"
+      ],
+      "recommendedQuestions": [
+        "分析近 30 天损耗趋势和关键拐点",
+        "哪些单位或装备的损耗持续上升"
+      ],
+      "inputHints": [
+        "时间范围",
+        "损耗类型",
+        "单位"
+      ],
+      "steps": [
+        "构建损耗时间序列",
+        "计算移动趋势与异常点",
+        "关联任务和故障解释拐点"
+      ],
+      "chartTypes": [
+        "line",
+        "scatter",
+        "bar"
+      ],
+      "mapLayerTypes": [
+        "points"
+      ],
+      "focusMetrics": [
+        "损耗量",
+        "环比变化率",
+        "异常拐点数"
+      ],
       "analysisGoal": "展示趋势、波动和拐点，并用关联事件解释而非把相关性表述为因果。"
     },
     {
@@ -462,14 +1199,41 @@
       "name": "行动方案态势对比",
       "description": "将多个评估方案投射到任务、风险、资源、时间和区域维度进行并列比较。",
       "category": "决策辅助",
-      "triggers": ["方案对比", "行动方案", "哪种方案", "评估对比"],
-      "recommendedQuestions": ["对比多个行动方案的效果、风险与资源代价", "把当前评估方案生成区域态势对比"],
-      "inputHints": ["方案 ID", "评价维度", "关注区域"],
-      "steps": ["读取方案与评估结果", "统一指标和约束口径", "对比空间影响、效果、风险和代价"],
-      "dataSources": ["evaluation", "indicator", "t_mission", "t_resource_consume"],
-      "chartTypes": ["radar", "bar", "scatter"],
-      "mapLayerTypes": ["areas", "routes", "points"],
-      "focusMetrics": ["方案效果", "综合风险", "资源代价"],
+      "triggers": [
+        "方案对比",
+        "行动方案",
+        "哪种方案",
+        "评估对比"
+      ],
+      "recommendedQuestions": [
+        "对比多个行动方案的效果、风险与资源代价",
+        "把当前评估方案生成区域态势对比"
+      ],
+      "inputHints": [
+        "方案 ID",
+        "评价维度",
+        "关注区域"
+      ],
+      "steps": [
+        "读取方案与评估结果",
+        "统一指标和约束口径",
+        "对比空间影响、效果、风险和代价"
+      ],
+      "chartTypes": [
+        "radar",
+        "bar",
+        "scatter"
+      ],
+      "mapLayerTypes": [
+        "areas",
+        "routes",
+        "points"
+      ],
+      "focusMetrics": [
+        "方案效果",
+        "综合风险",
+        "资源代价"
+      ],
       "analysisGoal": "并列展示方案差异、约束和数据依据，不隐去不可比指标或缺失数据。"
     },
     {
@@ -478,15 +1242,115 @@
       "name": "态势数据质量诊断",
       "description": "检查参与态势生成的数据完整性、时效性、一致性和空间覆盖，提示结论置信度。",
       "category": "决策辅助",
-      "triggers": ["数据质量", "数据完整性", "缺失数据", "可信度"],
-      "recommendedQuestions": ["诊断当前态势数据质量和覆盖范围", "哪些区域或指标因数据缺失影响分析可信度"],
-      "inputHints": ["数据来源", "质量阈值", "区域"],
-      "steps": ["盘点数据来源与更新时间", "检查缺失、重复、冲突和异常", "映射覆盖空白并评估影响"],
-      "dataSources": ["admin", "indicator", "knowledge", "evaluation"],
-      "chartTypes": ["gauge", "bar", "heatmap"],
-      "mapLayerTypes": ["areas"],
-      "focusMetrics": ["完整率", "时效性", "空间覆盖率"],
+      "triggers": [
+        "数据质量",
+        "数据完整性",
+        "缺失数据",
+        "可信度"
+      ],
+      "recommendedQuestions": [
+        "诊断当前态势数据质量和覆盖范围",
+        "哪些区域或指标因数据缺失影响分析可信度"
+      ],
+      "inputHints": [
+        "数据来源",
+        "质量阈值",
+        "区域"
+      ],
+      "steps": [
+        "盘点数据来源与更新时间",
+        "检查缺失、重复、冲突和异常",
+        "映射覆盖空白并评估影响"
+      ],
+      "chartTypes": [
+        "gauge",
+        "bar",
+        "heatmap"
+      ],
+      "mapLayerTypes": [
+        "areas"
+      ],
+      "focusMetrics": [
+        "完整率",
+        "时效性",
+        "空间覆盖率"
+      ],
       "analysisGoal": "明确展示数据质量问题、影响范围和置信度，不用缺失值推断确定结论。"
+    },
+    {
+      "order": 31,
+      "id": "olist-delivery-overview",
+      "name": "电商配送态势分析",
+      "description": "融合配送轨迹、订单、地理位置与订单项数据，刻画配送网络运行态势。",
+      "category": "物流态势",
+      "triggers": [
+        "配送态势",
+        "物流态势",
+        "配送轨迹",
+        "电商配送",
+        "配送网络"
+      ],
+      "recommendedQuestions": [
+        "分析近30天电商配送网络运行态势",
+        "展示各城市配送里程与状态构成"
+      ],
+      "inputHints": [
+        "时间范围",
+        "配送状态"
+      ],
+      "steps": [
+        "汇聚配送轨迹与订单数据",
+        "按城市对和状态聚合里程与订单量",
+        "生成图表、配送路线图层与态势说明"
+      ],
+      "chartTypes": [
+        "bar",
+        "line",
+        "pie"
+      ],
+      "mapLayerTypes": [
+        "routes",
+        "points",
+        "areas"
+      ],
+      "focusMetrics": [
+        "配送总里程",
+        "配送状态构成",
+        "城市对订单量",
+        "平均配送时长"
+      ],
+      "analysisGoal": "从配送网络视角描述城市对流量、里程分布与状态构成，标明数据时间与重点关注区域。",
+      "featured": true,
+      "parameters": [
+        {
+          "key": "时间范围",
+          "label": "时间范围",
+          "type": "select",
+          "required": false,
+          "options": [
+            "近24小时",
+            "近7天",
+            "近30天",
+            "近90天"
+          ],
+          "default": "近30天",
+          "placeholder": "请选择时间范围"
+        },
+        {
+          "key": "配送状态",
+          "label": "配送状态",
+          "type": "select",
+          "required": false,
+          "options": [
+            "全部",
+            "配送中",
+            "已签收",
+            "运输中"
+          ],
+          "default": "全部",
+          "placeholder": "请选择配送状态"
+        }
+      ]
     }
   ]
 }

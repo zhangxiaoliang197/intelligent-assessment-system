@@ -194,20 +194,6 @@
                         <SituationNarrative :narrative="store.narrative" />
                       </div>
 
-                      <div v-if="hasVerificationEvidence" class="evidence-strip" aria-label="结果验证信息">
-                        <el-tag
-                          size="small"
-                          :type="verificationPassed ? 'success' : 'warning'"
-                          effect="plain"
-                        >
-                          {{ verificationPassed ? '结果已验证' : '结果待复核' }}
-                        </el-tag>
-                        <span v-if="evidenceHashText" :title="evidenceHashText">
-                          证据 {{ evidenceHashText.slice(0, 12) }}
-                        </span>
-                        <span v-if="provenanceDatasetCount">{{ provenanceDatasetCount }} 个来源数据集</span>
-                      </div>
-
                       <!-- 错误提示 -->
                       <div v-if="store.errorMsg">
                         <el-alert :title="store.errorMsg" type="error" :closable="false" show-icon />
@@ -529,27 +515,6 @@ const suggests = [
 const isEmpty = computed(() =>
   !store.query && !store.isGenerating && store.status === 'idle'
 )
-
-const verificationRecords = computed(() => [
-  store.evidence.verification,
-  ...store.charts.map((chart) => chart.verification),
-  ...store.mapLayers.map((layer) => layer.verification),
-].filter((item): item is Record<string, any> => Boolean(item && Object.keys(item).length)))
-
-const hasVerificationEvidence = computed(() => Boolean(
-  store.evidence.evidenceHash
-  || verificationRecords.value.length
-  || store.charts.some((chart) => chart.provenance && Object.keys(chart.provenance).length)
-))
-const verificationPassed = computed(() => verificationRecords.value.length > 0
-  && verificationRecords.value.every((item) => item.verified === true || item.valid === true || item.status === 'verified'))
-const evidenceHashText = computed(() => store.evidence.evidenceHash
-  || store.datasets.find((dataset) => dataset.evidenceHash)?.evidenceHash
-  || '')
-const provenanceDatasetCount = computed(() => new Set([
-  ...store.datasets.map((dataset) => dataset.datasetId),
-  ...store.charts.map((chart) => String(chart.provenance?.datasetId || '')).filter(Boolean),
-]).size)
 
 const filteredHistory = computed(() => {
   const kw = historySearch.value.trim().toLowerCase()
@@ -1113,19 +1078,6 @@ async function deleteHistory(targetId: string) {
 .tree-section, .references-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
 .data-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
 .ai-map-section { padding: 0; overflow: hidden; height: 460px; }
-.evidence-strip {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  margin-top: 10px;
-  padding: 9px 12px;
-  border: 1px solid #dbeafe;
-  border-radius: 8px;
-  color: #64748b;
-  background: #f8fbff;
-  font-size: 12px;
-}
 .ai-map-section :deep(.map-container) { height: 100%; }
 
 /* ── 操作按钮 ── */

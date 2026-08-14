@@ -177,10 +177,16 @@ def build_plan_messages(query: str, meta: dict) -> list:
 
 
 def build_chart_messages(query: str, data_context: dict, plan: dict) -> list:
-    """阶段3：产图。LLM 基于真实数据行生成 ECharts option 数组。"""
+    """阶段3：产图。LLM 基于真实数据行生成 ECharts option 数组。
+
+    v1.1 调整：
+    - 图表数量 2-4 个（原 1-4）
+    - 允许相同 type 重复（撤销原"类型互不相同"约束）
+    - 增加"图表类型-数据适配"规则，避免 pie 塞过多分类等错配
+    """
     plans = plan.get("chartsPlan", [])
     plans_text = "\n".join(f"- {p.get('type','')}: {p.get('title','')}（{p.get('intent','')}）"
-                           for p in plans) or "（规划阶段未指定图表，请根据数据自行设计 1-4 个最贴切问题的图表，按需选择图表个数）"
+                           for p in plans) or "（规划阶段未指定图表，请根据数据自行设计 2-4 个最贴切问题的图表，按需选择图表个数）"
     data_text = ""
     for ds_id, ds_data in data_context.items():
         data_text += f"\n--- 数据集 {ds_id} ---\n{_format_data(ds_data)}\n"
@@ -192,13 +198,61 @@ def build_chart_messages(query: str, data_context: dict, plan: dict) -> list:
             "基于脱敏聚合证据，生成 ECharts option JSON 数组。每个图表的 option 必须内联可由 numericStats/categoryCounts/groupedStats 复算的值，禁止占位符。\n"
             "返回 JSON 数组（仅 JSON）：\n"
             '[{"chartId": "c_1", "type": "line", "title": "标题", "option": {ECharts完整option(内联样本数据)}, "datasetRef": "数据集ID", "fieldMapping": {"xField": "分类字段名", "yFields": ["数值字段1", "数值字段2"]}, "explanation": "一句话说明"}]\n'
-            "规则：chartId 用 c_1/c_2...；option 必须是合法 ECharts 配置（含 series/xAxis/yAxis 等）；"
-            "图表类型必须互不相同（每个 type 只能出现一次），并优先覆盖上方图表规划给出的不同类型，禁止生成两个相同类型的图表；"
+            "规则：chartId 用 c_1/c_2...；option 必须是合法 ECharts 配置（含 series/xAxis/yAxis 等）；\n"
+            "**图表数量 2-4 个；允许相同 type 重复**（如两个 line 图各展示不同维度）；\n"
+            "**图表类型-数据适配规则（必须遵守，违反会被校验拦截）**：\n"
+            "- pie：分类数 ≤ 8（超过应合并为「其他」或改用 bar）；分片数值不得为负；\n"
+            "- radar：维度数 ∈ [3, 12]；\n"
+            "- line：X 轴样本数 ≥ 2（至少两个点才成线）；\n"
+            "- bar：分类数 ≤ 30；\n"
+            "- scatter：点数 ≥ 5；\n"
             "数据只能来自上方聚合证据，不得编造；series 中每个数值必须逐字等于证据中出现的 sum/avg/count 值，"
             "禁止估算、取整或跨字段换算；datasetRef 必须使用所列数据集 ID；若无合适数据可降级为说明性图表；"
             "若图表基于数据集明细行直接可视化（bar/line/scatter/pie），必须在 fieldMapping 给出 xField（分类/X轴字段）与 yFields（数值/Y轴字段列表），供前端用全量数据重建；"
             "若图表是聚合汇总结果（option 已内联全部聚合值），fieldMapping 可省略。"},
         {"role": "user", "content": f"用户问题：{query}\n\n图表规划：\n{plans_text}\n\n真实数据：\n{data_text}"},
+    ]
+
+
+def build_single_chart_messages(
+    query: str,
+    chart_spec: dict,
+    evidence_text: str,
+    allowed_chart_types: list,
+) -> list:
+    """单图 prompt（阶段3 并行 Writer 用）：一个 chart_spec + 一条证据 → 一个 chart。
+
+    与 build_chart_messages 的差异：
+    - 输入只针对单个 chartSpec，不需要返回数组
+    - LLM 只产出 1 个图表，端到端延迟更低（并行 N 次 LLM 调用）
+    - 仍受相同"类型-数据适配"规则约束
+    """
+    chart_id = chart_spec.get("id", "")
+    chart_type = chart_spec.get("type", "")
+    title = chart_spec.get("title", "")
+    intent = chart_spec.get("intent", "")
+    return [
+        {"role": "system", "content": get_system_prompt() +
+            "\n\n【当前阶段：产图（单图 Writer）】\n"
+            "为指定的单个图表规格生成 ECharts option。option 必须内联可由证据复算的数值，禁止占位符。\n"
+            "返回 JSON（仅 JSON，单个对象，非数组）：\n"
+            '{"chartId": "...", "type": "...", "title": "...", "option": {ECharts完整option}, '
+            '"datasetRef": "...", "fieldMapping": {"xField": "...", "yFields": [...]}, "explanation": "..."}\n'
+            "规则：\n"
+            f"- chartId 必须使用规格中给定的值「{chart_id}」；type 必须为「{chart_type}」（仅可在 {allowed_chart_types} 内）；\n"
+            "- **图表类型-数据适配规则（必须遵守）**：\n"
+            "  · pie：分类数 ≤ 8（超过应合并为「其他」）；分片数值不得为负；\n"
+            "  · radar：维度数 ∈ [3, 12]；\n"
+            "  · line：X 轴样本数 ≥ 2；\n"
+            "  · bar：分类数 ≤ 30；\n"
+            "  · scatter：点数 ≥ 5；\n"
+            "- 数据只能来自下方证据，不得编造；series 中每个数值必须逐字等于证据中的 sum/avg/count；\n"
+            "- fieldMapping 必填 xField（分类字段）和 yFields（数值字段列表）。"},
+        {"role": "user", "content": (
+            f"用户问题：{query}\n\n"
+            f"图表规格：\n- {chart_type}: {title}（{intent}）\n\n"
+            f"证据数据：\n{evidence_text}"
+        )},
     ]
 
 

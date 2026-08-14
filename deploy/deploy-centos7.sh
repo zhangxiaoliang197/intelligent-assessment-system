@@ -294,10 +294,6 @@ services:
     restart: always
     environment:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
-      - QA_SERVICE_URL=http://assessment-qa:10253
-      - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
-      - INDICATOR_SERVICE_URL=http://assessment-indicator:10254
-      - SITUATION_GENERATION_MODE=real
       - SITUATION_ALLOW_DATA_FALLBACK=true
       - SITUATION_MAX_INFLIGHT=8
       - SITUATION_MAX_CONCURRENT=2
