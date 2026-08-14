@@ -1,5 +1,7 @@
 FROM nginx:1.24-alpine
+RUN apk add --no-cache apache2-utils
 COPY frontend/dist /usr/share/nginx/html
-COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker/nginx.conf /etc/nginx/templates/default.conf.template
+COPY docker/frontend-entrypoint.sh /docker-entrypoint.d/05-admin-auth.sh
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

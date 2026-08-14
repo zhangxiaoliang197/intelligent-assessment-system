@@ -20,7 +20,7 @@ class DraftRequest(BaseModel):
     """创建草稿态请求。"""
     source: str = "manual"           # manual | qa | indicator | evaluation
     context: DraftContext = Field(default_factory=DraftContext)
-    userId: str = "local-admin"
+    userId: str = "local-user"
     teamIds: List[str] = Field(default_factory=list)
 
 
@@ -30,7 +30,7 @@ class GenerateRequest(BaseModel):
     draftId: Optional[str] = None
     source: str = "manual"
     context: Dict[str, Any] = Field(default_factory=dict)
-    userId: str = "local-admin"
+    userId: str = "local-user"
     teamIds: List[str] = Field(default_factory=list)
     autoRefresh: bool = False
     skillId: str = ""
@@ -50,6 +50,7 @@ class SkillApplyRequest(BaseModel):
     """预执行 Skill，返回最终问题和可审计执行计划。"""
     query: str = Field(default="", max_length=2000)
     parameters: Dict[str, Any] = Field(default_factory=dict)
+    dataSourceId: str = Field(default="", max_length=128)
 
 
 class SkillFavoriteRequest(BaseModel):
@@ -87,6 +88,7 @@ class ChartSpec(BaseModel):
     option: Dict[str, Any]
     explanation: str = ""
     datasetRef: str = ""
+    fieldMapping: Dict[str, Any] = Field(default_factory=dict)
     provenance: Dict[str, Any] = Field(default_factory=dict)
     verification: Dict[str, Any] = Field(default_factory=dict)
 
@@ -99,6 +101,9 @@ class MapLayerSpec(BaseModel):
     areas: List[Dict[str, Any]] = Field(default_factory=list)
     circles: List[Dict[str, Any]] = Field(default_factory=list)
     layerConfig: Dict[str, Any] = Field(default_factory=dict)
+    datasetRef: str = ""
+    fieldMapping: Dict[str, Any] = Field(default_factory=dict)
+    verification: Dict[str, Any] = Field(default_factory=dict)
 
 
 class Explanation(BaseModel):
@@ -125,6 +130,8 @@ class DatasetSummary(BaseModel):
     truncated: bool = False
     evidenceHash: str = ""
     execution: Dict[str, Any] = Field(default_factory=dict)
+    columns: List[str] = Field(default_factory=list)
+    data: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class Report(BaseModel):
@@ -140,7 +147,7 @@ class Report(BaseModel):
     skillRevision: int = 1
     skillVersion: int = 1
     skillContentHash: str = ""
-    userId: str = "local-admin"
+    userId: str = "local-user"
     teamIds: List[str] = Field(default_factory=list)
     status: str = "generating"        # generating | ready | partial | failed
     # 数据源 ID（透传到 stream 阶段供 real_generate 过滤数据集 schema；仅生成期使用，落库 snapshot 也包含）
@@ -149,3 +156,4 @@ class Report(BaseModel):
     map: Dict[str, Any] = Field(default_factory=dict)         # { layers: [MapLayerSpec] }
     narrative: Narrative = Field(default_factory=Narrative)
     datasets: List[DatasetSummary] = Field(default_factory=list)
+    execution: List[Dict[str, Any]] = Field(default_factory=list)

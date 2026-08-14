@@ -2,6 +2,7 @@ package com.assessment.admin.controller;
 
 import com.assessment.admin.model.SituationReport;
 import com.assessment.admin.repository.SituationReportRepository;
+import com.assessment.admin.security.TrustedRequestAuthorizer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -28,8 +29,8 @@ public class SituationController {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    @org.springframework.beans.factory.annotation.Value("${internal.service-token:local-development-token}")
-    private String internalServiceToken;
+    @Autowired
+    private TrustedRequestAuthorizer authorizer;
 
     // ==================== 产物 CRUD ====================
 
@@ -37,15 +38,26 @@ public class SituationController {
     @PostMapping("/reports")
     public ResponseEntity<Map<String, Object>> createReport(
             @RequestHeader(value = "X-Service-Token", required = false) String serviceToken,
+            @RequestHeader(value = "X-User-Id", required = false) String actorUserId,
+            @RequestHeader(value = "X-Team-Ids", required = false) String actorTeamIds,
             @RequestBody Map<String, Object> body) {
-        if (!Objects.equals(internalServiceToken, serviceToken)) return unauthorizedService();
+        if (!authorizer.isTrustedService(serviceToken)) return unauthorizedService();
+        if (actorUserId == null || actorUserId.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "缺少产物归属用户"));
+        }
         SituationReport r = new SituationReport();
         r.setId(getStr(body, "reportId"));
+        if (r.getId().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "缺少 reportId"));
+        }
+        if (reportRepo.existsById(r.getId())) {
+            return ResponseEntity.status(409).body(Map.of("success", false, "message", "产物已存在"));
+        }
         r.setTitle(getStr(body, "title"));
         r.setQuery(getStr(body, "query"));
         r.setSource(getStr(body, "source"));
-        r.setUserId(getStr(body, "userId"));
-        r.setTeamIds(getStr(body, "teamIds"));
+        r.setUserId(actorUserId.trim());
+        r.setTeamIds(normalizeTeams(actorTeamIds));
         r.setStatus(getStr(body, "status"));
         r.setSnapshotJson(toJson(body.get("snapshot")));
         reportRepo.save(r);
@@ -56,8 +68,14 @@ public class SituationController {
     @PutMapping("/reports/{reportId}")
     public ResponseEntity<Map<String, Object>> updateReport(@PathVariable String reportId,
                                                             @RequestHeader(value = "X-Service-Token", required = false) String serviceToken,
+                                                            @RequestHeader(value = "X-User-Id", required = false) String actorUserId,
+                                                            @RequestHeader(value = "X-Team-Ids", required = false) String actorTeamIds,
+                                                            @RequestHeader(value = "X-User-Role", required = false) String actorRole,
                                                             @RequestBody Map<String, Object> body) {
-        if (!Objects.equals(internalServiceToken, serviceToken)) return unauthorizedService();
+        if (!authorizer.isTrustedService(serviceToken)) return unauthorizedService();
+        if (actorUserId == null || actorUserId.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "缺少产物归属用户"));
+        }
         Optional<SituationReport> opt = reportRepo.findById(reportId);
         SituationReport r;
         boolean created = false;
@@ -68,12 +86,17 @@ public class SituationController {
             created = true;
         } else {
             r = opt.get();
+            if (!canAccess(r, actorUserId, actorTeamIds, actorRole)) {
+                return ResponseEntity.status(403).body(Map.of("success", false, "message", "无权更新该产物"));
+            }
         }
         if (body.containsKey("title")) r.setTitle(getStr(body, "title"));
         if (body.containsKey("query")) r.setQuery(getStr(body, "query"));
         if (body.containsKey("source")) r.setSource(getStr(body, "source"));
-        if (body.containsKey("userId")) r.setUserId(getStr(body, "userId"));
-        if (body.containsKey("teamIds")) r.setTeamIds(getStr(body, "teamIds"));
+        if (created) {
+            r.setUserId(actorUserId.trim());
+            r.setTeamIds(normalizeTeams(actorTeamIds));
+        }
         if (body.containsKey("status")) r.setStatus(getStr(body, "status"));
         if (body.containsKey("snapshot")) r.setSnapshotJson(toJson(body.get("snapshot")));
         reportRepo.save(r);
@@ -91,15 +114,17 @@ public class SituationController {
             @RequestParam(value = "teamIds", required = false) String teamIdsParam,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
-        if (!Objects.equals(internalServiceToken, serviceToken)) return unauthorizedService();
+        if (!authorizer.isTrustedService(serviceToken)) return unauthorizedService();
         // Query parameters cannot widen the authenticated actor's scope.
         List<SituationReport> all = reportRepo.findAll();
         all.removeIf(report -> !canAccess(report, userId, teamIdsRaw, role));
         all.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
 
         int total = all.size();
-        int from = Math.max(0, (page - 1) * size);
-        int to = Math.min(total, from + size);
+        int safePage = Math.max(1, page);
+        int safeSize = Math.max(1, Math.min(size, 100));
+        int from = Math.min(total, (safePage - 1) * safeSize);
+        int to = Math.min(total, from + safeSize);
         List<Map<String, Object>> items = new ArrayList<>();
         for (SituationReport r : all.subList(from, to)) {
             items.add(toListItem(r));
@@ -115,7 +140,7 @@ public class SituationController {
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-Team-Ids", required = false) String teamIds,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
-        if (!Objects.equals(internalServiceToken, serviceToken)) return unauthorizedService();
+        if (!authorizer.isTrustedService(serviceToken)) return unauthorizedService();
         Optional<SituationReport> opt = reportRepo.findById(reportId);
         if (opt.isEmpty()) return ResponseEntity.status(404).body(Map.of("success", false, "message", "产物不存在"));
         if (!canAccess(opt.get(), userId, teamIds, role)) {
@@ -132,7 +157,7 @@ public class SituationController {
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-Team-Ids", required = false) String teamIds,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
-        if (!Objects.equals(internalServiceToken, serviceToken)) return unauthorizedService();
+        if (!authorizer.isTrustedService(serviceToken)) return unauthorizedService();
         Optional<SituationReport> report = reportRepo.findById(reportId);
         if (report.isEmpty()) return ResponseEntity.status(404).body(Map.of("success", false, "message", "产物不存在"));
         if (!canAccess(report.get(), userId, teamIds, role)) {
@@ -144,29 +169,53 @@ public class SituationController {
 
     // ==================== 分享 ====================
 
-    /** 生成分享 token（v1 永不过期，Q-04）。 */
+    /** Generate or rotate a time-limited share token. */
     @PostMapping("/reports/{reportId}/share")
     public ResponseEntity<Map<String, Object>> createShare(
             @PathVariable String reportId,
             @RequestHeader(value = "X-Service-Token", required = false) String serviceToken,
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-Team-Ids", required = false) String teamIds,
-            @RequestHeader(value = "X-User-Role", required = false) String role) {
-        if (!Objects.equals(internalServiceToken, serviceToken)) return unauthorizedService();
+            @RequestHeader(value = "X-User-Role", required = false) String role,
+            @RequestBody(required = false) Map<String, Object> body) {
+        if (!authorizer.isTrustedService(serviceToken)) return unauthorizedService();
         Optional<SituationReport> opt = reportRepo.findById(reportId);
         if (opt.isEmpty()) return ResponseEntity.status(404).body(Map.of("success", false, "message", "产物不存在"));
         if (!canAccess(opt.get(), userId, teamIds, role)) {
             return ResponseEntity.status(403).body(Map.of("success", false, "message", "无权分享该产物"));
         }
         SituationReport r = opt.get();
-        if (r.getShareToken() == null || r.getShareToken().isEmpty()) {
-            r.setShareToken(UUID.randomUUID().toString().replace("-", "").substring(0, 24));
-            reportRepo.save(r);
-        }
+        int ttlHours = 72;
+        if (body != null && body.get("ttlHours") instanceof Number number) ttlHours = number.intValue();
+        ttlHours = Math.max(1, Math.min(ttlHours, 24 * 30));
+        r.setShareToken(UUID.randomUUID().toString().replace("-", ""));
+        r.setShareExpiresAt(LocalDateTime.now().plusHours(ttlHours));
+        reportRepo.save(r);
         return ResponseEntity.ok(Map.of("success", true, "data", Map.of(
                 "token", r.getShareToken(),
-                "expiresAt", ""
+                "expiresAt", r.getShareExpiresAt().toString()
         )));
+    }
+
+    /** Revoke a share without deleting its report. */
+    @DeleteMapping("/reports/{reportId}/share")
+    public ResponseEntity<Map<String, Object>> revokeShare(
+            @PathVariable String reportId,
+            @RequestHeader(value = "X-Service-Token", required = false) String serviceToken,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-Team-Ids", required = false) String teamIds,
+            @RequestHeader(value = "X-User-Role", required = false) String role) {
+        if (!authorizer.isTrustedService(serviceToken)) return unauthorizedService();
+        Optional<SituationReport> opt = reportRepo.findById(reportId);
+        if (opt.isEmpty()) return ResponseEntity.status(404).body(Map.of("success", false, "message", "产物不存在"));
+        if (!canAccess(opt.get(), userId, teamIds, role)) {
+            return ResponseEntity.status(403).body(Map.of("success", false, "message", "无权撤销该分享"));
+        }
+        SituationReport report = opt.get();
+        report.setShareToken(null);
+        report.setShareExpiresAt(null);
+        reportRepo.save(report);
+        return ResponseEntity.ok(Map.of("success", true, "message", "分享已撤销"));
     }
 
     /** 公开查看（分享，无需登录态）。 */
@@ -174,6 +223,9 @@ public class SituationController {
     public ResponseEntity<Map<String, Object>> getShare(@PathVariable String token) {
         Optional<SituationReport> opt = reportRepo.findByShareToken(token);
         if (opt.isEmpty()) return ResponseEntity.status(404).body(Map.of("success", false, "message", "分享链接无效"));
+        if (opt.get().getShareExpiresAt() == null || !opt.get().getShareExpiresAt().isAfter(LocalDateTime.now())) {
+            return ResponseEntity.status(410).body(Map.of("success", false, "message", "分享链接已过期"));
+        }
         // 分享视图脱敏：不含 userId/teamIds
         SituationReport r = opt.get();
         Map<String, Object> detail = toDetail(r);
@@ -191,10 +243,16 @@ public class SituationController {
 
     private boolean canAccess(SituationReport report, String userId, String teamIds, String role) {
         if ("admin".equalsIgnoreCase(role)) return true;
-        if (userId != null && userId.equals(report.getUserId())) return true;
+        if (userId != null && userId.trim().equalsIgnoreCase(report.getUserId())) return true;
         Set<String> requestTeams = csvSet(teamIds);
         requestTeams.retainAll(csvSet(report.getTeamIds()));
         return !requestTeams.isEmpty();
+    }
+
+    private String normalizeTeams(String value) {
+        List<String> teams = new ArrayList<>(csvSet(value));
+        Collections.sort(teams);
+        return String.join(",", teams);
     }
 
     private ResponseEntity<Map<String, Object>> unauthorizedService() {
@@ -204,7 +262,9 @@ public class SituationController {
     private Set<String> csvSet(String value) {
         if (value == null || value.isBlank()) return new HashSet<>();
         Set<String> result = new HashSet<>();
-        for (String item : value.split(",")) if (!item.isBlank()) result.add(item.trim());
+        for (String item : value.split(",")) {
+            if (!item.isBlank()) result.add(item.trim().toLowerCase(Locale.ROOT));
+        }
         return result;
     }
 
@@ -237,7 +297,9 @@ public class SituationController {
         Map<String, Object> m = toListItem(r);
         m.put("userId", r.getUserId());
         m.put("teamIds", r.getTeamIds());
-        m.put("shareToken", r.getShareToken());
+        // Authenticated report detail does not need to disclose bearer share credentials.
+        m.put("shared", r.getShareToken() != null && !r.getShareToken().isBlank());
+        m.put("shareExpiresAt", r.getShareExpiresAt() == null ? "" : r.getShareExpiresAt().toString());
         Object snapshot = null;
         String s = r.getSnapshotJson();
         if (s != null && !s.isEmpty()) {

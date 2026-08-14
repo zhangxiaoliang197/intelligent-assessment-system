@@ -54,6 +54,7 @@ _DATABASE_PROFILE_KEYS = (
 
 # admin-service 的基地址，支持通过环境变量覆盖（Docker 部署时设为容器名）
 ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
+INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "").strip()
 
 # ontology-service 的基地址（B 阶段数据联动：三服务参考本体模型）
 # 本地开发：http://localhost:10256（本机 10256 被幽灵 socket 占用时开发期可跑 10257）
@@ -87,6 +88,8 @@ def _api_get(path: str, timeout: int = 30) -> dict:
     url = f"{ADMIN_SERVICE_URL}/api/admin/{path}"
     req = urllib.request.Request(url, method="GET")
     req.add_header("Content-Type", "application/json")
+    if INTERNAL_SERVICE_TOKEN:
+        req.add_header("X-Service-Token", INTERNAL_SERVICE_TOKEN)
     # 内部服务通道按管理员身份访问 admin-service（execute-sql 等接口要求该角色头）
     req.add_header("X-User-Role", "admin")
     req.add_header("X-User-Id", "system")
@@ -116,6 +119,8 @@ def _api_post(path: str, body: dict, timeout: int = 120) -> dict:
     data = json.dumps(body).encode("utf-8")  # 将请求体序列化为 UTF-8 字节
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
+    if INTERNAL_SERVICE_TOKEN:
+        req.add_header("X-Service-Token", INTERNAL_SERVICE_TOKEN)
     # 内部服务通道按管理员身份访问 admin-service（execute-sql 等接口要求该角色头）
     req.add_header("X-User-Role", "admin")
     req.add_header("X-User-Id", "system")

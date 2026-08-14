@@ -10,6 +10,12 @@ BASE_DIR="${ASSESSMENT_BASE_DIR:-/opt/intelligent-assessment}"
 DATA_DIR="$BASE_DIR/data"
 NETWORK_NAME="${ASSESSMENT_NETWORK:-}"
 QA_PORT="${QA_PORT:-10253}"
+INTERNAL_SERVICE_TOKEN="${INTERNAL_SERVICE_TOKEN:-}"
+
+if [ ${#INTERNAL_SERVICE_TOKEN} -lt 24 ] || [ "$INTERNAL_SERVICE_TOKEN" = "local-development-token" ]; then
+    echo "ERROR: INTERNAL_SERVICE_TOKEN 必须显式配置为至少 24 位随机值"
+    exit 1
+fi
 
 if [[ ! -f "$IMAGE_TAR" ]]; then
     echo "ERROR: 未找到 QA 镜像包: $IMAGE_TAR"
@@ -72,6 +78,8 @@ docker run -d --name assessment-qa \
     -p "$QA_PORT:10253" \
     -e ADMIN_SERVICE_URL="${ADMIN_SERVICE_URL:-http://assessment-admin:10258}" \
     -e KNOWLEDGE_SERVICE_URL="${KNOWLEDGE_SERVICE_URL:-http://assessment-knowledge:10252}" \
+    -e ONTOLOGY_SERVICE_URL="${ONTOLOGY_SERVICE_URL:-http://assessment-ontology:10256}" \
+    -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
     -e EVALUATION_SKILLS_DIR="/app/config/skills" \
     -v "$DATA_DIR/qa:/app/data" \
     -v "$SKILLS_DIR:/app/config/skills:ro" \

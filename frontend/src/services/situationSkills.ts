@@ -60,10 +60,12 @@ export async function preflightSituationSkill(
   skillId: string,
   query: string,
   parameters: Record<string, unknown> = {},
+  dataSourceId = '',
 ): Promise<SituationSkillPreflight> {
   const response = await api.post(`/situation/skills/${encodeURIComponent(skillId)}/preflight`, {
     query,
     parameters,
+    dataSourceId,
   })
   return unwrap<SituationSkillPreflight>(response)
 }

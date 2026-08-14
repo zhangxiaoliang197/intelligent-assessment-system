@@ -22,6 +22,8 @@ export interface ChartSpec {
   explanation?: string
   datasetRef?: string
   fieldMapping?: { xField?: string; yFields?: string[] }
+  provenance?: Record<string, any>
+  verification?: Record<string, any>
 }
 
 export interface MapLayer {
@@ -30,6 +32,12 @@ export interface MapLayer {
   routes?: any[]
   areas?: any[]
   circles?: any[]
+  heatmap?: any[]
+  clusters?: any[]
+  flows?: any[]
+  flow?: any[]
+  coverage?: { areas?: any[]; circles?: any[] }
+  coverages?: any[]
   layerConfig: Record<string, any>
   datasetRef?: string
   fieldMapping?: {
@@ -39,6 +47,8 @@ export interface MapLayer {
     routeIdField?: string
     orderField?: string
   }
+  provenance?: Record<string, any>
+  verification?: Record<string, any>
 }
 
 export interface DatasetSummary {
@@ -46,6 +56,11 @@ export interface DatasetSummary {
   source: string
   summary: string
   rows: number
+  physicalDatasetId?: string
+  schemaVersion?: number
+  truncated?: boolean
+  evidenceHash?: string
+  execution?: Record<string, any>
   columns?: string[]
   data?: any[]
 }
@@ -63,7 +78,7 @@ export interface Viewport {
 
 // ── 执行步骤（SSE 事件转步骤，供 execution-panel 展示）──
 export interface ExecStep {
-  phase: 'plan' | 'dataset' | 'chart' | 'map_layer' | 'narrative' | 'done' | 'error'
+  phase: 'plan' | 'step' | 'dataset' | 'chart' | 'map_layer' | 'narrative' | 'done' | 'error'
   description: string
   status: 'in_progress' | 'completed' | 'error'
   detail?: string
@@ -78,6 +93,13 @@ export interface ReportMeta {
   source: string
   status: string
   createTime?: string
+}
+
+export interface ResultEvidence {
+  evidenceHash?: string
+  provenance?: Record<string, any>
+  verification?: Record<string, any>
+  execution?: Record<string, any>
 }
 
 export type SituationStatus = 'idle' | 'generating' | 'ready' | 'partial' | 'failed'
@@ -202,6 +224,7 @@ export const useSituationStore = defineStore('situation', () => {
   const charts = ref<ChartSpec[]>([])
   const mapLayers = ref<MapLayer[]>([])
   const narrative = ref<Narrative>({ intro: '', explanations: [] })
+  const evidence = ref<ResultEvidence>({})
   const mapExplanation = ref('')
 
   // ── 联动共享状态（图表 ↔ 地图，ADR-04/13）──
@@ -213,6 +236,12 @@ export const useSituationStore = defineStore('situation', () => {
   // ── SSE 句柄 ──
   const eventSource = ref<EventSource | null>(null)
   const errorMsg = ref('')
+  const requestPending = ref(false)
+  let streamReportId: string | null = null
+  let generationEpoch = 0
+  let generationController: AbortController | null = null
+  let recoveryTimer: ReturnType<typeof setTimeout> | null = null
+  let recoveryAttempts = 0
 
   // ── 对话式工作区状态 ──
   const history = ref<ReportMeta[]>([])           // 后端历史产物列表
@@ -247,7 +276,18 @@ export const useSituationStore = defineStore('situation', () => {
   }
 
   // ── 重置（清产物 + 步骤；不清历史列表）──
+  function clearRecoveryTimer() {
+    if (recoveryTimer) clearTimeout(recoveryTimer)
+    recoveryTimer = null
+    recoveryAttempts = 0
+  }
+
   function reset() {
+    generationEpoch += 1
+    generationController?.abort()
+    generationController = null
+    closeStream()
+    clearRecoveryTimer()
     reportId.value = null
     status.value = 'idle'
     query.value = ''
@@ -260,13 +300,14 @@ export const useSituationStore = defineStore('situation', () => {
     charts.value = []
     mapLayers.value = []
     narrative.value = { intro: '', explanations: [] }
+    evidence.value = {}
     mapExplanation.value = ''
     selectedRegion.value = null
     selectedTimeRange.value = null
     filters.value = {}
     errorMsg.value = ''
     executionSteps.value = []
-    closeStream()
+    requestPending.value = false
   }
 
   // ── 从草稿态初始化 ──
@@ -282,7 +323,26 @@ export const useSituationStore = defineStore('situation', () => {
 
   // ── 从已有产物加载（历史/分享）──
   function loadReport(data: any) {
+    generationEpoch += 1
+    generationController?.abort()
+    generationController = null
+    closeStream()
+    clearRecoveryTimer()
     const snapshot = data.snapshot || data
+    // 先完整清空产物和联动状态，再一次性 hydrate，避免旧 SSE/筛选/视口污染历史报告。
+    datasets.value = []
+    activeDatasetId.value = null
+    charts.value = []
+    mapLayers.value = []
+    narrative.value = { intro: '', explanations: [] }
+    selectedRegion.value = null
+    selectedTimeRange.value = null
+    filters.value = {}
+    viewport.value = { center: [35, 105], zoom: 4 }
+    evidence.value = {}
+    executionSteps.value = []
+    errorMsg.value = ''
+    requestPending.value = false
     reportId.value = data.reportId || snapshot.reportId || null
     title.value = data.title || snapshot.title || ''
     query.value = data.query || snapshot.query || ''
@@ -314,7 +374,25 @@ export const useSituationStore = defineStore('situation', () => {
     })
     narrative.value = snapshot.narrative || { intro: '', explanations: [] }
     mapExplanation.value = snapshot.map?.explanation || snapshot.mapExplanation || ''
-    executionSteps.value = []   // 历史产物不回放步骤
+    selectedRegion.value = snapshot.selectedRegion || snapshot.context?.selectedRegion || null
+    selectedTimeRange.value = snapshot.selectedTimeRange || snapshot.context?.selectedTimeRange || null
+    filters.value = snapshot.filters || snapshot.context?.filters || {}
+    if (snapshot.viewport?.center?.length === 2) viewport.value = snapshot.viewport
+    evidence.value = {
+      evidenceHash: snapshot.evidenceHash,
+      provenance: snapshot.provenance,
+      verification: snapshot.verification,
+      execution: snapshot.execution || snapshot.executionPlan,
+    }
+    if (Array.isArray(snapshot.execution)) {
+      executionSteps.value = snapshot.execution.map((step: any) => ({
+        phase: 'step' as const,
+        description: `${step.sequence ? `${step.sequence}. ` : ''}${step.name || step.operator || '执行步骤'}`,
+        status: step.status === 'error' ? 'error' as const : 'completed' as const,
+        detail: `输入 ${step.inputRows ?? 0} 行，输出 ${step.outputRows ?? 0} 行`,
+        ts: Date.now(),
+      }))
+    }
     if (datasets.value.length && !activeDatasetId.value) {
       activeDatasetId.value = datasets.value[0].datasetId
     }
@@ -378,7 +456,30 @@ export const useSituationStore = defineStore('situation', () => {
           chartCount != null || mapCount != null
             ? `规划生成方案：${chartCount ?? 0} 张图表 + ${mapCount ?? 0} 个地图图层`
             : '规划生成方案'
-        pushStep('plan', desc, 'completed', data?.plan ? JSON.stringify(data.plan).slice(0, 200) : '')
+        evidence.value.execution = data?.plan || data?.executionPlan || data || evidence.value.execution
+        if (!executionSteps.value.some((step) => step.phase === 'plan' && step.description === desc)) {
+          pushStep('plan', desc, 'completed', data?.plan ? JSON.stringify(data.plan).slice(0, 200) : '')
+        }
+        break
+      }
+      case 'step': {
+        const sequence = Number(data?.sequence || 0)
+        const description = `${sequence ? `${sequence}. ` : ''}${data?.name || data?.operator || '执行步骤'}`
+        const detail = `输入 ${data?.inputRows ?? 0} 行，输出 ${data?.outputRows ?? 0} 行`
+        const existing = executionSteps.value.findIndex(
+          (item) => item.phase === 'step' && item.description === description,
+        )
+        const step: ExecStep = {
+          phase: 'step', description, status: data?.status === 'error' ? 'error' : 'completed',
+          detail, ts: Date.now(),
+        }
+        if (existing >= 0) executionSteps.value.splice(existing, 1, step)
+        else executionSteps.value.push(step)
+        const current = Array.isArray(evidence.value.execution) ? evidence.value.execution : []
+        evidence.value.execution = [
+          ...current.filter((item: any) => Number(item?.sequence || 0) !== sequence),
+          data,
+        ].sort((a: any, b: any) => Number(a?.sequence || 0) - Number(b?.sequence || 0))
         break
       }
       case 'dataset': {
@@ -387,12 +488,19 @@ export const useSituationStore = defineStore('situation', () => {
           source: data.source,
           summary: data.summary,
           rows: data.rows || 0,
+          physicalDatasetId: data.physicalDatasetId || '',
+          schemaVersion: data.schemaVersion,
+          truncated: Boolean(data.truncated),
+          evidenceHash: data.evidenceHash || '',
+          execution: data.execution || {},
           columns: data.columns || [],
           data: data.data || [],
         }
-        datasets.value.push(ds)
+        const existingIndex = datasets.value.findIndex((item) => item.datasetId === ds.datasetId)
+        if (existingIndex >= 0) datasets.value.splice(existingIndex, 1, ds)
+        else datasets.value.push(ds)
         if (!activeDatasetId.value) activeDatasetId.value = ds.datasetId
-        pushStep('dataset', `获取数据集 ${ds.datasetId}（${ds.rows} 行）`, 'completed', ds.summary)
+        if (existingIndex < 0) pushStep('dataset', `获取数据集 ${ds.datasetId}（${ds.rows} 行）`, 'completed', ds.summary)
         break
       }
       case 'chart': {
@@ -401,36 +509,57 @@ export const useSituationStore = defineStore('situation', () => {
         const option = fieldMapping && ds?.data?.length
           ? rebuildChartOption({ type: data.type, option: data.option, fieldMapping }, ds)
           : data.option
-        charts.value.push({
+        const chart: ChartSpec = {
           chartId: data.chartId,
           type: data.type,
           title: data.title,
           option,
           datasetRef: data.datasetRef || '',
           fieldMapping,
-        })
-        pushStep('chart', `生成图表：${data.title || data.chartId}`, 'completed')
+          provenance: data.provenance || {},
+          verification: data.verification || {},
+        }
+        const existingIndex = charts.value.findIndex((item) => item.chartId === chart.chartId)
+        if (existingIndex >= 0) charts.value.splice(existingIndex, 1, chart)
+        else charts.value.push(chart)
+        if (existingIndex < 0) pushStep('chart', `生成图表：${data.title || data.chartId}`, 'completed')
         break
       }
       case 'chart_update': {
         const c = charts.value.find((x) => x.chartId === data.chartId)
-        if (c) c.option = data.option
+        if (c) {
+          c.option = data.option
+          if (data.provenance) c.provenance = data.provenance
+          if (data.verification) c.verification = data.verification
+        }
         break
       }
       case 'map_layer': {
         const ds = datasets.value.find((d) => d.datasetId === data.datasetRef)
-        const layer = rebuildMapLayer({
-          layerId: data.layerId,
-          points: data.points || [],
-          routes: data.routes || [],
-          areas: data.areas || [],
-          circles: data.circles || [],
-          layerConfig: data.layerConfig || {},
-          datasetRef: data.datasetRef || '',
-          fieldMapping: data.fieldMapping || undefined,
-        }, ds)
-        mapLayers.value.push(layer)
-        pushStep('map_layer', `生成地图图层：${data.layerId}`, 'completed')
+        const mapLayer: MapLayer = {
+          ...rebuildMapLayer({
+            layerId: data.layerId,
+            points: data.points || [],
+            routes: data.routes || [],
+            areas: data.areas || [],
+            circles: data.circles || [],
+            heatmap: data.heatmap || [],
+            clusters: data.clusters || [],
+            flows: data.flows || [],
+            flow: data.flow || [],
+            coverage: data.coverage,
+            coverages: data.coverages || [],
+            layerConfig: data.layerConfig || {},
+            datasetRef: data.datasetRef || '',
+            fieldMapping: data.fieldMapping || undefined,
+          }, ds),
+          provenance: data.provenance || {},
+          verification: data.verification || {},
+        }
+        const existingIndex = mapLayers.value.findIndex((item) => item.layerId === mapLayer.layerId)
+        if (existingIndex >= 0) mapLayers.value.splice(existingIndex, 1, mapLayer)
+        else mapLayers.value.push(mapLayer)
+        if (existingIndex < 0) pushStep('map_layer', `生成地图图层：${data.layerId}`, 'completed')
         break
       }
       case 'map_update': {
@@ -440,6 +569,15 @@ export const useSituationStore = defineStore('situation', () => {
           if (data.routes) lyr.routes = data.routes
           if (data.areas) lyr.areas = data.areas
           if (data.circles) lyr.circles = data.circles
+          if (data.heatmap) lyr.heatmap = data.heatmap
+          if (data.clusters) lyr.clusters = data.clusters
+          if (data.flows) lyr.flows = data.flows
+          if (data.flow) lyr.flow = data.flow
+          if (data.coverage) lyr.coverage = data.coverage
+          if (data.coverages) lyr.coverages = data.coverages
+          if (data.layerConfig) lyr.layerConfig = { ...lyr.layerConfig, ...data.layerConfig }
+          if (data.provenance) lyr.provenance = data.provenance
+          if (data.verification) lyr.verification = data.verification
         }
         break
       }
@@ -457,9 +595,17 @@ export const useSituationStore = defineStore('situation', () => {
         charts.value.forEach((c) => {
           if (expMap.has(c.chartId)) c.explanation = expMap.get(c.chartId)
         })
-        pushStep('narrative', '撰写态势介绍', 'completed')
+        if (!executionSteps.value.some((step) => step.phase === 'narrative')) {
+          pushStep('narrative', '撰写态势介绍', 'completed')
+        }
         break
       case 'done':
+        evidence.value = {
+          evidenceHash: data.evidenceHash || evidence.value.evidenceHash,
+          provenance: data.provenance || evidence.value.provenance,
+          verification: data.verification || evidence.value.verification,
+          execution: data.execution || data.executionPlan || evidence.value.execution,
+        }
         status.value = (data.status as SituationStatus) || 'ready'
         pushStep('done', '生成完成', 'completed')
         closeStream()
@@ -474,6 +620,7 @@ export const useSituationStore = defineStore('situation', () => {
 
   // ── 发起生成 ──
   async function generate(q?: string) {
+    if (requestPending.value || isGenerating.value) return false
     if (q) query.value = q
     if (!query.value.trim()) return
     // 重置产物字段与步骤，保留 query/source（不清历史列表）
@@ -481,44 +628,80 @@ export const useSituationStore = defineStore('situation', () => {
     const _source = source.value
     const _skill = activeSkill.value
     const _skillParameters = skillParameters.value
+    const _selectedRegion = selectedRegion.value
+    const _selectedTimeRange = selectedTimeRange.value
+    const _filters = { ...filters.value }
+    const _viewport = { ...viewport.value, center: [...viewport.value.center] as [number, number] }
     reset()
     query.value = _query
     source.value = _source
     activeSkill.value = _skill
     skillParameters.value = _skillParameters
+    selectedRegion.value = _selectedRegion
+    selectedTimeRange.value = _selectedTimeRange
+    filters.value = _filters
+    viewport.value = _viewport
+    const epoch = generationEpoch
     status.value = 'generating'
-
-    const resp: any = await api.post('/situation/generate', {
-      query: query.value,
-      source: source.value,
-      skillId: activeSkill.value?.id || '',
-      skillParameters: skillParameters.value,
-      dataSourceId: dataSourceId.value,
-    })
-    if (!resp || resp.success === false) return
-    const data = resp.data || resp
-    reportId.value = data.reportId
-    if (data.skill) {
-      activeSkill.value = {
-        id: data.skill.id,
-        name: data.skill.name,
-        category: data.skill.category || activeSkill.value?.category || '态势 Skill',
-        description: activeSkill.value?.description || '使用专业 Skill 编排生成',
+    requestPending.value = true
+    generationController = new AbortController()
+    try {
+      const resp: any = await api.post('/situation/generate', {
+        query: query.value,
+        source: source.value,
+        skillId: activeSkill.value?.id || '',
+        skillParameters: skillParameters.value,
+        dataSourceId: dataSourceId.value,
+        context: {
+          selectedRegion: selectedRegion.value,
+          selectedTimeRange: selectedTimeRange.value,
+          filters: filters.value,
+          viewport: viewport.value,
+        },
+      }, { signal: generationController.signal })
+      if (epoch !== generationEpoch) return false
+      if (!resp || resp.success === false) throw new Error(resp?.message || '生成请求失败')
+      const data = resp.data || resp
+      if (!data.reportId) throw new Error('生成服务未返回 reportId')
+      reportId.value = data.reportId
+      if (data.skill) {
+        activeSkill.value = {
+          id: data.skill.id,
+          name: data.skill.name,
+          category: data.skill.category || activeSkill.value?.category || '态势 Skill',
+          description: activeSkill.value?.description || '使用专业 Skill 编排生成',
+        }
+        evidence.value.execution = data.skill.executionPlan || data.executionPlan
+      }
+      subscribeSSE(data.reportId, epoch)
+      return true
+    } catch (error: any) {
+      if (epoch !== generationEpoch) return false
+      errorMsg.value = error?.serverMessage || error?.message || '生成请求失败'
+      status.value = 'failed'
+      pushStep('error', `错误：${errorMsg.value}`, 'error')
+      throw error
+    } finally {
+      if (epoch === generationEpoch) {
+        requestPending.value = false
+        generationController = null
       }
     }
-    subscribeSSE(data.reportId)
   }
 
   // ── 订阅 SSE ──
-  function subscribeSSE(rid: string) {
+  function subscribeSSE(rid: string, epoch = generationEpoch) {
     closeStream()
+    clearRecoveryTimer()
     const es = new EventSource(`/api/situation/stream/${rid}`)
     eventSource.value = es
+    streamReportId = rid
 
     const types = ['plan', 'dataset', 'chart', 'chart_update', 'map_layer', 'map_update', 'narrative']
     types.forEach((t) => {
       es.addEventListener(t, (e: MessageEvent) => {
         try {
+          if (epoch !== generationEpoch || streamReportId !== rid) return
           applyEvent(t, JSON.parse(e.data))
         } catch (err) {
           console.error('SSE 解析失败', t, err)
@@ -527,23 +710,82 @@ export const useSituationStore = defineStore('situation', () => {
     })
     es.addEventListener('done', (e: MessageEvent) => {
       try {
+        if (epoch !== generationEpoch || streamReportId !== rid) return
         applyEvent('done', JSON.parse(e.data))
       } catch (err) {
         console.error('done 解析失败', err)
       }
     })
-    es.addEventListener('error', () => {
-      // EventSource 自身错误（断连），仅提示，由浏览器自动重连
-      if (es.readyState === EventSource.CLOSED) {
-        if (status.value === 'generating') status.value = 'failed'
+    es.addEventListener('error', (event: Event) => {
+      if (epoch !== generationEpoch || streamReportId !== rid || status.value !== 'generating') return
+      // 后端业务错误也使用 event:error；它是 MessageEvent，先落库再决定是否等 done。
+      if (event instanceof MessageEvent && event.data) {
+        try {
+          applyEvent('error', JSON.parse(event.data))
+        } catch (error) {
+          console.error('error 事件解析失败', error)
+        }
+        return
       }
+      // EventSource 会自动重连；同时轮询持久化报告，覆盖代理不支持 SSE 重连或 done 丢失的情况。
+      scheduleReportRecovery(rid, epoch)
     })
+  }
+
+  function scheduleReportRecovery(rid: string, epoch: number) {
+    if (recoveryTimer || epoch !== generationEpoch) return
+    recoveryTimer = setTimeout(async () => {
+      recoveryTimer = null
+      if (epoch !== generationEpoch || status.value !== 'generating') return
+      try {
+        const resp: any = await api.get(`/situation/reports/${encodeURIComponent(rid)}`)
+        const report = resp?.data || resp
+        if (report?.status && report.status !== 'generating' && report.snapshot) {
+          loadReport(report)
+          return
+        }
+      } catch {
+        // 生成未持久化或暂时不可达，按上限退避重试。
+      }
+      recoveryAttempts += 1
+      if (recoveryAttempts >= 8) {
+        errorMsg.value = '生成连接已中断，后台状态暂不可确认，请稍后从历史记录重新打开'
+        status.value = 'partial'
+        closeStream()
+        return
+      }
+      scheduleReportRecovery(rid, epoch)
+    }, Math.min(15000, 1200 * (recoveryAttempts + 1)))
   }
 
   function closeStream() {
     if (eventSource.value) {
       eventSource.value.close()
       eventSource.value = null
+    }
+    streamReportId = null
+    clearRecoveryTimer()
+  }
+
+  async function cancelGeneration() {
+    if (!isGenerating.value && !requestPending.value) return
+    const rid = reportId.value
+    generationEpoch += 1
+    generationController?.abort()
+    generationController = null
+    closeStream()
+    clearRecoveryTimer()
+    requestPending.value = false
+    status.value = 'failed'
+    errorMsg.value = '已取消生成'
+    pushStep('error', '用户取消生成', 'error')
+    if (!rid) return
+    try {
+      await api.post(`/situation/cancel/${encodeURIComponent(rid)}`)
+    } catch (error: any) {
+      // 兼容尚未部署 cancel endpoint 的旧服务；404/405 表示前端已取消订阅。
+      const code = error?.response?.status
+      if (code !== 404 && code !== 405) console.warn('后台取消请求失败', error)
     }
   }
 
@@ -587,16 +829,16 @@ export const useSituationStore = defineStore('situation', () => {
   return {
     // state
     reportId, status, query, source, title, activeSkill, skillParameters,
-    datasets, activeDatasetId, charts, mapLayers, narrative, mapExplanation,
+    datasets, activeDatasetId, charts, mapLayers, narrative, evidence, mapExplanation,
     selectedRegion, selectedTimeRange, filters, viewport,
-    eventSource, errorMsg,
+    eventSource, errorMsg, requestPending,
     history, executionSteps,
     dataSources, dataSourceId, dataSourceName,
     // getters
     activeDataset, isGenerating, stepProgress,
     // actions
     reset, initFromDraft, loadReport, applyEvent, generate,
-    subscribeSSE, closeStream, refresh, fetchHistory, deleteHistory,
+    subscribeSSE, closeStream, cancelGeneration, refresh, fetchHistory, deleteHistory,
     fetchDataSources, setDataSource,
     setSelectedRegion, setSelectedTimeRange, setViewport, toggleLayer,
     setActiveSkill, setSkillParameters,

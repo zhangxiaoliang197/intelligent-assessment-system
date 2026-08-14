@@ -15,11 +15,14 @@ import ssl
 import urllib.request
 import urllib.error
 import logging
+import os
+import urllib.parse
 
 logger = logging.getLogger("ontology-service")
 
 # admin-service 地址（与 qa-service 共用同一配置源）
-ADMIN_SERVICE_URL = "http://localhost:10258"
+ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
+INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "").strip()
 
 # LLM 请求超时（秒）。reasoning 模型思考链长、输出大时读取耗时长，
 # 120s 不足容易触发 SSL 连接中断（UNEXPECTED_EOF_WHILE_READING），默认 300s。
@@ -30,8 +33,8 @@ LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "300"))
 def load_llm_config() -> dict:
     """从 Java admin-service 获取当前活跃的大模型配置。
 
-    复用 qa-service 的 load_llm_config 模式，优先取活跃配置，
-    失败则从配置列表兜底，最终失败返回硬编码默认值。
+    通过仅服务间可访问的活跃配置端点读取；失败返回无密钥默认值，
+    由调用方明确报错，避免从公开列表接口暴露凭据。
 
     Returns:
         包含 type/apiUrl/apiKey/model/temperature/maxTokens 的配置字典
@@ -39,10 +42,12 @@ def load_llm_config() -> dict:
     # 优先取活跃配置
     try:
         req = urllib.request.Request(
-            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/active",
+            f"{ADMIN_SERVICE_URL}/api/admin/internal/config/llm/active",
             method="GET"
         )
         req.add_header("Content-Type", "application/json")
+        if INTERNAL_SERVICE_TOKEN:
+            req.add_header("X-Service-Token", INTERNAL_SERVICE_TOKEN)
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             if data.get("success") and data.get("data"):
@@ -50,32 +55,7 @@ def load_llm_config() -> dict:
     except Exception as e:
         logger.warning(f"从 admin-service 获取活跃 LLM 配置失败: {e}")
 
-    # 兜底：从配置列表取第一个可用配置
-    try:
-        req = urllib.request.Request(
-            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/list",
-            method="GET"
-        )
-        req.add_header("Content-Type", "application/json")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            list_data = json.loads(resp.read().decode("utf-8"))
-            if list_data.get("success") and list_data.get("data"):
-                configs = list_data["data"]
-                if isinstance(configs, list) and len(configs) > 0:
-                    # 优先 vllm > openai > deepseek
-                    for pt in ["vllm", "openai", "deepseek"]:
-                        for c in configs:
-                            if c.get("type") == pt and c.get("apiUrl"):
-                                return c
-                    for c in configs:
-                        if c.get("apiUrl"):
-                            return c
-                    return configs[0]
-    except Exception as e:
-        logger.warning(f"从 admin-service 获取 LLM 配置列表失败: {e}")
-
-    # 最终兜底：硬编码默认值
-    logger.warning("没有可用的 LLM 配置，使用硬编码默认值")
+    logger.warning("没有可用的服务端 LLM 配置")
     return {
         "type": "deepseek",
         "apiUrl": "https://api.deepseek.com/v1",
@@ -107,6 +87,17 @@ def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000) -
     api_url = config.get("apiUrl", "https://api.deepseek.com/v1").rstrip("/")
     model = config.get("model", "deepseek-chat")
 
+    parsed_url = urllib.parse.urlparse(api_url)
+    if parsed_url.scheme not in {"https", "http"} or not parsed_url.hostname:
+        raise RuntimeError("大模型 API 地址无效")
+    allow_insecure_http = os.getenv("LLM_ALLOW_INSECURE_HTTP", "false").lower() in {
+        "1", "true", "yes", "on",
+    }
+    if parsed_url.scheme != "https" and not (
+        allow_insecure_http and parsed_url.hostname in {"localhost", "127.0.0.1", "::1"}
+    ):
+        raise RuntimeError("大模型 API 必须使用 HTTPS；本地 HTTP 需显式开启 LLM_ALLOW_INSECURE_HTTP")
+
     # vLLM 本地部署无需 API Key
     if not api_key and llm_type != "vllm":
         raise RuntimeError("大模型 API Key 未配置，请在「基础管理 → 大模型配置」中设置")
@@ -124,10 +115,8 @@ def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000) -
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", f"Bearer {api_key}")
 
-    # 跳过 SSL 证书校验（内网 vLLM 部署常用自签名证书）
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode = ssl.CERT_NONE
+    ca_file = os.getenv("LLM_CA_FILE", "").strip() or None
+    ssl_ctx = ssl.create_default_context(cafile=ca_file)
 
     try:
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT, context=ssl_ctx) as resp:

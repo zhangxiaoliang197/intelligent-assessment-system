@@ -46,13 +46,15 @@
           <span v-if="query" class="query-context">当前问题：{{ query }}</span>
         </div>
 
-        <button
+        <div
           v-for="skill in filteredSkills"
           :key="skill.id"
-          type="button"
+          role="button"
+          tabindex="0"
           class="skill-card"
           :class="{ selected: previewSkill?.id === skill.id, applied: selectedSkillId === skill.id }"
           @click="previewSkill = skill"
+          @keydown.enter.prevent="previewSkill = skill"
         >
           <span class="skill-icon">{{ categoryIcon(skill.category) }}</span>
           <span class="skill-card-content">
@@ -72,6 +74,16 @@
                 使用 {{ usageStats[skill.id].uses }} 次
               </el-tag>
             </span>
+            <span
+              role="button"
+              tabindex="0"
+              class="mobile-use-action"
+              :class="{ disabled: skill.status !== 'published' }"
+              @click.stop="skill.status === 'published' && selectSkill(skill)"
+              @keydown.enter.stop.prevent="skill.status === 'published' && selectSkill(skill)"
+            >
+              {{ selectedSkillId === skill.id ? '继续使用' : '使用此 Skill' }}
+            </span>
           </span>
           <span
             class="favorite-action"
@@ -80,7 +92,7 @@
           >
             <el-icon><StarFilled v-if="isFavorite(skill.id)" /><Star v-else /></el-icon>
           </span>
-        </button>
+        </div>
 
         <el-empty v-if="!loading && !filteredSkills.length" description="没有匹配的 Skill，试试其他关键词">
           <el-button v-if="!skills.length" type="primary" plain @click="emit('reload')">重新加载</el-button>
@@ -577,6 +589,7 @@ function selectSkill(skill: SituationSkill, question?: string) {
   color: #e6a23c;
   padding: 4px;
 }
+.mobile-use-action { display: none; }
 .skill-preview {
   overflow-y: auto;
   padding: 18px;
@@ -654,6 +667,23 @@ function selectSkill(skill: SituationSkill, question?: string) {
   }
   .skill-preview {
     display: none;
+  }
+  .mobile-use-action {
+    display: inline-flex;
+    align-self: flex-start;
+    align-items: center;
+    min-height: 30px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    color: #fff;
+    background: #2563eb;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .mobile-use-action.disabled {
+    color: #909399;
+    background: #f2f3f5;
+    cursor: not-allowed;
   }
 }
 </style>

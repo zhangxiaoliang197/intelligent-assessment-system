@@ -5,6 +5,7 @@ Phase 1 用内存字典；Phase 2 若需多实例共享可换 Redis（接口不�
 """
 import time
 import threading
+import uuid
 from typing import Optional
 
 import config
@@ -16,7 +17,9 @@ _LOCK = threading.Lock()
 
 def create_draft(req: DraftRequest) -> str:
     """创建草稿态，返回 draftId。"""
-    draft_id = f"d_{int(time.time() * 1000)}_{id(req) % 10000}"
+    # Draft IDs are bearer-like references carried across pages. Use 128 bits of
+    # entropy so IDs cannot be enumerated from timestamps or process object IDs.
+    draft_id = f"d_{uuid.uuid4().hex}"
     expire_at = time.time() + config.DRAFT_TTL
     with _LOCK:
         _DRAFTS[draft_id] = {
@@ -31,8 +34,15 @@ def create_draft(req: DraftRequest) -> str:
     return draft_id
 
 
-def get_draft(draft_id: str) -> Optional[dict]:
-    """读取草稿态，过期则删除并返回 None。"""
+def get_draft(
+    draft_id: str,
+    *,
+    user_id: str = "",
+    team_ids: Optional[list[str]] = None,
+    role: str = "viewer",
+    consume: bool = False,
+) -> Optional[dict]:
+    """按 owner/team 读取草稿；生成时可原子地一次性消费。"""
     with _LOCK:
         item = _DRAFTS.get(draft_id)
         if not item:
@@ -40,4 +50,13 @@ def get_draft(draft_id: str) -> Optional[dict]:
         if time.time() > item["expire_at"]:
             _DRAFTS.pop(draft_id, None)
             return None
-        return {k: v for k, v in item.items() if k != "expire_at"}
+        if user_id:
+            owner_match = user_id.strip().lower() == str(item.get("userId") or "").strip().lower()
+            request_teams = {str(value).strip().lower() for value in (team_ids or []) if str(value).strip()}
+            draft_teams = {str(value).strip().lower() for value in (item.get("teamIds") or []) if str(value).strip()}
+            if role.strip().lower() != "admin" and not owner_match and not request_teams.intersection(draft_teams):
+                return None
+        result = {k: v for k, v in item.items() if k != "expire_at"}
+        if consume:
+            _DRAFTS.pop(draft_id, None)
+        return result

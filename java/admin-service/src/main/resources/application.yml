@@ -72,4 +72,13 @@ logging:
     com.zaxxer.hikari: WARN
 
 internal:
-  service-token: ${INTERNAL_SERVICE_TOKEN:local-development-token}
+  # Required for backend-to-backend calls. Minimum 24 chars; the historical
+  # local-development-token value is deliberately rejected.
+  service-token: ${INTERNAL_SERVICE_TOKEN:}
+
+admin:
+  # Required in X-Admin-Token for every management API. Keep this separate from
+  # INTERNAL_SERVICE_TOKEN so a runtime service cannot mutate administration state.
+  api-token: ${ADMIN_API_TOKEN:}
+  # Emergency diagnostic capability only; disabled by default even for administrators.
+  allow-ad-hoc-sql: ${ADMIN_ALLOW_AD_HOC_SQL:false}

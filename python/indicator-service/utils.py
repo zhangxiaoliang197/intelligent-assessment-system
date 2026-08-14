@@ -4,8 +4,20 @@ import urllib.parse
 import json
 import ssl
 import logging
+import os
 
 logger = logging.getLogger("indicator-service")
+
+INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "").strip()
+
+
+def _service_headers(url: str) -> dict:
+    """Attach the shared service credential only to protected admin-service calls."""
+    return (
+        {"X-Service-Token": INTERNAL_SERVICE_TOKEN}
+        if INTERNAL_SERVICE_TOKEN and "/api/admin/" in str(url)
+        else {}
+    )
 
 
 def _create_ssl_context():
@@ -19,6 +31,8 @@ def http_get(url, timeout=10, headers=None):
     try:
         req = urllib.request.Request(url, method="GET")
         req.add_header("Content-Type", "application/json")
+        for k, v in _service_headers(url).items():
+            req.add_header(k, v)
         if headers:
             for k, v in headers.items():
                 req.add_header(k, v)
@@ -34,6 +48,8 @@ def http_post(url, data=None, timeout=10, headers=None):
         body = json.dumps(data or {}).encode("utf-8")
         req = urllib.request.Request(url, data=body, method="POST")
         req.add_header("Content-Type", "application/json")
+        for k, v in _service_headers(url).items():
+            req.add_header(k, v)
         if headers:
             for k, v in headers.items():
                 req.add_header(k, v)

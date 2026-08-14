@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS `ass_dataset` (
     `database_id`   VARCHAR(32)   DEFAULT NULL,
     `table_name`    VARCHAR(200)  DEFAULT NULL,
     `sql_text`      TEXT          DEFAULT NULL,
+    `allowed_user_ids` TEXT       DEFAULT NULL,
+    `allowed_team_ids` TEXT       DEFAULT NULL,
+    `allowed_columns` TEXT        DEFAULT NULL,
+    `sensitive_columns` TEXT      DEFAULT NULL,
+    `schema_version` INT          DEFAULT 1,
     `records`       INT           DEFAULT 0,
     `last_executed` DATETIME      DEFAULT NULL,
     `create_time`   DATETIME      DEFAULT NULL,
@@ -146,6 +151,7 @@ CREATE TABLE IF NOT EXISTS `situation_report` (
     `status`        VARCHAR(20)   NOT NULL DEFAULT 'generating',
     `snapshot_json` LONGTEXT      DEFAULT NULL,
     `share_token`   VARCHAR(64)   DEFAULT NULL,
+    `share_expires_at` DATETIME   DEFAULT NULL,
     `created_at`    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at`    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
@@ -153,6 +159,22 @@ CREATE TABLE IF NOT EXISTS `situation_report` (
     INDEX `idx_team` (`team_ids`),
     INDEX `idx_share` (`share_token`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='态势图产物';
+
+-- Existing deployments may already have situation_report. Keep this migration idempotent.
+SET @share_expiry_exists = (
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'situation_report'
+      AND COLUMN_NAME = 'share_expires_at'
+);
+SET @share_expiry_sql = IF(
+    @share_expiry_exists = 0,
+    'ALTER TABLE situation_report ADD COLUMN share_expires_at DATETIME DEFAULT NULL AFTER share_token',
+    'SELECT 1'
+);
+PREPARE share_expiry_stmt FROM @share_expiry_sql;
+EXECUTE share_expiry_stmt;
+DEALLOCATE PREPARE share_expiry_stmt;
 
 -- 2.9 聊天会话主表
 CREATE TABLE IF NOT EXISTS `ass_chat_session` (

@@ -50,6 +50,7 @@ class RealOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[2][1]["option"]["series"][0]["data"], [91, 83])
         self.assertTrue(events[2][1]["verification"]["verified"])
         self.assertEqual(events[2][1]["provenance"]["datasetId"], "real_1_t_equipment")
+        self.assertEqual(events[3][1]["verification"]["method"], "empty-without-coordinate-evidence")
         self.assertEqual(events[-1][1]["orchestration"], "llm")
 
     async def test_llm_failure_falls_back_to_real_rows_not_mock_data(self):
@@ -97,6 +98,20 @@ class RealOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(transformed[0]["payload"]["rows"], [{"区域": "A", "完好率": 91}])
         self.assertEqual(transformed[0]["execution"]["inputRows"], 3)
         self.assertEqual(transformed[0]["execution"]["outputRows"], 1)
+        events = orchestrator._workflow_events({
+            **profile,
+            "workflow": [
+                {"sequence": 1, "name": "读取", "operator": "collect"},
+                {"sequence": 2, "name": "筛选", "operator": "filter"},
+                {"sequence": 3, "name": "聚合", "operator": "transform"},
+                {"sequence": 4, "name": "可视化", "operator": "visualize"},
+            ],
+            "focusMetrics": ["完好率"], "chartTypes": ["bar"], "mapLayerTypes": ["points"],
+        }, transformed)
+        self.assertEqual([event["operator"] for event in events], ["collect", "filter", "transform", "visualize"])
+        self.assertEqual(events[1]["appliedOperators"][0]["operator"], "equals")
+        self.assertEqual(events[2]["focusMetrics"], ["完好率"])
+        self.assertEqual(events[3]["plannedCharts"], 1)
 
     def test_llm_evidence_is_aggregated_and_sensitive_fields_removed(self):
         bundle = {
@@ -111,6 +126,29 @@ class RealOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("apiKey", payload["columns"])
         self.assertEqual(payload["numericStats"]["数量"]["sum"], 5)
         self.assertEqual(payload["samples"], [])
+
+    @patch.object(orchestrator, "call_llm_json")
+    def test_five_stage_llm_protocol_never_sends_raw_rows(self, call_llm):
+        bundle = {
+            "datasetId": "real_1", "source": "dataset:ds_a", "summary": "rows",
+            "payload": {"rows": [{"区域": "A", "数量": 2, "姓名": "张三"}]},
+        }
+        call_llm.side_effect = [
+            {"datasets": [{"datasetId": "real_1"}], "chartsPlan": [{"type": "bar", "title": "数量"}]},
+            # series 数值必须可由证据复算，否则会触发纠错重试（多一次 LLM 调用）
+            [{"chartId": "c_1", "type": "bar", "datasetRef": "real_1", "option": {"series": [{"type": "bar", "data": [2]}]}}],
+            {"layerId": "main", "points": []},
+            {"intro": "介绍", "explanations": []},
+        ]
+        result = orchestrator._run_llm_orchestration(
+            "test", orchestrator._skill_profile(None), {}, [bundle],
+        )
+        self.assertEqual(call_llm.call_count, 4)
+        self.assertIn("charts", result)
+        all_messages = str([call.args[0] for call in call_llm.call_args_list])
+        self.assertNotIn("张三", all_messages)
+        self.assertNotIn("姓名", all_messages)
+        self.assertIn("numericStats", all_messages)
 
     def test_unverifiable_chart_and_unsafe_option_are_rejected(self):
         bundles = [{
@@ -129,6 +167,23 @@ class RealOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         }
         with self.assertRaisesRegex(ValueError, "外部资源"):
             orchestrator._validate_llm_result(base, profile, bundles)
+
+    async def test_selected_database_filters_authorized_catalog(self):
+        profile = orchestrator._skill_profile({"dataSources": ["t_equipment"]})
+        catalog = {"success": True, "datasets": [
+            {"id": "ds_a", "tableName": "t_equipment", "databaseId": "db_a"},
+            {"id": "ds_b", "tableName": "t_equipment", "databaseId": "db_b"},
+        ]}
+        with patch.object(orchestrator.tools, "list_admin_datasets", return_value=catalog), \
+             patch.object(orchestrator.tools, "query_admin_dataset", return_value={
+                 "success": True, "rows": [{"value": 1}], "dataset": {"id": "ds_b"},
+             }) as query:
+            bundles, failures = await orchestrator._collect_real_data(
+                "test", profile, {"dataSourceId": "db_b", "_actor": {"userId": "alice"}},
+            )
+        self.assertEqual(failures, [])
+        self.assertEqual(len(bundles), 1)
+        self.assertEqual(query.call_args.args[0]["id"], "ds_b")
 
 
 class SharedSSESessionTests(unittest.IsolatedAsyncioTestCase):

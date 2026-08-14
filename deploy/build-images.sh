@@ -50,8 +50,14 @@ save_image "evaluation"
 build_image "ontology" "ontology"
 save_image "ontology"
 
+build_image "situation" "situation"
+echo "[校验] assessment-situation:latest 内置 Skill 与安全执行测试 ..."
+docker run --rm --entrypoint python assessment-situation:latest \
+    -m unittest discover -s tests -p 'test_*.py' -v
+save_image "situation"
+
 echo ""
-echo "=== 第2步: 构建 Java 服务 ==="
+echo "=== 第3步: 构建 Java 服务 ==="
 build_image "admin" "admin"
 save_image "admin"
 

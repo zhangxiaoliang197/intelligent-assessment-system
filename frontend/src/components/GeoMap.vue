@@ -93,6 +93,8 @@ const props = withDefaults(defineProps<{
   routes?: GeoRoute[]
   areas?: GeoArea[]
   circles?: CircleArea[]
+  /** WGS84 视口。态势插槽恢复历史报告时以它为准。 */
+  viewport?: { center: [number, number]; zoom: number }
   title?: string
   compact?: boolean  // 紧凑模式：隐藏标题栏和坐标表，适用于嵌入其他面板
   showHeader?: boolean   // 隐藏“坐标可视化”头部
@@ -190,6 +192,29 @@ const colors = [
   '#1abc9c', '#e67e22', '#2980b9', '#c0392b', '#27ae60',
   '#8e44ad', '#d35400',
 ]
+
+/** Leaflet popup/divIcon 接收 HTML 字符串，所有业务数据必须先转义。 */
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+/** 仅允许可控 CSS 颜色进入 divIcon 的 style 属性。 */
+function safeColor(value: unknown, fallback: string): string {
+  const color = String(value ?? '').trim()
+  return /^(?:#[0-9a-f]{3,8}|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\))$/i.test(color)
+    ? color
+    : fallback
+}
+
+function safeNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback
+}
 
 /** 名称 → 颜色（简单 hash，同名同色） */
 function getColorByName(name: string): string {
@@ -426,10 +451,6 @@ function initDrawControl() {
     </div>`
   }
 
-  function escapeHtml(s: string): string {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  }
-
   /** 为图层绑定可编辑名称的 popup */
   function bindEditablePopup(layer: any, initialName: string) {
     layer._customName = initialName
@@ -521,9 +542,10 @@ async function initMap() {
 
   const layerConfigs = await loadMapConfig()
 
+  const initialViewport = resolveViewport()
   map = L.map(mapContainer.value, {
-    center: fitViewport.value.center,
-    zoom: fitViewport.value.zoom,
+    center: initialViewport.center,
+    zoom: initialViewport.zoom,
     zoomControl: true,
     attributionControl: false,
     minZoom: 3,
@@ -551,7 +573,33 @@ async function initMap() {
 function onViewportChange() {
   if (!map) return
   const c = map.getCenter()
-  emit('viewport-change', { center: [c.lat, c.lng], zoom: map.getZoom() })
+  const wgs84 = gcoord.transform([c.lng, c.lat], gcoord.GCJ02, gcoord.WGS84)
+  emit('viewport-change', {
+    center: [Number(wgs84[1].toFixed(6)), Number(wgs84[0].toFixed(6))],
+    zoom: map.getZoom(),
+  })
+}
+
+function resolveViewport(): { center: L.LatLngTuple; zoom: number } {
+  if (props.viewport?.center?.length === 2) {
+    const [lat, lng] = transformCoord(props.viewport.center[1], props.viewport.center[0])
+    return {
+      center: [lat, lng],
+      zoom: safeNumber(props.viewport.zoom, 4, 3, 18),
+    }
+  }
+  return fitViewport.value
+}
+
+function applyViewport() {
+  if (!map || !props.viewport) return
+  const target = resolveViewport()
+  const current = map.getCenter()
+  const zoom = map.getZoom()
+  if (Math.abs(current.lat - target.center[0]) < 0.00001
+    && Math.abs(current.lng - target.center[1]) < 0.00001
+    && zoom === target.zoom) return
+  map.setView(target.center, target.zoom, { animate: false })
 }
 
 /**
@@ -641,30 +689,30 @@ function addMarkers(fit = true) {
       }
 
       // 同路线使用同一颜色（基于 routeName），不同路线颜色不同
-      const color = getColorByName(p.routeName || p.name)
+      const color = safeColor((p as any).color, getColorByName(p.routeName || p.name))
 
       const circle = L.circleMarker([offsetLat, offsetLng], {
-        radius: n > 1 ? 6 : 8,
+        radius: safeNumber((p as any).radius, n > 1 ? 6 : 8, 3, 36),
         fillColor: color,
         color: '#fff',
         weight: 2,
         opacity: 1,
-        fillOpacity: 0.9,
+        fillOpacity: safeNumber((p as any).fillOpacity, 0.9, 0.05, 1),
       }).addTo(map!)
 
       // 构建弹窗内容：基础信息 + 动态属性（中文化）
-      let tooltip = `<strong>${p.name}</strong>`
+      let tooltip = `<strong>${escapeHtml(p.name)}</strong>`
       tooltip += `<br/>经度: ${p.lng.toFixed(4)}`
       tooltip += `<br/>纬度: ${p.lat.toFixed(4)}`
       if (n > 1) tooltip += `<br/><em>该位置共 ${n} 个点</em>`
       if (p.props) {
         for (const [key, val] of Object.entries(p.props)) {
           if (val !== null && val !== undefined && val !== '') {
-            tooltip += `<br/>${cnLabel(key)}: ${val}`
+            tooltip += `<br/>${escapeHtml(cnLabel(key))}: ${escapeHtml(val)}`
           }
         }
       }
-      tooltip += `<br/><small style="color:#999">${p.raw}</small>`
+      tooltip += `<br/><small style="color:#999">${escapeHtml(p.raw)}</small>`
 
       circle.bindPopup(tooltip)
       circle.on('mouseover', () => { circle.openPopup() })
@@ -674,7 +722,7 @@ function addMarkers(fit = true) {
       const marker = L.marker([offsetLat, offsetLng], {
         icon: L.divIcon({
           className: 'geo-marker-label',
-          html: `<span style="color:${color}">${p.name}</span>`,
+          html: `<span style="color:${color}">${escapeHtml(p.name)}</span>`,
           iconSize: [80, 20],
           iconAnchor: [-10, -25],
         }),
@@ -683,7 +731,7 @@ function addMarkers(fit = true) {
     })
   })
 
-  if (fit && props.points.length > 0) {
+  if (fit && props.points.length > 0 && !props.viewport) {
     const bounds = props.points.map(p => {
       const [lat, lng] = transformCoord(p.lng, p.lat)
       return [lat, lng] as L.LatLngTuple
@@ -725,14 +773,15 @@ function addRoutes() {
       return [lat, lng] as L.LatLngTuple
     })
     if (latlngs.length < 2) return
-    const color = getColorByName(route.name)
+    const routeStyle = route as any
+    const color = safeColor(routeStyle.color, getColorByName(route.name))
     const polyline = L.polyline(latlngs, {
       color,
-      weight: 4,
-      opacity: 0.85,
-      dashArray: '10 5',
+      weight: safeNumber(routeStyle.weight, 4, 1, 16),
+      opacity: safeNumber(routeStyle.opacity, 0.85, 0.05, 1),
+      dashArray: routeStyle.dashArray === false ? undefined : '10 5',
     }).addTo(map!)
-    polyline.bindPopup(`<strong>路线: ${route.name}</strong><br/>${route.points.length} 个节点`)
+    polyline.bindPopup(`<strong>路线: ${escapeHtml(route.name)}</strong><br/>${route.points.length} 个节点`)
     routeLayers.push(polyline)
 
     // ── 方向箭头：在连续点对的中点上放置旋转箭头 ──
@@ -806,14 +855,16 @@ function addAreas() {
       return [lat, lng] as L.LatLngTuple
     })
     if (latlngs.length < 3) return
-    const color = getColorByName(area.name)
+    const areaStyle = area as any
+    const color = safeColor(areaStyle.color, getColorByName(area.name))
     const polygon = L.polygon(latlngs, {
       color,
-      weight: 2,
-      fillOpacity: 0.12,
+      weight: safeNumber(areaStyle.weight, 2, 1, 16),
+      opacity: safeNumber(areaStyle.opacity, 1, 0.05, 1),
+      fillOpacity: safeNumber(areaStyle.fillOpacity, areaStyle._selected ? 0.28 : 0.12, 0.02, 0.9),
       fillColor: color,
     }).addTo(map!)
-    polygon.bindPopup(`<strong>区域: ${area.name}</strong><br/>${area.points.length} 个顶点`)
+    polygon.bindPopup(`<strong>区域: ${escapeHtml(area.name)}</strong><br/>${area.points.length} 个顶点`)
     polygon.on('click', () => {
       const a = area as any
       emit('region-select', {
@@ -838,22 +889,24 @@ function addCircles() {
     if (hiddenGroups.value.has(c.name)) return
     const [lat, lng] = transformCoord(c.center.lng, c.center.lat)
     const radiusMeters = c.radiusKm * 1000
-    const color = getColorByName(c.name)
+    const circleStyle = c as any
+    const color = safeColor(circleStyle.color, getColorByName(c.name))
     const circle = L.circle([lat, lng], {
       radius: radiusMeters,
       color,
-      weight: 2,
-      fillOpacity: 0.12,
+      weight: safeNumber(circleStyle.weight, 2, 1, 16),
+      opacity: safeNumber(circleStyle.opacity, 1, 0.05, 1),
+      fillOpacity: safeNumber(circleStyle.fillOpacity, 0.12, 0.02, 0.9),
       fillColor: color,
     }).addTo(map!)
     // ── 圆形弹窗：基础信息 + 附加业务属性（中文化）──
-    let popupHtml = `<strong>${c.name}</strong>`
+    let popupHtml = `<strong>${escapeHtml(c.name)}</strong>`
     popupHtml += `<br/>覆盖半径: ${c.radiusKm}km`
     popupHtml += `<br/>圆心: ${c.center.lng.toFixed(4)}°, ${c.center.lat.toFixed(4)}°`
     if (c.props) {
       for (const [key, val] of Object.entries(c.props)) {
         if (val !== null && val !== undefined && val !== '') {
-          popupHtml += `<br/>${cnLabel(key)}: ${val}`
+          popupHtml += `<br/>${escapeHtml(cnLabel(key))}: ${escapeHtml(val)}`
         }
       }
     }
@@ -889,6 +942,10 @@ watch(() => props.areas, () => {
 
 watch(() => props.circles, () => {
   if (map) addCircles()
+}, { deep: true })
+
+watch(() => props.viewport, () => {
+  applyViewport()
 }, { deep: true })
 
 onMounted(() => {
