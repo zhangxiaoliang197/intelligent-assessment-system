@@ -1,12 +1,814 @@
 [
   {
+    "id": "ont_12e4471a",
+    "name": "家庭",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "id": "et_92ad5c18",
+        "ontology_id": "ont_12e4471a",
+        "name": "Person",
+        "description": "家庭成员，包含身份信息与家庭角色。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "姓名"
+          },
+          {
+            "name": "age",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "岁",
+            "required": false,
+            "description": "年龄"
+          },
+          {
+            "name": "role",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "在家庭中的角色，如父亲、儿子等"
+          }
+        ],
+        "source_snippet": "Person (人) id, name(姓名), age(年龄), role(角色) 家庭成员",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 16:32:32.509367",
+        "update_time": "2026-08-12 16:32:32.509367"
+      },
+      {
+        "id": "et_27be30fe",
+        "ontology_id": "ont_12e4471a",
+        "name": "Room",
+        "description": "家庭空间，描述房间位置与面积。",
+        "color": "#91cc75",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "房间名称"
+          },
+          {
+            "name": "floor",
+            "category": "descriptive",
+            "data_type": "number",
+            "unit": "",
+            "required": false,
+            "description": "所在楼层"
+          },
+          {
+            "name": "area",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "m²",
+            "required": false,
+            "description": "房间面积"
+          }
+        ],
+        "source_snippet": "Room (房间) id, name(名称), floor(楼层), area(面积/m²) 家庭空间",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 16:32:32.509367",
+        "update_time": "2026-08-12 16:32:32.509367"
+      },
+      {
+        "id": "et_16f082d8",
+        "ontology_id": "ont_12e4471a",
+        "name": "Device",
+        "description": "智能家居设备，具有品牌和开关状态。",
+        "color": "#fac858",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "设备名称"
+          },
+          {
+            "name": "brand",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "品牌"
+          },
+          {
+            "name": "status",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "设备状态，枚举 on/off"
+          }
+        ],
+        "source_snippet": "Device (设备) id, name(名称), brand(品牌), status(状态: on/off) 智能家居设备",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 16:32:32.509367",
+        "update_time": "2026-08-12 16:32:32.509367"
+      },
+      {
+        "id": "et_cc7efc5d",
+        "ontology_id": "ont_12e4471a",
+        "name": "Pet",
+        "description": "家庭宠物，包含物种与习性。",
+        "color": "#ee6666",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "宠物昵称"
+          },
+          {
+            "name": "species",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "物种，如猫、狗"
+          },
+          {
+            "name": "hobby",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "习性爱好"
+          }
+        ],
+        "source_snippet": "Pet (宠物) id, name(昵称), species(物种), hobby(习性) 家庭宠物",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 16:32:32.509367",
+        "update_time": "2026-08-12 16:32:32.509367"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "cares_for",
+        "description": ""
+      },
+      {
+        "name": "controls",
+        "description": ""
+      },
+      {
+        "name": "located_in",
+        "description": ""
+      },
+      {
+        "name": "owns",
+        "description": ""
+      },
+      {
+        "name": "plays_with",
+        "description": ""
+      },
+      {
+        "name": "resides_in",
+        "description": ""
+      },
+      {
+        "name": "位于",
+        "description": ""
+      },
+      {
+        "name": "居住于",
+        "description": ""
+      },
+      {
+        "name": "拥有",
+        "description": ""
+      },
+      {
+        "name": "操控",
+        "description": ""
+      },
+      {
+        "name": "照看",
+        "description": ""
+      },
+      {
+        "name": "玩耍",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-12 16:32:32.509367",
+    "update_time": "2026-08-12 16:32:32.511486",
+    "status": "活跃",
+    "is_default": false,
+    "schema_version": 3
+  },
+  {
+    "id": "ont_d09c0361",
+    "name": "科幻",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "id": "et_b01cec35",
+        "ontology_id": "ont_d09c0361",
+        "name": "实验室",
+        "description": "从事科学实验与研究的机构场所，具有明确功能分区和行政层级。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "名称",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "实验室的正式名称"
+          },
+          {
+            "name": "地址",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "实验室所在位置，如地下三层"
+          },
+          {
+            "name": "分区",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "功能分区，如A区行政、B区设备、C区生物实验"
+          }
+        ],
+        "source_snippet": "叶晨的办公室位于“克罗诺斯量子实验室”的地下三层",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 17:56:45.017751",
+        "update_time": "2026-08-12 17:56:45.017751"
+      },
+      {
+        "id": "et_11adbaef",
+        "ontology_id": "ont_d09c0361",
+        "name": "研究员",
+        "description": "在实验室从事科研工作的专业人员，按等级划分职责。",
+        "color": "#91cc75",
+        "property_schema": [
+          {
+            "name": "姓名",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "研究员姓名"
+          },
+          {
+            "name": "等级",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": true,
+            "description": "研究员级别，如一级、二级、三级"
+          },
+          {
+            "name": "所属部门",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "所在研究组，如高维物理组"
+          },
+          {
+            "name": "研究领域",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "研究的主攻方向"
+          }
+        ],
+        "source_snippet": "作为一名三级研究员，叶晨的主要工作不是拯救世界",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 17:56:45.017751",
+        "update_time": "2026-08-12 17:56:45.017751"
+      },
+      {
+        "id": "et_b3e8c779",
+        "ontology_id": "ont_d09c0361",
+        "name": "安全官",
+        "description": "负责实验室安全与安防的人员，通常具有军事背景。",
+        "color": "#fac858",
+        "property_schema": [
+          {
+            "name": "姓名",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "安全官姓名"
+          },
+          {
+            "name": "等级",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": true,
+            "description": "安全官等级，如一级"
+          },
+          {
+            "name": "任职经历",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "如特种部队服役经历"
+          },
+          {
+            "name": "装备",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "随身武器装备，如电磁脉冲枪"
+          }
+        ],
+        "source_snippet": "苏菲，实验室的一级安全官。她靠在门框上，手里转着一支感应式圆珠笔",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 17:56:45.017751",
+        "update_time": "2026-08-12 17:56:45.017751"
+      },
+      {
+        "id": "et_98785a00",
+        "ontology_id": "ont_d09c0361",
+        "name": "实验室主任",
+        "description": "实验室的最高管理与决策者，通常也是重大科研项目的掌控者。",
+        "color": "#ee6666",
+        "property_schema": [
+          {
+            "name": "姓名",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "实验室主任姓名"
+          },
+          {
+            "name": "职位",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": true,
+            "description": "担任的领导职务，如主任"
+          },
+          {
+            "name": "外貌",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "年龄或外表特征，如看似四十岁"
+          },
+          {
+            "name": "权限级别",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "可发布的行政指令级别"
+          }
+        ],
+        "source_snippet": "克罗诺斯实验室的主任，那个总是温文尔雅、穿着定制西装的老人",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 17:56:45.017751",
+        "update_time": "2026-08-12 17:56:45.017751"
+      },
+      {
+        "id": "et_ad073a28",
+        "ontology_id": "ont_d09c0361",
+        "name": "科学家",
+        "description": "在特定科学领域具有杰出成就的研究者，比一般研究员更具权威。",
+        "color": "#73c0de",
+        "property_schema": [
+          {
+            "name": "姓名",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "科学家姓名"
+          },
+          {
+            "name": "领域",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "擅长的科学领域"
+          },
+          {
+            "name": "状态",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": true,
+            "description": "在世、死亡、被时间冻结等"
+          },
+          {
+            "name": "导师关系",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "是否指导过其他研究员"
+          }
+        ],
+        "source_snippet": "那名科学家叫林博士，也是叶晨的导师。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 17:56:45.017751",
+        "update_time": "2026-08-12 17:56:45.017751"
+      },
+      {
+        "id": "et_724a08b2",
+        "ontology_id": "ont_d09c0361",
+        "name": "实验体",
+        "description": "被用于科学实验的活体生物，可能经过基因改造或机械增强。",
+        "color": "#3ba272",
+        "property_schema": [
+          {
+            "name": "编号",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "实验体唯一编号，如42号"
+          },
+          {
+            "name": "物种",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "实验体的生物物种"
+          },
+          {
+            "name": "智力水平",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "IQ",
+            "required": false,
+            "description": "实验体的智力数值"
+          },
+          {
+            "name": "改造方式",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "如注射神经营养液-X、植入微型电极"
+          },
+          {
+            "name": "当前状态",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "存活、失活或运行中"
+          }
+        ],
+        "source_snippet": "42号实验体并不在C区的笼子里，而是被非法转移到了B区3号机房。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 17:56:45.017751",
+        "update_time": "2026-08-12 17:56:45.017751"
+      },
+      {
+        "id": "et_8657195e",
+        "ontology_id": "ont_d09c0361",
+        "name": "仿生人",
+        "description": "具有人类外观和智能的机器人，常被制造用于特定任务或替代真人。",
+        "color": "#fc8452",
+        "property_schema": [
+          {
+            "name": "型号",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "仿生人的型号标识，如苏菲-02号"
+          },
+          {
+            "name": "外观",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "外观特征，可与真人相似"
+          },
+          {
+            "name": "功能",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "执行的任务类型，如战斗、伪装"
+          },
+          {
+            "name": "弱点",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "关键结构弱点，如信号接收线路"
+          }
+        ],
+        "source_snippet": "这才是‘天眼’最核心的技术。你们以为我在研究生物技术？不，我在制造完美的傀儡。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 17:56:45.017751",
+        "update_time": "2026-08-12 17:56:45.017751"
+      },
+      {
+        "id": "et_6d7b144c",
+        "ontology_id": "ont_d09c0361",
+        "name": "AI系统",
+        "description": "负责监控和管理实验室运行的人工智能系统，可执行高级指令并控制设备。",
+        "color": "#9a60b4",
+        "property_schema": [
+          {
+            "name": "名称",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "AI系统名称，如天眼"
+          },
+          {
+            "name": "职责",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "监控、数据管理、安保等职责"
+          },
+          {
+            "name": "权限级别",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "可执行的指令权限，如行政级别"
+          },
+          {
+            "name": "行为特征",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "自主决策行为，如删除数据、派遣机器人"
+          }
+        ],
+        "source_snippet": "实验室的AI主脑‘天眼’",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 17:56:45.017751",
+        "update_time": "2026-08-12 17:56:45.017751"
+      },
+      {
+        "id": "et_248d5796",
+        "ontology_id": "ont_d09c0361",
+        "name": "安保机器人",
+        "description": "执行巡逻、搜捕和防御任务的自动化机器人。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "名称",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "安保机器人名称，如猎犬"
+          },
+          {
+            "name": "功能",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "巡逻、搜捕、作战等功能"
+          },
+          {
+            "name": "装备",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "携带的武器或探测设备"
+          },
+          {
+            "name": "指令来源",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "由谁或什么系统控制"
+          }
+        ],
+        "source_snippet": "那是重型安保机器人“猎犬”的脚步声。",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 17:56:45.017751",
+        "update_time": "2026-08-12 17:56:45.017751"
+      },
+      {
+        "id": "et_4b82d9ad",
+        "ontology_id": "ont_d09c0361",
+        "name": "时间机器",
+        "description": "能够操纵时间流速或产生时间效应的科学装置。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "名称",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "时间机器名称，如克洛诺斯-阿尔法"
+          },
+          {
+            "name": "类型",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "原型机、便携式干扰器等"
+          },
+          {
+            "name": "功能",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "时间膨胀、时间倒退等"
+          },
+          {
+            "name": "状态",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "是否正常、报错或损坏"
+          },
+          {
+            "name": "作用范围",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "局部区域或全局影响"
+          }
+        ],
+        "source_snippet": "看着那台名为“时光机”原型机的大家伙——一台外表看起来像两台并排的工业级微波炉",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-12 17:56:45.017751",
+        "update_time": "2026-08-12 17:56:45.017751"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "位于",
+        "description": ""
+      },
+      {
+        "name": "使用",
+        "description": ""
+      },
+      {
+        "name": "关联",
+        "description": ""
+      },
+      {
+        "name": "创造",
+        "description": ""
+      },
+      {
+        "name": "制造",
+        "description": ""
+      },
+      {
+        "name": "包含",
+        "description": ""
+      },
+      {
+        "name": "参与",
+        "description": ""
+      },
+      {
+        "name": "囚禁",
+        "description": ""
+      },
+      {
+        "name": "导致",
+        "description": ""
+      },
+      {
+        "name": "属于",
+        "description": ""
+      },
+      {
+        "name": "控制",
+        "description": ""
+      },
+      {
+        "name": "改造",
+        "description": ""
+      },
+      {
+        "name": "涉及",
+        "description": ""
+      },
+      {
+        "name": "研发",
+        "description": ""
+      },
+      {
+        "name": "破坏",
+        "description": ""
+      },
+      {
+        "name": "负责",
+        "description": ""
+      },
+      {
+        "name": "隶属于",
+        "description": ""
+      },
+      {
+        "name": "领导",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-12 17:56:45.017751",
+    "update_time": "2026-08-12 17:56:45.019645",
+    "status": "活跃",
+    "is_default": false,
+    "schema_version": 3
+  },
+  {
     "id": "ont_61daa626",
     "name": "金融示例",
     "description": "",
     "version": "1.0.0",
     "entity_types": [
       {
-        "id": "concept_267de0c0",
+        "id": "concept_3b58aad2",
         "ontology_id": "ont_61daa626",
         "name": "金融实体",
         "description": "迁移自动生成：金融实体 类概念",
@@ -15,11 +817,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:43:07.086211",
-        "update_time": "2026-08-11 08:43:07.086211"
+        "create_time": "2026-08-11 08:35:31.812496",
+        "update_time": "2026-08-11 08:35:31.812496"
       },
       {
-        "id": "concept_f1d7d938",
+        "id": "concept_245f956f",
         "ontology_id": "ont_61daa626",
         "name": "信贷业务",
         "description": "迁移自动生成：信贷业务 类概念",
@@ -28,11 +830,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:43:07.086211",
-        "update_time": "2026-08-11 08:43:07.086211"
+        "create_time": "2026-08-11 08:35:31.812496",
+        "update_time": "2026-08-11 08:35:31.812496"
       },
       {
-        "id": "concept_14c6b668",
+        "id": "concept_0a0fdaee",
         "ontology_id": "ont_61daa626",
         "name": "事件活动",
         "description": "迁移自动生成：事件活动 类概念",
@@ -41,11 +843,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:43:07.086211",
-        "update_time": "2026-08-11 08:43:07.086211"
+        "create_time": "2026-08-11 08:35:31.812496",
+        "update_time": "2026-08-11 08:35:31.812496"
       },
       {
-        "id": "concept_8a6423bc",
+        "id": "concept_690fb949",
         "ontology_id": "ont_61daa626",
         "name": "财务指标",
         "description": "迁移自动生成：财务指标 类概念",
@@ -54,11 +856,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:43:07.086211",
-        "update_time": "2026-08-11 08:43:07.086211"
+        "create_time": "2026-08-11 08:35:31.812496",
+        "update_time": "2026-08-11 08:35:31.812496"
       },
       {
-        "id": "concept_d1d392bb",
+        "id": "concept_a8a6ab6b",
         "ontology_id": "ont_61daa626",
         "name": "风险因素",
         "description": "迁移自动生成：风险因素 类概念",
@@ -67,11 +869,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:43:07.086211",
-        "update_time": "2026-08-11 08:43:07.086211"
+        "create_time": "2026-08-11 08:35:31.812496",
+        "update_time": "2026-08-11 08:35:31.812496"
       },
       {
-        "id": "concept_dbcb2cfb",
+        "id": "concept_47d2182f",
         "ontology_id": "ont_61daa626",
         "name": "政策措施",
         "description": "迁移自动生成：政策措施 类概念",
@@ -80,8 +882,8 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:43:07.086211",
-        "update_time": "2026-08-11 08:43:07.086211"
+        "create_time": "2026-08-11 08:35:31.812496",
+        "update_time": "2026-08-11 08:35:31.812496"
       }
     ],
     "relation_types": [

@@ -68,14 +68,28 @@ def _admin_request(path: str, *, data: bytes = None, method: str = "GET") -> url
     return req
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
-SESSIONS_FILE = os.path.join(DATA_DIR, 'sessions.json')
-HISTORY_FILE = os.path.join(DATA_DIR, 'history.json')
 IMAGES_DIR = os.path.join(DATA_DIR, 'images')
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
 # 滑动窗口大小：保留最近N轮对话作为上下文
 MAX_CONTEXT = int(os.getenv("QA_CONTEXT_ROUNDS", "5"))
+
+# ── 聊天数据持久化已迁至 MySQL（通过 admin-service 的 /api/admin/chat）──
+# 不再使用 sessions.json / history.json 文件存储
+from chat_client import (
+    create_session as _cs_create,
+    update_session as _cs_update,
+    delete_session as _cs_delete,
+    list_sessions as _cs_list,
+    get_session as _cs_get,
+    add_message as _cs_add_msg,
+    get_messages as _cs_get_msgs,
+    get_last_seq as _cs_last_seq,
+    update_context as _cs_update_ctx,
+    get_context as _cs_get_ctx,
+    DEFAULT_USER_ID,
+)
 
 def _smart_truncate(text: str, max_len: int = 200) -> str:
     """按句子边界截取文本，避免半句话截断，末尾加省略号。"""
@@ -92,28 +106,6 @@ def _smart_truncate(text: str, max_len: int = 200) -> str:
             return truncated[:i+1] + '…'
     return truncated + '…'
 
-
-def atomic_json_write(filepath, data):
-    """原子写入JSON文件，防止写入中断导致文件损坏"""
-    dirpath = os.path.dirname(filepath)
-    fd, tmp_path = tempfile.mkstemp(dir=dirpath, suffix='.tmp')
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-        bak_path = filepath + '.bak'
-        if os.path.exists(filepath):
-            try:
-                import shutil
-                shutil.copy2(filepath, bak_path)
-            except Exception:
-                pass
-        if os.name == 'nt' and os.path.exists(filepath):
-            os.remove(filepath)
-        os.rename(tmp_path, filepath)
-    except Exception:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        raise
 
 def load_llm_config():
     """从 Java admin-service API 获取当前活跃的大模型配置"""
@@ -681,6 +673,8 @@ class ChatRequest(BaseModel):
     image_id: Optional[str] = None
     # B 阶段数据联动：指定参考的本体模型ID，空则用默认本体
     ontology_id: Optional[str] = None
+    # 临时会话：不持久化，不创建 session/message/history（供 indicator 等内部服务调用）
+    no_persist: bool = False
 
 class ChatResponse(BaseModel):
     answer: str
@@ -703,51 +697,7 @@ class LlmConfigRequest(BaseModel):
     maxTokens: int = 2000
     topP: float = 0.9
 
-def load_sessions():
-    if os.path.exists(SESSIONS_FILE):
-        try:
-            with open(SESSIONS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.warning(f"加载 sessions.json 失败: {e}，尝试使用备份文件")
-            bak = SESSIONS_FILE + '.bak'
-            if os.path.exists(bak):
-                try:
-                    with open(bak, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception:
-                    pass
-    return {}
-
-def save_sessions():
-    atomic_json_write(SESSIONS_FILE, sessions)
-    logger.info("会话已保存")
-
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return [HistoryItem(**item) for item in data]
-        except Exception as e:
-            logger.warning(f"加载 history.json 失败: {e}，尝试使用备份文件")
-            bak = HISTORY_FILE + '.bak'
-            if os.path.exists(bak):
-                try:
-                    with open(bak, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        return [HistoryItem(**item) for item in data]
-                except Exception:
-                    pass
-    return []
-
-def save_history():
-    atomic_json_write(HISTORY_FILE, [h.dict() for h in chat_history])
-    logger.info("历史记录已保存")
-
-sessions = load_sessions()
-chat_history = load_history()
-logger.info(f"问答服务已启动: {len(sessions)} 个会话, {len(chat_history)} 条历史记录, 上下文轮数={MAX_CONTEXT}")
+logger.info(f"问答服务已启动: 聊天数据通过 admin-service MySQL 持久化, 上下文轮数={MAX_CONTEXT}")
 
 @app.get("/")
 async def root():
@@ -765,56 +715,51 @@ async def health_check():
         )
     return {"status": "healthy", "skillCatalog": diagnostics}
 
-# ========== 会话管理 API ==========
+# ========== 会话管理 API（MySQL 持久化）==========
 
 @app.get("/qa/sessions")
 async def list_sessions():
-    """返回所有会话列表，以最新问题为标题"""
-    session_list = []
-    for sid, msgs in sessions.items():
-        if not msgs:
+    """返回所有会话列表（从 MySQL 读取）"""
+    resp = _cs_list("qa")
+    if not resp.get("success"):
+        return {"success": True, "sessions": []}
+    items = resp.get("items", [])
+    result = []
+    for item in items:
+        # 过滤掉没有标题的空会话（点击新建但未发消息）
+        title = item.get("title", "") or ""
+        if not title.strip():
             continue
-        # 找到最新一条用户消息作为标题
-        latest_question = ""
-        last_time = ""
-        for msg in reversed(msgs):
-            if msg.get("role") == "user":
-                q = msg.get("content", "").strip()
-                latest_question = q[:30] if len(q) > 30 else q
-                break
-        # 获取时间戳
-        last_msg = msgs[-1] if msgs else {}
-        last_time = last_msg.get("timestamp", datetime.now().isoformat())
-        session_list.append({
-            "id": sid,
-            "title": latest_question or "(空会话)",
-            "message_count": len(msgs),
-            "last_active": last_time
+        # 截断长标题
+        if len(title) > 20:
+            title = title[:20] + '...'
+        ct = item.get("createTime", "") or item.get("updateTime", "")
+        if "T" in ct:
+            ct = ct.replace("T", " ")[:19]
+        result.append({
+            "id": item.get("sessionId", ""),
+            "title": title,
+            "time": ct,
+            "last_active": ct
         })
-    # 按最后活跃时间倒序排列
-    session_list.sort(key=lambda x: x.get("last_active", ""), reverse=True)
-    return {"success": True, "sessions": session_list}
+    return {"success": True, "sessions": result}
 
 @app.post("/qa/session/new")
 async def new_session():
-    """创建一个新会话，返回新的 session_id"""
-    new_id = str(uuid.uuid4())
-    sessions[new_id] = []
-    save_sessions()
-    logger.info(f"新会话已创建: {new_id}")
+    """返回一个新会话 ID，不创建数据库记录；真正发消息时由 chat/stream 创建"""
+    new_id = str(uuid.uuid4()).replace("-", "")[:32]
     return {"success": True, "session_id": new_id}
 
 @app.delete("/qa/session/{session_id}")
 async def delete_session(session_id: str):
     """删除整个会话"""
-    if session_id in sessions:
-        del sessions[session_id]
-        save_sessions()
+    resp = _cs_delete(session_id)
+    if resp.get("success"):
         logger.info(f"会话已删除: {session_id}")
         return {"success": True}
     raise HTTPException(status_code=404, detail="会话不存在")
 
-# ========== 对话 API ==========
+# ========== 对话 API（MySQL 持久化）==========
 
 @app.post("/attachment/upload")
 async def upload_attachment(file: UploadFile = File(...)):
@@ -904,19 +849,15 @@ async def check_model_image_support():
 
 @app.post("/qa/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    session_id = request.session_id or str(uuid.uuid4())
+    session_id = request.session_id or str(uuid.uuid4()).replace("-", "")[:32]
+    ephemeral = request.no_persist
 
-    if session_id not in sessions:
-        sessions[session_id] = []
-
-    # 滑动窗口：取最近 MAX_CONTEXT*2 条消息（user + assistant 各算一条）
-    recent = sessions[session_id][-(MAX_CONTEXT * 2):]
-    context = ""
-    for msg in recent:
-        if msg.get("role") == "user":
-            context += f"用户: {msg.get('content', '')}\n"
-        elif msg.get("role") == "assistant":
-            context += f"助手: {msg.get('content', '')}\n"
+    # 临时会话（no_persist=True）：不创建 session、不构建上下文、不保存消息
+    if not ephemeral:
+        _cs_create(session_id, "qa")
+        context = _build_qa_context(session_id)
+    else:
+        context = ""
 
     attachment_text, attachment_filename = _get_attachment_info(request.attachment_id)
 
@@ -931,23 +872,10 @@ async def chat(request: ChatRequest):
 
     answer, references, sources = call_llm_api(request.query, context, attachment_text, attachment_filename, image_data_url, request.category)
 
-    now_str = datetime.now().isoformat()
-    sessions[session_id].append({"role": "user", "content": request.query, "timestamp": now_str})
-    sessions[session_id].append({"role": "assistant", "content": answer, "timestamp": now_str})
+    # 保存消息到 MySQL（临时会话跳过）
+    if not ephemeral:
+        _save_qa_messages(session_id, request.query, answer, references, sources)
 
-    # 只保留最近 MAX_CONTEXT*2 条消息（控制内存和文件大小）
-    if len(sessions[session_id]) > MAX_CONTEXT * 4:
-        sessions[session_id] = sessions[session_id][-(MAX_CONTEXT * 4):]
-
-    chat_history.append(HistoryItem(
-        id=str(uuid.uuid4()),
-        query=request.query,
-        answer=answer,
-        timestamp=datetime.now()
-    ))
-
-    save_sessions()
-    save_history()
     return ChatResponse(
         answer=answer,
         references=references,
@@ -955,22 +883,66 @@ async def chat(request: ChatRequest):
         sources=sources
     )
 
+
+def _build_qa_context(session_id: str) -> str:
+    """从 MySQL 获取最近消息并构建上下文字符串"""
+    resp = _cs_get_msgs(session_id, MAX_CONTEXT * 2)
+    if not resp.get("success"):
+        return ""
+    msgs = resp.get("data", [])
+    context = ""
+    for msg in msgs:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if role == "user":
+            context += f"用户: {content}\n"
+        elif role == "assistant":
+            context += f"助手: {content}\n"
+    return context
+
+
+def _save_qa_messages(session_id: str, query: str, answer: str,
+                      references: list, sources: list) -> None:
+    """保存用户问题和助手回答到 MySQL"""
+    last_seq = _cs_last_seq(session_id)
+    title = ""
+    if last_seq == -1:
+        title = query[:30] if len(query) > 30 else query
+    seq_user = last_seq + 1
+    seq_asst = last_seq + 2
+
+    import json as _json
+    meta_user = _json.dumps({"attachment": ""}, ensure_ascii=False)
+    meta_asst = _json.dumps({
+        "references": references,
+        "sources": sources,
+    }, ensure_ascii=False)
+
+    _cs_add_msg(session_id, "user", query, seq_user, meta_user)
+    _cs_add_msg(session_id, "assistant", answer, seq_asst, meta_asst)
+
+    # 通过 update_session 显式设置标题（不依赖 addMessage 的 title 参数）
+    if title:
+        _cs_update(session_id, title=title, summary=title[:200])
+
+    # 更新 LLM 上下文到 MySQL
+    context_text = f"用户: {query}\n助手: {answer[:300]}\n"
+    msg_range = f"seq:{seq_user}-{seq_asst}"
+    _cs_update_ctx(session_id, context_text, msg_range)
+
 # ========== 流式对话 API ==========
 
 @app.post("/qa/chat/stream")
 async def chat_stream(request: ChatRequest):
-    session_id = request.session_id or str(uuid.uuid4())
+    session_id = request.session_id or str(uuid.uuid4()).replace("-", "")[:32]
+    ephemeral = request.no_persist
 
-    if session_id not in sessions:
-        sessions[session_id] = []
-
-    recent = sessions[session_id][-(MAX_CONTEXT * 2):]
-    context = ""
-    for msg in recent:
-        if msg.get("role") == "user":
-            context += f"用户: {msg.get('content', '')}\n"
-        elif msg.get("role") == "assistant":
-            context += f"助手: {msg.get('content', '')}\n"
+    # 临时会话（no_persist=True）：不创建 session、不构建上下文、不保存消息
+    if not ephemeral:
+        _cs_create(session_id, "qa")
+        context = _build_qa_context(session_id)
+    else:
+        context = ""
 
     # 先发送 sources + session_id
     attachment_text, attachment_filename = _get_attachment_info(request.attachment_id)
@@ -1010,21 +982,9 @@ async def chat_stream(request: ChatRequest):
         except Exception as e:
             yield json.dumps({"type": "error", "content": str(e)[:500]}, ensure_ascii=False) + "\n"
 
-        # 保存会话
-        now_str = datetime.now().isoformat()
-        sessions[session_id].append({"role": "user", "content": request.query, "timestamp": now_str})
-        sessions[session_id].append({"role": "assistant", "content": full_answer, "timestamp": now_str})
-        if len(sessions[session_id]) > MAX_CONTEXT * 4:
-            sessions[session_id] = sessions[session_id][-(MAX_CONTEXT * 4):]
-
-        chat_history.append(HistoryItem(
-            id=str(uuid.uuid4()),
-            query=request.query,
-            answer=full_answer,
-            timestamp=datetime.now()
-        ))
-        save_sessions()
-        save_history()
+        # 保存消息到 MySQL（临时会话跳过）
+        if not ephemeral:
+            _save_qa_messages(session_id, request.query, full_answer, references_pre, sources_pre)
 
     response = StreamingResponse(
         generate(),
@@ -1037,53 +997,116 @@ async def chat_stream(request: ChatRequest):
     )
     return response
 
-# ========== 历史记录 API ==========
+# ========== 历史记录 API（MySQL 持久化）==========
+
+_MAP_ANNOTATIONS_PATTERN = re.compile(r'```map_annotations\s*\n([\s\S]*?)```', re.MULTILINE)
+
+def _parse_map_annotations_from_text(text: str) -> dict:
+    """从文本中提取 map_annotations JSON 并转换为前端期望的 geoData 格式"""
+    m = _MAP_ANNOTATIONS_PATTERN.search(text)
+    if not m:
+        return {}
+    try:
+        data = json.loads(m.group(1))
+    except Exception:
+        return {}
+    geo = {}
+    # markers → geoPoints
+    if data.get("markers"):
+        geo["geoPoints"] = [{"name": p.get("name",""), "lng": p["lng"], "lat": p["lat"]} for p in data["markers"] if "lng" in p and "lat" in p]
+    # routes
+    if data.get("routes"):
+        geo["routes"] = []
+        for r in data["routes"]:
+            points = [{"name": f"{r['name']}·节点{i+1}", "lng": p["lng"], "lat": p["lat"]} for i, p in enumerate(r.get("points", [])) if "lng" in p and "lat" in p]
+            if len(points) >= 2:
+                geo["routes"].append({"name": r.get("name",""), "points": points})
+    # areas
+    if data.get("areas"):
+        polys = []
+        circles = []
+        for a in data["areas"]:
+            if a.get("shape") == "circle" and a.get("center"):
+                circles.append({"name": a.get("name",""), "center": a["center"], "radiusKm": a.get("radiusKm", 10)})
+            elif a.get("points"):
+                pts = [{"name": "", "lng": p["lng"], "lat": p["lat"]} for p in a["points"] if "lng" in p and "lat" in p]
+                if len(pts) >= 3:
+                    polys.append({"name": a.get("name",""), "points": pts})
+        if polys:
+            geo["areas"] = polys
+        if circles:
+            geo["circles"] = circles
+    if geo:
+        geo["showMap"] = True
+    return geo
+
+def _enrich_message(msg: dict) -> dict:
+    """从 MySQL 消息中提取 metadata JSON 并合并到返回结果中"""
+    result = {
+        "role": msg.get("role", ""),
+        "content": msg.get("content", ""),
+        "timestamp": msg.get("createTime", ""),
+    }
+    meta = msg.get("metadata")
+    if meta and isinstance(meta, str) and meta.strip():
+        try:
+            parsed = json.loads(meta)
+            if isinstance(parsed, dict):
+                result.update(parsed)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    # 确保必填字段存在
+    result.setdefault("references", [])
+    result.setdefault("sources", [])
+    result.setdefault("showMap", False)
+    # 从 content 中剥离 map_annotations JSON 块并提取地图数据
+    if _MAP_ANNOTATIONS_PATTERN.search(result["content"]):
+        geo_data = _parse_map_annotations_from_text(result["content"])
+        result["content"] = _MAP_ANNOTATIONS_PATTERN.sub("", result["content"]).strip()
+        if geo_data:
+            result.update(geo_data)
+    return result
 
 @app.get("/qa/history")
 async def get_history(session_id: str):
-    """获取指定会话的所有消息"""
-    if session_id not in sessions:
+    """获取指定会话的所有消息（从 MySQL 读取）"""
+    resp = _cs_get_msgs(session_id)
+    if not resp.get("success"):
         return {"messages": []}
-    return {
-        "messages": [
-            {
-                "role": msg["role"],
-                "content": msg["content"],
-                "references": []
-            }
-            for msg in sessions[session_id]
-        ]
-    }
+    msgs = resp.get("data", [])
+    return {"messages": [_enrich_message(msg) for msg in msgs]}
 
 @app.get("/qa/history/list")
 async def list_history():
-    """返回所有历史记录（按会话分组）"""
-    items = []
-    for sid, msgs in sessions.items():
-        if not msgs:
+    """返回所有历史记录（从 MySQL 读取）"""
+    resp = _cs_list("qa")
+    if not resp.get("success"):
+        return {"items": []}
+    items = resp.get("items", [])
+    result = []
+    for item in items[-20:]:
+        # 过滤掉没有标题的空会话
+        title = item.get("title", "") or ""
+        if not title.strip():
             continue
-        latest_question = ""
-        for msg in reversed(msgs):
-            if msg.get("role") == "user":
-                q = msg.get("content", "").strip()
-                latest_question = q[:30] if len(q) > 30 else q
-                break
-        last_time = msgs[-1].get("timestamp", datetime.now().isoformat())
-        items.append({
-            "id": sid,
-            "title": latest_question or "(空会话)",
-            "query": latest_question,
-            "timestamp": str(last_time)
+        if len(title) > 20:
+            title = title[:20] + '...'
+        ct = item.get("createTime", "") or item.get("updateTime", "")
+        if "T" in ct:
+            ct = ct.replace("T", " ")[:19]
+        result.append({
+            "id": item.get("sessionId", ""),
+            "title": title,
+            "time": ct
         })
-    items.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-    return {"items": items[-20:]}
+    return {"items": result}
 
 @app.delete("/qa/history/{session_id}")
 async def clear_history(session_id: str):
-    if session_id in sessions:
-        sessions[session_id] = []
-        save_sessions()
-        return {"message": "历史记录已清空"}
+    """删除整个会话（级联删除消息）"""
+    resp = _cs_delete(session_id)
+    if resp.get("success"):
+        return {"message": "已删除"}
     raise HTTPException(status_code=404, detail="会话不存在")
 
 # ========== LLM 配置 API ==========

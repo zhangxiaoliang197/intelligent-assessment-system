@@ -171,9 +171,16 @@ function getColorByName(name: string): string {
   return colors[Math.abs(hash) % colors.length]
 }
 
+// ── 把本机 GeoServer 绝对地址转成同源代理相对路径，避免导出时 canvas 跨域污染 ──
+function normalizeBaseUrl(baseUrl: string): string {
+  if (!baseUrl) return baseUrl
+  // http://localhost:9090/geowebcache/gwc → /geowebcache/gwc（走 vite/nginx 同源代理）
+  return baseUrl.replace(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i, '/')
+}
+
 // ── 根据 type + baseUrl 客户端构建图层 ──
 function buildLayers(type: string, baseUrl: string): MapLayerConfig[] {
-  const url = baseUrl.replace(/\/+$/, '')
+  const url = normalizeBaseUrl(baseUrl).replace(/\/+$/, '')
   if (type === 'geowebcache') {
     return [
       { id: 'china_provinces_3857', name: '省级行政边界', urlTemplate: `${url}/service/tms/1.0.0/china:china_provinces_3857@EPSG:900913@png/{z}/{x}/{y}.png`, opacity: 0.9, minZoom: 3, maxZoom: 18, tms: true },
@@ -185,7 +192,7 @@ function buildLayers(type: string, baseUrl: string): MapLayerConfig[] {
     ]
   }
   // 自定义: 地址作为单层瓦片源
-  return [{ id: 'custom', name: '自定义图层', urlTemplate: baseUrl, opacity: 0.9, minZoom: 3, maxZoom: 18, tms: true }]
+  return [{ id: 'custom', name: '自定义图层', urlTemplate: normalizeBaseUrl(baseUrl), opacity: 0.9, minZoom: 3, maxZoom: 18, tms: true }]
 }
 
 // ── 从 API 加载地图服务配置，失败则用默认配置 ──
@@ -489,6 +496,7 @@ async function initMap() {
     attributionControl: false,
     minZoom: 3,
     maxZoom: 18,
+    preferCanvas: true,
   })
 
   buildTileLayers(layerConfigs)

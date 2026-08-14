@@ -43,6 +43,7 @@
                 :selected-region="store.selectedRegion"
                 :time-range="store.selectedTimeRange"
                 :filters="store.filters"
+                :explanation="store.mapExplanation"
                 @region-select="onRegionSelect"
                 @marker-click="onMarkerClick"
                 @layer-toggle="onLayerToggle"
@@ -110,12 +111,14 @@ const sourceLabel = computed(() => {
  * - 数量少时优先纵向或 2 列，保证地图有足够高度不致过扁；
  * - 3 个图表用 2 列 + 第 3 个跨列填满第 2 行（避免 1 列 3 行过高使地图过瘦）；
  * - 4 个用 2×2；5-6 个用 2 列 3 行；7+ 用 3 列。
- * - 单行高度按 380px 估算（图表卡片 body 320 + header/padding 60），含 12px gap。
+ * - 单行高度按 440px 估算（图表卡片 body 320 + header/padding 60 + 说明块约 60），含 12px gap。
+ *   说明块为 1-3 行（12px/1.5 行高 + 上下 padding），估算值保留余量；即使说明更长，
+ *   行高也会随内容撑开，minHeight 仅作为下限。
  */
 const chartLayout = computed(() => {
   const n = store.charts.length
-  // 单行高度估算：卡片 380 + gap 12（末行无 gap，公式 rows*380 + (rows-1)*12）
-  const ROW_H = 380
+  // 单行高度估算：卡片 440 + gap 12（末行无 gap，公式 rows*440 + (rows-1)*12）
+  const ROW_H = 440
   const GAP = 12
   const PAD = 32 // chart-side 上下 padding
   const h = (rows: number) => rows * ROW_H + (rows - 1) * GAP + PAD
@@ -262,7 +265,10 @@ function onViewportChange(vp: Viewport) {
   display: flex;
   align-items: stretch;
   gap: 16px;
-  /* minHeight 由 chartLayout 计算属性内联设置，按图表数量自适应 */
+  /* minHeight 由 chartLayout 计算属性内联设置，按图表数量自适应；
+     禁止 flex 压缩：内容（含图表说明）高于 minHeight 时整页滚动，而不是把
+     说明挤入下方区块被遮挡 */
+  flex-shrink: 0;
 }
 .chart-side {
   flex: 1;

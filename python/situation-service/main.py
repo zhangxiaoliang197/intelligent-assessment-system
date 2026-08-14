@@ -757,6 +757,7 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
             "option": data.get("option", {}),
             "explanation": "",
             "datasetRef": data.get("datasetRef", ""),
+            "fieldMapping": data.get("fieldMapping") or {},
             "provenance": data.get("provenance", {}),
             "verification": data.get("verification", {}),
         }
@@ -774,6 +775,8 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
             "areas": data.get("areas", []),
             "circles": data.get("circles", []),
             "layerConfig": data.get("layerConfig", {}),
+            "datasetRef": data.get("datasetRef", ""),
+            "fieldMapping": data.get("fieldMapping") or {},
             "verification": data.get("verification", {}),
         }
         report.map["layers"] = [layer for layer in layers if layer.get("layerId") != item["layerId"]]
@@ -782,12 +785,16 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
         report.narrative = {
             "intro": data.get("intro", ""),
             "explanations": data.get("explanations", []),
+            "mapExplanation": data.get("mapExplanation", ""),
         }
         # 回填每个图表的 explanation 字段
         exp_map = {e.get("chartId"): e.get("text", "") for e in data.get("explanations", [])}
         for c in report.charts:
             if c["chartId"] in exp_map:
                 c["explanation"] = exp_map[c["chartId"]]
+        # 回填地图说明
+        if data.get("mapExplanation"):
+            report.map["explanation"] = data.get("mapExplanation", "")
     elif event_type == "dataset":
         item = {
             "datasetId": data.get("datasetId", ""),
@@ -799,6 +806,8 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
             "truncated": data.get("truncated", False),
             "evidenceHash": data.get("evidenceHash", ""),
             "execution": data.get("execution", {}),
+            "columns": data.get("columns", []),
+            "data": data.get("data", []),
         }
         report.datasets = [
             dataset for dataset in report.datasets

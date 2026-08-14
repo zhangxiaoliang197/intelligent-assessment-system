@@ -90,6 +90,9 @@ def _api_get(path: str, timeout: int = 30) -> dict:
     req.add_header("Content-Type", "application/json")
     if INTERNAL_SERVICE_TOKEN:
         req.add_header("X-Service-Token", INTERNAL_SERVICE_TOKEN)
+    # 内部服务通道按管理员身份访问 admin-service（execute-sql 等接口要求该角色头）
+    req.add_header("X-User-Role", "admin")
+    req.add_header("X-User-Id", "system")
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=_ssl_ctx) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -118,6 +121,9 @@ def _api_post(path: str, body: dict, timeout: int = 120) -> dict:
     req.add_header("Content-Type", "application/json")
     if INTERNAL_SERVICE_TOKEN:
         req.add_header("X-Service-Token", INTERNAL_SERVICE_TOKEN)
+    # 内部服务通道按管理员身份访问 admin-service（execute-sql 等接口要求该角色头）
+    req.add_header("X-User-Role", "admin")
+    req.add_header("X-User-Id", "system")
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=_ssl_ctx) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -566,6 +572,38 @@ def fetch_indicator_detail(indicator_id: str) -> dict:
         ind["fieldMapping"] = ind.get("fieldMapping") or linkage.get("fieldMapping", "{}")
         ind["calculationMethod"] = ind.get("calculationMethod") or linkage.get("calculationMethod", "")
     return ind
+
+
+def fetch_database_catalog(database_id: str) -> dict:
+    """获取语义目录完整视图（表 + 列 + 标注 + 连接键），供 LLM 建议绑定使用。"""
+    try:
+        url = f"catalog/database?databaseId={database_id}" if database_id else "catalog/database"
+        resp = _api_get(url, timeout=30)
+        return resp if isinstance(resp, dict) else {}
+    except Exception as e:
+        logger.warning(f"获取语义目录失败: {e}")
+        return {}
+
+
+def save_catalog_synonym(concept: str, dataset_id: str, table_name: str,
+                         column_name: str, database_id: str = "",
+                         column_comment: str = "") -> bool:
+    """人工确认后回写语义目录同义词条目。"""
+    try:
+        body = {
+            "concept": concept,
+            "datasetId": dataset_id or "",
+            "tableName": table_name or "",
+            "columnName": column_name or "",
+            "databaseId": database_id or "",
+            "columnComment": column_comment or "",
+            "source": "llm-confirmed",
+        }
+        resp = _api_post("catalog/synonym", body, timeout=30)
+        return bool(resp and resp.get("success"))
+    except Exception as e:
+        logger.warning(f"回写语义目录失败: {e}")
+        return False
 
 
 def search_knowledge_base(query: str, top_k: int = 3) -> list:

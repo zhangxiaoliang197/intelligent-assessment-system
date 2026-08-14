@@ -446,7 +446,8 @@ async def mock_generate(
 
     # ── 4. map_layer（WGS84 坐标，前端 gcoord 转 GCJ02）──
     await asyncio.sleep(interval)
-    yield "map_layer", _map_payload(profile)
+    map_payload = _map_payload(profile)
+    yield "map_layer", map_payload
 
     # ── 5. narrative（态势介绍 + 逐图说明，最后产出）──
     await asyncio.sleep(interval)
@@ -463,6 +464,12 @@ async def mock_generate(
             }
             for index, metric in enumerate(focus_metrics, start=1)
         ],
+        "mapExplanation": (
+            f"该地图用于展示「{query}」相关关键对象的空间分布（"
+            f"{len(map_payload.get('points', []))} 个标点、{len(map_payload.get('routes', []))} 条路线、"
+            f"{len(map_payload.get('areas', []))} 个区域、{len(map_payload.get('circles', []))} 个圆形区域），"
+            f"请结合各图表与地图位置进行联动分析。"
+        ),
     }
 
     # ── 6. done ──
@@ -533,7 +540,21 @@ def _source_result_as_actor(source: str, query: str, context: dict, datasets: li
         if len(matches) != 1:
             message = "未找到已授权数据集" if not matches else "数据源绑定不唯一，请改用 dataset:<id>"
             return {"success": False, "message": message}
-        return tools.query_admin_dataset(matches[0], config.SITUATION_DATA_ROW_LIMIT)
+        matched = matches[0]
+        # 远端特性：schema 含字段元数据时优先 LLM 生成精确 SQL 取数，失败回退预定义查询/整表
+        if matched.get("fields"):
+            try:
+                sql_result = _query_dataset_with_sql(
+                    str(matched.get("id") or ""), query, matched, "",
+                    config.SITUATION_DATA_ROW_LIMIT,
+                )
+                if isinstance(sql_result, dict) and sql_result.get("success") is not False:
+                    sql_result["dataset"] = matched
+                    return sql_result
+                logger.warning("SQL 取数未成功，回退数据集预定义查询: dataset=%s", matched.get("id"))
+            except Exception as exc:
+                logger.warning("SQL 取数异常，回退数据集预定义查询: dataset=%s err=%s", matched.get("id"), exc)
+        return tools.query_admin_dataset(matched, config.SITUATION_DATA_ROW_LIMIT)
     if source == "knowledge":
         return tools.query_knowledge(query, top_k=8)
     if source == "indicator":
@@ -967,6 +988,15 @@ def _sanitize_map_layer(value: Any, profile: dict, context: Optional[dict] = Non
         "points": points, "routes": routes, "areas": areas, "circles": circles,
         "layerConfig": layer_config,
     }
+    # 远端特性：保留 datasetRef/fieldMapping（前端据此用全量数据渲染轨迹/标点）
+    if isinstance(value.get("datasetRef"), str) and value["datasetRef"]:
+        layer["datasetRef"] = _safe_text(value["datasetRef"], 80)
+    if isinstance(value.get("fieldMapping"), dict):
+        layer["fieldMapping"] = {
+            str(key)[:60]: str(item)[:60]
+            for key, item in value["fieldMapping"].items()
+            if isinstance(item, str)
+        }
     map_radius = next((
         _as_number(value)
         for key, value in (((context or {}).get("skill") or {}).get("parameters") or {}).items()
@@ -1164,6 +1194,7 @@ def _validate_llm_result(result: dict, profile: dict, bundles: list) -> tuple[li
             "title": str(value.get("title") or profile["focusMetrics"][(index - 1) % len(profile["focusMetrics"])]),
             "option": option,
             "datasetRef": dataset_ref,
+            "fieldMapping": value.get("fieldMapping") or {},
             "provenance": {
                 "datasetId": dataset_ref,
                 "physicalDatasetId": bundle_by_id[dataset_ref].get("physicalDatasetId", ""),
@@ -1307,6 +1338,61 @@ def _data_fallback(query: str, profile: dict, bundles: list, context: Optional[d
     return charts, _fallback_map(profile, bundles, context), narrative
 
 
+def _query_dataset_with_sql(
+    ds_id: str,
+    query: str,
+    schema: Optional[Dict[str, Any]],
+    intent: str,
+    limit: int,
+) -> Dict[str, Any]:
+    """Phase 2 取数：优先用 LLM 生成精确 SQL 执行，失败回退整表查询。
+
+    复用评估分析 Text-to-SQL 能力（LLM 生成 WHERE/聚合/GROUP BY），
+    只有 schema 无字段元数据或 SQL 生成/执行失败时才回退原 query_admin_data，
+    保证态势图整体流程（5 阶段）不因取数方式升级而中断。
+    """
+    from agent import tools
+
+    # 无 schema 或字段元数据 → 直接回退原整表/预定义查询
+    if not schema or not schema.get("fields"):
+        return tools.query_admin_data(ds_id, limit)
+
+    from llm_client import call_llm_json
+    from agent import prompts
+
+    try:
+        sql_result = call_llm_json(
+            prompts.build_sql_messages(query, schema, intent),
+            0.3,
+            config.LLM_MAX_TOKENS,
+        )
+        sql = ""
+        if isinstance(sql_result, dict):
+            sql = str(sql_result.get("sql") or "").strip()
+        elif isinstance(sql_result, str):
+            sql = sql_result.strip()
+        if not sql:
+            logger.warning("LLM 未生成 SQL，回退整表查询: datasetId=%s", ds_id)
+            return tools.query_admin_data(ds_id, limit)
+    except Exception as exc:
+        logger.warning("SQL 生成失败，回退整表查询: datasetId=%s err=%s", ds_id, exc)
+        return tools.query_admin_data(ds_id, limit)
+
+    data = tools.execute_dataset_sql(ds_id, sql)
+    if not data.get("success"):
+        logger.warning(
+            "SQL 执行失败，回退整表查询: datasetId=%s sql=%s err=%s",
+            ds_id, sql[:200], data.get("message", "")[:200],
+        )
+        return tools.query_admin_data(ds_id, limit)
+
+    # 统一字段：execute-sql 返回 rowCount，而 /dataset/{id}/data 返回 total，
+    # 补齐 total 供下游（dataset 事件 / _format_data）统一读取。
+    if "total" not in data and "rowCount" in data:
+        data["total"] = data["rowCount"]
+    return data
+
+
 async def real_generate(
     query: str,
     report_id: str,
@@ -1360,6 +1446,11 @@ async def real_generate(
 
     for index, bundle in enumerate(bundles, start=1):
         bundle["datasetId"] = f"real_{index}_{_safe_id(bundle['source'])}"
+        payload = bundle.get("payload")
+        rows = _rows_from_payload(payload)
+        columns = payload.get("columns") if isinstance(payload, dict) else []
+        if not columns and rows and isinstance(rows[0], dict):
+            columns = list(rows[0].keys())
         yield "dataset", {
             "datasetId": bundle["datasetId"],
             "source": bundle["source"],
@@ -1370,7 +1461,10 @@ async def real_generate(
             "schemaVersion": bundle.get("schemaVersion", 1),
             "truncated": bundle.get("truncated", False),
             "execution": bundle.get("execution", {}),
-            "evidenceHash": _evidence_digest(_rows_from_payload(bundle.get("payload"))),
+            "evidenceHash": _evidence_digest(rows),
+            # 远端特性：全量数据下发，前端用 fieldMapping 全量渲染（替代 LLM 内联样本）
+            "columns": columns,
+            "data": rows,
         }
 
     partial = False
@@ -1389,6 +1483,38 @@ async def real_generate(
             "fatal": False,
         }
         charts, map_layer, narrative = _data_fallback(query, profile, bundles, runtime_context)
+
+    # 远端特性：优先用 map_builder 从全量真实数据自动标注（确定性、无需 LLM 产图）；
+    # 无地理列或坐标未通过证据校验时保留 LLM 地图（其坐标已通过同一证据校验）。
+    builder_layer = None
+    try:
+        from agent import map_builder
+        for bundle in bundles:
+            ann = map_builder.build_map_annotations(_rows_from_payload(bundle.get("payload")))
+            if ann and (ann.get("points") or ann.get("routes") or ann.get("areas") or ann.get("circles")):
+                candidate = _verify_map_coordinates(_sanitize_map_layer({
+                    "layerId": f"ds_{bundle.get('datasetId', '')}",
+                    "datasetRef": bundle.get("datasetId", ""),
+                    "points": ann.get("points", []),
+                    "routes": ann.get("routes", []),
+                    "areas": ann.get("areas", []),
+                    "circles": ann.get("circles", []),
+                    "layerConfig": {
+                        "name": f"数据集 {bundle.get('source', '')}",
+                        "type": "points",
+                        "supportedTypes": ["points", "routes", "areas", "circles"],
+                        "color": "#8b5cf6",
+                        "opacity": 0.85,
+                        "visible": True,
+                    },
+                }, profile, runtime_context), bundles)
+                if candidate.get("points") or candidate.get("routes") or candidate.get("areas") or candidate.get("circles"):
+                    builder_layer = candidate
+                    break
+    except Exception as exc:
+        logger.warning("map_builder 自动标注失败，保留 LLM 地图: %s", exc)
+    if builder_layer:
+        map_layer = builder_layer
 
     for chart in charts:
         yield "chart", chart

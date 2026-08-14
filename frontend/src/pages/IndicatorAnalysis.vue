@@ -295,6 +295,55 @@
                 </div>
               </div>
 
+              <!-- 查询计划 / Preflight 就绪度（确定性编译路径） -->
+              <div v-if="panelState.queryPlan || (panelState.preflight && panelState.preflight.per_indicator)" class="panel-section">
+                <div class="section-header" @click="togglePanel('plan')">
+                  <h5>查询计划 / 指标就绪度</h5>
+                  <el-icon :class="{ rotated: !panelState.sections.plan }"><ArrowDown /></el-icon>
+                </div>
+                <div v-show="!panelState.sections.plan">
+                  <div v-if="panelState.preflight && panelState.preflight.per_indicator" class="panel-data-wrapper">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th style="width:26%">指标</th>
+                          <th style="width:16%">状态</th>
+                          <th style="width:58%">原因 / 建议</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(p, i) in panelState.preflight.per_indicator" :key="i">
+                          <td>{{ p.name }}</td>
+                          <td>
+                            <el-tag :type="p.status === 'ready' ? 'success' : p.status === 'empty_source' ? 'warning' : 'danger'" size="small">
+                              {{ p.status }}
+                            </el-tag>
+                          </td>
+                          <td style="font-size:12px">{{ p.reason || p.suggestion || '-' }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div v-if="panelState.queryPlan && panelState.queryPlan.plans && panelState.queryPlan.plans.length" style="margin-top:10px">
+                    <div v-for="(pl, i) in panelState.queryPlan.plans" :key="i" style="margin-bottom:8px">
+                      <div style="font-size:12px;font-weight:600;margin-bottom:4px">
+                        计划 {{ i + 1 }}：{{ (pl.indicatorNames || []).join('、') || '指标' }}
+                        <el-tag v-if="pl.ok" type="success" size="small" style="margin-left:6px">可执行</el-tag>
+                        <el-tag v-else type="danger" size="small" style="margin-left:6px">缺口</el-tag>
+                      </div>
+                      <pre class="sql-block" style="max-height:160px;overflow:auto;font-size:11px">{{ pl.sql }}</pre>
+                    </div>
+                    <div v-if="panelState.queryPlan.unready && panelState.queryPlan.unready.length" style="margin-top:10px">
+                      <div style="font-size:12px;font-weight:600;color:#e6a23c;margin-bottom:6px">未就绪指标（可即时绑定后重新查询）</div>
+                      <div v-for="(u, ui) in panelState.queryPlan.unready" :key="ui" style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px">
+                        <span style="color:#e6a23c;flex:1">{{ u.name }}：{{ u.reason || '-' }}</span>
+                        <el-button size="small" type="primary" plain @click="openRuntimeBind(u)">即时绑定</el-button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <!-- 指标体系（Phase 1 生成，默认折叠） -->
               <div v-if="panelState.indicators && panelState.indicators.length > 0" class="panel-section">
                 <div class="section-header" @click="togglePanel('indicators')">
@@ -374,8 +423,8 @@
               v-model="inputMessage"
               type="textarea"
               :rows="3"
-              placeholder="输入指标需求，Enter 发送，Shift+Enter 换行"
-              @keydown="sendMessageOnEnter($event, () => analyzeIndicator())"
+              placeholder="输入指标需求，如：帮我分析火力打击任务完成度指标..."
+              @keydown.enter.exact.prevent="() => analyzeIndicator()"
             />
             <div class="input-actions">
               <el-tooltip :content="isListening ? '停止录音' : '语音输入'" placement="top">
@@ -440,6 +489,53 @@
       </template>
     </el-dialog>
 
+    <!-- 运行期即时绑定确认对话框 -->
+    <el-dialog v-model="showRuntimeBindDialog" title="即时绑定（LLM 建议 → 代码编译 + dry-run → 人工确认）" width="820px" top="5vh">
+      <div v-if="runtimeBindLoading" style="padding:24px;text-align:center;color:#909399">正在生成绑定建议并校验…</div>
+      <template v-else>
+        <el-form label-width="90px">
+          <el-form-item label="指标">
+            <b>{{ runtimeBindTarget?.name || '-' }}</b>
+            <code style="margin-left:10px;font-size:12px">{{ runtimeBindFormula }}</code>
+          </el-form-item>
+          <el-form-item label="规格 JSON">
+            <el-input v-model="runtimeBindSpecText" type="textarea" :rows="10"
+              placeholder='{"sourceTables":[...],"keyMappings":[...],"bindings":[...]}' />
+          </el-form-item>
+          <el-form-item v-if="runtimeBindPlan" label="SQL 计划">
+            <div style="width:100%">
+              <el-tag size="small" :type="runtimeBindPlan.ok ? 'success' : 'danger'" style="margin-bottom:6px">
+                {{ runtimeBindPlan.ok ? '可编译' : '有缺口' }}
+              </el-tag>
+              <pre class="sql-block" style="max-height:140px;overflow:auto;font-size:11px;background:#f5f7fa;padding:8px;border-radius:6px">{{ runtimeBindPlan.sql || '-' }}</pre>
+              <div v-if="runtimeBindPlan.gaps && runtimeBindPlan.gaps.length" style="font-size:12px;color:#f56c6c">
+                缺口：{{ runtimeBindPlan.gaps.join('；') }}
+              </div>
+              <div v-if="runtimeBindPlan.errors && runtimeBindPlan.errors.length" style="font-size:12px;color:#f56c6c">
+                错误：{{ runtimeBindPlan.errors.join('；') }}
+              </div>
+            </div>
+          </el-form-item>
+          <el-form-item v-if="runtimeBindDryRun" label="dry-run">
+            <div style="width:100%">
+              <el-tag size="small" :type="runtimeBindDryRun.ok ? 'success' : 'warning'">
+                {{ runtimeBindDryRun.ok ? '来源表可读，列存在' : '存在未通过项' }}
+              </el-tag>
+              <div v-for="(c, ci) in runtimeBindDryRun.checks" :key="ci" style="font-size:12px;margin-top:4px">
+                [{{ c.ok ? 'OK' : 'FAIL' }}] {{ c.table }} — {{ c.message }}
+              </div>
+            </div>
+          </el-form-item>
+          <div v-if="runtimeBindMsg" style="font-size:12px;color:#e6a23c;margin-bottom:8px">{{ runtimeBindMsg }}</div>
+        </el-form>
+      </template>
+      <template #footer>
+        <el-button @click="showRuntimeBindDialog = false">取消</el-button>
+        <el-button v-if="!runtimeBindLoading" @click="runRuntimeBind" :loading="runtimeBindLoading">重新生成</el-button>
+        <el-button v-if="!runtimeBindLoading" type="primary" @click="saveRuntimeBind">确认并保存规格</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 指标选择对话框：默认不选，提供一键全选；确定后仅查询选中的指标 -->
     <el-dialog
       v-model="indicatorSelectDialog.visible"
@@ -501,13 +597,12 @@ import { Search, Collection, Box, PieChart, Plus, Delete, ArrowRight, ArrowDown,
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
-import { useToolNav } from '@/composables/useToolNav'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData } from '@/composables/useMapPrompt'
 import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
 import api from '@/services/api'
 import { renderMarkdown } from '@/utils/markdown'
-import { sendMessageOnEnter } from '@/utils/messageInput'
+import { useToolNav } from '@/composables/useToolNav'
 
 const router = useRouter()
 
@@ -568,6 +663,7 @@ const chatArea = ref<HTMLElement | null>(null)
 const treeChartRefs = ref<HTMLElement[]>([])
 let activeAbortController: AbortController | null = null
 let cancelRequested = false
+let _newSessionPending = false  // 防止新会话创建期间发送消息到旧会话
 
 // ── 右侧执行面板状态 ──
 const showExecutionPanel = ref(false)
@@ -589,11 +685,14 @@ const panelState = ref({
   rawResults: null as any[] | null,
   indicators: null as any[] | null,
   activeSkillName: '',
+  preflight: null as any,
+  queryPlan: null as any,
   sections: {
     steps: false,  // collapsed=false 表示展开
     indicators: true,  // collapsed=true 表示折叠
     sql: true,
-    data: true
+    data: true,
+    plan: true
   }
 })
 
@@ -604,7 +703,7 @@ const hasExecutionData = computed(() => {
     (panelState.value.indicators && panelState.value.indicators.length > 0)
 })
 
-const togglePanel = (section: 'steps' | 'indicators' | 'sql' | 'data') => {
+const togglePanel = (section: 'steps' | 'indicators' | 'sql' | 'data' | 'plan') => {
   panelState.value.sections[section] = !panelState.value.sections[section]
 }
 
@@ -649,6 +748,7 @@ const startResize = (e: MouseEvent) => {
   document.body.style.userSelect = 'none'
 }
 
+// 持久化辅助函数（仅保存 session_id 和执行面板状态）
 const persistState = () => {
   localStorage.setItem(LS_SESSION_ID, sessionId.value)
   localStorage.setItem(LS_HISTORY_LIST, JSON.stringify(historyList.value))
@@ -661,10 +761,55 @@ const persistState = () => {
       generatedSql: panelState.value.generatedSql,
       rawResults: panelState.value.rawResults,
       indicators: panelState.value.indicators,
+      preflight: panelState.value.preflight,
+      queryPlan: panelState.value.queryPlan,
       sections: panelState.value.sections
     }
     localStorage.setItem(LS_SESSION_EXEC, JSON.stringify(execMap))
   }
+}
+
+// ── 从服务端 API 加载数据 ──
+const fetchHistoryList = async () => {
+  try {
+    const res = await fetch('/api/indicator/sessions')
+    const data = await res.json()
+    if (data.sessions) {
+      historyList.value = data.sessions.map((s: any) => ({
+        id: s.id, title: s.title, time: s.time,
+        message_count: s.message_count, last_active: s.last_active
+      }))
+    }
+  } catch (e) { /* 静默处理 */ }
+}
+
+const fetchSessionMessages = async (sid: string) => {
+  try {
+    const res = await fetch(`/api/indicator/history?session_id=${sid}`)
+    const data = await res.json()
+    if (data.messages) {
+      sessionMessages.value[sid] = data.messages
+    }
+  } catch (e) { /* 静默处理 */ }
+}
+
+fetchHistoryList()
+if (sessionId.value) {
+  fetchSessionMessages(sessionId.value).then(() => {
+    const msgs = sessionMessages.value[sessionId.value]
+    if (msgs) {
+      // 恢复地图显示状态（历史加载时后端已剥离 map_annotations 并提取 geo 数据）
+      msgs.forEach(msg => {
+        if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0) {
+          msg.showMap = true
+          msg.showMapPrompt = false
+        }
+      })
+      messages.value = [...msgs]
+    }
+    restoreExecutionState(sessionId.value)
+    nextTick(() => { setTimeout(() => renderTreesForMessages(), 300) })
+  })
 }
 
 const recommendedIndicators = [
@@ -696,6 +841,8 @@ const restoreExecutionState = (sid: string) => {
     panelState.value.generatedSql = state.generatedSql || ''
     panelState.value.rawResults = state.rawResults || null
     panelState.value.indicators = state.indicators || null
+    panelState.value.preflight = state.preflight || null
+    panelState.value.queryPlan = state.queryPlan || null
     if (state.sections) {
       panelState.value.sections = state.sections
     }
@@ -703,10 +850,11 @@ const restoreExecutionState = (sid: string) => {
   }
 }
 
-const loadHistory = (item: any) => {
-  if (sessionMessages.value[item.id]) {
-    messages.value = [...sessionMessages.value[item.id]]
-    // 恢复历史消息中的地图状态
+const loadHistory = async (item: any) => {
+  await fetchSessionMessages(item.id)
+  const msgs = sessionMessages.value[item.id]
+  if (msgs && msgs.length > 0) {
+    messages.value = [...msgs]
     messages.value.forEach(msg => {
       if (msg.geoPoints && msg.geoPoints.length > 0) {
         msg.showMap = true
@@ -717,32 +865,62 @@ const loadHistory = (item: any) => {
     restoreExecutionState(item.id)
     persistState()
     ElMessage.success('已加载历史记录')
-    nextTick(() => { renderTreesForMessages() })
+    nextTick(() => { setTimeout(() => renderTreesForMessages(), 300) })
   } else {
     ElMessage.warning('暂无该历史记录内容')
   }
 }
 
-const newSession = () => {
+const newSession = async () => {
+  // 立即中止可能正在运行的请求并清空状态
+  stopAnalysis()
+  _newSessionPending = true
   sessionId.value = ''
   messages.value = []
   executionSteps.value = []
-  panelState.value = { generatedSql: '', rawResults: null, indicators: null, activeSkillName: '', sections: { steps: false, indicators: true, sql: true, data: true } }
+  panelState.value = { generatedSql: '', rawResults: null, indicators: null, activeSkillName: '', preflight: null, queryPlan: null, sections: { steps: false, indicators: true, sql: true, data: true, plan: true } }
   showExecutionPanel.value = false
   activeAbortController = null
   cancelRequested = false
   persistState()
+
+  // 向后端请求全新会话 ID，确保不会复用旧会话
+  try {
+    const res = await fetch('/api/indicator/session/new', { method: 'POST' })
+    const data = await res.json()
+    if (data.success && data.session_id) {
+      sessionId.value = data.session_id
+    }
+  } catch { /* sessionId 保持空值，发送时后端会自行生成 */ }
+
+  _newSessionPending = false
+  persistState()
   ElMessage.success('已创建新会话')
 }
 
-const deleteHistory = (id: string) => {
+const deleteHistory = async (id: string) => {
+  try {
+    const res = await fetch(`/api/indicator/session/${id}`, { method: 'DELETE' })
+    if (!res.ok) {
+      ElMessage.error('删除会话失败')
+      return
+    }
+    const data = await res.json()
+    if (!data.success) {
+      ElMessage.error('删除会话失败')
+      return
+    }
+  } catch (e) {
+    ElMessage.error('删除会话失败，服务不可用')
+    return
+  }
   delete sessionMessages.value[id]
   historyList.value = historyList.value.filter(item => item.id !== id)
   if (sessionId.value === id) {
     sessionId.value = ''
     messages.value = []
     executionSteps.value = []
-    panelState.value = { generatedSql: '', rawResults: null, indicators: null, activeSkillName: '', sections: { steps: false, indicators: true, sql: true, data: true } }
+    panelState.value = { generatedSql: '', rawResults: null, indicators: null, activeSkillName: '', preflight: null, queryPlan: null, sections: { steps: false, indicators: true, sql: true, data: true, plan: true } }
     showExecutionPanel.value = false
     activeAbortController = null
     cancelRequested = false
@@ -837,8 +1015,16 @@ const stopAnalysis = () => {
 }
 
 const analyzeIndicator = async (selectedNames?: string[]) => {
+  if (_newSessionPending) {
+    ElMessage.warning('正在创建新会话，请稍候')
+    return
+  }
   if (!inputMessage.value.trim()) {
     ElMessage.warning('请输入指标需求')
+    return
+  }
+  if (analyzing.value) {
+    ElMessage.warning('正在分析中，请稍候')
     return
   }
 
@@ -1126,6 +1312,99 @@ const filteredHistoryList = computed(() => {
   if (!searchQuery.value.trim()) return historyList.value
   return historyList.value.filter(item => item.title.toLowerCase().includes(searchQuery.value.toLowerCase()))
 })
+
+// ── 运行期即时绑定（未就绪指标 → LLM 建议 → 编译 + dry-run → 人工确认保存） ──
+const showRuntimeBindDialog = ref(false)
+const runtimeBindLoading = ref(false)
+const runtimeBindTarget = ref<any>(null)
+const runtimeBindFormula = ref('')
+const runtimeBindSpecText = ref('')
+const runtimeBindPlan = ref<any>(null)
+const runtimeBindDryRun = ref<any>(null)
+const runtimeBindMsg = ref('')
+const runtimeBindIndicator = ref<any>(null)
+
+async function openRuntimeBind(u: any) {
+  runtimeBindTarget.value = u
+  runtimeBindPlan.value = null
+  runtimeBindDryRun.value = null
+  runtimeBindMsg.value = ''
+  runtimeBindIndicator.value = null
+  runtimeBindFormula.value = u.formula || ''
+  // 若该指标在管理端已存在，取其公式与 ID（保存时可直接回写规格）
+  try {
+    const res = await api.get('/admin/indicator/list')
+    if (res && res.success && res.indicators) {
+      const hit = res.indicators.find((i: any) => i.name === u.name)
+      if (hit) {
+        runtimeBindIndicator.value = hit
+        runtimeBindFormula.value = hit.formula || runtimeBindFormula.value
+      }
+    }
+  } catch { /* 忽略：未匹配到管理端指标时按新建处理 */ }
+  if (!runtimeBindFormula.value) {
+    ElMessage.warning('未找到该指标的公式，无法即时绑定')
+    return
+  }
+  runtimeBindSpecText.value = ''
+  showRuntimeBindDialog.value = true
+  await runRuntimeBind()
+}
+
+async function runRuntimeBind() {
+  if (!selectedDataSourceId.value) {
+    ElMessage.warning('请先选择数据源')
+    return
+  }
+  runtimeBindLoading.value = true
+  runtimeBindMsg.value = ''
+  try {
+    const res = await api.post('/evaluation/indicator-spec/runtime-bind', {
+      indicator_name: runtimeBindTarget.value?.name || '',
+      formula: runtimeBindFormula.value,
+      database_id: selectedDataSourceId.value,
+      question: inputMessage.value || ''
+    })
+    if (res && res.success) {
+      runtimeBindSpecText.value = res.suggestedSpec ? JSON.stringify(res.suggestedSpec, null, 2) : ''
+      runtimeBindPlan.value = res.plan || null
+      runtimeBindDryRun.value = res.dryRun || null
+      runtimeBindMsg.value = res.message || ''
+    } else {
+      ElMessage.error(res?.message || '即时绑定失败')
+      runtimeBindMsg.value = res?.message || ''
+    }
+  } catch (e: any) {
+    ElMessage.error('即时绑定失败: ' + (e.serverMessage || e.message || ''))
+  } finally {
+    runtimeBindLoading.value = false
+  }
+}
+
+async function saveRuntimeBind() {
+  let spec: any = null
+  try { spec = JSON.parse(runtimeBindSpecText.value) } catch { spec = null }
+  if (!spec) { ElMessage.warning('规格 JSON 无效，无法保存'); return }
+  try {
+    let id = runtimeBindIndicator.value?.id || ''
+    if (!id) {
+      const created = await api.post('/admin/indicator', {
+        name: runtimeBindTarget.value?.name || '',
+        formula: runtimeBindFormula.value,
+        category: '即时绑定导入',
+        description: '运行期即时绑定（LLM 建议 + 人工确认）'
+      })
+      id = created.id
+    }
+    const saved = await api.post(`/admin/indicator/${id}/spec`, { indicatorSpec: JSON.stringify(spec) })
+    ElMessage.success(
+      `规格已保存${saved.ready ? '（ready）' : `（${saved.bindStatus || 'not_ready'}）`}，重新查询将走确定性编译路径`
+    )
+    showRuntimeBindDialog.value = false
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + (e.serverMessage || e.message || ''))
+  }
+}
 
 onMounted(async () => {
   // 加载数据源

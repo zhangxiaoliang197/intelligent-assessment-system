@@ -9,6 +9,7 @@
 - call_llm_json: 调用 LLM 并解析为 JSON，带容错和重试
 """
 import json
+import os
 import re
 import ssl
 import urllib.request
@@ -22,6 +23,11 @@ logger = logging.getLogger("ontology-service")
 # admin-service 地址（与 qa-service 共用同一配置源）
 ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
 INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "").strip()
+
+# LLM 请求超时（秒）。reasoning 模型思考链长、输出大时读取耗时长，
+# 120s 不足容易触发 SSL 连接中断（UNEXPECTED_EOF_WHILE_READING），默认 300s。
+# 可通过环境变量 LLM_TIMEOUT 覆盖。
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "300"))
 
 
 def load_llm_config() -> dict:
@@ -113,7 +119,7 @@ def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000) -
     ssl_ctx = ssl.create_default_context(cafile=ca_file)
 
     try:
-        with urllib.request.urlopen(req, timeout=120, context=ssl_ctx) as resp:
+        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT, context=ssl_ctx) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             choice = data["choices"][0]
             content = choice["message"]["content"]

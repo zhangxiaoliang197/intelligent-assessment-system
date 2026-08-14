@@ -35,6 +35,9 @@
                   <span class="history-item-time">{{ formatTime(item.createTime || '') }}</span>
                 </div>
               </div>
+              <el-button class="history-delete-btn" size="small" text type="danger" @click.stop="deleteHistory(item.reportId)">
+                <el-icon><Delete /></el-icon>
+              </el-button>
             </div>
             <el-empty v-if="!filteredHistory.length" description="暂无历史" :image-size="56" />
           </div>
@@ -177,6 +180,7 @@
                           :selected-region="store.selectedRegion"
                           :time-range="store.selectedTimeRange"
                           :filters="store.filters"
+                          :explanation="store.mapExplanation"
                           @region-select="onRegionSelect"
                           @marker-click="onMarkerClick"
                           @layer-toggle="onLayerToggle"
@@ -263,6 +267,7 @@
 
           <!-- 执行面板 -->
           <div v-if="showExecPanel" class="execution-panel" :style="{ width: execPanelWidth + 'px' }">
+            <div class="resize-handle" @mousedown="startResize"></div>
             <div class="panel-header">
               <div class="panel-title-wrap"><span>执行过程</span></div>
               <el-icon class="panel-close" @click="showExecPanel = false"><Close /></el-icon>
@@ -407,7 +412,7 @@ import { ElMessage } from 'element-plus'
 import {
   Plus, Collection, Box, List, Search, MapLocation, Promotion, Loading,
   FullScreen, Share, Download, CircleClose, CircleCheck, Close, ArrowRight,
-  PieChart, TrendCharts, DataAnalysis, Setting, MagicStick, Document
+  PieChart, TrendCharts, DataAnalysis, Setting, MagicStick, Document, Delete
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
 import { useToolNav } from '@/composables/useToolNav'
@@ -446,8 +451,9 @@ const inputText = ref('')
 const historySearch = ref('')
 const chatAreaRef = ref<HTMLElement | null>(null)
 const aiMsgRef = ref<HTMLElement | null>(null)
-const showExecPanel = ref(true)
-const execPanelWidth = ref(340)
+const showExecPanel = ref(false)
+const execPanelWidth = ref(460)
+const isResizing = ref(false)
 const shareVisible = ref(false)
 const shareUrl = ref('')
 const skillDrawerVisible = ref(false)
@@ -467,6 +473,29 @@ const dataSourceDialogVisible = ref(false)
 const generatePending = ref(false)
 let recommendTimer: ReturnType<typeof setTimeout> | undefined
 let recommendRequest = 0
+
+// ── 执行面板拖拽缩放（与指标分析保持一致）──
+function startResize(e: MouseEvent) {
+  isResizing.value = true
+  const startX = e.clientX
+  const startWidth = execPanelWidth.value
+  const onMouseMove = (ev: MouseEvent) => {
+    if (!isResizing.value) return
+    const delta = startX - ev.clientX
+    execPanelWidth.value = Math.min(700, Math.max(300, startWidth + delta))
+  }
+  const onMouseUp = () => {
+    isResizing.value = false
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
 
 // ── 数据源切换 ──
 function onDataSourceChange(val: string) {
@@ -706,7 +735,8 @@ async function onGenerate(q?: string) {
     ElMessage.warning('请输入问题')
     return
   }
-  inputText.value = text
+  // 发送后立即清空输入框，避免问题残留；pending 状态驱动按钮 loading
+  inputText.value = ''
   generatePending.value = true
   try {
     // 已启用 Skill 时先执行前检查（preflight）
@@ -718,6 +748,7 @@ async function onGenerate(q?: string) {
         store.dataSourceId,
       )
       if (!preflight.ready) {
+        inputText.value = text
         ElMessage.error(preflight.errors.join('；') || 'Skill 执行前检查未通过')
         return
       }
@@ -726,12 +757,15 @@ async function onGenerate(q?: string) {
         ElMessage.warning(`执行前检查通过：${preflight.warnings[0]}`)
       }
     }
+    // 用户提问后展示系统执行过程面板（与指标分析保持一致）
+    showExecPanel.value = true
     const started = await store.generate(text)
     if (started) {
       void store.fetchHistory()
       void loadSkillPreferences()
     }
   } catch (e: any) {
+    inputText.value = text
     ElMessage.error('生成失败：' + (e?.serverMessage || e?.message || '未知错误'))
   } finally {
     generatePending.value = false
@@ -746,6 +780,7 @@ async function onStop() {
 function onNewSession() {
   store.reset()
   inputText.value = ''
+  showExecPanel.value = false
 }
 
 async function onPickHistory(item: ReportMeta) {
@@ -757,7 +792,6 @@ async function loadReportById(rid: string) {
     const resp: any = await api.get(`/situation/reports/${rid}`)
     if (resp?.success !== false) {
       store.loadReport(resp.data || resp)
-      inputText.value = store.query
     }
   } catch (e) {
     console.warn('产物加载失败', e)
@@ -826,11 +860,21 @@ function stepStatusClass(s: string) {
   if (s === 'error') return 'error'
   return 'in-progress'
 }
-function formatTime(t: string): string {
+function formatTime(t?: string): string {
   if (!t) return ''
   const d = new Date(t)
   if (isNaN(d.getTime())) return t
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+async function deleteHistory(targetId: string) {
+  try {
+    await store.deleteHistory(targetId)
+    ElMessage.success('已删除')
+  } catch (e: any) {
+    ElMessage.error('删除失败：' + (e?.serverMessage || e?.message || ''))
+  }
 }
 </script>
 
@@ -864,6 +908,8 @@ function formatTime(t: string): string {
 .history-item-main { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
 .history-item .el-icon { font-size: 16px; flex-shrink: 0; color: var(--text-muted); }
 .history-item.active .el-icon { color: #8b5cf6; }
+.history-delete-btn { opacity: 0; transition: opacity 0.2s; flex-shrink: 0; }
+.history-item:hover .history-delete-btn { opacity: 1; }
 .history-item-content { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .history-item-title { font-size: 13px; font-weight: 500; color: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .history-item-time { font-size: 11px; color: var(--text-muted); }
@@ -1110,6 +1156,20 @@ function formatTime(t: string): string {
   position: relative;
   overflow: hidden;
 }
+
+.resize-handle {
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background 0.15s;
+}
+.resize-handle:hover, .resize-handle:active { background: rgba(64, 158, 255, 0.35); }
+
 .panel-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px; border-bottom: 1px solid #e2e8f0; background: white;

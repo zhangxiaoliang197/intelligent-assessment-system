@@ -135,7 +135,8 @@ class RealOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         }
         call_llm.side_effect = [
             {"datasets": [{"datasetId": "real_1"}], "chartsPlan": [{"type": "bar", "title": "数量"}]},
-            [{"chartId": "c_1", "type": "bar", "datasetRef": "real_1", "option": {"series": []}}],
+            # series 数值必须可由证据复算，否则会触发纠错重试（多一次 LLM 调用）
+            [{"chartId": "c_1", "type": "bar", "datasetRef": "real_1", "option": {"series": [{"type": "bar", "data": [2]}]}}],
             {"layerId": "main", "points": []},
             {"intro": "介绍", "explanations": []},
         ]

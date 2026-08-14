@@ -88,6 +88,7 @@ class ChartSpec(BaseModel):
     option: Dict[str, Any]
     explanation: str = ""
     datasetRef: str = ""
+    fieldMapping: Dict[str, Any] = Field(default_factory=dict)
     provenance: Dict[str, Any] = Field(default_factory=dict)
     verification: Dict[str, Any] = Field(default_factory=dict)
 
@@ -100,6 +101,8 @@ class MapLayerSpec(BaseModel):
     areas: List[Dict[str, Any]] = Field(default_factory=list)
     circles: List[Dict[str, Any]] = Field(default_factory=list)
     layerConfig: Dict[str, Any] = Field(default_factory=dict)
+    datasetRef: str = ""
+    fieldMapping: Dict[str, Any] = Field(default_factory=dict)
     verification: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -113,6 +116,7 @@ class Narrative(BaseModel):
     """态势介绍 + 逐图说明（介绍性，非结论先行）。"""
     intro: str = ""
     explanations: List[Explanation] = Field(default_factory=list)
+    mapExplanation: str = ""
 
 
 class DatasetSummary(BaseModel):
@@ -126,6 +130,8 @@ class DatasetSummary(BaseModel):
     truncated: bool = False
     evidenceHash: str = ""
     execution: Dict[str, Any] = Field(default_factory=dict)
+    columns: List[str] = Field(default_factory=list)
+    data: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class Report(BaseModel):

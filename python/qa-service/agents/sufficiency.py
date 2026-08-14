@@ -238,6 +238,21 @@ def _match_column(required_norm: str, result_cols_norm: dict) -> str:
     return None
 
 
+def _is_numeric_column(values: list) -> bool:
+    """判断一列是否为数值列：存在可转 float 的非空值。"""
+    for v in values[:200]:
+        if v is None or v == "":
+            continue
+        if isinstance(v, (int, float)):
+            return True
+        try:
+            float(v)
+            return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
 # ============================================================
 # 主评估函数
 # ============================================================
@@ -314,6 +329,20 @@ def assess_data_sufficiency(raw_results: list,
             for r in raw_results:
                 if any(r.get(mc) not in (None, "", [], {}) for mc in matched_columns):
                     row_count += 1
+
+        # computed 指标：SQL 已把公式算成输出列（如 GROSS_MARGIN），
+        # 原始字段名不出现在输出列是正常现象 → 数值列兜底
+        if (ind_type == "computed" and not matched_columns
+                and raw_results and total_rows > 0):
+            # 计算结果列通常位于 SELECT 末尾（如 GROSS_MARGIN），
+            # 从后往前取第一个数值列，避免选中前置的数值型 ID 列。
+            for c in reversed(result_columns):
+                if _is_numeric_column([r.get(c) for r in raw_results]):
+                    matched_columns = [c]
+                    row_count = sum(1 for r in raw_results
+                                    if r.get(c) not in (None, "", [], {}))
+                    missing_dimensions = []
+                    break
 
         # 判定该指标是否有数据
         if not matched_columns:

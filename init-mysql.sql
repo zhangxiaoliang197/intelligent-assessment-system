@@ -176,6 +176,63 @@ PREPARE share_expiry_stmt FROM @share_expiry_sql;
 EXECUTE share_expiry_stmt;
 DEALLOCATE PREPARE share_expiry_stmt;
 
+-- 2.9 聊天会话主表
+CREATE TABLE IF NOT EXISTS `ass_chat_session` (
+    `id`              VARCHAR(50)   NOT NULL,
+    `user_id`         VARCHAR(64)   NOT NULL DEFAULT '',
+    `type`            VARCHAR(20)   NOT NULL COMMENT 'qa|indicator|evaluation',
+    `title`           VARCHAR(200)  NOT NULL DEFAULT '' COMMENT '会话标题',
+    `stage`           VARCHAR(30)   DEFAULT NULL COMMENT 'indicator专用阶段',
+    `message_count`   INT           NOT NULL DEFAULT 0,
+    `last_active_at`  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `create_time`     DATETIME      DEFAULT NULL,
+    `update_time`     DATETIME      DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    INDEX `idx_cs_type` (`user_id`, `type`, `last_active_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='聊天会话';
+
+-- 2.10 聊天消息
+CREATE TABLE IF NOT EXISTS `ass_chat_message` (
+    `id`              VARCHAR(32)   NOT NULL,
+    `session_id`      VARCHAR(50)   NOT NULL,
+    `role`            VARCHAR(16)   NOT NULL COMMENT 'user|assistant|system',
+    `content`         TEXT          DEFAULT NULL COMMENT '消息正文',
+    `sequence_num`    INT           NOT NULL COMMENT '消息序号',
+    `metadata`        TEXT          DEFAULT NULL COMMENT 'JSON: 三类对话的结构化差异数据',
+    `create_time`     DATETIME      DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    INDEX `idx_cm_session` (`session_id`),
+    INDEX `idx_cm_seq` (`session_id`, `sequence_num`),
+    CONSTRAINT `fk_cm_session` FOREIGN KEY (`session_id`) REFERENCES `ass_chat_session`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='聊天消息';
+
+-- 2.11 LLM 上下文
+CREATE TABLE IF NOT EXISTS `ass_chat_context` (
+    `session_id`      VARCHAR(50)   NOT NULL,
+    `context_type`    VARCHAR(20)   NOT NULL DEFAULT 'full' COMMENT 'full|summary',
+    `content`         TEXT          DEFAULT NULL COMMENT '拼接好的上下文文本',
+    `message_range`   VARCHAR(50)   DEFAULT NULL COMMENT '如 seq:3-12',
+    `token_estimate`  INT           DEFAULT NULL,
+    `create_time`     DATETIME      DEFAULT NULL,
+    PRIMARY KEY (`session_id`, `context_type`),
+    CONSTRAINT `fk_cc_session` FOREIGN KEY (`session_id`) REFERENCES `ass_chat_session`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='LLM上下文';
+
+-- 2.12 聊天历史索引（列表快照）
+CREATE TABLE IF NOT EXISTS `ass_chat_history` (
+    `id`              VARCHAR(32)   NOT NULL,
+    `session_id`      VARCHAR(50)   NOT NULL,
+    `user_id`         VARCHAR(64)   NOT NULL,
+    `type`            VARCHAR(20)   NOT NULL,
+    `title`           VARCHAR(200)  NOT NULL,
+    `summary`         VARCHAR(500)  NOT NULL DEFAULT '',
+    `skill_id`        VARCHAR(50)   DEFAULT NULL COMMENT 'evaluation专用',
+    `create_time`     DATETIME      DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_ch_session` (`session_id`),
+    INDEX `idx_ch_user_type` (`user_id`, `type`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='聊天历史索引';
+
 -- ============================================================
 -- 3. 插入初始数据（仅当表为空时）
 -- ============================================================
@@ -203,7 +260,7 @@ VALUES ('map_001', 'GeoWebCache 内网地图（默认）', 'geowebcache', '/geow
 SELECT '========================================' AS '';
 SELECT '  MySQL 初始化完成！' AS '';
 SELECT '  数据库: assessment' AS '';
-SELECT '  表: ass_database_config, ass_dataset, ass_field_annotation, ass_indicator, ass_llm_config, ass_driver, ass_map_service_config, situation_report' AS '';
+SELECT '  表: ass_database_config, ass_dataset, ass_field_annotation, ass_indicator, ass_llm_config, ass_driver, ass_map_service_config, situation_report, ass_chat_session, ass_chat_message, ass_chat_context, ass_chat_history' AS '';
 SELECT '  默认 LLM: DeepSeek (llm_001, 已激活)' AS '';
 SELECT '  默认地图: GeoWebCache 6层叠加 (map_001, 已激活)' AS '';
 SELECT '========================================' AS '';

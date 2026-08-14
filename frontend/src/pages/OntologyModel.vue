@@ -1020,7 +1020,9 @@ onMounted(() => {
 
 .ontology-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  /* 固定列宽 320px，不随数量拉伸；放不下自动换行，新卡片在尾部追加 */
+  grid-template-columns: repeat(auto-fill, 320px);
+  justify-content: start;
   gap: 1.5rem;
 }
 
@@ -1029,6 +1031,9 @@ onMounted(() => {
   border: 1px solid var(--border-light);
   border-radius: var(--radius-lg);
   padding: 1.5rem;
+  height: 220px;
+  display: flex;
+  flex-direction: column;
   transition: all var(--transition-normal);
 }
 
@@ -1050,6 +1055,10 @@ onMounted(() => {
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .card-desc {
@@ -1057,7 +1066,11 @@ onMounted(() => {
   font-size: 0.875rem;
   line-height: 1.6;
   margin-bottom: 1rem;
-  min-height: 36px;
+  /* 固定高度下超出两行省略 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .card-stats {
@@ -1084,6 +1097,8 @@ onMounted(() => {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 0.75rem;
 }
 
 .section-header {
@@ -1102,7 +1117,9 @@ onMounted(() => {
 
 .build-tasks-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  /* 与本体卡片同宽同策略：固定 320px，尾部追加换行 */
+  grid-template-columns: repeat(auto-fill, 320px);
+  justify-content: start;
   gap: 1rem;
 }
 
@@ -1111,6 +1128,9 @@ onMounted(() => {
   border: 1px solid var(--border-light);
   border-radius: var(--radius-lg);
   padding: 1.25rem;
+  height: 190px;
+  display: flex;
+  flex-direction: column;
   transition: all 0.2s;
 }
 
@@ -1131,6 +1151,10 @@ onMounted(() => {
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .task-progress {
@@ -1147,11 +1171,16 @@ onMounted(() => {
   font-size: 0.75rem;
   color: var(--text-muted);
   margin-bottom: 0.75rem;
+  /* 超长源文件名省略，避免撑破固定宽度 */
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .task-actions {
   display: flex;
   gap: 0.5rem;
+  margin-top: auto;
+  padding-top: 0.5rem;
 }
 
 .type-editor {

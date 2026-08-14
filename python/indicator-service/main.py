@@ -18,11 +18,49 @@ from logging_config import setup_logging
 setup_logging("indicator-service")
 logger = logging.getLogger("indicator-service")
 
+# ── 地图标注处理（历史记录加载时剥离 map_annotations JSON 块）──
+_MAP_ANNOTATIONS_PATTERN = re.compile(r'```map_annotations\s*\n([\s\S]*?)```', re.MULTILINE)
+
+def _parse_map_annotations_from_text(text: str) -> dict:
+    """从文本中提取 map_annotations JSON 并转换为前端 geoData 格式"""
+    m = _MAP_ANNOTATIONS_PATTERN.search(text)
+    if not m:
+        return {}
+    try:
+        data = json.loads(m.group(1))
+    except Exception:
+        return {}
+    geo = {}
+    if data.get("markers"):
+        geo["geoPoints"] = [{"name": p.get("name",""), "lng": p["lng"], "lat": p["lat"]} for p in data["markers"] if "lng" in p and "lat" in p]
+    if data.get("routes"):
+        geo["routes"] = []
+        for r in data["routes"]:
+            points = [{"name": f"{r['name']}·节点{i+1}", "lng": p["lng"], "lat": p["lat"]} for i, p in enumerate(r.get("points", [])) if "lng" in p and "lat" in p]
+            if len(points) >= 2:
+                geo["routes"].append({"name": r.get("name",""), "points": points})
+    if data.get("areas"):
+        polys, circles = [], []
+        for a in data["areas"]:
+            if a.get("shape") == "circle" and a.get("center"):
+                circles.append({"name": a.get("name",""), "center": a["center"], "radiusKm": a.get("radiusKm", 10)})
+            elif a.get("points"):
+                pts = [{"name": "", "lng": p["lng"], "lat": p["lat"]} for p in a["points"] if "lng" in p and "lat" in p]
+                if len(pts) >= 3:
+                    polys.append({"name": a.get("name",""), "points": pts})
+        if polys:
+            geo["areas"] = polys
+        if circles:
+            geo["circles"] = circles
+    if geo:
+        geo["showMap"] = True
+    return geo
+
 from utils import http_get, http_post, http_post_stream, fetch_available_databases, create_stream_response
 from session import (
     ensure_session, get_recent_messages, get_session_stage, set_session_stage,
     set_pending_indicators, get_pending_indicators, clear_pending_indicators,
-    add_message, get_all_sessions, delete_session, build_context, save_sessions,
+    add_message, get_all_sessions, delete_session, build_context,
     MAX_CONTEXT
 )
 from intent import (
@@ -157,7 +195,7 @@ def _handle_concept_qa_stream(session_id: str, query: str) -> Generator[str, Non
     # ── 调用 qa-service 流式接口 ──
     full_answer = ""
     try:
-        for line in http_post_stream(f"{QA_SERVICE_URL}/qa/chat/stream", {"query": query, "top_k": 3}, timeout=180):
+        for line in http_post_stream(f"{QA_SERVICE_URL}/qa/chat/stream", {"query": query, "top_k": 3, "no_persist": True}, timeout=180):
             line_str = line.strip()
             if not line_str:
                 continue
@@ -288,7 +326,7 @@ def call_llm_for_indicator_analysis(query: str, context: str = "") -> dict:
 6. 只返回 JSON 数据，不要其他说明文字
 """
 
-        data = http_post(f"{QA_SERVICE_URL}/qa/chat", {"query": prompt, "top_k": 10}, timeout=120)
+        data = http_post(f"{QA_SERVICE_URL}/qa/chat", {"query": prompt, "top_k": 10, "no_persist": True}, timeout=120)
         if data:
             answer = data.get("answer", "")
             result = parse_structured_response(answer)
@@ -707,16 +745,23 @@ async def list_sessions():
         msgs = s_data.get("messages", []) if isinstance(s_data, dict) else s_data
         if not msgs:
             continue
-        latest_question = ""
-        for msg in reversed(msgs):
+        first_question = ""
+        # 取第一条用户消息作为标题（不是最新一条）
+        for msg in msgs:
             if msg.get("role") == "user":
                 q = msg.get("content", "").strip()
-                latest_question = q[:30] if len(q) > 30 else q
+                first_question = (q[:20] + '...') if len(q) > 20 else q
                 break
-        last_time = msgs[-1].get("timestamp", datetime.now().isoformat())
+        last_time = msgs[-1].get("createTime", "") or msgs[-1].get("timestamp", "")
+        if not last_time:
+            last_time = datetime.now().isoformat()
+        # 格式化为可读形式，去除 T
+        if "T" in last_time:
+            last_time = last_time.replace("T", " ")[:19]
         session_list.append({
             "id": sid,
-            "title": latest_question or "(空会话)",
+            "title": first_question or "(空会话)",
+            "time": last_time,
             "message_count": len(msgs),
             "last_active": last_time
         })
@@ -726,15 +771,17 @@ async def list_sessions():
 
 @app.post("/indicator/session/new")
 async def new_session():
+    # 只返回 UUID，不创建数据库记录；真正发消息时由 analyze/stream 创建
     new_id = str(uuid.uuid4())
-    ensure_session(new_id)
     return {"success": True, "session_id": new_id}
 
 
 @app.delete("/indicator/session/{session_id}")
 async def delete_session_endpoint(session_id: str):
     try:
-        delete_session(session_id)
+        ok = delete_session(session_id)
+        if not ok:
+            raise HTTPException(status_code=500, detail="删除会话失败，请查看服务端日志")
         return {"success": True}
     except KeyError:
         raise HTTPException(status_code=404, detail="会话不存在")
@@ -752,19 +799,11 @@ async def analyze_indicator(request: AnalyzeRequest):
     result = call_llm_for_indicator_analysis(request.query, context)
 
     now_str = datetime.now().isoformat()
-    s = ensure_session(session_id)
-    s["messages"].append({"role": "user", "content": request.query, "timestamp": now_str})
-    s["messages"].append({
-        "role": "assistant",
-        "content": result.get("summary", result.get("answer", "")[:200]),
-        "timestamp": now_str
-    })
-    if len(s["messages"]) > MAX_CONTEXT * 4:
-        s["messages"] = s["messages"][-(MAX_CONTEXT * 4):]
+    add_message(session_id, "user", request.query)
+    add_message(session_id, "assistant", result.get("summary", result.get("answer", "")[:200]))
 
     # 非流式接口不触发追问机制，直接返回
     set_session_stage(session_id, "done")
-    save_sessions()
 
     return {
         "success": True,
@@ -791,7 +830,32 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
           - 表示不查询 → 结束 → stage=done
       - "done" → 新问题 → 重置为 analyzing
     """
-    session_id = request.session_id or str(uuid.uuid4())
+    session_id = request.session_id
+    if not session_id:
+        # ── 无 session_id 时尝试复用最近的活跃 indicator 会话 ──
+        # 仅复用 analyzing 阶段（用户可能刷新了页面，正在等待LLM响应）。
+        # awaiting_confirmation/querying/done 阶段的会话不自动复用，
+        # 避免新问题被合并到旧会话。
+        from datetime import datetime as _dt, timezone as _tz
+        existing_sessions = get_all_sessions()
+        for sid, sdata in existing_sessions.items():
+            stage_s = sdata.get("stage", "")
+            if stage_s in ("analyzing",):
+                # 仅复用 5 分钟内创建的会话
+                created = sdata.get("createTime", "")
+                if created:
+                    try:
+                        ct = _dt.fromisoformat(created)
+                        if (_dt.now(_tz.utc) - ct.replace(tzinfo=_tz.utc)).total_seconds() < 300:
+                            session_id = sid
+                            logger.info(f"Reusing analyzing session {session_id} (created {created})")
+                            break
+                    except Exception:
+                        pass
+
+    if not session_id:
+        session_id = str(uuid.uuid4())
+    
     ensure_session(session_id)
     stage = get_session_stage(session_id)
     msgs = get_recent_messages(session_id)
@@ -827,9 +891,8 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                     "indicators": [],
                 }, ensure_ascii=False) + "\n"
 
-                s = ensure_session(session_id)
-                s["messages"].append({"role": "user", "content": user_text, "timestamp": now_str})
-                s["messages"].append({"role": "assistant", "content": resp_text, "timestamp": now_str})
+                add_message(session_id, "user", user_text)
+                add_message(session_id, "assistant", resp_text)
                 set_session_stage(session_id, "done")
                 clear_pending_indicators(session_id)
 
@@ -864,8 +927,7 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                     now_str = datetime.now().isoformat()
                     set_session_stage(session_id, "querying")
 
-                    s = ensure_session(session_id)
-                    s["messages"].append({"role": "user", "content": user_text, "timestamp": now_str})
+                    add_message(session_id, "user", user_text)
 
                     # 先创建助手消息，后续所有 text 事件都流入同一消息气泡
                     yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
@@ -900,11 +962,7 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                             "session_id": session_id
                         }, ensure_ascii=False) + "\n"
 
-                    s["messages"].append({
-                        "role": "assistant",
-                        "content": final_answer or "查询完成",
-                        "timestamp": now_str
-                    })
+                    add_message(session_id, "assistant", final_answer or "查询完成")
                     set_session_stage(session_id, "done")
                     clear_pending_indicators(session_id)
 
@@ -930,11 +988,8 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                         "tree": None, "indicators": [],
                     }, ensure_ascii=False) + "\n"
 
-                    s = ensure_session(session_id)
-                    s["messages"].append({"role": "user", "content": user_text, "timestamp": now_str})
-                    s["messages"].append({"role": "assistant", "content": resp_text, "timestamp": now_str})
-                    # 仍然保持 awaiting_confirmation，等用户提供数据源
-                    save_sessions()
+                    add_message(session_id, "user", user_text)
+                    add_message(session_id, "assistant", resp_text)
 
                 return create_stream_response(generate_list_dbs())
 
@@ -951,8 +1006,7 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                 now_str = datetime.now().isoformat()
                 set_session_stage(session_id, "querying")
 
-                s = ensure_session(session_id)
-                s["messages"].append({"role": "user", "content": user_text, "timestamp": now_str})
+                add_message(session_id, "user", user_text)
 
                 # 先创建助手消息，后续所有 text 事件都流入同一消息气泡
                 yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
@@ -984,11 +1038,7 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                         "session_id": session_id
                     }, ensure_ascii=False) + "\n"
 
-                s["messages"].append({
-                    "role": "assistant",
-                    "content": final_answer or "查询完成",
-                    "timestamp": now_str
-                })
+                add_message(session_id, "assistant", final_answer or "查询完成")
                 set_session_stage(session_id, "done")
                 clear_pending_indicators(session_id)
 
@@ -1024,11 +1074,8 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
                 "tree": None, "indicators": [],
             }, ensure_ascii=False) + "\n"
 
-            s = ensure_session(session_id)
-            s["messages"].append({"role": "user", "content": user_text, "timestamp": now_str})
-            s["messages"].append({"role": "assistant", "content": resp_text, "timestamp": now_str})
-            # 保持 awaiting_confirmation 状态，保留 pending_indicators，等待用户明确意图
-            save_sessions()
+            add_message(session_id, "user", user_text)
+            add_message(session_id, "assistant", resp_text)
 
         logger.info(f"User text in awaiting_confirmation not matched: {user_text[:50]}, asking for clarification (preserving pending indicators)")
         return create_stream_response(generate_clarification())
@@ -1052,9 +1099,7 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
         if query_type == "concept_qa":
             # 概念问答 → 直接走知识库检索 + LLM 总结
             def generate_concept_qa():
-                now_str = datetime.now().isoformat()
-                s = ensure_session(session_id)
-                s["messages"].append({"role": "user", "content": request.query, "timestamp": now_str})
+                add_message(session_id, "user", request.query)
 
                 yield json.dumps({"type": "new_message", "content": ""}, ensure_ascii=False) + "\n"
 
@@ -1125,7 +1170,7 @@ JSON 格式要求：
         }, ensure_ascii=False) + "\n"
 
         try:
-            for line in http_post_stream(f"{QA_SERVICE_URL}/qa/chat/stream", {"query": prompt, "top_k": 10}, timeout=180):
+            for line in http_post_stream(f"{QA_SERVICE_URL}/qa/chat/stream", {"query": prompt, "top_k": 10, "no_persist": True}, timeout=180):
                 line_str = line.strip()
                 if not line_str:
                     continue
@@ -1230,7 +1275,7 @@ JSON 格式要求：
 
             try:
                 summary_text_buf = ""
-                for line in http_post_stream(f"{QA_SERVICE_URL}/qa/chat/stream", {"query": summary_system_prompt, "top_k": 3}, timeout=180):
+                for line in http_post_stream(f"{QA_SERVICE_URL}/qa/chat/stream", {"query": summary_system_prompt, "top_k": 3, "no_persist": True}, timeout=180):
                     line_str = line.strip()
                     if not line_str:
                         continue
@@ -1275,32 +1320,67 @@ JSON 格式要求：
             "content": follow_up.strip()
         }, ensure_ascii=False) + "\n"
 
-        # 保存会话
-        s = ensure_session(session_id)
-        s["messages"].append({"role": "user", "content": request.query, "timestamp": now_str})
-        s["messages"].append({"role": "assistant", "content": summary or f"已生成 {len(indicators)} 个指标", "timestamp": now_str})
-        s["messages"].append({"role": "assistant", "content": follow_up.strip(), "timestamp": now_str})
-        if len(s["messages"]) > MAX_CONTEXT * 4:
-            s["messages"] = s["messages"][-(MAX_CONTEXT * 4):]
-        save_sessions()
+        # 保存会话到 MySQL
+        add_message(session_id, "user", request.query)
+        add_message(session_id, "assistant", summary or f"已生成 {len(indicators)} 个指标")
+        add_message(session_id, "assistant", follow_up.strip())
 
     return create_stream_response(generate())
 
 
 @app.get("/indicator/history")
 async def get_history(session_id: str):
-    """获取指定会话的消息"""
-    sessions_data = get_all_sessions()
-    if session_id not in sessions_data:
-        return {"messages": []}
-    s = sessions_data[session_id]
-    msgs = s.get("messages", []) if isinstance(s, dict) else s
-    return {
-        "messages": [
-            {"role": msg["role"], "content": msg["content"]}
-            for msg in msgs
-        ]
-    }
+    """获取指定会话的消息（从 MySQL 读取，含 metadata + 地图数据 + 指标体系数据）"""
+    msgs = get_recent_messages(session_id)
+    stage = get_session_stage(session_id)
+    pending = get_pending_indicators(session_id) or {}
+
+    enriched = []
+    for msg in msgs:
+        entry = {"role": msg.get("role", ""), "content": msg.get("content", ""), "querying": False}
+        meta_str = msg.get("metadata", "")
+        if meta_str:
+            try:
+                parsed = _json.loads(meta_str) if isinstance(meta_str, str) else meta_str
+                if isinstance(parsed, dict):
+                    entry.update({k: v for k, v in parsed.items() if k != "role" and k != "content"})
+            except Exception:
+                pass
+        # 剥离 content 中的 map_annotations JSON 块并提取地图数据
+        if _MAP_ANNOTATIONS_PATTERN.search(entry["content"]):
+            geo_data = _parse_map_annotations_from_text(entry["content"])
+            entry["content"] = _MAP_ANNOTATIONS_PATTERN.sub("", entry["content"]).strip()
+            if geo_data:
+                entry.update(geo_data)
+        enriched.append(entry)
+
+    # 附加指标体系数据（tree / indicators / confirmActions）
+    if pending:
+        tree = pending.get("tree")
+        indicators = pending.get("indicators", [])
+        # 找到包含"是否需要查询"的最后一个 assistant 消息，附加指标数据
+        for entry in reversed(enriched):
+            if entry.get("role") == "assistant" and "是否需要查询" in entry.get("content", ""):
+                if tree:
+                    entry["tree"] = tree
+                if indicators:
+                    entry["indicators"] = indicators
+                if stage == "awaiting_confirmation":
+                    entry["confirmActions"] = True
+                break
+        else:
+            # 没有"是否需要查询"消息，附加到最后一个 assistant 消息
+            for entry in reversed(enriched):
+                if entry.get("role") == "assistant":
+                    if tree:
+                        entry["tree"] = tree
+                    if indicators:
+                        entry["indicators"] = indicators
+                    if stage == "awaiting_confirmation":
+                        entry["confirmActions"] = True
+                    break
+
+    return {"messages": enriched}
 
 
 @app.get("/indicator/tree")
