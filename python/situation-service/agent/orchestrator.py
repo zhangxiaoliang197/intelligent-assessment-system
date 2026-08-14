@@ -580,11 +580,18 @@ def _source_result_as_actor(source: str, query: str, context: dict, datasets: li
             message = "未找到已授权数据集" if not matches else "数据源绑定不唯一，请改用 dataset:<id>"
             return {"success": False, "message": message}
         matched = matches[0]
-        # 远端特性：schema 含字段元数据时优先 LLM 生成精确 SQL 取数，失败回退预定义查询/整表
-        if matched.get("fields"):
+        schema = dict(matched)
+        schema.setdefault("datasetName", schema.get("name", ""))
+        # authorized-list 不带字段元数据；按需读取物理表结构，使 Text-to-SQL 分支可用。
+        if not schema.get("fields"):
+            structure = tools.fetch_dataset_structure(str(matched.get("id") or ""))
+            if structure.get("fields"):
+                schema.update(structure)
+        # schema 含字段元数据时优先 LLM 生成精确 SQL 取数，失败回退预定义查询/整表
+        if schema.get("fields"):
             try:
                 sql_result = _query_dataset_with_sql(
-                    str(matched.get("id") or ""), query, matched, "",
+                    str(matched.get("id") or ""), query, schema, "",
                     config.SITUATION_DATA_ROW_LIMIT,
                 )
                 if isinstance(sql_result, dict) and sql_result.get("success") is not False:
@@ -604,26 +611,124 @@ def _source_result_as_actor(source: str, query: str, context: dict, datasets: li
             return {"success": False, "message": "当前上下文未提供评估会话 ID"}
         return tools.get_evaluation(str(evaluation_id))
     if source == "admin":
-        combined_rows = []
-        sampled = []
-        for dataset in datasets[:config.SITUATION_AUTO_DATASET_LIMIT]:
-            result = tools.query_admin_dataset(dataset, config.SITUATION_DATA_ROW_LIMIT)
-            if result.get("success") is not True:
-                continue
-            table_name = str(dataset.get("tableName") or dataset.get("name") or "dataset")
-            sampled.append(table_name)
-            for row in result.get("rows", []):
-                if isinstance(row, dict):
-                    combined_rows.append({"_dataset": table_name, **row})
-        if not combined_rows:
-            return {"success": False, "message": "已注册数据集未返回可用记录"}
-        return {
-            "success": True,
-            "rows": combined_rows,
-            "rowCount": len(combined_rows),
-            "sampledDatasets": sampled,
-        }
+        return _query_admin_source(query, context, datasets)
     return {"success": False, "message": "尚未配置该数据源的只读适配器"}
+
+
+def _query_admin_source(query: str, context: dict, datasets: list) -> dict:
+    """admin 数据源：按问题精确选表 + Text-to-SQL 取数（对齐评估分析查表能力）。
+
+    关键点：优先使用 /export/for-llm 的字段标注（businessMeaning/annotation）作为
+    SQL 生成 schema，这样 LLM 才能理解“机型/高度/速度/状态”等业务列并生成全字段
+    SELECT，从而让地图节点携带完整 props 与 routeName（决定节点颜色）。
+    """
+    if not datasets:
+        return {"success": False, "message": "已注册数据集未返回可用记录"}
+
+    schemas_by_id: Dict[str, dict] = {}
+    # 1a. 富字段元数据（含业务含义标注），对齐合并前的原始实现（原 query_datasets_meta 流程）。
+    meta = tools.query_datasets_meta(str(context.get("dataSourceId") or ""))
+    if isinstance(meta, dict):
+        for s in (meta.get("data") or {}).get("schemas") or []:
+            if isinstance(s, dict) and s.get("datasetId"):
+                ds_id = str(s["datasetId"])
+                schema = dict(s)
+                schema.setdefault("id", ds_id)
+                schema.setdefault("name", s.get("datasetName", ""))
+                schema.setdefault("schemaVersion", 1)
+                schema.setdefault("sensitiveColumns", [])
+                schemas_by_id[ds_id] = schema
+
+    # 1b. 无字段标注的数据集回退物理表结构（仅列名/类型/注释）。
+    if not schemas_by_id:
+        for dataset in datasets:
+            ds_id = str(dataset.get("id") or "").strip()
+            if not ds_id:
+                continue
+            structure = tools.fetch_dataset_structure(ds_id)
+            if not isinstance(structure, dict):
+                structure = {}
+            fields = structure.get("fields") or []
+            schemas_by_id[ds_id] = {
+                "id": ds_id,
+                "datasetId": ds_id,
+                "name": dataset.get("name", ""),
+                "datasetName": dataset.get("name", ""),
+                "tableName": structure.get("tableName") or dataset.get("tableName", ""),
+                "description": dataset.get("description", ""),
+                "schemaVersion": dataset.get("schemaVersion", 1),
+                "sensitiveColumns": dataset.get("sensitiveColumns") or [],
+                "fields": list(fields),
+            }
+
+    schema_list = list(schemas_by_id.values())
+    if not schema_list:
+        return {"success": False, "message": "已注册数据集未返回可用记录"}
+
+    # 2. LLM 规划：从全部数据集中挑选与问题相关的表。
+    from llm_client import call_llm_json
+    from agent import prompts
+
+    plan_meta = {"success": True, "data": {"schemas": schema_list, "indicators": []}}
+    selected: list = []
+    try:
+        plan = call_llm_json(
+            prompts.build_plan_messages(query, plan_meta),
+            temperature=0.2,
+            max_tokens=min(config.LLM_MAX_TOKENS, 6000),
+        )
+        if isinstance(plan, dict):
+            raw = plan.get("datasets")
+            if isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, dict) and str(item.get("datasetId", "")) in schemas_by_id:
+                        selected.append(item)
+    except Exception as exc:
+        logger.warning("admin 数据源 LLM 规划失败，回退按序取数: %s", exc)
+
+    if not selected:
+        selected = [
+            {"datasetId": str(s.get("id") or s.get("datasetId", "")), "intent": ""}
+            for s in schema_list
+        ]
+    selected = selected[:max(1, min(config.SITUATION_AUTO_DATASET_LIMIT, 5))]
+
+    # 3. 对选中的数据集执行 Text-to-SQL 精确取数，失败回退预定义查询。
+    combined_rows = []
+    sampled = []
+    for item in selected:
+        ds_id = str(item.get("datasetId") or "").strip()
+        schema = schemas_by_id.get(ds_id)
+        if not schema:
+            continue
+        intent = str(item.get("intent") or "")
+        try:
+            limit = max(1, int(item.get("limit") or config.SITUATION_DATA_ROW_LIMIT))
+        except (TypeError, ValueError):
+            limit = config.SITUATION_DATA_ROW_LIMIT
+        try:
+            result = _query_dataset_with_sql(ds_id, query, schema, intent, limit)
+        except Exception as exc:
+            logger.warning("admin 数据源 Text-to-SQL 异常，回退预定义查询: dataset=%s err=%s", ds_id, exc)
+            result = {"success": False, "message": str(exc)[:200]}
+        if not isinstance(result, dict) or result.get("success") is not True:
+            result = tools.query_admin_dataset(schema, limit)
+        if not isinstance(result, dict) or result.get("success") is not True:
+            continue
+        table_name = str(schema.get("tableName") or schema.get("datasetName") or "dataset")
+        sampled.append(table_name)
+        for row in result.get("rows", []):
+            if isinstance(row, dict):
+                combined_rows.append({"_dataset": table_name, **row})
+
+    if not combined_rows:
+        return {"success": False, "message": "已注册数据集未返回可用记录"}
+    return {
+        "success": True,
+        "rows": combined_rows,
+        "rowCount": len(combined_rows),
+        "sampledDatasets": sampled,
+    }
 
 
 def _result_ok(source: str, result: dict) -> bool:
@@ -923,12 +1028,32 @@ def _safe_text(value: Any, limit: int = 160) -> str:
     return re.sub(r"[<>\x00-\x1f]", "", str(value or ""))[:limit]
 
 
+def _safe_props(value: Any) -> dict:
+    """清洗业务字段（props），仅保留可安全序列化的标量，供前端弹窗展示。"""
+    if not isinstance(value, dict):
+        return {}
+    props = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key or len(key) > 60:
+            continue
+        if item is None or item == "":
+            continue
+        if isinstance(item, bool):
+            props[key] = item
+        elif isinstance(item, (int, float)):
+            props[key] = item
+        else:
+            props[key] = _safe_text(item, 200)
+    return props
+
+
 def _safe_point(value: Any) -> Optional[dict]:
     if not isinstance(value, dict) or not (
         _valid_coord(value.get("lng"), -180, 180)
         and _valid_coord(value.get("lat"), -90, 90)
     ):
         return None
+    props = _safe_props(value.get("props"))
     point = {
         "name": _safe_text(value.get("name") or "点位"),
         "lng": float(value["lng"]),
@@ -941,6 +1066,8 @@ def _safe_point(value: Any) -> Optional[dict]:
     color = value.get("color")
     if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
         point["color"] = color
+    if props:
+        point["props"] = props
     if value.get("featureId"):
         point["featureId"] = _safe_id(value.get("featureId"))
     if value.get("datasetRef"):
@@ -1029,6 +1156,9 @@ def _sanitize_map_layer(value: Any, profile: dict, context: Optional[dict] = Non
                 "center": {"lng": center["lng"], "lat": center["lat"]},
                 "radiusKm": radius,
             }
+            props = _safe_props(item.get("props"))
+            if props:
+                circle["props"] = props
             color = item.get("color")
             if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
                 circle["color"] = color

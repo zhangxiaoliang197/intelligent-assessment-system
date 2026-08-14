@@ -74,6 +74,7 @@ public class AdminApiSecurityFilter extends OncePerRequestFilter {
         if (path.startsWith("/api/admin/internal/")) return true;
         if (path.startsWith("/api/admin/situation/")) return true;
         if (path.equals("/api/admin/dataset/authorized-list")) return true;
+        if (path.equals("/api/admin/export/for-llm")) return true;
         return path.matches("/api/admin/dataset/[^/]+/query");
     }
 
@@ -85,17 +86,23 @@ public class AdminApiSecurityFilter extends OncePerRequestFilter {
     private boolean allowsTrustedRuntimeService(HttpServletRequest request) {
         String method = request.getMethod();
         String path = request.getRequestURI();
+        // 聊天会话数据由 qa/indicator/evaluation 等可信运行时服务通过 X-Service-Token 读写，
+        // 管理面则通过 X-Admin-Token 访问，二者均属可信调用，不应被默认拒绝。
+        if (path.startsWith("/api/admin/chat/")) return true;
         if ("GET".equalsIgnoreCase(method)) {
             return path.equals("/api/admin/database/list")
                     || path.matches("/api/admin/database/[^/]+/tables")
                     || path.matches("/api/admin/database/[^/]+/table-structure")
                     || path.equals("/api/admin/dataset/list")
                     || path.matches("/api/admin/dataset/[^/]+")
+                    || path.matches("/api/admin/dataset/[^/]+/structure")
+                    || path.matches("/api/admin/dataset/[^/]+/data")
                     || path.equals("/api/admin/indicator/list")
                     || path.matches("/api/admin/indicator/[^/]+")
                     || path.matches("/api/admin/indicator/[^/]+/linkage");
         }
         return "POST".equalsIgnoreCase(method)
-                && path.matches("/api/admin/database/[^/]+/execute-sql");
+                && (path.matches("/api/admin/database/[^/]+/execute-sql")
+                    || path.matches("/api/admin/dataset/[^/]+/execute-query"));
     }
 }

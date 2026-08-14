@@ -14,6 +14,7 @@ logger = logging.getLogger("situation-service")
 _EXCLUDE = {
     "name", "aircraft_name", "aircraft_id", "seq", "id",
     "lng", "lon", "longitude", "lat", "latitude", "raw",
+    "_dataset",
 }
 
 # 标注配色：按分组/行索引取色，同路线同色、不同路线不同色，避免全部退化为同一种颜色

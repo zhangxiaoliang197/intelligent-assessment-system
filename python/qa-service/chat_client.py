@@ -20,6 +20,13 @@ try:
 except Exception:
     pass
 
+INTERNAL_SERVICE_TOKEN = ""
+try:
+    import os as _os
+    INTERNAL_SERVICE_TOKEN = _os.getenv("INTERNAL_SERVICE_TOKEN", "").strip()
+except Exception:
+    pass
+
 
 def _http(method: str, path: str, body: dict = None, timeout: int = 10) -> dict:
     """调用 admin-service。返回解析后的 JSON dict。"""
@@ -27,6 +34,8 @@ def _http(method: str, path: str, body: dict = None, timeout: int = 10) -> dict:
     data_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data_bytes, method=method)
     req.add_header("Content-Type", "application/json")
+    if INTERNAL_SERVICE_TOKEN:
+        req.add_header("X-Service-Token", INTERNAL_SERVICE_TOKEN)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))

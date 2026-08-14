@@ -118,9 +118,9 @@ const mergedPoints = computed<GeoPoint[]>(() => {
         raw: p.raw || `${center.lng ?? center.longitude}, ${center.lat ?? center.latitude}`,
         props: p.props || p.properties || {},
         routeName: p.routeName,
-        color: p.color || layer.layerConfig?.color,
+        color: p.color,
         radius: isIntensityLayer ? valueScale(p.value ?? p.count ?? p.weight) : layer.layerConfig?.radius,
-        fillOpacity: isIntensityLayer ? layer.layerConfig?.fillOpacity ?? 0.55 : layer.layerConfig?.fillOpacity,
+        fillOpacity: isIntensityLayer ? layer.layerConfig?.fillOpacity ?? 0.55 : undefined,
         _layerId: layer.layerId,
         _datasetRef: p.datasetRef || props.dataset?.datasetId || '',
         _featureId: p.featureId || '',
@@ -150,7 +150,7 @@ const mergedRoutes = computed<GeoRoute[]>(() => {
         raw: `${p.lng}, ${p.lat}`,
       } as any))
       all.push({
-        name: r.name || '', points: pts, color: r.color || layer.layerConfig?.color,
+        name: r.name || '', points: pts, color: r.color,
         weight: layer.layerConfig?.weight,
         opacity: layer.layerConfig?.opacity,
         dashArray: layerType(layer) === 'flow' ? false : layer.layerConfig?.dashArray,
@@ -180,7 +180,7 @@ const mergedAreas = computed<GeoArea[]>(() => {
         raw: `${p.lng}, ${p.lat}`,
       } as any))
       all.push({
-        name: a.name || '', points: pts, color: a.color || layer.layerConfig?.color,
+        name: a.name || '', points: pts, color: a.color,
         weight: layer.layerConfig?.weight,
         opacity: layer.layerConfig?.opacity,
         fillOpacity: layer.layerConfig?.fillOpacity,
@@ -211,7 +211,7 @@ const mergedCircles = computed<CircleArea[]>(() => {
         center: { lng: c.center?.lng ?? 0, lat: c.center?.lat ?? 0 },
         radiusKm: c.radiusKm || 50,
         props: c.props || c.properties || {},
-        color: c.color || layer.layerConfig?.color,
+        color: c.color,
         weight: layer.layerConfig?.weight,
         opacity: layer.layerConfig?.opacity,
         fillOpacity: layer.layerConfig?.fillOpacity,

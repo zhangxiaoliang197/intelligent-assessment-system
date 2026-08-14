@@ -762,5 +762,54 @@
     "update_time": "2026-08-14 10:53:20.581237",
     "status": "活跃",
     "schema_version": 3
+  },
+  {
+    "id": "ont_88a4ceef",
+    "name": "未命名本体",
+    "description": "手动构建本体",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "id": "et_f1352ff3",
+        "ontology_id": "",
+        "name": "概念",
+        "description": "",
+        "color": "#5470c6",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-14 08:49:00.274188",
+        "update_time": "2026-08-14 08:49:00.274188"
+      },
+      {
+        "id": "et_d5ecbc29",
+        "ontology_id": "",
+        "name": "实体",
+        "description": "",
+        "color": "#91cc75",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-14 08:49:00.274188",
+        "update_time": "2026-08-14 08:49:00.274188"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "关联",
+        "description": ""
+      },
+      {
+        "name": "影响",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-14 08:49:00.274188",
+    "update_time": "2026-08-14 08:49:00.274188",
+    "status": "活跃",
+    "is_default": false,
+    "schema_version": 3
   }
 ]

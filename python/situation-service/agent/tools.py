@@ -154,11 +154,16 @@ def execute_dataset_sql(dataset_id: str, sql: str) -> dict:
 
 
 def query_knowledge(query: str, top_k: int = 5) -> dict:
-    """调用知识库的真实混合检索接口。"""
+    """调用知识库的真实混合检索接口。
+
+    知识库首次请求会加载向量模型（sentence-transformers），冷启动可能超过默认
+    HTTP_TIMEOUT，因此单独放宽超时，避免首次提问被误判为超时失败。
+    """
     return _http_json(
         "POST",
         f"{config.KNOWLEDGE_SERVICE_URL}/knowledge/search",
         {"query": query, "top_k": max(1, min(int(top_k), 20))},
+        timeout=max(config.HTTP_TIMEOUT, 60),
     )
 
 
@@ -180,10 +185,38 @@ def get_evaluation(evaluation_id: str) -> dict:
     return _http_get(f"{config.QA_SERVICE_URL}/evaluation/session/{safe_id}")
 
 
-def query_admin_data(dataset_id: str) -> dict:
-    """读取已注册数据集元数据。"""
+def get_dataset_meta(dataset_id: str) -> dict:
+    """读取已注册数据集元数据（不含字段结构，字段结构请用 fetch_dataset_structure）。"""
     safe_id = urllib.parse.quote(str(dataset_id), safe="")
     return _http_get(f"{config.ADMIN_SERVICE_URL}/api/admin/dataset/{safe_id}")
+
+
+def fetch_dataset_structure(dataset_id: str) -> dict:
+    """读取数据集物理表结构，构建 Text-to-SQL 所需的 schema（含 fields 元数据）。
+
+    返回 {tableName, columns, fields, count}，fields 每项含 column/type/comment/isPrimaryKey。
+    与评估分析读取表结构的思路一致，供 LLM 生成精确的 WHERE/聚合/GROUP BY。
+    """
+    safe_id = urllib.parse.quote(str(dataset_id), safe="")
+    result = _http_get(
+        f"{config.ADMIN_SERVICE_URL}/api/admin/dataset/{safe_id}/structure",
+        timeout=config.HTTP_TIMEOUT,
+    )
+    if not isinstance(result, dict) or not result.get("success"):
+        return {"tableName": "", "columns": [], "fields": [], "count": 0}
+    columns = [c for c in (result.get("columns") or []) if isinstance(c, dict)]
+    fields = [{
+        "column": c.get("columnName", ""),
+        "type": c.get("dataType", ""),
+        "isPrimaryKey": bool(c.get("isPrimaryKey", False)),
+        "comment": c.get("comment", ""),
+    } for c in columns]
+    return {
+        "tableName": result.get("tableName", ""),
+        "columns": columns,
+        "fields": fields,
+        "count": len(fields),
+    }
 
 
 def list_admin_datasets() -> dict:

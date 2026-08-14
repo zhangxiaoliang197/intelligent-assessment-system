@@ -42,7 +42,7 @@ public class Dataset {
 
     @Column(name = "schema_version")
     private Integer schemaVersion;
-    /** 琛ㄩ棿杩炴帴�?JSON锛歔{"left":"orders.order_id","right":"order_items.order_id"}] */
+    /** Table join JSON: [{"left":"orders.order_id","right":"order_items.order_id"}] */
     @Column(name = "key_mappings", columnDefinition = "json")
     private String keyMappings;
 

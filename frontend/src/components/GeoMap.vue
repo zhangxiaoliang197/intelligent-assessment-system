@@ -899,17 +899,20 @@ function addCircles() {
       fillOpacity: safeNumber(circleStyle.fillOpacity, 0.12, 0.02, 0.9),
       fillColor: color,
     }).addTo(map!)
-    // ── 圆形弹窗：基础信息 + 附加业务属性（中文化）──
+    // ── 圆形弹窗：完整展示节点信息（经纬度 + 半径 + 全部业务属性 + 坐标原文）──
     let popupHtml = `<strong>${escapeHtml(c.name)}</strong>`
-    popupHtml += `<br/>覆盖半径: ${c.radiusKm}km`
-    popupHtml += `<br/>圆心: ${c.center.lng.toFixed(4)}°, ${c.center.lat.toFixed(4)}°`
+    popupHtml += `<br/>经度: ${c.center.lng.toFixed(4)}`
+    popupHtml += `<br/>纬度: ${c.center.lat.toFixed(4)}`
+    popupHtml += `<br/>覆盖半径(km): ${c.radiusKm}`
     if (c.props) {
       for (const [key, val] of Object.entries(c.props)) {
-        if (val !== null && val !== undefined && val !== '') {
-          popupHtml += `<br/>${escapeHtml(cnLabel(key))}: ${escapeHtml(val)}`
-        }
+        if (val === null || val === undefined || val === '') continue
+        const kl = key.toLowerCase()
+        if (kl === 'radius_km' || kl === 'radius') continue
+        popupHtml += `<br/>${escapeHtml(cnLabel(key))}: ${escapeHtml(val)}`
       }
     }
+    popupHtml += `<br/><small style="color:#999">${c.center.lng.toFixed(4)}, ${c.center.lat.toFixed(4)}</small>`
     circle.bindPopup(popupHtml)
     circleLayers.push(circle)
   })

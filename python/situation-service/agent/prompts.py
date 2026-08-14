@@ -150,7 +150,8 @@ def build_sql_messages(query: str, schema: dict, intent: str = "") -> list:
             "3. 根据问题与查询意图生成精确过滤（WHERE）、聚合（COUNT/SUM/AVG/MAX/MIN）与分组（GROUP BY），必要时 ORDER BY 排序；\n"
             "4. 聚合列与非聚合列必须满足 GROUP BY 规则；\n"
             "5. 使用标准 SQL 语法（ANSI），避免厂商专用函数；不要添加 LIMIT，返回全部数据（行数由后端统一限制）；\n"
-            "6. 若问题只需明细数据，可直接 SELECT 相关列并加必要的 WHERE 过滤，无需强行聚合。"},
+            "6. 明细/轨迹/地图类问题（查询轨迹、点位、列表、目标/设备信息等）必须 SELECT 表结构里列出的**全部业务列**，不得只选经纬度或少数列，确保地图节点和图表能展示完整字段（名称、机型、高度、速度、航向、时间、状态等）；\n"
+            "7. 仅当问题明确要求统计/汇总时才使用聚合函数与 GROUP BY，聚合场景只 SELECT 聚合列和分组列，不得混入未聚合的明细列。"},
         {"role": "user", "content": f"用户问题：{query}\n{intent_text}\n\n表结构：\n{_format_schema_for_sql(schema)}"},
     ]
 
