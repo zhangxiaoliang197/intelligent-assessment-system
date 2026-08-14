@@ -13,7 +13,6 @@
         </div>
         <div class="header-actions">
           <el-button size="small" @click="emit('show-usage')">使用记录</el-button>
-          <el-button size="small" type="primary" @click="openEditor('create')">新建 Skill</el-button>
           <el-tag type="primary" effect="plain">{{ skills.length }} 项</el-tag>
         </div>
       </div>
@@ -21,10 +20,15 @@
 
     <div class="drawer-controls">
       <el-input v-model="search" :prefix-icon="Search" clearable placeholder="搜索名称、场景、指标或触发词" />
-      <button class="favorite-filter" :class="{ active: favoritesOnly }" @click="favoritesOnly = !favoritesOnly">
-        <el-icon><StarFilled v-if="favoritesOnly" /><Star v-else /></el-icon>
-        我的收藏
-      </button>
+      <div class="drawer-control-actions">
+        <el-button class="create-skill-button" type="primary" :icon="Plus" @click="openEditor('create')">
+          新建 Skill
+        </el-button>
+        <button class="favorite-filter" :class="{ active: favoritesOnly }" @click="favoritesOnly = !favoritesOnly">
+          <el-icon><StarFilled v-if="favoritesOnly" /><Star v-else /></el-icon>
+          我的收藏
+        </button>
+      </div>
     </div>
 
     <div class="category-list">
@@ -216,7 +220,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Document, Search, Star, StarFilled } from '@element-plus/icons-vue'
+import { Document, Plus, Search, Star, StarFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import SituationSkillEditorDialog from './SituationSkillEditorDialog.vue'
 import SituationSkillMarkdownDialog from './SituationSkillMarkdownDialog.vue'
@@ -460,6 +464,15 @@ function selectSkill(skill: SituationSkill, question?: string) {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
 }
+.drawer-control-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+.create-skill-button,
+.favorite-filter {
+  min-height: 40px;
+}
 .favorite-filter,
 .category-list button {
   border: 1px solid #dcdfe6;
@@ -662,6 +675,13 @@ function selectSkill(skill: SituationSkill, question?: string) {
   background: rgba(255, 255, 255, .96);
 }
 @media (max-width: 760px) {
+  .drawer-controls {
+    grid-template-columns: 1fr;
+  }
+  .drawer-control-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
   .catalog-layout {
     grid-template-columns: 1fr;
   }
