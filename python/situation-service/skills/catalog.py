@@ -43,7 +43,7 @@ _CHART_TYPES = {
     "bar", "line", "pie", "radar", "gauge", "scatter", "heatmap",
     "relation", "sankey", "map",
 }
-_MAP_LAYER_TYPES = {"points", "routes", "areas", "heatmap", "coverage", "clusters", "flow"}
+_MAP_LAYER_TYPES = {"points", "routes", "areas", "coverage", "clusters", "flow"}
 _REQUIRED_FIELDS = {
     "order", "id", "name", "description", "category", "triggers",
     "recommendedQuestions", "inputHints", "steps", "dataSources",

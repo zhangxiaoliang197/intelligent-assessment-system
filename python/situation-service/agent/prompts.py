@@ -192,6 +192,7 @@ def build_chart_messages(query: str, data_context: dict, plan: dict) -> list:
             "返回 JSON 数组（仅 JSON）：\n"
             '[{"chartId": "c_1", "type": "line", "title": "标题", "option": {ECharts完整option(内联样本数据)}, "datasetRef": "数据集ID", "fieldMapping": {"xField": "分类字段名", "yFields": ["数值字段1", "数值字段2"]}, "explanation": "一句话说明"}]\n'
             "规则：chartId 用 c_1/c_2...；option 必须是合法 ECharts 配置（含 series/xAxis/yAxis 等）；"
+            "图表类型必须互不相同（每个 type 只能出现一次），并优先覆盖上方图表规划给出的不同类型，禁止生成两个相同类型的图表；"
             "数据只能来自上方聚合证据，不得编造；series 中每个数值必须逐字等于证据中出现的 sum/avg/count 值，"
             "禁止估算、取整或跨字段换算；datasetRef 必须使用所列数据集 ID；若无合适数据可降级为说明性图表；"
             "若图表基于数据集明细行直接可视化（bar/line/scatter/pie），必须在 fieldMapping 给出 xField（分类/X轴字段）与 yFields（数值/Y轴字段列表），供前端用全量数据重建；"
@@ -241,9 +242,10 @@ def build_map_messages(query: str, data_context: dict) -> list:
             '  "areas": [],\n'
             '  "circles": [{"name": "名称", "center": {"lng": 113.27, "lat": 23.13}, "radiusKm": 120}],\n'
             '  "fieldMapping": {"lngField": "经度字段名", "latField": "纬度字段名", "nameField": "名称字段名", "routeIdField": "轨迹ID字段名", "orderField": "排序字段名"},\n'
-            '  "layerConfig": {"color": "#e74c3c", "opacity": 0.85}\n'
+            '  "layerConfig": {"type": "points", "color": "#e74c3c", "opacity": 0.85}\n'
             '}\n'
-            "规则：坐标必须来自证据中的 samples 地理字段，不得编造境外坐标；聚合证据默认不含 samples 时必须返回空图层；"
+            "规则：layerConfig.type 取值 points（普通标点，默认）。"
+            "坐标必须来自证据中的 samples 地理字段，不得编造境外坐标；聚合证据默认不含 samples 时必须返回空图层；"
             "若数据无地理信息且问题不涉及空间分布，返回空 points/routes/areas/circles 数组（layerId 仍保留）；"
             "若数据含经纬度字段，必须在 fieldMapping 给出 lngField/latField（供前端用全量数据渲染轨迹/标点）；"
             "若轨迹数据含轨迹ID与排序字段，给出 routeIdField/orderField。"},

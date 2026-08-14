@@ -16,6 +16,18 @@ _EXCLUDE = {
     "lng", "lon", "longitude", "lat", "latitude", "raw",
 }
 
+# 标注配色：按分组/行索引取色，同路线同色、不同路线不同色，避免全部退化为同一种颜色
+_PALETTE = [
+    "#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6",
+    "#1abc9c", "#e67e22", "#2980b9", "#27ae60", "#8e44ad",
+    "#d35400", "#c0392b",
+]
+
+
+def _color_for(index: int) -> str:
+    """按索引稳定取色，索引越界时回绕。"""
+    return _PALETTE[index % len(_PALETTE)]
+
 
 def _to_float(value, default=0.0):
     try:
@@ -71,13 +83,15 @@ def build_map_annotations(rows):
     # 圆形范围（radius_km / radius）
     if "radius_km" in cols_lower or "radius" in cols_lower:
         radius_key = "radius_km" if "radius_km" in cols_lower else "radius"
-        for row in rows:
+        for index, row in enumerate(rows):
             name = str(row.get("name", ""))
             props = _make_props(row, columns)
+            color = _color_for(index)
             circle = {
                 "name": name,
                 "center": {"lng": _to_float(row.get(lng_key)), "lat": _to_float(row.get(lat_key))},
                 "radiusKm": _to_float(row.get(radius_key), 50),
+                "color": color,
             }
             if props:
                 circle["props"] = props
@@ -88,6 +102,7 @@ def build_map_annotations(rows):
                 "lng": _to_float(row.get(lng_key)),
                 "lat": _to_float(row.get(lat_key)),
                 "routeName": name,
+                "color": color,
             }
             if props:
                 point["props"] = props
@@ -114,8 +129,10 @@ def build_map_annotations(rows):
 
         for gid, group in groups.items():
             points = sorted(group["points"], key=lambda p: p["seq"])
+            color = _color_for(len(result["routes"]))
             result["routes"].append({
                 "name": group["name"],
+                "color": color,
                 "points": [{"lng": p["lng"], "lat": p["lat"]} for p in points],
             })
             for index, pt in enumerate(points):
@@ -130,6 +147,7 @@ def build_map_annotations(rows):
                     "lng": pt["lng"],
                     "lat": pt["lat"],
                     "routeName": group["name"],
+                    "color": color,
                 }
                 props = _make_props(pt["row"], columns)
                 if props:
@@ -138,13 +156,14 @@ def build_map_annotations(rows):
         return result
 
     # 默认标记点（无半径、无轨迹）
-    for row in rows:
+    for index, row in enumerate(rows):
         name = str(row.get("name", row.get("aircraft_name", "")))
         point = {
             "name": name,
             "lng": _to_float(row.get(lng_key)),
             "lat": _to_float(row.get(lat_key)),
             "routeName": name,
+            "color": _color_for(index),
         }
         props = _make_props(row, columns)
         if props:

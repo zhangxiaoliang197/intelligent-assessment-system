@@ -206,7 +206,6 @@ def _ontology_to_props(ont: OntologyModel) -> dict:
         "description": ont.description,
         "version": ont.version,
         "status": ont.status,
-        "is_default": ont.is_default,
         "schema_version": ont.schema_version,
         "entity_types_json": json.dumps(
             [et.dict() for et in ont.entity_types],
@@ -243,7 +242,6 @@ def _props_to_ontology(props: dict) -> OntologyModel:
         description=props.get("description", ""),
         version=props.get("version", "1.0.0"),
         status=props.get("status", "活跃"),
-        is_default=bool(props.get("is_default", False)),
         schema_version=props.get("schema_version", 2),
         entity_types=entity_types,
         relation_types=relation_types,
@@ -407,7 +405,7 @@ class Neo4jRepository(OntologyRepository):
         pass
 
     def save_index(self) -> None:
-        """no-op：Neo4j 无索引文件概念。"""
+        """no-op：Neo4j 无索引文件实体类型。"""
         pass
 
     def delete_ontology(self, ontology_id: str) -> None:
@@ -424,19 +422,11 @@ class Neo4jRepository(OntologyRepository):
             )
         logger.info("已删除本体: %s", ontology_id)
 
-    def set_default_ontology(self, ontology_id: str) -> None:
+    def list_archived_ontologies(self) -> List[OntologyModel]:
+        """返回所有已归档（参与下游数据联动）的本体列表。"""
         with self._session as s:
-            s.run("MATCH (o:Ontology) SET o.is_default = False")
-            s.run(
-                "MATCH (o:Ontology {id: $oid}) SET o.is_default = True",
-                oid=ontology_id
-            )
-
-    def get_default_ontology(self) -> Optional[OntologyModel]:
-        with self._session as s:
-            result = s.run("MATCH (o:Ontology {is_default: True}) RETURN o")
-            r = result.single()
-            return _props_to_ontology(r["o"]) if r else None
+            result = s.run("MATCH (o:Ontology) WHERE o.status = '归档' RETURN o")
+            return [_props_to_ontology(r["o"]) for r in result]
 
     def get_ontology_summary(self, ont: OntologyModel) -> Dict[str, Any]:
         oid = ont.id
@@ -534,7 +524,7 @@ class Neo4jRepository(OntologyRepository):
                     """,
                     props=e_props, oid=oid
                 )
-                # INSTANCE_OF_CONCEPT 边（如果概念存在）
+                # INSTANCE_OF_CONCEPT 边（如果实体类型存在）
                 if e.instance_of:
                     s.run(
                         """
@@ -868,16 +858,16 @@ class Neo4jRepository(OntologyRepository):
         """用 Cypher 聚合生成图谱数据（nodes + links）。
 
         与 JsonRepository._graph_data 返回格式完全对齐：
-        - 概念节点（node_type="concept"）：id/name/type/node_type/entity_type/color
+        - 实体类型节点（node_type="concept"）：id/name/type/node_type/entity_type/color
         - 实体节点（node_type="entity"）：id/name/type/node_type/concept_type/concept_id/is_primary
         - instance_of 边：source=concept_id, target=entity_id, relation="instance_of"
         - 关系边：source=source_id, target=target_id, relation=relation_type
 
         重要：`type` 字段保持为类型名（如"人物""事件"），供前端按 entity_types
-        颜色匹配；`node_type` 字段区分概念节点与实体节点。
+        颜色匹配；`node_type` 字段区分实体类型节点与实体节点。
         """
         with self._session as s:
-            # 查询概念
+            # 查询实体类型
             concept_result = s.run(
                 """
                 MATCH (c:Concept {ontology_id: $oid})
@@ -910,7 +900,7 @@ class Neo4jRepository(OntologyRepository):
             )
             relations_data = [dict(r) for r in rel_result]
 
-        # 概念映射（concept_id -> {name, entity_type, color}）
+        # 实体类型映射（concept_id -> {name, entity_type, color}）
         concept_map = {
             c["id"]: {
                 "name": c["name"],
@@ -923,12 +913,12 @@ class Neo4jRepository(OntologyRepository):
         nodes = []
         links = []
 
-        # ── 概念节点 ──
+        # ── 实体类型节点 ──
         for c in concepts_data:
             nodes.append({
                 "id": c["id"],
                 "name": c["name"],
-                "type": c["entity_type"] or c["name"] or "概念",
+                "type": c["entity_type"] or c["name"] or "实体类型",
                 "node_type": "concept",
                 "entity_type": c["entity_type"],
                 "color": c["color"],
@@ -938,7 +928,7 @@ class Neo4jRepository(OntologyRepository):
         for e in entities_data:
             concept = concept_map.get(e["instance_of"])
             concept_name = concept["name"] if concept else ""
-            # type 用概念的 entity_type（元模型类型名），兼容前端颜色匹配
+            # type 用实体类型的 entity_type（元模型类型名），兼容前端颜色匹配
             type_name = (concept["entity_type"] if concept else "未分类") or "未分类"
             nodes.append({
                 "id": e["id"],
@@ -949,7 +939,7 @@ class Neo4jRepository(OntologyRepository):
                 "concept_id": e["instance_of"],
                 "is_primary": e.get("is_primary", False),
             })
-            # instance_of 边（概念→实体）
+            # instance_of 边（实体类型→实体）
             if e["instance_of"]:
                 links.append({
                     "source": e["instance_of"],
@@ -1057,7 +1047,7 @@ class Neo4jRepository(OntologyRepository):
                 # 推导 type 字段
                 type_name = "未分类"
                 if instance_of:
-                    # 查概念取 entity_type
+                    # 查实体类型取 entity_type
                     concept = s.run(
                         "MATCH (c:Concept {id: $cid}) RETURN c.entity_type AS et, c.name AS cn",
                         cid=instance_of

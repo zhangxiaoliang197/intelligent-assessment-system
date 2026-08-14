@@ -8,6 +8,7 @@ import OntologyModel from '@/pages/OntologyModel.vue'
 import OntologyDetail from '@/pages/OntologyDetail.vue'
 import OntologyBuild from '@/pages/OntologyBuild.vue'
 import OntologyManualBuild from '@/pages/OntologyManualBuild.vue'
+import OntologyMetaModelEdit from '@/pages/OntologyMetaModelEdit.vue'
 import AdminSystem from '@/pages/AdminSystem.vue'
 import SituationMap from '@/pages/SituationMap.vue'
 import SituationView from '@/pages/SituationView.vue'
@@ -44,6 +45,20 @@ const routes: Array<RouteRecordRaw> = [
     path: '/ontology',
     name: 'OntologyModel',
     component: OntologyModel
+  },
+  {
+    // 新建元模型
+    path: '/ontology/meta-model/new',
+    name: 'OntologyMetaModelCreate',
+    component: OntologyMetaModelEdit,
+    meta: { title: '新建元模型' }
+  },
+  {
+    // 编辑元模型
+    path: '/ontology/meta-model/:id/edit',
+    name: 'OntologyMetaModelEdit',
+    component: OntologyMetaModelEdit,
+    meta: { title: '编辑元模型' }
   },
   {
     path: '/ontology/:id',

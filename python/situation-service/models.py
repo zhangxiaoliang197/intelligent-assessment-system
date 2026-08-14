@@ -106,17 +106,11 @@ class MapLayerSpec(BaseModel):
     verification: Dict[str, Any] = Field(default_factory=dict)
 
 
-class Explanation(BaseModel):
-    """图表说明，绑定 chartId。"""
-    chartId: str
-    text: str
-
-
 class Narrative(BaseModel):
-    """态势介绍 + 逐图说明（介绍性，非结论先行）。"""
+    """态势介绍 + 地图说明 + 逐图说明（chartId → text）。"""
     intro: str = ""
-    explanations: List[Explanation] = Field(default_factory=list)
     mapExplanation: str = ""
+    explanations: List[Dict[str, str]] = Field(default_factory=list)
 
 
 class DatasetSummary(BaseModel):

@@ -240,7 +240,7 @@ class AnalyzeRequest(BaseModel):
     # 用户在前端勾选的要查询的指标名称列表；非空时仅查询这些指标。
     # 透传给 qa-service，由其在 admin 指标合并之后做权威过滤。
     selected_indicator_names: Optional[List[str]] = None
-    # B 阶段数据联动：指定参考的本体模型ID，空则用默认本体
+    # B 阶段数据联动：指定参考的本体模型ID，空则合并全部归档本体
     ontology_id: Optional[str] = None
 
 

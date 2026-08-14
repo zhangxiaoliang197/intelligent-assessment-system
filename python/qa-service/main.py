@@ -671,7 +671,7 @@ class ChatRequest(BaseModel):
     category: Optional[str] = None  # 知识库分类筛选，不传则全库搜索
     attachment_id: Optional[str] = None
     image_id: Optional[str] = None
-    # B 阶段数据联动：指定参考的本体模型ID，空则用默认本体
+    # B 阶段数据联动：指定参考的本体模型ID，空则合并全部归档本体
     ontology_id: Optional[str] = None
     # 临时会话：不持久化，不创建 session/message/history（供 indicator 等内部服务调用）
     no_persist: bool = False

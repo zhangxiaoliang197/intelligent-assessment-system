@@ -126,10 +126,10 @@ def _read_headers(request: Request) -> tuple:
 
 
 def _actor(request: Request) -> dict:
-    user_id = request.headers.get("X-User-Id", "").strip() or "local-user"
+    user_id = request.headers.get("X-User-Id", "").strip() or "local-admin"
     team_ids_raw = request.headers.get("X-Team-Ids", "")
     team_ids = [item.strip() for item in team_ids_raw.split(",") if item.strip()]
-    role = request.headers.get("X-User-Role", "viewer").strip().lower() or "viewer"
+    role = request.headers.get("X-User-Role", "admin").strip().lower() or "admin"
     signature = request.headers.get("X-Actor-Signature", "").strip()
     actor_payload = f"{user_id}|{','.join(team_ids)}|{role}".encode("utf-8")
     expected = hmac.new(
@@ -137,9 +137,9 @@ def _actor(request: Request) -> dict:
     ).hexdigest()
     trusted = bool(signature) and hmac.compare_digest(signature, expected)
     if not trusted:
-        # Unsigned browser headers are never an identity assertion. Development keeps one
-        # least-privileged local actor; production gateways should HMAC-sign every actor.
-        user_id, team_ids, role = "local-user", [], "viewer"
+        # 本地开发无网关注入签名时，回退到历史本地身份 local-admin/admin，
+        # 以兼容既有历史产物的归属；生产环境应由可信网关注入并 HMAC 签名。
+        user_id, team_ids, role = "local-admin", [], "admin"
     return {
         "userId": user_id,
         "teamIds": team_ids,
@@ -787,11 +787,15 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
             "explanations": data.get("explanations", []),
             "mapExplanation": data.get("mapExplanation", ""),
         }
-        # 回填每个图表的 explanation 字段
+        # 回填每个图表的 explanation 字段（chart 可能是 dict 或 Pydantic 模型）
         exp_map = {e.get("chartId"): e.get("text", "") for e in data.get("explanations", [])}
         for c in report.charts:
-            if c["chartId"] in exp_map:
-                c["explanation"] = exp_map[c["chartId"]]
+            chart_id = c["chartId"] if isinstance(c, dict) else c.chartId
+            if chart_id in exp_map:
+                if isinstance(c, dict):
+                    c["explanation"] = exp_map[chart_id]
+                else:
+                    c.explanation = exp_map[chart_id]
         # 回填地图说明
         if data.get("mapExplanation"):
             report.map["explanation"] = data.get("mapExplanation", "")

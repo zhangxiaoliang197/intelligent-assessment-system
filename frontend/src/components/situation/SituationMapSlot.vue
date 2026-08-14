@@ -12,16 +12,6 @@
       @draw-end="(p: any) => emit('draw-end', p)"
       @viewport-change="(p: any) => emit('viewport-change', p)"
     />
-    <div v-if="layers.length" class="situation-layer-control" aria-label="态势图层">
-      <label v-for="layer in layers" :key="layer.layerId">
-        <input
-          type="checkbox"
-          :checked="layer.layerConfig?.visible !== false"
-          @change="emit('layer-toggle', { layerId: layer.layerId, visible: ($event.target as HTMLInputElement).checked })"
-        />
-        {{ layer.layerConfig?.name || layer.layerId }}
-      </label>
-    </div>
     <div v-if="explanation" class="map-explain">
       <el-icon><InfoFilled /></el-icon>
       <span>{{ explanation }}</span>
@@ -55,8 +45,6 @@ const emit = defineEmits<{
   (e: 'draw-end', payload: { type: string; geojson: any; name?: string }): void
   (e: 'viewport-change', vp: Viewport): void
 }>()
-
-/** 合并所有图层 → GeoMap props */
 
 function featureValue(feature: any, key: string): unknown {
   return feature?.[key] ?? feature?.props?.[key] ?? feature?.properties?.[key]
@@ -116,15 +104,13 @@ const mergedPoints = computed<GeoPoint[]>(() => {
     const type = layerType(layer)
     const sourcePoints = [
       ...(layer.points || []),
-      ...((layer as any).heatmap || []),
       ...((layer as any).clusters || []),
     ]
     if (!sourcePoints.length) continue
-    const color = layer.layerConfig?.color || '#e74c3c'
     for (const p of sourcePoints) {
       if (!featurePassesContext(p)) continue
       const center = p.center || p.coordinate || p
-      const isIntensityLayer = type === 'heatmap' || type === 'clusters'
+      const isIntensityLayer = type === 'clusters'
       all.push({
         name: p.name || '',
         lng: center.lng ?? center.longitude ?? 0,
@@ -132,7 +118,7 @@ const mergedPoints = computed<GeoPoint[]>(() => {
         raw: p.raw || `${center.lng ?? center.longitude}, ${center.lat ?? center.latitude}`,
         props: p.props || p.properties || {},
         routeName: p.routeName,
-        color: p.color || color,
+        color: p.color || layer.layerConfig?.color,
         radius: isIntensityLayer ? valueScale(p.value ?? p.count ?? p.weight) : layer.layerConfig?.radius,
         fillOpacity: isIntensityLayer ? layer.layerConfig?.fillOpacity ?? 0.55 : layer.layerConfig?.fillOpacity,
         _layerId: layer.layerId,
@@ -154,7 +140,6 @@ const mergedRoutes = computed<GeoRoute[]>(() => {
       ...((layer as any).flow || []),
     ]
     if (!sourceRoutes.length) continue
-    const color = layer.layerConfig?.color || '#e74c3c'
     for (const r of sourceRoutes) {
       if (!featurePassesContext(r)) continue
       const routePoints = r.points || (r.from && r.to ? [r.from, r.to] : [])
@@ -163,10 +148,9 @@ const mergedRoutes = computed<GeoRoute[]>(() => {
         lng: p.lng ?? 0,
         lat: p.lat ?? 0,
         raw: `${p.lng}, ${p.lat}`,
-        color,
       } as any))
       all.push({
-        name: r.name || '', points: pts, color: r.color || color,
+        name: r.name || '', points: pts, color: r.color || layer.layerConfig?.color,
         weight: layer.layerConfig?.weight,
         opacity: layer.layerConfig?.opacity,
         dashArray: layerType(layer) === 'flow' ? false : layer.layerConfig?.dashArray,
@@ -187,7 +171,6 @@ const mergedAreas = computed<GeoArea[]>(() => {
       ...((layer as any).coverage?.areas || []),
     ]
     if (!sourceAreas.length) continue
-    const color = layer.layerConfig?.color || '#3498db'
     for (const a of sourceAreas) {
       if (!featurePassesContext(a)) continue
       const pts: GeoPoint[] = (a.points || []).map((p: any) => ({
@@ -195,10 +178,9 @@ const mergedAreas = computed<GeoArea[]>(() => {
         lng: p.lng ?? 0,
         lat: p.lat ?? 0,
         raw: `${p.lng}, ${p.lat}`,
-        color,
       } as any))
       all.push({
-        name: a.name || '', points: pts, color: a.color || color,
+        name: a.name || '', points: pts, color: a.color || layer.layerConfig?.color,
         weight: layer.layerConfig?.weight,
         opacity: layer.layerConfig?.opacity,
         fillOpacity: layer.layerConfig?.fillOpacity,
@@ -263,19 +245,4 @@ const mergedCircles = computed<CircleArea[]>(() => {
   border-radius: 4px;
   flex-shrink: 0;
 }
-.situation-layer-control {
-  position: absolute;
-  z-index: 500;
-  top: 10px;
-  right: 10px;
-  display: grid;
-  gap: 4px;
-  max-width: 220px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: rgb(255 255 255 / 92%);
-  box-shadow: 0 1px 6px rgb(0 0 0 / 18%);
-  font-size: 12px;
-}
-.situation-layer-control label { display: flex; align-items: center; gap: 6px; }
 </style>

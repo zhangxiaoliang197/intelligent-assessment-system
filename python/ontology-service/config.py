@@ -26,7 +26,7 @@ NEO4J_CONNECTION_TIMEOUT = int(os.getenv("NEO4J_CONNECTION_TIMEOUT", "30"))
 STEP1_BATCH_THRESHOLD_CHARS = int(os.getenv("STEP1_BATCH_THRESHOLD_CHARS", "5000"))
 # 每批喂给 LLM 的文档字符数上限（≈7.5K-10K token，留出 reasoning 思考链 + prompt 模板 + 输出空间）
 STEP1_BATCH_MAX_CHARS = int(os.getenv("STEP1_BATCH_MAX_CHARS", "5000"))
-# 相邻批重叠字符数（覆盖跨批边界概念的上下文，约 5-8 个句子）
+# 相邻批重叠字符数（覆盖跨批边界实体类型的上下文，约 5-8 个句子）
 STEP1_BATCH_OVERLAP = int(os.getenv("STEP1_BATCH_OVERLAP", "500"))
 
 # ── Step 2 实体+属性提取分批（实例层）──
@@ -62,11 +62,51 @@ VERIFICATION_MAX_DOC_CHARS = int(os.getenv("VERIFICATION_MAX_DOC_CHARS", "20000"
 # （reasoning_content），再输出正式 content。max_tokens 需同时容纳 reasoning + content，
 # 否则 reasoning 耗尽上限后 content 会被截断为空（finish_reason=length）。
 # 复杂文学/叙事文档的 reasoning 可达 6K-15K token，24000 仍可能不够，提到 32000。
-# 可通过环境变量 LLM_MAX_TOKENS 覆盖。
+# 可通过环境变量 LLM_MAX_TOKENS 覆盖。各阶段优先使用下方 LLM_STAGE_PROFILES 的独立配置。
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "32000"))
 
+# ── LLM 各阶段独立参数 ──
+# 本体构建是「深度抽取」场景，step1/step2/step3 保留推理与大上下文；
+# meta（元模型推荐）轻量关闭推理，step4（验证报告）保留推理以判断可疑项。
+# 全部可通过环境变量 ONTOLOGY_LLM_<阶段>_MAX_TOKENS / ONTOLOGY_LLM_<阶段>_THINKING 覆盖。
+LLM_STAGE_PROFILES = {
+    "meta": {
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_META_MAX_TOKENS", "4000")),
+        "thinking": os.getenv("ONTOLOGY_LLM_META_THINKING", "disabled"),
+    },
+    "step1": {
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP1_MAX_TOKENS", "16000")),
+        "thinking": os.getenv("ONTOLOGY_LLM_STEP1_THINKING", "enabled"),
+    },
+    "step2": {
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP2_MAX_TOKENS", "16000")),
+        "thinking": os.getenv("ONTOLOGY_LLM_STEP2_THINKING", "enabled"),
+    },
+    "step3_group": {
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP3_GROUP_MAX_TOKENS", "12000")),
+        "thinking": os.getenv("ONTOLOGY_LLM_STEP3_GROUP_THINKING", "enabled"),
+    },
+    "step3_cross": {
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP3_CROSS_MAX_TOKENS", "8000")),
+        "thinking": os.getenv("ONTOLOGY_LLM_STEP3_CROSS_THINKING", "enabled"),
+    },
+    "step4": {
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP4_MAX_TOKENS", "8000")),
+        "thinking": os.getenv("ONTOLOGY_LLM_STEP4_THINKING", "enabled"),
+    },
+}
+
+
+def get_llm_params(stage: str):
+    """获取指定阶段的 LLM 调用参数 (max_tokens, thinking)。未配置阶段回退全局默认。"""
+    profile = LLM_STAGE_PROFILES.get(stage, {})
+    return (
+        profile.get("max_tokens", LLM_MAX_TOKENS),
+        profile.get("thinking", ""),
+    )
+
 # ── 粒度预设（step0 用户选择，注入 step1/step2 prompt 控制提取数量）──
-# coarse（粗）：仅核心概念，适合快速概览
+# coarse（粗）：仅核心实体类型，适合快速概览
 # medium（中）：默认，平衡覆盖与噪声
 # fine（细）：详细提取，适合深度分析
 # 区间为 (下限, 上限)，注入 prompt 时转为"通常提取 X-Y 个"的软约束

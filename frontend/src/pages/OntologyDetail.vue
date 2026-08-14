@@ -6,12 +6,13 @@
         <div class="header-left">
           <el-button @click="goBack" :icon="ArrowLeft">返回</el-button>
           <h2>{{ ontology?.name || '本体详情' }}</h2>
-          <el-tag v-if="ontology?.is_default" type="warning" size="small">默认</el-tag>
+          <el-tag v-if="ontology?.status === '归档'" type="warning" size="small">已归档</el-tag>
         </div>
         <div class="header-actions">
           <el-button @click="refreshData" :icon="Refresh">刷新</el-button>
           <el-button @click="showEditDialog = true" :icon="Edit">编辑</el-button>
-          <el-button @click="archiveOntology" :icon="FolderChecked">归档</el-button>
+          <el-button v-if="ontology?.status !== '归档'" @click="archiveOntology" :icon="FolderChecked">归档</el-button>
+          <el-button v-else @click="restoreOntology" :icon="FolderChecked">恢复</el-button>
           <el-button @click="exportOntology" :icon="Download">导出</el-button>
         </div>
       </div>
@@ -163,7 +164,7 @@
                     <el-icon><Fold /></el-icon> 收起全部实例（{{ expandedTypeIds.size }}）
                   </el-button>
                 </div>
-                <div class="graph-hint">左键实体类型→展开其实例（类型节点分解）；右键实例→收起所属类型；刷新恢复全部类型</div>
+                <div class="graph-hint">左键实体类型→分解为其实例（类型消失）；右键实例→收起为所属类型；刷新恢复全部类型</div>
               </div>
             </template>
             <div class="graph-wrapper">
@@ -282,15 +283,15 @@
           <el-form-item label="实体名称" required>
             <el-input v-model="entityForm.name" placeholder="请输入实体名称" />
           </el-form-item>
-          <el-form-item label="归属概念" required>
+          <el-form-item label="归属实体类型" required>
             <el-select
               v-model="entityForm.instance_of"
-              placeholder="请选择概念（类型）"
+              placeholder="请选择实体类型（类型）"
               style="width: 100%"
-              @change="onEntityConceptChange"
+              @change="onEntityTypeChange"
             >
               <el-option
-                v-for="c in concepts"
+                v-for="c in entityTypes"
                 :key="c.id"
                 :label="`${c.name}（${c.parent_entity_type_name ? '父类：' + c.parent_entity_type_name : '顶层类型'}）`"
                 :value="c.id"
@@ -326,15 +327,15 @@
           <el-form-item label="实体名称" required>
             <el-input v-model="entityForm.name" placeholder="请输入实体名称" />
           </el-form-item>
-          <el-form-item label="归属概念" required>
+          <el-form-item label="归属实体类型" required>
             <el-select
               v-model="entityForm.instance_of"
-              placeholder="请选择概念（类型）"
+              placeholder="请选择实体类型（类型）"
               style="width: 100%"
-              @change="onEntityConceptChange"
+              @change="onEntityTypeChange"
             >
               <el-option
-                v-for="c in concepts"
+                v-for="c in entityTypes"
                 :key="c.id"
                 :label="`${c.name}（${c.parent_entity_type_name ? '父类：' + c.parent_entity_type_name : '顶层类型'}）`"
                 :value="c.id"
@@ -410,6 +411,7 @@ import {
   updateOntology,
   exportOntology as exportOntologyApi,
   archiveOntology as archiveOntologyApi,
+  restoreOntology as restoreOntologyApi,
   getEntityList,
   getRelationList,
   getGraphData,
@@ -428,7 +430,7 @@ const loading = ref(false)
 const submitting = ref(false)
 
 const ontology = ref<any>(null)
-const concepts = ref<any[]>([])
+const entityTypes = ref<any[]>([])
 const entities = ref<any[]>([])
 const relations = ref<any[]>([])
 const selectedEntity = ref<any>(null)
@@ -440,10 +442,10 @@ const layoutType = ref('force')
 const graphRef = ref<HTMLElement | null>(null)
 let chartInstance: echarts.ECharts | null = null
 
-// ── 图谱实例分解（类型节点⇄实例节点两态切换）──
-// rawGraphData 缓存后端原始图谱数据，expandedTypeIds 记录处于「实例态」的类型 ID
-// 类型态：显示类型节点，其实例隐藏；实例态：类型节点消失，其全部实例原位出现
-// 左键类型 → 分解为实例；右键实例 → 收回为类型节点
+// ── 图谱实例展开/收起 ──
+// rawGraphData 缓存后端原始图谱数据，expandedTypeIds 记录已展开实例的类型 ID
+// 类型节点始终常驻：收起态仅显示类型节点（其实例隐藏）；展开态实例环绕类型节点出现
+// 左键类型 → 展开/收起实例；右键实例 → 收回所属类型
 const rawGraphData = ref<{ nodes: any[]; links: any[] }>({ nodes: [], links: [] })
 const expandedTypeIds = ref<Set<string>>(new Set())
 
@@ -552,9 +554,9 @@ const loadOntology = async () => {
 const loadConcepts = async () => {
   try {
     const res: any = await getConceptList(ontologyId)
-    concepts.value = res.items || []
+    entityTypes.value = res.items || []
   } catch (e: any) {
-    ElMessage.error(e.serverMessage || '加载概念失败')
+    ElMessage.error(e.serverMessage || '加载实体类型失败')
   }
 }
 
@@ -594,10 +596,11 @@ const refreshData = async () => {
   ElMessage.success('数据已刷新')
 }
 
-// ── 图谱渲染（实体类型实例分解：类型节点⇄实例节点两态切换）──
+// ── 图谱渲染（类型与实例两态互斥：分解语义）──
 // 统一「可见代表节点」模型：每条逻辑边连接两端各自的可见代表
-// - 实体-实体关系边：所属类型为类型态 → 代表为类型节点；实例态 → 代表为实例本身
-// - 类型级边（SUB_CONCEPT_OF / EntityTypeRelation）：任一端实例态即隐藏
+// - 实体-实体关系边：所属类型未分解 → 代表为类型节点；已分解 → 代表为实例本身
+// - 类型级边（SUB_CONCEPT_OF / EntityTypeRelation）：两端类型节点均未分解（可见）时才渲染
+// - instance_of 边（类型→实例）：不渲染，实例出现后靠位置/同色表达归属
 const renderGraph = () => {
   if (!graphRef.value) return
   if (!chartInstance) {
@@ -649,11 +652,12 @@ const renderGraph = () => {
     if (e.concept_id) instanceCount[e.concept_id] = (instanceCount[e.concept_id] || 0) + 1
   }
 
-  // ── 节点：类型态→类型节点；实例态→该类型全部实例节点（类型节点消失）──
+  // ── 节点：类型节点与其实例两态互斥（分解语义）──
+  // 已分解的类型：类型节点消失，仅显示其实例；未分解：仅显示类型节点
   const displayNodes: any[] = []
   for (const n of typeNodes) {
     if (isExpanded(n.id)) {
-      // 实例态：类型节点不展示，原位渲染其实例（同类型色，更小尺寸区分）
+      // 分解态：类型节点消失，其实例原位出现
       for (const e of entityNodes) {
         if (e.concept_id === n.id) {
           displayNodes.push({
@@ -670,20 +674,20 @@ const renderGraph = () => {
           })
         }
       }
-      continue
+    } else {
+      // 收起态：仅显示类型节点（父类型 > 子类型，加粗边框）
+      displayNodes.push({
+        name: n.name,
+        id: n.id,
+        category: catIndex[n.type] ?? fallbackCatIndex,
+        symbolSize: parentConceptIds.has(n.id) ? 65 : 55,
+        draggable: true,
+        nodeType: 'entityType',
+        conceptId: n.id,
+        itemStyle: { borderColor: '#333', borderWidth: 2 },
+        label: { fontWeight: 'bold' }
+      })
     }
-    // 类型态：类型节点（父类型 > 子类型，加粗边框）
-    displayNodes.push({
-      name: n.name,
-      id: n.id,
-      category: catIndex[n.type] ?? fallbackCatIndex,
-      symbolSize: parentConceptIds.has(n.id) ? 65 : 55,
-      draggable: true,
-      nodeType: 'concept',
-      conceptId: n.id,
-      itemStyle: { borderColor: '#333', borderWidth: 2 },
-      label: { fontWeight: 'bold' }
-    })
   }
 
   // 可见节点集合：边两端代表节点必须在可见集合内才渲染
@@ -692,8 +696,8 @@ const renderGraph = () => {
   // ── 边：连接两端各自的可见代表，去重去自环 ──
   const displayLinks: any[] = []
   const seenEdges = new Set<string>()
-  const pushEdge = (srcId: string, tgtId: string, relation: string) => {
-    if (srcId === tgtId) return // 去自环（同类型折叠后内部边消失）
+  const pushEdge = (srcId: string, tgtId: string, relation: string, dashed = false) => {
+    if (srcId === tgtId) return // 去自环（同类型收起后内部边消失）
     if (!visibleNodeIds.has(srcId) || !visibleNodeIds.has(tgtId)) return
     const edgeKey = `${srcId}-${tgtId}-${relation}`
     if (seenEdges.has(edgeKey)) return // 去重
@@ -706,20 +710,20 @@ const renderGraph = () => {
       // 额外保留名称用于 tooltip 展示，不影响边匹配
       sourceName: idToName[srcId] || srcId,
       targetName: idToName[tgtId] || tgtId,
-      lineStyle: { type: 'solid' }
+      // 归属边（instance_of）细虚线弱化，与业务关系边区分
+      lineStyle: dashed ? { type: 'dashed', width: 1, opacity: 0.45 } : { type: 'solid' }
     })
   }
 
   for (const l of raw.links) {
     const relation = l.relation
-    // 成员关系由节点颜色表达，不再渲染 instance_of 边
-    if (relation === 'instance_of') continue
-    // 类型级边（SUB_CONCEPT_OF / EntityTypeRelation）：仅两端均为类型态（类型节点可见）时渲染
+    // 类型级边（SUB_CONCEPT_OF / EntityTypeRelation）：类型节点常驻，始终渲染
     if (typeNodeById[l.source] && typeNodeById[l.target]) {
-      if (isExpanded(l.source) || isExpanded(l.target)) continue
       pushEdge(l.source, l.target, relation)
       continue
     }
+    // 实例归属边（instance_of）：实例出现后靠位置+同色表达归属，不渲染归属边
+    if (relation === 'instance_of') continue
     // 实体-实体关系边：提升/降级到两端可见代表
     const srcEntity = entityById[l.source]
     const tgtEntity = entityById[l.target]
@@ -734,15 +738,18 @@ const renderGraph = () => {
     tooltip: {
       trigger: 'item',
       formatter: (p: any) => {
+        // 图谱更新/动画期间 tooltip 可能拿到空 data，直接返回空避免报错
+        if (!p.data) return ''
         if (p.dataType === 'edge') {
           const sName = p.data.sourceName || p.data.source
           const tName = p.data.targetName || p.data.target
           return `${sName} → ${tName}<br/>关系: ${p.data.value || ''}`
         }
         const d = p.data
-        if (d.nodeType === 'concept') {
+        if (d.nodeType === 'entityType') {
           const cnt = instanceCount[d.conceptId] || 0
-          return `${d.name}（实体类型）<br/>${cnt} 个实例 · 左键展开实例`
+          const state = expandedTypeIds.value.has(d.conceptId) ? '左键收起实例' : '左键分解为实例'
+          return `${d.name}（实体类型）<br/>${cnt} 个实例 · ${state}`
         }
         return `${d.name}<br/>右键收起所属类型`
       }
@@ -780,7 +787,7 @@ const handleGraphContextMenu = (params: any) => {
 const handleGraphClick = (params: any) => {
   if (params.dataType !== 'node' || !params.data) return
   const node = params.data
-  if (node.nodeType === 'concept') {
+  if (node.nodeType === 'entityType') {
     if (expandedTypeIds.value.has(node.conceptId)) {
       collapseType(node.conceptId)
     } else {
@@ -798,7 +805,7 @@ const expandType = (typeId: string) => {
     (n: any) => n.node_type === 'entity' && n.concept_id === typeId
   )
   if (!hasInstances) {
-    ElMessage.info('该类型暂无实体实例，无法展开')
+    ElMessage.info('该类型暂无实体实例，无法分解')
     return
   }
   const newSet = new Set(expandedTypeIds.value)
@@ -894,9 +901,9 @@ const resetEntityForm = () => {
   }
 }
 
-/** 选中概念时按其 property_schema 自动生成属性行 */
-const onEntityConceptChange = (conceptId: string) => {
-  const concept = concepts.value.find(c => c.id === conceptId)
+/** 选中实体类型时按其 property_schema 自动生成属性行 */
+const onEntityTypeChange = (conceptId: string) => {
+  const concept = entityTypes.value.find(c => c.id === conceptId)
   if (!concept) return
   // 仅在表单属性为空时自动填充，避免覆盖已编辑的值
   if (entityForm.value.properties.length === 0 && concept.property_schema?.length) {
@@ -913,7 +920,7 @@ const onEntityConceptChange = (conceptId: string) => {
 
 const submitEntity = async () => {
   if (!entityForm.value.name || !entityForm.value.instance_of) {
-    ElMessage.warning('请填写实体名并选择归属概念')
+    ElMessage.warning('请填写实体名并选择归属实体类型')
     return
   }
 
@@ -940,7 +947,7 @@ const submitEntity = async () => {
 
 const submitEditEntity = async () => {
   if (!entityForm.value.name || !entityForm.value.instance_of) {
-    ElMessage.warning('请填写实体名并选择归属概念')
+    ElMessage.warning('请填写实体名并选择归属实体类型')
     return
   }
 
@@ -1052,10 +1059,10 @@ const submitEdit = async () => {
   }
 }
 
-// 归档本体：确认后调用后端归档接口，归档后返回列表页
+// 归档本体：确认后调用后端归档接口，归档后参与下游数据联动
 const archiveOntology = async () => {
   try {
-    await ElMessageBox.confirm(`确定将本体「${ontology.value?.name || ''}」归档吗？归档后不再作为默认本体，可在列表的「归档」筛选中查看。`, '归档确认', {
+    await ElMessageBox.confirm(`确定将本体「${ontology.value?.name || ''}」归档吗？归档后参与下游数据联动。`, '归档确认', {
       confirmButtonText: '归档', cancelButtonText: '取消', type: 'warning'
     })
   } catch { return }
@@ -1063,9 +1070,20 @@ const archiveOntology = async () => {
   try {
     await archiveOntologyApi(ontologyId)
     ElMessage.success('归档成功')
-    goBack()
+    await refreshData()
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '归档失败')
+  }
+}
+
+// 恢复本体：取消归档，恢复为活跃，不再参与下游数据联动
+const restoreOntology = async () => {
+  try {
+    await restoreOntologyApi(ontologyId)
+    ElMessage.success('已恢复为活跃')
+    await refreshData()
+  } catch (e: any) {
+    ElMessage.error(e.serverMessage || '恢复失败')
   }
 }
 

@@ -219,7 +219,7 @@ def migrate_ontology_to_neo4j(repo: Neo4jRepository, index_item: Dict[str, Any],
             result["owl_path"] = _generate_owl(ont, concepts, entities, relations)
 
         logger.info(
-            "本体 %s(%s) 迁移成功: %d 概念 / %d 实体 / %d 关系",
+            "本体 %s(%s) 迁移成功: %d 实体类型 / %d 实体 / %d 关系",
             ont_id, name, len(concepts), len(entities), len(relations)
         )
     except Exception as e:
@@ -329,7 +329,7 @@ def _print_summary(results: List[Dict[str, Any]]) -> None:
     print("=" * 80)
     print("迁移汇总")
     print("=" * 80)
-    print(f"{'ID':<20} {'名称':<16} {'状态':<8} {'概念':>6} {'实体':>6} {'关系':>6}  备注")
+    print(f"{'ID':<20} {'名称':<16} {'状态':<8} {'实体类型':>6} {'实体':>6} {'关系':>6}  备注")
     print("-" * 80)
     for r in results:
         note = ""
@@ -370,7 +370,7 @@ def main() -> int:
         print("=" * 80)
         print(f"Dry-run 统计（共 {len(items)} 个本体）")
         print("=" * 80)
-        print(f"{'ID':<20} {'名称':<16} {'SV':>4} {'概念':>6} {'实体':>6} {'关系':>6}  文件")
+        print(f"{'ID':<20} {'名称':<16} {'SV':>4} {'实体类型':>6} {'实体':>6} {'关系':>6}  文件")
         print("-" * 80)
         total_c = total_e = total_r = 0
         for item in items:
@@ -390,7 +390,7 @@ def main() -> int:
             print(f"{ont_id:<20} {item.get('name','')[:14]:<16} "
                   f"{sv:>4} {cs:>6} {es:>6} {rs:>6}  {Path(src).name}")
         print("-" * 80)
-        print(f"合计: 概念={total_c}  实体={total_e}  关系={total_r}")
+        print(f"合计: 实体类型={total_c}  实体={total_e}  关系={total_r}")
         print("=" * 80)
         print("提示: 添加 --all 执行实际迁移")
         return 0

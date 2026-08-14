@@ -32,7 +32,7 @@
                 <el-icon><MapLocation /></el-icon>
                 <div class="history-item-content">
                   <span class="history-item-title">{{ item.title || item.query || '未命名态势' }}</span>
-                  <span class="history-item-time">{{ formatTime(item.createTime || '') }}</span>
+                  <span class="history-item-time">{{ formatTime(item.createTime || item.createdAt || '') }}</span>
                 </div>
               </div>
               <el-button class="history-delete-btn" size="small" text type="danger" @click.stop="deleteHistory(item.reportId)">
@@ -168,7 +168,7 @@
                     <div class="ai-response">
                       <!-- 图表区 -->
                       <div v-if="store.charts.length" class="tree-section">
-                        <SituationChartGrid :charts="store.charts" :loading="store.isGenerating" />
+                        <SituationChartGrid :charts="store.charts" :loading="store.isGenerating" :cols="1" :body-height="360" />
                       </div>
 
                       <!-- 地图（仅有图层时显示） -->
@@ -190,8 +190,8 @@
                       </div>
 
                       <!-- 分析结论 -->
-                      <div v-if="store.narrative.intro || store.isGenerating" class="references-section">
-                        <SituationNarrative :narrative="store.narrative" :loading="store.isGenerating" />
+                      <div v-if="store.narrative.intro" class="references-section">
+                        <SituationNarrative :narrative="store.narrative" />
                       </div>
 
                       <div v-if="hasVerificationEvidence" class="evidence-strip" aria-label="结果验证信息">
@@ -512,18 +512,18 @@ const activeFullSkill = computed(() => (
   skills.value.find((skill) => skill.id === store.activeSkill?.id) || null
 ))
 
-const inputPlaceholder = '输入态势分析需求，如：分析各省份订单销售态势与客单价、评分、配送效率趋势...'
+const inputPlaceholder = '输入军事态势分析需求，如：分析战斗机巡航覆盖范围、舰艇编队部署、雷达探测范围等态势...'
 
 // 工具胶囊（与 Portal tools-row 一致，态势图 current）
 // 四功能切换栏（共享配置，current 由当前路由自动推导）
 const { tools, navigateToTool } = useToolNav()
 
-// 推荐提问
+// 推荐提问（军事题材）
 const suggests = [
-  { title: '各省份订单销售态势', desc: '区域分布与客户聚类', icon: MapLocation, color: '#8b5cf6' },
-  { title: '运营指标趋势分析', desc: '客单价/评分/配送效率', icon: TrendCharts, color: '#10b981' },
-  { title: '品类销售表现', desc: '各品类销量与占比', icon: PieChart, color: '#f59e0b' },
-  { title: '综合运营态势', desc: '趋势+分布+关键指标', icon: DataAnalysis, color: '#3b82f6' }
+  { title: '战斗机巡航覆盖范围态势', desc: '巡航区域与作战覆盖分析', icon: MapLocation, color: '#8b5cf6' },
+  { title: '舰艇编队部署态势', desc: '编队分布与活动规律', icon: TrendCharts, color: '#10b981' },
+  { title: '雷达探测范围态势', desc: '探测覆盖与盲区分析', icon: PieChart, color: '#f59e0b' },
+  { title: '综合战场态势', desc: '兵力+装备+态势融合', icon: DataAnalysis, color: '#3b82f6' }
 ]
 
 const isEmpty = computed(() =>
@@ -1112,7 +1112,7 @@ async function deleteHistory(targetId: string) {
 .ai-response { display: flex; flex-direction: column; gap: 1rem; width: 100%; }
 .tree-section, .references-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
 .data-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
-.ai-map-section { padding: 0; overflow: hidden; height: 420px; }
+.ai-map-section { padding: 0; overflow: hidden; height: 460px; }
 .evidence-strip {
   display: flex;
   flex-wrap: wrap;

@@ -67,13 +67,15 @@ def load_llm_config() -> dict:
     }
 
 
-def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000) -> str:
+def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000,
+             thinking_type: str = "") -> str:
     """同步调用 LLM，返回纯文本响应。
 
     Args:
         messages: OpenAI 格式的消息列表 [{"role":"system","content":"..."},{"role":"user","content":"..."}]
         temperature: 温度参数，结构化输出建议 0.3
         max_tokens: 最大输出 token 数
+        thinking_type: 推理开关，"enabled"/"disabled"；空字符串表示不注入、保持模型默认
 
     Returns:
         LLM 返回的文本内容
@@ -102,13 +104,17 @@ def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000) -
     if not api_key and llm_type != "vllm":
         raise RuntimeError("大模型 API Key 未配置，请在「基础管理 → 大模型配置」中设置")
 
-    body = json.dumps({
+    body_dict = {
         "model": model,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "stream": False
-    }).encode("utf-8")
+        "stream": False,
+    }
+    # 仅当显式指定 enabled/disabled 时注入 thinking 字段，否则保持模型默认行为
+    if thinking_type in ("enabled", "disabled"):
+        body_dict["thinking"] = {"type": thinking_type}
+    body = json.dumps(body_dict).encode("utf-8")
 
     url = f"{api_url}/chat/completions"
     req = urllib.request.Request(url, data=body, method="POST")
@@ -208,7 +214,8 @@ def _extract_json_block(text: str):
     raise json.JSONDecodeError("无法从 LLM 响应中提取 JSON", text, 0)
 
 
-def call_llm_json(messages: list, temperature: float = 0.3, max_tokens: int = 4000):
+def call_llm_json(messages: list, temperature: float = 0.3, max_tokens: int = 4000,
+                  thinking_type: str = ""):
     """调用 LLM 并解析为 JSON 结构。
 
     带容错和重试机制（最多 4 次尝试）：
@@ -220,6 +227,7 @@ def call_llm_json(messages: list, temperature: float = 0.3, max_tokens: int = 40
         messages: OpenAI 格式的消息列表
         temperature: 温度参数
         max_tokens: 最大输出 token 数
+        thinking_type: 推理开关，"enabled"/"disabled"；空字符串表示不注入、保持模型默认
 
     Returns:
         解析后的 dict 或 list
@@ -245,7 +253,7 @@ def call_llm_json(messages: list, temperature: float = 0.3, max_tokens: int = 40
                     current_msgs = list(messages) + [
                         {"role": "user", "content": "你上一次没有返回任何内容。请直接返回符合要求的 JSON，不要输出空白或空内容。"}
                     ]
-            raw = call_llm(current_msgs, temperature, max_tokens)
+            raw = call_llm(current_msgs, temperature, max_tokens, thinking_type)
         except RuntimeError as e:
             raise ValueError(str(e))
 

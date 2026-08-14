@@ -10,10 +10,12 @@
       :style="gridStyle"
     >
       <SituationChartCard
-        v-for="c in charts"
+        v-for="(c, index) in charts"
         :key="c.chartId"
         :ref="(el) => setCardRef(el, c.chartId)"
         :spec="c"
+        :index="index"
+        :body-height="bodyHeight"
       />
     </div>
   </div>
@@ -29,12 +31,23 @@ const props = defineProps<{
   loading?: boolean
   /** 指定列数；不传则自适应 minmax(300px,1fr) */
   cols?: number
+  /** 图表主体高度（px），透传给卡片；详情页缩小布局传较小值 */
+  bodyHeight?: number
+  /** 网格每行最小高度（px），单列时保证卡片不被压扁 */
+  rowMinHeight?: number
 }>()
 
 // 指定列数时用等宽 1fr（minmax(0,1fr) 防止内容溢出撑宽）
-const gridStyle = computed(() =>
-  props.cols ? { gridTemplateColumns: `repeat(${props.cols}, minmax(0, 1fr))` } : {}
-)
+// 行高支持自定义：详情页缩小布局需传更小的 rowMinHeight，否则会被默认 360px 下限拉伸
+const gridStyle = computed(() => {
+  const style: Record<string, string> = {}
+  if (props.cols) style.gridTemplateColumns = `repeat(${props.cols}, minmax(0, 1fr))`
+  const rowMin = props.rowMinHeight ?? 360
+  style.gridAutoRows = props.cols
+    ? `minmax(${rowMin}px, 1fr)`
+    : `minmax(${rowMin}px, auto)`
+  return style
+})
 
 // chartId → 组件实例（供说明点击滚动+高亮）
 const cardRefs = ref<Record<string, InstanceType<typeof SituationChartCard>>>({})
@@ -61,10 +74,10 @@ defineExpose({ scrollToChart })
   /* 默认（未指定 cols）：自适应排列，minmax(300px,1fr) 让图表在 chart-side 内可多列 */
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 12px;
-  /* 每行至少 360px，保证图表卡片有足够可视高度 */
+  /* 每行最小高度由 gridStyle 动态注入；此值作为无 JS 兜底 */
   grid-auto-rows: minmax(360px, auto);
 }
-/* 指定列数时，每行等高（1fr）让同行图表对齐 */
+/* 指定列数时，每行等高（1fr）让同行图表对齐（行高下限由 gridStyle 覆盖） */
 .chart-grid-inner.cols-fixed {
   grid-auto-rows: minmax(360px, 1fr);
 }

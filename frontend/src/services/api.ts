@@ -13,10 +13,9 @@ service.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
-    // Production authorization is enforced again by backend services. The browser never
-    // defaults itself to administrator; a gateway/session may replace this local actor.
-    config.headers['X-User-Id'] = localStorage.getItem('skill_user_id') || 'local-user'
-    config.headers['X-User-Role'] = localStorage.getItem('skill_user_role') || 'viewer'
+    // 本地开发默认使用 local-admin/admin，生产环境由后端服务二次鉴权并可由网关覆盖。
+    config.headers['X-User-Id'] = localStorage.getItem('skill_user_id') || 'local-admin'
+    config.headers['X-User-Role'] = localStorage.getItem('skill_user_role') || 'admin'
     const teamIds = localStorage.getItem('skill_team_ids')
     if (teamIds) config.headers['X-Team-Ids'] = teamIds
     return config

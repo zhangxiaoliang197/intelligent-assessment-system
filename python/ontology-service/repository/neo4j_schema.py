@@ -3,9 +3,9 @@
 数据模型映射（与 docs/OWL2-Neo4j-存储层重构方案.md 第三节对齐）：
 
 节点标签：
-  :Ontology    - 本体元信息（id, name, description, version, status, is_default, schema_version）
+  :Ontology    - 本体元信息（id, name, description, version, status, schema_version）
   :EntityType  - 元模型实体类型（id, ontology_id, name, color）
-  :Concept     - 概念/类型层（id, ontology_id, name, entity_type, description, color, property_schema_json）
+  :Concept     - 实体类型/类型层（id, ontology_id, name, entity_type, description, color, property_schema_json）
   :Entity      - 实体/实例层（id, ontology_id, name, instance_of, is_primary, properties_json）
   :Relation    - 关系（id, ontology_id, relation_type, weight, properties_json）
   :Template    - 本体模板（id, name, data_json）

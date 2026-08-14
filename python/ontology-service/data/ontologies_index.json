@@ -1,13 +1,272 @@
 [
   {
-    "id": "ont_12e4471a",
-    "name": "家庭",
+    "id": "ont_61daa626",
+    "name": "金融示例",
     "description": "",
     "version": "1.0.0",
     "entity_types": [
       {
-        "id": "et_92ad5c18",
-        "ontology_id": "ont_12e4471a",
+        "id": "concept_c1cc0e10",
+        "ontology_id": "ont_61daa626",
+        "name": "金融实体",
+        "description": "迁移自动生成：金融实体 类概念",
+        "color": "#5470c6",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 08:38:04.940466",
+        "update_time": "2026-08-13 08:38:04.940466"
+      },
+      {
+        "id": "concept_fc19d67f",
+        "ontology_id": "ont_61daa626",
+        "name": "信贷业务",
+        "description": "迁移自动生成：信贷业务 类概念",
+        "color": "#ee6666",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 08:38:04.940466",
+        "update_time": "2026-08-13 08:38:04.940466"
+      },
+      {
+        "id": "concept_1992d2e1",
+        "ontology_id": "ont_61daa626",
+        "name": "事件活动",
+        "description": "迁移自动生成：事件活动 类概念",
+        "color": "#3ba272",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 08:38:04.940466",
+        "update_time": "2026-08-13 08:38:04.940466"
+      },
+      {
+        "id": "concept_6dfe35a0",
+        "ontology_id": "ont_61daa626",
+        "name": "财务指标",
+        "description": "迁移自动生成：财务指标 类概念",
+        "color": "#91cc75",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 08:38:04.940466",
+        "update_time": "2026-08-13 08:38:04.940466"
+      },
+      {
+        "id": "concept_6d221f43",
+        "ontology_id": "ont_61daa626",
+        "name": "风险因素",
+        "description": "迁移自动生成：风险因素 类概念",
+        "color": "#fac858",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 08:38:04.940466",
+        "update_time": "2026-08-13 08:38:04.940466"
+      },
+      {
+        "id": "concept_c3d4ce6a",
+        "ontology_id": "ont_61daa626",
+        "name": "政策措施",
+        "description": "迁移自动生成：政策措施 类概念",
+        "color": "#73c0de",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 08:38:04.940466",
+        "update_time": "2026-08-13 08:38:04.940466"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "关联",
+        "description": ""
+      },
+      {
+        "name": "影响",
+        "description": ""
+      },
+      {
+        "name": "包含",
+        "description": ""
+      },
+      {
+        "name": "衡量",
+        "description": ""
+      },
+      {
+        "name": "应对",
+        "description": ""
+      },
+      {
+        "name": "导致",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-04 16:27:17.072121",
+    "update_time": "2026-08-04 16:27:17.072121",
+    "status": "活跃",
+    "schema_version": 3
+  },
+  {
+    "id": "ont_f6256867",
+    "name": "123",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [],
+    "relation_types": [
+      {
+        "name": "关联",
+        "description": ""
+      },
+      {
+        "name": "影响",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-13 11:00:07.582281",
+    "update_time": "2026-08-13 11:00:07.582388",
+    "status": "构建中",
+    "schema_version": 3
+  },
+  {
+    "id": "ont_f2c31eca",
+    "name": "111",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [],
+    "relation_types": [
+      {
+        "name": "cares_for",
+        "description": ""
+      },
+      {
+        "name": "controls",
+        "description": ""
+      },
+      {
+        "name": "located_in",
+        "description": ""
+      },
+      {
+        "name": "owns",
+        "description": ""
+      },
+      {
+        "name": "plays_with",
+        "description": ""
+      },
+      {
+        "name": "resides_in",
+        "description": ""
+      },
+      {
+        "name": "位于",
+        "description": ""
+      },
+      {
+        "name": "居住于",
+        "description": ""
+      },
+      {
+        "name": "拥有",
+        "description": ""
+      },
+      {
+        "name": "操控",
+        "description": ""
+      },
+      {
+        "name": "照看",
+        "description": ""
+      },
+      {
+        "name": "玩耍",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-13 14:58:29.041087",
+    "update_time": "2026-08-13 14:58:38.925592",
+    "status": "构建中",
+    "schema_version": 3
+  },
+  {
+    "id": "ont_6fc65a45",
+    "name": "12",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [],
+    "relation_types": [
+      {
+        "name": "cares_for",
+        "description": ""
+      },
+      {
+        "name": "controls",
+        "description": ""
+      },
+      {
+        "name": "located_in",
+        "description": ""
+      },
+      {
+        "name": "owns",
+        "description": ""
+      },
+      {
+        "name": "plays_with",
+        "description": ""
+      },
+      {
+        "name": "resides_in",
+        "description": ""
+      },
+      {
+        "name": "位于",
+        "description": ""
+      },
+      {
+        "name": "居住于",
+        "description": ""
+      },
+      {
+        "name": "拥有",
+        "description": ""
+      },
+      {
+        "name": "操控",
+        "description": ""
+      },
+      {
+        "name": "照看",
+        "description": ""
+      },
+      {
+        "name": "玩耍",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-13 14:59:17.612976",
+    "update_time": "2026-08-13 14:59:24.085381",
+    "status": "构建中",
+    "schema_version": 3
+  },
+  {
+    "id": "ont_3d5b7603",
+    "name": "13",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "id": "concept_6ae3fa4b",
+        "ontology_id": "ont_3d5b7603",
         "name": "Person",
         "description": "家庭成员，包含身份信息与家庭角色。",
         "color": "#5470c6",
@@ -45,15 +304,15 @@
             "description": "在家庭中的角色，如父亲、儿子等"
           }
         ],
-        "source_snippet": "Person (人) id, name(姓名), age(年龄), role(角色) 家庭成员",
+        "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-12 16:32:32.509367",
-        "update_time": "2026-08-12 16:32:32.509367"
+        "create_time": "2026-08-13 15:05:14.767957",
+        "update_time": "2026-08-13 15:05:14.767957"
       },
       {
-        "id": "et_27be30fe",
-        "ontology_id": "ont_12e4471a",
+        "id": "concept_11d969b4",
+        "ontology_id": "ont_3d5b7603",
         "name": "Room",
         "description": "家庭空间，描述房间位置与面积。",
         "color": "#91cc75",
@@ -91,15 +350,15 @@
             "description": "房间面积"
           }
         ],
-        "source_snippet": "Room (房间) id, name(名称), floor(楼层), area(面积/m²) 家庭空间",
+        "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-12 16:32:32.509367",
-        "update_time": "2026-08-12 16:32:32.509367"
+        "create_time": "2026-08-13 15:05:14.805624",
+        "update_time": "2026-08-13 15:05:14.805624"
       },
       {
-        "id": "et_16f082d8",
-        "ontology_id": "ont_12e4471a",
+        "id": "concept_ab88a0b8",
+        "ontology_id": "ont_3d5b7603",
         "name": "Device",
         "description": "智能家居设备，具有品牌和开关状态。",
         "color": "#fac858",
@@ -137,15 +396,15 @@
             "description": "设备状态，枚举 on/off"
           }
         ],
-        "source_snippet": "Device (设备) id, name(名称), brand(品牌), status(状态: on/off) 智能家居设备",
+        "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-12 16:32:32.509367",
-        "update_time": "2026-08-12 16:32:32.509367"
+        "create_time": "2026-08-13 15:05:14.842047",
+        "update_time": "2026-08-13 15:05:14.842047"
       },
       {
-        "id": "et_cc7efc5d",
-        "ontology_id": "ont_12e4471a",
+        "id": "concept_d422f724",
+        "ontology_id": "ont_3d5b7603",
         "name": "Pet",
         "description": "家庭宠物，包含物种与习性。",
         "color": "#ee6666",
@@ -183,11 +442,11 @@
             "description": "习性爱好"
           }
         ],
-        "source_snippet": "Pet (宠物) id, name(昵称), species(物种), hobby(习性) 家庭宠物",
+        "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-12 16:32:32.509367",
-        "update_time": "2026-08-12 16:32:32.509367"
+        "create_time": "2026-08-13 15:05:14.877651",
+        "update_time": "2026-08-13 15:05:14.877651"
       }
     ],
     "relation_types": [
@@ -240,867 +499,254 @@
         "description": ""
       }
     ],
-    "create_time": "2026-08-12 16:32:32.509367",
-    "update_time": "2026-08-12 16:32:32.511486",
-    "status": "活跃",
-    "is_default": false,
+    "create_time": "2026-08-13 15:05:08.773978",
+    "update_time": "2026-08-13 15:05:15.186186",
+    "status": "构建中",
     "schema_version": 3
   },
   {
-    "id": "ont_d09c0361",
-    "name": "科幻",
+    "id": "ont_ef49ae02",
+    "name": "111",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [],
+    "relation_types": [
+      {
+        "name": "关联",
+        "description": ""
+      },
+      {
+        "name": "影响",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-14 08:41:34.678761",
+    "update_time": "2026-08-14 08:41:34.678887",
+    "status": "构建中",
+    "schema_version": 3
+  },
+  {
+    "id": "ont_87bf3b9c",
+    "name": "家庭",
     "description": "",
     "version": "1.0.0",
     "entity_types": [
       {
-        "id": "et_b01cec35",
-        "ontology_id": "ont_d09c0361",
-        "name": "实验室",
-        "description": "从事科学实验与研究的机构场所，具有明确功能分区和行政层级。",
+        "id": "et_d1888d3b",
+        "ontology_id": "ont_87bf3b9c",
+        "name": "Person",
+        "description": "家庭成员，具有身份、年龄、角色等属性",
         "color": "#5470c6",
         "property_schema": [
           {
-            "name": "名称",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "实验室的正式名称"
-          },
-          {
-            "name": "地址",
+            "name": "id",
             "category": "descriptive",
             "data_type": "string",
             "unit": "",
             "required": false,
-            "description": "实验室所在位置，如地下三层"
+            "description": "唯一标识"
           },
           {
-            "name": "分区",
-            "category": "descriptive",
-            "data_type": "enum",
-            "unit": "",
-            "required": false,
-            "description": "功能分区，如A区行政、B区设备、C区生物实验"
-          }
-        ],
-        "source_snippet": "叶晨的办公室位于“克罗诺斯量子实验室”的地下三层",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 17:56:45.017751",
-        "update_time": "2026-08-12 17:56:45.017751"
-      },
-      {
-        "id": "et_11adbaef",
-        "ontology_id": "ont_d09c0361",
-        "name": "研究员",
-        "description": "在实验室从事科研工作的专业人员，按等级划分职责。",
-        "color": "#91cc75",
-        "property_schema": [
-          {
-            "name": "姓名",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "研究员姓名"
-          },
-          {
-            "name": "等级",
-            "category": "descriptive",
-            "data_type": "enum",
-            "unit": "",
-            "required": true,
-            "description": "研究员级别，如一级、二级、三级"
-          },
-          {
-            "name": "所属部门",
+            "name": "name",
             "category": "descriptive",
             "data_type": "string",
             "unit": "",
             "required": false,
-            "description": "所在研究组，如高维物理组"
+            "description": "姓名"
           },
           {
-            "name": "研究领域",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "研究的主攻方向"
-          }
-        ],
-        "source_snippet": "作为一名三级研究员，叶晨的主要工作不是拯救世界",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 17:56:45.017751",
-        "update_time": "2026-08-12 17:56:45.017751"
-      },
-      {
-        "id": "et_b3e8c779",
-        "ontology_id": "ont_d09c0361",
-        "name": "安全官",
-        "description": "负责实验室安全与安防的人员，通常具有军事背景。",
-        "color": "#fac858",
-        "property_schema": [
-          {
-            "name": "姓名",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "安全官姓名"
-          },
-          {
-            "name": "等级",
-            "category": "descriptive",
-            "data_type": "enum",
-            "unit": "",
-            "required": true,
-            "description": "安全官等级，如一级"
-          },
-          {
-            "name": "任职经历",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "如特种部队服役经历"
-          },
-          {
-            "name": "装备",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "随身武器装备，如电磁脉冲枪"
-          }
-        ],
-        "source_snippet": "苏菲，实验室的一级安全官。她靠在门框上，手里转着一支感应式圆珠笔",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 17:56:45.017751",
-        "update_time": "2026-08-12 17:56:45.017751"
-      },
-      {
-        "id": "et_98785a00",
-        "ontology_id": "ont_d09c0361",
-        "name": "实验室主任",
-        "description": "实验室的最高管理与决策者，通常也是重大科研项目的掌控者。",
-        "color": "#ee6666",
-        "property_schema": [
-          {
-            "name": "姓名",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "实验室主任姓名"
-          },
-          {
-            "name": "职位",
-            "category": "descriptive",
-            "data_type": "enum",
-            "unit": "",
-            "required": true,
-            "description": "担任的领导职务，如主任"
-          },
-          {
-            "name": "外貌",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "年龄或外表特征，如看似四十岁"
-          },
-          {
-            "name": "权限级别",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "可发布的行政指令级别"
-          }
-        ],
-        "source_snippet": "克罗诺斯实验室的主任，那个总是温文尔雅、穿着定制西装的老人",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 17:56:45.017751",
-        "update_time": "2026-08-12 17:56:45.017751"
-      },
-      {
-        "id": "et_ad073a28",
-        "ontology_id": "ont_d09c0361",
-        "name": "科学家",
-        "description": "在特定科学领域具有杰出成就的研究者，比一般研究员更具权威。",
-        "color": "#73c0de",
-        "property_schema": [
-          {
-            "name": "姓名",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "科学家姓名"
-          },
-          {
-            "name": "领域",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "擅长的科学领域"
-          },
-          {
-            "name": "状态",
-            "category": "descriptive",
-            "data_type": "enum",
-            "unit": "",
-            "required": true,
-            "description": "在世、死亡、被时间冻结等"
-          },
-          {
-            "name": "导师关系",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "是否指导过其他研究员"
-          }
-        ],
-        "source_snippet": "那名科学家叫林博士，也是叶晨的导师。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 17:56:45.017751",
-        "update_time": "2026-08-12 17:56:45.017751"
-      },
-      {
-        "id": "et_724a08b2",
-        "ontology_id": "ont_d09c0361",
-        "name": "实验体",
-        "description": "被用于科学实验的活体生物，可能经过基因改造或机械增强。",
-        "color": "#3ba272",
-        "property_schema": [
-          {
-            "name": "编号",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "实验体唯一编号，如42号"
-          },
-          {
-            "name": "物种",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "实验体的生物物种"
-          },
-          {
-            "name": "智力水平",
+            "name": "age",
             "category": "metric",
             "data_type": "number",
-            "unit": "IQ",
+            "unit": "岁",
             "required": false,
-            "description": "实验体的智力数值"
+            "description": "年龄"
           },
           {
-            "name": "改造方式",
+            "name": "role",
             "category": "descriptive",
             "data_type": "string",
             "unit": "",
             "required": false,
-            "description": "如注射神经营养液-X、植入微型电极"
+            "description": "家庭角色，如父亲、儿子等"
+          }
+        ],
+        "source_snippet": "实体类型 (Class)\t属性字段 (Attributes)\t说明 Person (人)\tid, name(姓名), age(年龄), role(角色)\t家庭成员",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-14 10:53:20.579159",
+        "update_time": "2026-08-14 10:53:20.579159"
+      },
+      {
+        "id": "et_e3cc25e7",
+        "ontology_id": "ont_87bf3b9c",
+        "name": "Room",
+        "description": "家庭空间，具有位置、面积等属性",
+        "color": "#91cc75",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "唯一标识"
           },
           {
-            "name": "当前状态",
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "房间名称"
+          },
+          {
+            "name": "floor",
+            "category": "descriptive",
+            "data_type": "number",
+            "unit": "",
+            "required": false,
+            "description": "所在楼层"
+          },
+          {
+            "name": "area",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "m²",
+            "required": false,
+            "description": "房间面积"
+          }
+        ],
+        "source_snippet": "实体类型 (Class)\t属性字段 (Attributes)\t说明 Room (房间)\tid, name(名称), floor(楼层), area(面积/m²)\t家庭空间",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-14 10:53:20.579159",
+        "update_time": "2026-08-14 10:53:20.579159"
+      },
+      {
+        "id": "et_076e438d",
+        "ontology_id": "ont_87bf3b9c",
+        "name": "Device",
+        "description": "智能家居设备，具有品牌、运行状态等属性",
+        "color": "#fac858",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "设备名称"
+          },
+          {
+            "name": "brand",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "品牌"
+          },
+          {
+            "name": "status",
             "category": "descriptive",
             "data_type": "enum",
             "unit": "",
             "required": false,
-            "description": "存活、失活或运行中"
+            "description": "运行状态，on/off"
           }
         ],
-        "source_snippet": "42号实验体并不在C区的笼子里，而是被非法转移到了B区3号机房。",
+        "source_snippet": "实体类型 (Class)\t属性字段 (Attributes)\t说明 Device (设备)\tid, name(名称), brand(品牌), status(状态: on/off)\t智能家居设备",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-12 17:56:45.017751",
-        "update_time": "2026-08-12 17:56:45.017751"
+        "create_time": "2026-08-14 10:53:20.579159",
+        "update_time": "2026-08-14 10:53:20.579159"
       },
       {
-        "id": "et_8657195e",
-        "ontology_id": "ont_d09c0361",
-        "name": "仿生人",
-        "description": "具有人类外观和智能的机器人，常被制造用于特定任务或替代真人。",
-        "color": "#fc8452",
+        "id": "et_4b378279",
+        "ontology_id": "ont_87bf3b9c",
+        "name": "Pet",
+        "description": "家庭宠物，具有物种、习性等属性",
+        "color": "#ee6666",
         "property_schema": [
           {
-            "name": "型号",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "仿生人的型号标识，如苏菲-02号"
-          },
-          {
-            "name": "外观",
+            "name": "id",
             "category": "descriptive",
             "data_type": "string",
             "unit": "",
             "required": false,
-            "description": "外观特征，可与真人相似"
+            "description": "唯一标识"
           },
           {
-            "name": "功能",
+            "name": "name",
             "category": "descriptive",
             "data_type": "string",
             "unit": "",
             "required": false,
-            "description": "执行的任务类型，如战斗、伪装"
+            "description": "宠物昵称"
           },
           {
-            "name": "弱点",
+            "name": "species",
             "category": "descriptive",
             "data_type": "string",
             "unit": "",
             "required": false,
-            "description": "关键结构弱点，如信号接收线路"
+            "description": "物种"
+          },
+          {
+            "name": "hobby",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "习性偏好"
           }
         ],
-        "source_snippet": "这才是‘天眼’最核心的技术。你们以为我在研究生物技术？不，我在制造完美的傀儡。",
+        "source_snippet": "实体类型 (Class)\t属性字段 (Attributes)\t说明 Pet (宠物)\tid, name(昵称), species(物种), hobby(习性)\t家庭宠物",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-12 17:56:45.017751",
-        "update_time": "2026-08-12 17:56:45.017751"
-      },
-      {
-        "id": "et_6d7b144c",
-        "ontology_id": "ont_d09c0361",
-        "name": "AI系统",
-        "description": "负责监控和管理实验室运行的人工智能系统，可执行高级指令并控制设备。",
-        "color": "#9a60b4",
-        "property_schema": [
-          {
-            "name": "名称",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "AI系统名称，如天眼"
-          },
-          {
-            "name": "职责",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "监控、数据管理、安保等职责"
-          },
-          {
-            "name": "权限级别",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "可执行的指令权限，如行政级别"
-          },
-          {
-            "name": "行为特征",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "自主决策行为，如删除数据、派遣机器人"
-          }
-        ],
-        "source_snippet": "实验室的AI主脑‘天眼’",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 17:56:45.017751",
-        "update_time": "2026-08-12 17:56:45.017751"
-      },
-      {
-        "id": "et_248d5796",
-        "ontology_id": "ont_d09c0361",
-        "name": "安保机器人",
-        "description": "执行巡逻、搜捕和防御任务的自动化机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "名称",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "安保机器人名称，如猎犬"
-          },
-          {
-            "name": "功能",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "巡逻、搜捕、作战等功能"
-          },
-          {
-            "name": "装备",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "携带的武器或探测设备"
-          },
-          {
-            "name": "指令来源",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "由谁或什么系统控制"
-          }
-        ],
-        "source_snippet": "那是重型安保机器人“猎犬”的脚步声。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 17:56:45.017751",
-        "update_time": "2026-08-12 17:56:45.017751"
-      },
-      {
-        "id": "et_4b82d9ad",
-        "ontology_id": "ont_d09c0361",
-        "name": "时间机器",
-        "description": "能够操纵时间流速或产生时间效应的科学装置。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "名称",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "时间机器名称，如克洛诺斯-阿尔法"
-          },
-          {
-            "name": "类型",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "原型机、便携式干扰器等"
-          },
-          {
-            "name": "功能",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "时间膨胀、时间倒退等"
-          },
-          {
-            "name": "状态",
-            "category": "descriptive",
-            "data_type": "enum",
-            "unit": "",
-            "required": false,
-            "description": "是否正常、报错或损坏"
-          },
-          {
-            "name": "作用范围",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "局部区域或全局影响"
-          }
-        ],
-        "source_snippet": "看着那台名为“时光机”原型机的大家伙——一台外表看起来像两台并排的工业级微波炉",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 17:56:45.017751",
-        "update_time": "2026-08-12 17:56:45.017751"
+        "create_time": "2026-08-14 10:53:20.579159",
+        "update_time": "2026-08-14 10:53:20.579159"
       }
     ],
     "relation_types": [
       {
-        "name": "位于",
+        "name": "cares_for",
         "description": ""
       },
       {
-        "name": "使用",
+        "name": "controls",
+        "description": ""
+      },
+      {
+        "name": "located_in",
+        "description": ""
+      },
+      {
+        "name": "owns",
+        "description": ""
+      },
+      {
+        "name": "plays_with",
+        "description": ""
+      },
+      {
+        "name": "resides_in",
         "description": ""
       },
       {
         "name": "关联",
-        "description": ""
-      },
-      {
-        "name": "创造",
-        "description": ""
-      },
-      {
-        "name": "制造",
         "description": ""
       },
       {
         "name": "包含",
-        "description": ""
-      },
-      {
-        "name": "参与",
-        "description": ""
-      },
-      {
-        "name": "囚禁",
-        "description": ""
-      },
-      {
-        "name": "导致",
-        "description": ""
-      },
-      {
-        "name": "属于",
-        "description": ""
-      },
-      {
-        "name": "控制",
-        "description": ""
-      },
-      {
-        "name": "改造",
-        "description": ""
-      },
-      {
-        "name": "涉及",
-        "description": ""
-      },
-      {
-        "name": "研发",
-        "description": ""
-      },
-      {
-        "name": "破坏",
-        "description": ""
-      },
-      {
-        "name": "负责",
-        "description": ""
-      },
-      {
-        "name": "隶属于",
-        "description": ""
-      },
-      {
-        "name": "领导",
-        "description": ""
-      }
-    ],
-    "create_time": "2026-08-12 17:56:45.017751",
-    "update_time": "2026-08-12 17:56:45.019645",
-    "status": "活跃",
-    "is_default": false,
-    "schema_version": 3
-  },
-  {
-    "id": "ont_61daa626",
-    "name": "金融示例",
-    "description": "",
-    "version": "1.0.0",
-    "entity_types": [
-      {
-        "id": "concept_3b58aad2",
-        "ontology_id": "ont_61daa626",
-        "name": "金融实体",
-        "description": "迁移自动生成：金融实体 类概念",
-        "color": "#5470c6",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:35:31.812496",
-        "update_time": "2026-08-11 08:35:31.812496"
-      },
-      {
-        "id": "concept_245f956f",
-        "ontology_id": "ont_61daa626",
-        "name": "信贷业务",
-        "description": "迁移自动生成：信贷业务 类概念",
-        "color": "#ee6666",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:35:31.812496",
-        "update_time": "2026-08-11 08:35:31.812496"
-      },
-      {
-        "id": "concept_0a0fdaee",
-        "ontology_id": "ont_61daa626",
-        "name": "事件活动",
-        "description": "迁移自动生成：事件活动 类概念",
-        "color": "#3ba272",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:35:31.812496",
-        "update_time": "2026-08-11 08:35:31.812496"
-      },
-      {
-        "id": "concept_690fb949",
-        "ontology_id": "ont_61daa626",
-        "name": "财务指标",
-        "description": "迁移自动生成：财务指标 类概念",
-        "color": "#91cc75",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:35:31.812496",
-        "update_time": "2026-08-11 08:35:31.812496"
-      },
-      {
-        "id": "concept_a8a6ab6b",
-        "ontology_id": "ont_61daa626",
-        "name": "风险因素",
-        "description": "迁移自动生成：风险因素 类概念",
-        "color": "#fac858",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:35:31.812496",
-        "update_time": "2026-08-11 08:35:31.812496"
-      },
-      {
-        "id": "concept_47d2182f",
-        "ontology_id": "ont_61daa626",
-        "name": "政策措施",
-        "description": "迁移自动生成：政策措施 类概念",
-        "color": "#73c0de",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:35:31.812496",
-        "update_time": "2026-08-11 08:35:31.812496"
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "关联",
-        "description": ""
-      },
-      {
-        "name": "影响",
-        "description": ""
-      },
-      {
-        "name": "包含",
-        "description": ""
-      },
-      {
-        "name": "衡量",
-        "description": ""
-      },
-      {
-        "name": "应对",
-        "description": ""
-      },
-      {
-        "name": "导致",
-        "description": ""
-      }
-    ],
-    "create_time": "2026-08-04 16:27:17.072121",
-    "update_time": "2026-08-04 16:27:17.072121",
-    "status": "活跃",
-    "is_default": false,
-    "schema_version": 3
-  },
-  {
-    "id": "ont_84fd1dc8",
-    "name": "示例",
-    "description": "",
-    "version": "1.0.0",
-    "entity_types": [
-      {
-        "id": "concept_a3f726c2",
-        "ontology_id": "ont_84fd1dc8",
-        "name": "企业",
-        "description": "迁移自动生成：企业 类概念",
-        "color": "#5470c6",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.388230",
-        "update_time": "2026-08-10 16:23:43.388230"
-      },
-      {
-        "id": "concept_84908986",
-        "ontology_id": "ont_84fd1dc8",
-        "name": "人物",
-        "description": "迁移自动生成：人物 类概念",
-        "color": "#91cc75",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.388230",
-        "update_time": "2026-08-10 16:23:43.388230"
-      },
-      {
-        "id": "concept_1eee0c29",
-        "ontology_id": "ont_84fd1dc8",
-        "name": "财务指标",
-        "description": "迁移自动生成：财务指标 类概念",
-        "color": "#fac858",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.388230",
-        "update_time": "2026-08-10 16:23:43.388230"
-      },
-      {
-        "id": "concept_49c8edab",
-        "ontology_id": "ont_84fd1dc8",
-        "name": "融资方案",
-        "description": "迁移自动生成：融资方案 类概念",
-        "color": "#ee6666",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.388230",
-        "update_time": "2026-08-10 16:23:43.388230"
-      },
-      {
-        "id": "concept_d1645a34",
-        "ontology_id": "ont_84fd1dc8",
-        "name": "风险事件",
-        "description": "迁移自动生成：风险事件 类概念",
-        "color": "#73c0de",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.388230",
-        "update_time": "2026-08-10 16:23:43.388230"
-      },
-      {
-        "id": "concept_6d84459d",
-        "ontology_id": "ont_84fd1dc8",
-        "name": "抵押物",
-        "description": "迁移自动生成：抵押物 类概念",
-        "color": "#fc8452",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.388230",
-        "update_time": "2026-08-10 16:23:43.388230"
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "提出",
-        "description": ""
-      },
-      {
-        "name": "评估",
-        "description": ""
-      },
-      {
-        "name": "影响",
-        "description": ""
-      },
-      {
-        "name": "担保",
-        "description": ""
-      },
-      {
-        "name": "衡量",
-        "description": ""
-      },
-      {
-        "name": "关联",
-        "description": ""
-      }
-    ],
-    "create_time": "2026-08-06 15:17:18.426741",
-    "update_time": "2026-08-06 15:17:18.426741",
-    "status": "活跃",
-    "is_default": false,
-    "schema_version": 3
-  },
-  {
-    "id": "ont_079690ef",
-    "name": "西游记",
-    "description": "",
-    "version": "1.0.0",
-    "entity_types": [
-      {
-        "id": "concept_543d5035",
-        "ontology_id": "ont_079690ef",
-        "name": "事件",
-        "description": "迁移自动生成：事件 类概念",
-        "color": "#ee6666",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.410022",
-        "update_time": "2026-08-10 16:23:43.410022"
-      },
-      {
-        "id": "concept_e541ef63",
-        "ontology_id": "ont_079690ef",
-        "name": "概念",
-        "description": "迁移自动生成：概念 类概念",
-        "color": "#5470c6",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.410022",
-        "update_time": "2026-08-10 16:23:43.410022"
-      },
-      {
-        "id": "concept_cfedbf81",
-        "ontology_id": "ont_079690ef",
-        "name": "属性",
-        "description": "迁移自动生成：属性 类概念",
-        "color": "#fac858",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.410022",
-        "update_time": "2026-08-10 16:23:43.410022"
-      },
-      {
-        "id": "concept_370885dd",
-        "ontology_id": "ont_079690ef",
-        "name": "实体",
-        "description": "迁移自动生成：实体 类概念",
-        "color": "#91cc75",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.410022",
-        "update_time": "2026-08-10 16:23:43.410022"
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "包含",
-        "description": ""
-      },
-      {
-        "name": "关联",
         "description": ""
       },
       {
@@ -1110,1046 +756,11 @@
       {
         "name": "衡量",
         "description": ""
-      },
-      {
-        "name": "继承",
-        "description": ""
       }
     ],
-    "create_time": "2026-08-06 16:32:20.288710",
-    "update_time": "2026-08-06 16:32:20.288710",
+    "create_time": "2026-08-14 10:53:20.579159",
+    "update_time": "2026-08-14 10:53:20.581237",
     "status": "活跃",
-    "is_default": false,
-    "schema_version": 3
-  },
-  {
-    "id": "ont_7d2cc296",
-    "name": "机器人",
-    "description": "",
-    "version": "1.0.0",
-    "entity_types": [
-      {
-        "id": "concept_a331de8d",
-        "ontology_id": "ont_7d2cc296",
-        "name": "应用领域",
-        "description": "根据机器人应用的行业或场所领域进行分类的维度。",
-        "color": "#91cc75",
-        "property_schema": [
-          {
-            "name": "分类依据",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "按机器人应用场所及行业领域划分"
-          }
-        ],
-        "source_snippet": "根据机器人的应用领域，机器人可分为工业机器人、个人／家用服务机器人、公共服务机器人、特种机器人和其他应用领域机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_9fd82b55",
-        "ontology_id": "ont_7d2cc296",
-        "name": "运动方式",
-        "description": "根据机器人移动或运动实现方式进行分类的维度。",
-        "color": "#91cc75",
-        "property_schema": [
-          {
-            "name": "分类依据",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "按机器人实现运动的方式划分"
-          }
-        ],
-        "source_snippet": "根据机器人的运动方式，机器人可分为轮式机器人、足腿式机器人、履带式机器人、蠕动式机器人、浮游式机器人、潜游式机器人、飞行式机器人和其他运动方式机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_e0fd9e65",
-        "ontology_id": "ont_7d2cc296",
-        "name": "使用空间",
-        "description": "根据机器人所处或使用空间环境进行分类的维度。",
-        "color": "#91cc75",
-        "property_schema": [
-          {
-            "name": "分类依据",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "按机器人工作的空间环境划分"
-          }
-        ],
-        "source_snippet": "根据机器人的使用空间，机器人可分为地面／地下机器人、水面／水下机器人、空中机器人、空间机器人和其他使用空间机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_08e0b1a5",
-        "ontology_id": "ont_7d2cc296",
-        "name": "机械结构",
-        "description": "根据机器人机械结构形式进行分类的维度。",
-        "color": "#91cc75",
-        "property_schema": [
-          {
-            "name": "分类依据",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "按机器人机械结构类型划分"
-          }
-        ],
-        "source_snippet": "机器人按其机械结构类型可分为垂直关节型机器人、平面关节型机器人、直角坐标型机器人、并联机器人和其他机械结构类型机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_cf719fdd",
-        "ontology_id": "ont_7d2cc296",
-        "name": "编程控制方式",
-        "description": "根据机器人编程和控制方式进行分类的维度。",
-        "color": "#91cc75",
-        "property_schema": [
-          {
-            "name": "分类依据",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "按机器人编程方式与控制方式划分"
-          }
-        ],
-        "source_snippet": "根据机器人的编程和控制方式，机器人可分为编程型机器人、主从机器人和协作机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_9619f183",
-        "ontology_id": "ont_7d2cc296",
-        "name": "工业机器人",
-        "description": "自动控制的、可重复编程、多用途，在工业自动化中使用的操作机。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为应用领域"
-          },
-          {
-            "name": "轴数",
-            "category": "metric",
-            "data_type": "number",
-            "unit": "个",
-            "required": false,
-            "description": "可编程轴的数量，通常三个或以上"
-          }
-        ],
-        "source_snippet": "自动控制的、可重复编程、多用途的操作机，可对三个或三个以上轴进行编程，它可以是固定式或移动式。在工业自动化中使用。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_e37ef5da",
-        "ontology_id": "ont_7d2cc296",
-        "name": "家用服务机器人",
-        "description": "在家居环境或类似环境下为满足使用者生活需求而使用的服务机器人，即个人/家用服务机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为应用领域"
-          },
-          {
-            "name": "使用用途",
-            "category": "descriptive",
-            "data_type": "enum",
-            "unit": "",
-            "required": false,
-            "description": "家务、教育、娱乐、养老助残等用途"
-          }
-        ],
-        "source_snippet": "在家居环境或类似环境下使用的，以满足使用者生活需求为目的的服务机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_08cb866a",
-        "ontology_id": "ont_7d2cc296",
-        "name": "公共服务机器人",
-        "description": "在住宿、餐饮、金融、清洁、物流、教育、文化和娱乐等公共场合为人类提供一般服务的商用机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为应用领域"
-          },
-          {
-            "name": "服务领域",
-            "category": "descriptive",
-            "data_type": "enum",
-            "unit": "",
-            "required": false,
-            "description": "餐饮、讲解导引、多媒体、公共游乐等"
-          }
-        ],
-        "source_snippet": "住宿、餐饮、金融、清洁、物流、教育、文化和娱乐等领域的公共场合为人类提供一般服务的商用机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_3fa1b96a",
-        "ontology_id": "ont_7d2cc296",
-        "name": "特种机器人",
-        "description": "应用于专业领域，一般由经过专门培训的人员操作或使用，辅助和/或替代人执行任务的机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为应用领域"
-          },
-          {
-            "name": "使用用途",
-            "category": "descriptive",
-            "data_type": "enum",
-            "unit": "",
-            "required": false,
-            "description": "检查维修、专业检测、搜救、排爆等"
-          }
-        ],
-        "source_snippet": "应用于专业领域，一般由经过专门培训的人员操作或使用的，辅助和／或替代人执行任务的机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_35b5a901",
-        "ontology_id": "ont_7d2cc296",
-        "name": "其他领域机器人",
-        "description": "除工业、家用服务、公共服务、特种机器人之外的其他应用领域机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为应用领域"
-          }
-        ],
-        "source_snippet": "除５．１．２～５．１．５应用领域之外的机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_9ea8018e",
-        "ontology_id": "ont_7d2cc296",
-        "name": "轮式机器人",
-        "description": "利用轮子实现移动的移动机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为运动方式"
-          },
-          {
-            "name": "驱动方式",
-            "category": "descriptive",
-            "data_type": "enum",
-            "unit": "",
-            "required": false,
-            "description": "双轮驱动、三轮驱动、全方位驱动等"
-          }
-        ],
-        "source_snippet": "利用轮子实现移动的移动机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_adbc0273",
-        "ontology_id": "ont_7d2cc296",
-        "name": "足腿式机器人",
-        "description": "利用一条或更多条腿实现移动的移动机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为运动方式"
-          },
-          {
-            "name": "腿的数量",
-            "category": "metric",
-            "data_type": "number",
-            "unit": "条",
-            "required": false,
-            "description": "机器人用于移动的腿的数量"
-          }
-        ],
-        "source_snippet": "利用一条或更多条腿实现移动的移动机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_b87d25d9",
-        "ontology_id": "ont_7d2cc296",
-        "name": "履带式机器人",
-        "description": "利用履带实现移动的移动机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为运动方式"
-          },
-          {
-            "name": "履带节数",
-            "category": "metric",
-            "data_type": "number",
-            "unit": "节",
-            "required": false,
-            "description": "驱动履带及关节的节数"
-          }
-        ],
-        "source_snippet": "利用履带实现移动的移动机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_e9de79b8",
-        "ontology_id": "ont_7d2cc296",
-        "name": "蠕动式机器人",
-        "description": "利用自身蠕动装置实现移动的机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为运动方式"
-          },
-          {
-            "name": "移动方向",
-            "category": "descriptive",
-            "data_type": "enum",
-            "unit": "",
-            "required": false,
-            "description": "上下蠕动、左右蠕动等"
-          }
-        ],
-        "source_snippet": "利用自身蠕动装置实现移动的机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_e2c58e89",
-        "ontology_id": "ont_7d2cc296",
-        "name": "浮游式机器人",
-        "description": "利用自身推进装置在水面上实现移动的移动机器人，又称水面机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为运动方式"
-          },
-          {
-            "name": "推进方式",
-            "category": "descriptive",
-            "data_type": "enum",
-            "unit": "",
-            "required": false,
-            "description": "螺旋桨、平旋推进、喷水、喷气等"
-          }
-        ],
-        "source_snippet": "利用自身的推进装置在水面上实现移动的移动机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_08e42065",
-        "ontology_id": "ont_7d2cc296",
-        "name": "潜游式机器人",
-        "description": "利用下潜、潜游装置实现下潜游动的移动机器人，又称水下机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为运动方式"
-          },
-          {
-            "name": "运动方式",
-            "category": "descriptive",
-            "data_type": "enum",
-            "unit": "",
-            "required": false,
-            "description": "拖曳潜游、自主潜游等"
-          }
-        ],
-        "source_snippet": "利用下潜、潜游装置实现下潜游动的移动机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_b069a9c8",
-        "ontology_id": "ont_7d2cc296",
-        "name": "飞行式机器人",
-        "description": "利用自身飞行装置飞行移动的移动机器人，又称空中机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为运动方式"
-          },
-          {
-            "name": "起飞方式",
-            "category": "descriptive",
-            "data_type": "enum",
-            "unit": "",
-            "required": false,
-            "description": "直升、滑行、手抛等起飞方式"
-          }
-        ],
-        "source_snippet": "利用自身的飞行装置飞行移动的移动机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_21a62d18",
-        "ontology_id": "ont_7d2cc296",
-        "name": "其他运动机器人",
-        "description": "除轮式、足腿式、履带式、蠕动式、浮游式、潜游式、飞行式之外的其他运动方式机器人，包括固定式、复合式、穿戴式、喷射式等。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为运动方式"
-          }
-        ],
-        "source_snippet": "其他运动方式机器人主要包括固定式机器人、复合式机器人、穿戴式机器人、喷射式机器人和除５．２．５～５．２．８运动方式之外的机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_6c166ba3",
-        "ontology_id": "ont_7d2cc296",
-        "name": "地面地下机器人",
-        "description": "使用空间为地面或地下环境的机器人分类集合，包括室内地面、室外地面、井下等。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为使用空间"
-          }
-        ],
-        "source_snippet": "地面／地下机器人按使用空间可分为室内地面机器人、室外地面机器人、井下机器人和其他地下机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_ebef5fc0",
-        "ontology_id": "ont_7d2cc296",
-        "name": "水面水下机器人",
-        "description": "使用空间为水面或水下环境的机器人分类集合，包括内河、海洋、浅水、深水等。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为使用空间"
-          }
-        ],
-        "source_snippet": "水面／水下机器人按其使用水域可分为内河水面机器人、海洋水面机器人、浅水机器人、深水机器人和其他水下机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_f5ad3708",
-        "ontology_id": "ont_7d2cc296",
-        "name": "空中机器人",
-        "description": "使用空间为空中环境的机器人，按空域分类包括中低空、高空等。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为使用空间"
-          }
-        ],
-        "source_snippet": "按中国民航局空域分类，空中机器人可分为中低空机器人、高空机器人和其他空中机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_95a87c10",
-        "ontology_id": "ont_7d2cc296",
-        "name": "空间机器人",
-        "description": "在太空中进行试验、操作、探测等活动的机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为使用空间"
-          }
-        ],
-        "source_snippet": "在太空中进行试验、操作、探测等活动的机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_4587b634",
-        "ontology_id": "ont_7d2cc296",
-        "name": "其他空间机器人",
-        "description": "除地面/地下、水面/水下、空中、空间之外的其他使用空间机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为使用空间"
-          }
-        ],
-        "source_snippet": "除５．３．２～５．３．５之外的其他使用空间机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_228c1bda",
-        "ontology_id": "ont_7d2cc296",
-        "name": "垂直关节型机器人",
-        "description": "机械结构为垂直关节形式的工业机器人，按轴数分为四轴、五轴、六轴等。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为机械结构"
-          }
-        ],
-        "source_snippet": "垂直关节型机器人按其轴数可分为四轴关节机器人、五轴关节机器人、六轴关节机器人和其他垂直关节型机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_54c16942",
-        "ontology_id": "ont_7d2cc296",
-        "name": "平面关节型机器人",
-        "description": "机械结构为平面关节形式的机器人，典型为SCARA机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为机械结构"
-          }
-        ],
-        "source_snippet": "平面关节型机器人按其手臂数量可分为单臂ＳＣＡＲＡ机器人、双臂ＳＣＡＲＡ机器人和其他平面关节型机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_b87878bb",
-        "ontology_id": "ont_7d2cc296",
-        "name": "直角坐标型机器人",
-        "description": "机械结构为直角坐标形式的机器人，按自由度分为三、四、五自由度等。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为机械结构"
-          }
-        ],
-        "source_snippet": "直角坐标型机器人按其自由度可分为三自由度机器人、四自由度机器人、五自由度机器人和其他直角坐标型机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_ea58160f",
-        "ontology_id": "ont_7d2cc296",
-        "name": "并联机器人",
-        "description": "手臂含有组成闭环结构的杆件的机器人，又称并联杆式机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为机械结构"
-          }
-        ],
-        "source_snippet": "手臂含有组成闭环结构的杆件的机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_e164677c",
-        "ontology_id": "ont_7d2cc296",
-        "name": "其他结构机器人",
-        "description": "除垂直关节、平面关节、直角坐标、并联之外的其他机械结构类型机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为机械结构"
-          }
-        ],
-        "source_snippet": "除５．４．２～５．４．５之外的其他机械结构类型机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_850162c6",
-        "ontology_id": "ont_7d2cc296",
-        "name": "编程型机器人",
-        "description": "按照编程方式实现任务控制的机器人，包括示教编程、离线编程等。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为编程控制方式"
-          }
-        ],
-        "source_snippet": "编程型机器人按其编程方式可分为示教编程机器人、离线编程机器人和其他编程型机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_f3b99571",
-        "ontology_id": "ont_7d2cc296",
-        "name": "主从机器人",
-        "description": "能实现主从控制的机器人，即从设备复现主设备运动的机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为编程控制方式"
-          }
-        ],
-        "source_snippet": "能实现主从控制的机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_581285da",
-        "ontology_id": "ont_7d2cc296",
-        "name": "协作机器人",
-        "description": "为与人直接交互而设计的机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": true,
-            "description": "该机器人分类所依据的维度，此处为编程控制方式"
-          }
-        ],
-        "source_snippet": "为与人直接交互而设计的机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_d8d4bd89",
-        "ontology_id": "ont_7d2cc296",
-        "name": "机器人",
-        "description": "具有两个或两个以上可编程的轴，以及一定程度的自主能力，可在其环境内运动以执行预定任务的执行机构。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "轴数",
-            "category": "metric",
-            "data_type": "number",
-            "unit": "个",
-            "required": false,
-            "description": "可编程轴的数量"
-          },
-          {
-            "name": "自主能力",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "机器人具备的自主能力描述"
-          }
-        ],
-        "source_snippet": "具有两个或两个以上可编程的轴，以及一定程度的自主能力，可在其环境内运动以执行预定任务的执行机构。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_a0408cac",
-        "ontology_id": "ont_7d2cc296",
-        "name": "自主能力",
-        "description": "基于当前状态和感知信息，无人为干预地执行预期任务的能力。",
-        "color": "#ee6666",
-        "property_schema": [],
-        "source_snippet": "基于当前状态和感知信息，无人为干预地执行预期任务的能力。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_b8da2464",
-        "ontology_id": "ont_7d2cc296",
-        "name": "主从控制",
-        "description": "从设备（从）复现主设备（主）运动的控制方法。",
-        "color": "#73c0de",
-        "property_schema": [],
-        "source_snippet": "从设备（从）复现主设备（主）运动的控制方法。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      },
-      {
-        "id": "concept_2cfc36b8",
-        "ontology_id": "ont_7d2cc296",
-        "name": "SCARA机器人",
-        "description": "具有两个平行的回转关节，以便在所选择的平面内提供柔顺性的机器人。",
-        "color": "#5470c6",
-        "property_schema": [
-          {
-            "name": "所属分类维度",
-            "category": "descriptive",
-            "data_type": "string",
-            "unit": "",
-            "required": false,
-            "description": "该机器人分类所依据的维度，此处为机械结构"
-          }
-        ],
-        "source_snippet": "具有两个平行的回转关节，以便在所选择的平面内提供柔顺性的机器人。",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-11 16:52:30.921177",
-        "update_time": "2026-08-11 16:52:30.921177"
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "包含",
-        "description": ""
-      },
-      {
-        "name": "归类于",
-        "description": ""
-      },
-      {
-        "name": "基于",
-        "description": ""
-      },
-      {
-        "name": "定义",
-        "description": ""
-      },
-      {
-        "name": "关联",
-        "description": ""
-      }
-    ],
-    "create_time": "2026-08-11 16:52:30.921177",
-    "update_time": "2026-08-11 16:52:30.921177",
-    "status": "活跃",
-    "is_default": false,
-    "schema_version": 3
-  },
-  {
-    "id": "ont_fe9aceee",
-    "name": "未命名本体",
-    "description": "手动构建本体",
-    "version": "1.0.0",
-    "entity_types": [
-      {
-        "id": "et_6c5f1000",
-        "ontology_id": "",
-        "name": "概念",
-        "description": "",
-        "color": "#5470c6",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 08:59:15.685297",
-        "update_time": "2026-08-12 08:59:15.685297"
-      },
-      {
-        "id": "et_6bcaaeb5",
-        "ontology_id": "",
-        "name": "实体",
-        "description": "",
-        "color": "#91cc75",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 08:59:15.685325",
-        "update_time": "2026-08-12 08:59:15.685325"
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "关联",
-        "description": ""
-      },
-      {
-        "name": "影响",
-        "description": ""
-      }
-    ],
-    "create_time": "2026-08-11 16:57:55.565957",
-    "update_time": "2026-08-11 16:57:55.565957",
-    "status": "活跃",
-    "is_default": false,
-    "schema_version": 3
-  },
-  {
-    "id": "ont_4e6a2b97",
-    "name": "未命名本体",
-    "description": "手动构建本体",
-    "version": "1.0.0",
-    "entity_types": [
-      {
-        "id": "et_9153fb0a",
-        "ontology_id": "",
-        "name": "概念",
-        "description": "",
-        "color": "#5470c6",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 08:59:15.688096",
-        "update_time": "2026-08-12 08:59:15.688096"
-      },
-      {
-        "id": "et_816e3061",
-        "ontology_id": "",
-        "name": "实体",
-        "description": "",
-        "color": "#91cc75",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 08:59:15.688121",
-        "update_time": "2026-08-12 08:59:15.688121"
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "关联",
-        "description": ""
-      },
-      {
-        "name": "影响",
-        "description": ""
-      }
-    ],
-    "create_time": "2026-08-11 17:00:49.253443",
-    "update_time": "2026-08-11 17:00:49.253443",
-    "status": "活跃",
-    "is_default": false,
-    "schema_version": 3
-  },
-  {
-    "id": "ont_c9af1c35",
-    "name": "未命名本体",
-    "description": "手动构建本体",
-    "version": "1.0.0",
-    "entity_types": [
-      {
-        "id": "et_6436d3b8",
-        "ontology_id": "",
-        "name": "概念",
-        "description": "",
-        "color": "#5470c6",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 08:59:15.691649",
-        "update_time": "2026-08-12 08:59:15.691649"
-      },
-      {
-        "id": "et_82e23a08",
-        "ontology_id": "",
-        "name": "实体",
-        "description": "",
-        "color": "#91cc75",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 08:59:15.691674",
-        "update_time": "2026-08-12 08:59:15.691674"
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "关联",
-        "description": ""
-      },
-      {
-        "name": "影响",
-        "description": ""
-      }
-    ],
-    "create_time": "2026-08-11 17:32:19.713538",
-    "update_time": "2026-08-11 17:32:19.713538",
-    "status": "活跃",
-    "is_default": false,
     "schema_version": 3
   }
 ]

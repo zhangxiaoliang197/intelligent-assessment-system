@@ -393,7 +393,7 @@ def _map_payload(profile: Dict[str, Any]) -> Dict[str, Any]:
     if any(layer_type in {"routes", "flow"} for layer_type in layer_types):
         routes = [{"name": "主要态势链路", "points": [points[0], points[3], points[2]]}]
     areas = []
-    if any(layer_type in {"areas", "coverage", "heatmap"} for layer_type in layer_types):
+    if any(layer_type in {"areas", "coverage"} for layer_type in layer_types):
         areas = [{
             "name": "重点关注区域",
             "_regionId": "focus-area-1",
@@ -833,6 +833,15 @@ def _run_llm_orchestration(query: str, profile: dict, context: dict, bundles: li
             {"type": chart_type, "title": metric, "intent": profile.get("analysisGoal", "")}
             for chart_type, metric in zip(profile["chartTypes"][:3], profile["focusMetrics"][:3])
         ]
+    # 图表类型去重：规划阶段可能重复给出 bar，这里按类型保留首个，避免最终产出多个同类型图表
+    deduped_plan, seen_types = [], set()
+    for item in charts_plan:
+        chart_type = str(item.get("type") or "bar").lower()
+        if chart_type in seen_types:
+            continue
+        seen_types.add(chart_type)
+        deduped_plan.append(item)
+    charts_plan = deduped_plan
     safe_plan = {
         "datasets": datasets_plan, "chartsPlan": charts_plan,
         "mapPlan": plan.get("mapPlan", [])[:3] if isinstance(plan.get("mapPlan"), list) else [],
@@ -920,14 +929,23 @@ def _safe_point(value: Any) -> Optional[dict]:
         and _valid_coord(value.get("lat"), -90, 90)
     ):
         return None
-    return {
+    point = {
         "name": _safe_text(value.get("name") or "点位"),
         "lng": float(value["lng"]),
         "lat": float(value["lat"]),
         "raw": _safe_text(value.get("raw")),
-        **({"featureId": _safe_id(value.get("featureId"))} if value.get("featureId") else {}),
-        **({"datasetRef": _safe_text(value.get("datasetRef"), 80)} if value.get("datasetRef") else {}),
     }
+    # 保留后端语义配色与路线归属，前端据此做「同路线同色、不同路线不同色」
+    if isinstance(value.get("routeName"), str) and value["routeName"]:
+        point["routeName"] = _safe_text(value["routeName"], 80)
+    color = value.get("color")
+    if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        point["color"] = color
+    if value.get("featureId"):
+        point["featureId"] = _safe_id(value.get("featureId"))
+    if value.get("datasetRef"):
+        point["datasetRef"] = _safe_text(value.get("datasetRef"), 80)
+    return point
 
 
 def _coordinate_evidence(bundles: list) -> set[tuple[float, float]]:
@@ -970,12 +988,18 @@ def _safe_path(value: Any, minimum_points: int) -> Optional[dict]:
     points = [point for item in value["points"][:500] if (point := _safe_point(item))]
     if len(points) < minimum_points:
         return None
-    return {
+    path = {
         "name": _safe_text(value.get("name") or "图形"),
         "points": points,
-        **({"featureId": _safe_id(value.get("featureId"))} if value.get("featureId") else {}),
-        **({"datasetRef": _safe_text(value.get("datasetRef"), 80)} if value.get("datasetRef") else {}),
     }
+    color = value.get("color")
+    if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        path["color"] = color
+    if value.get("featureId"):
+        path["featureId"] = _safe_id(value.get("featureId"))
+    if value.get("datasetRef"):
+        path["datasetRef"] = _safe_text(value.get("datasetRef"), 80)
+    return path
 
 
 def _sanitize_map_layer(value: Any, profile: dict, context: Optional[dict] = None) -> dict:
@@ -1000,13 +1024,19 @@ def _sanitize_map_layer(value: Any, profile: dict, context: Optional[dict] = Non
         center = _safe_point(item["center"])
         radius = _as_number(item.get("radiusKm"))
         if center and radius is not None and 0 < radius <= 5000:
-            circles.append({
+            circle = {
                 "name": _safe_text(item.get("name") or "圆形区域"),
                 "center": {"lng": center["lng"], "lat": center["lat"]},
                 "radiusKm": radius,
-                **({"featureId": _safe_id(item.get("featureId"))} if item.get("featureId") else {}),
-                **({"datasetRef": _safe_text(item.get("datasetRef"), 80)} if item.get("datasetRef") else {}),
-            })
+            }
+            color = item.get("color")
+            if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+                circle["color"] = color
+            if item.get("featureId"):
+                circle["featureId"] = _safe_id(item.get("featureId"))
+            if item.get("datasetRef"):
+                circle["datasetRef"] = _safe_text(item.get("datasetRef"), 80)
+            circles.append(circle)
     layer_config = value.get("layerConfig", {}) if isinstance(value.get("layerConfig"), dict) else {}
     color = str(layer_config.get("color") or "#e74c3c")
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
@@ -1266,6 +1296,7 @@ def _validate_llm_result(result: dict, profile: dict, bundles: list) -> tuple[li
     narrative = {
         "intro": str(raw_narrative.get("intro") or f"已围绕“{profile['skillName']}”汇聚真实数据并生成当前态势。"),
         "explanations": explanations,
+        "mapExplanation": str(raw_narrative.get("mapExplanation") or ""),
     }
     return charts, map_layer, narrative
 
@@ -1311,6 +1342,58 @@ def _fallback_option(chart_type: str, rows: list, metric: str) -> tuple[str, dic
     if chart_type == "gauge":
         return "gauge", {"series": [{"name": actual_metric, "type": "gauge", "progress": {"show": True},
                                        "data": [{"name": labels[0], "value": values[0]}]}]}, actual_metric
+    if chart_type == "scatter":
+        return "scatter", {
+            "tooltip": {"trigger": "item"},
+            "xAxis": {"name": "序号", "type": "value"},
+            "yAxis": {"name": actual_metric, "type": "value"},
+            "series": [{
+                "name": actual_metric, "type": "scatter", "symbolSize": 14,
+                "data": [[index, float(value)] for index, value in enumerate(values)],
+            }],
+        }, actual_metric
+    if chart_type == "heatmap":
+        heat_max = max([float(value) for value in values] + [1.0])
+        return "heatmap", {
+            "tooltip": {"position": "top"},
+            "xAxis": {"type": "category", "data": labels},
+            "yAxis": {"type": "category", "data": [actual_metric]},
+            "visualMap": {"min": 0, "max": heat_max, "calculable": True,
+                          "orient": "horizontal", "left": "center"},
+            "series": [{
+                "name": actual_metric, "type": "heatmap",
+                "data": [[x, 0, float(value)] for x, value in enumerate(values)],
+            }],
+        }, actual_metric
+    if chart_type == "relation":
+        graph_max = max([float(value) for value in values] + [1.0])
+        return "relation", {
+            "tooltip": {},
+            "series": [{
+                "type": "graph", "layout": "force", "roam": True, "label": {"show": True},
+                "data": [
+                    {"name": label, "symbolSize": 20 + round(float(value) / graph_max * 40, 2)}
+                    for label, value in zip(labels, values)
+                ],
+                "links": [
+                    {"source": labels[index], "target": labels[index + 1]}
+                    for index in range(len(labels) - 1)
+                ],
+            }],
+        }, actual_metric
+    if chart_type == "sankey":
+        return "sankey", {
+            "tooltip": {"trigger": "item"},
+            "series": [{
+                "type": "sankey",
+                "data": [{"name": label} for label in labels],
+                "links": [
+                    {"source": labels[index], "target": labels[index + 1], "value": max(0.0, float(values[index]))}
+                    for index in range(len(labels) - 1)
+                ],
+                "lineStyle": {"color": "gradient", "curveness": 0.5},
+            }],
+        }, actual_metric
     effective = "line" if chart_type == "line" else "bar"
     return effective, {
         "tooltip": {"trigger": "axis"},
@@ -1373,6 +1456,7 @@ def _data_fallback(query: str, profile: dict, bundles: list, context: Optional[d
             {"chartId": chart["chartId"], "text": f"该图直接使用 {chart['datasetRef']} 的真实记录生成。"}
             for chart in charts
         ],
+        "mapExplanation": "",
     }
     return charts, _fallback_map(profile, bundles, context), narrative
 

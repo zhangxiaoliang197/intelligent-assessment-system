@@ -4,7 +4,7 @@
       <span class="chart-title">{{ spec.title }}</span>
       <el-tag size="small" type="info">{{ typeLabel }}</el-tag>
     </div>
-    <div class="chart-card-body" :id="`chart-${spec.chartId}`">
+    <div class="chart-card-body" :id="`chart-${spec.chartId}`" :style="{ height: `${bodyHeight ?? 320}px` }">
       <component
         v-if="chartDef"
         :is="chartDef.component"
@@ -28,6 +28,10 @@ import type { ChartSpec } from '@/stores/situation'
 
 const props = defineProps<{
   spec: ChartSpec
+  /** 图表在列表中的序号，用于配色轮转，避免所有图表同色 */
+  index?: number
+  /** 图表主体高度（px），提问页单列较大、详情页缩小布局较小 */
+  bodyHeight?: number
 }>()
 
 const highlighted = ref(false)
@@ -38,7 +42,7 @@ const typeLabel = computed(() => chartDef.value?.name || props.spec.type)
 
 const builtOption = computed(() => {
   if (!chartDef.value?.buildOption) return props.spec.option
-  return chartDef.value.buildOption({ option: props.spec.option, title: props.spec.title })
+  return chartDef.value.buildOption({ option: props.spec.option, title: props.spec.title, index: props.index })
 })
 
 // 暴露给父组件：滚动到此图并高亮
@@ -77,18 +81,17 @@ defineExpose({ flashHighlight, chartId: props.spec.chartId })
   color: #303133;
 }
 .chart-card-body {
-  height: 320px;
   width: 100%;
 }
 .chart-card-explain {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  font-size: 12px;
+  gap: 8px;
+  font-size: 13px;
   color: #606266;
-  line-height: 1.5;
+  line-height: 1.6;
   background: #f5f7fa;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border-radius: 4px;
 }
 </style>

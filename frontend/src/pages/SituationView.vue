@@ -30,7 +30,7 @@
         >
           <div v-if="store.charts.length" class="chart-side">
             <h3 class="section-label">统计图表</h3>
-            <SituationChartGrid :charts="store.charts" :cols="chartLayout.cols" />
+            <SituationChartGrid :charts="store.charts" :cols="chartLayout.cols" :body-height="230" :row-min-height="300" />
           </div>
 
           <div v-if="store.mapLayers.length" class="map-side">
@@ -111,14 +111,14 @@ const sourceLabel = computed(() => {
  * - 数量少时优先纵向或 2 列，保证地图有足够高度不致过扁；
  * - 3 个图表用 2 列 + 第 3 个跨列填满第 2 行（避免 1 列 3 行过高使地图过瘦）；
  * - 4 个用 2×2；5-6 个用 2 列 3 行；7+ 用 3 列。
- * - 单行高度按 440px 估算（图表卡片 body 320 + header/padding 60 + 说明块约 60），含 12px gap。
- *   说明块为 1-3 行（12px/1.5 行高 + 上下 padding），估算值保留余量；即使说明更长，
+ * - 单行高度按 300px 估算（图表卡片 body 230 + header/padding 60 + 说明块约 30），含 12px gap。
+ *   说明块为 1-3 行（13px/1.6 行高 + 上下 padding），估算值保留余量；即使说明更长，
  *   行高也会随内容撑开，minHeight 仅作为下限。
  */
 const chartLayout = computed(() => {
   const n = store.charts.length
-  // 单行高度估算：卡片 440 + gap 12（末行无 gap，公式 rows*440 + (rows-1)*12）
-  const ROW_H = 440
+  // 单行高度估算：卡片 300 + gap 12（末行无 gap，公式 rows*300 + (rows-1)*12）
+  const ROW_H = 300
   const GAP = 12
   const PAD = 32 // chart-side 上下 padding
   const h = (rows: number) => rows * ROW_H + (rows - 1) * GAP + PAD

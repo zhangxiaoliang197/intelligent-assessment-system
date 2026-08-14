@@ -10,11 +10,6 @@ export const getOntologyStats = () => {
   return api.get('/ontology/stats')
 }
 
-/** 获取默认本体 */
-export const getDefaultOntology = () => {
-  return api.get('/ontology/default')
-}
-
 /** 创建本体 */
 export const createOntology = (data: FormData) => {
   return api.post('/ontology/create', data, {
@@ -34,14 +29,14 @@ export const deleteOntology = (id: string) => {
   return api.delete(`/ontology/${id}`)
 }
 
-/** 设为默认 */
-export const setDefaultOntology = (id: string) => {
-  return api.post(`/ontology/${id}/set-default`)
-}
-
-/** 归档本体 */
+/** 归档本体（参与下游数据联动） */
 export const archiveOntology = (id: string) => {
   return api.post(`/ontology/${id}/archive`)
+}
+
+/** 恢复本体（取消归档，不再参与下游数据联动） */
+export const restoreOntology = (id: string) => {
+  return api.post(`/ontology/${id}/unarchive`)
 }
 
 /** 导入本体 */
@@ -99,11 +94,11 @@ export const getGraphData = (ontologyId: string) => {
 }
 
 // ── 实体类型（类型层）CRUD ──
-// v3 重构：ConceptType = EntityType，概念层合并进实体类型层
-// 后端路由仍为 /concept/*（兼容），前端函数名统一为 entityType* 语义
+// v3 重构：ConceptType = EntityType，独立概念层已合并进实体类型层（历史兼容）
+// 后端路由仍为 /concept/*（历史兼容），前端函数名统一为 entityType* 语义
 // FormData 可包含 v3 字段：parent_entity_type_id / parent_entity_type_name（层级）
 
-/** 获取实体类型列表（v3：原概念列表，含 parent_entity_type_id 层级字段） */
+/** 获取实体类型列表（v3：实体类型列表，含 parent_entity_type_id 层级字段） */
 export const getEntityTypeList = (ontologyId: string, entityType?: string) => {
   return api.get(`/ontology/${ontologyId}/concept/list`, {
     params: entityType ? { entity_type: entityType } : {}
@@ -164,7 +159,7 @@ export const reworkBuildStep = (jobId: string, step: number, data: FormData) => 
 }
 
 // ── 实体（实例层）CRUD ──
-// 新 schema：instance_of 指向概念ID，properties 为 List[Property] 结构化数组
+// 新 schema：instance_of 指向实体类型ID，properties 为 List[Property] 结构化数组
 
 /** 新增实体（instance_of + 结构化 properties） */
 export const createEntity = (ontologyId: string, data: FormData) => {

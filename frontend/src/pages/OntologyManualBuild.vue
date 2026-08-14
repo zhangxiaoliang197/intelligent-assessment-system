@@ -7,13 +7,12 @@
           <el-button @click="goBack" :icon="ArrowLeft">返回</el-button>
           <h2>手动构建本体</h2>
           <el-tag v-if="ontology" type="primary" size="small">{{ ontology.name }}</el-tag>
-          <el-tag v-if="templateMode" type="warning" size="small">基于模板：{{ templateName }}</el-tag>
+          <el-tag v-if="templateMode" type="warning" size="small">基于元模型：{{ templateName }}</el-tag>
           <el-tag v-else type="info" size="small">空白构建</el-tag>
         </div>
         <div class="header-actions">
           <el-button @click="refreshAll" :icon="Refresh">刷新</el-button>
           <el-button @click="goDetail" :icon="View">查看图谱</el-button>
-          <el-button @click="saveAsTemplate" :icon="Files">保存为模板</el-button>
         </div>
       </div>
 
@@ -25,17 +24,17 @@
 
       <!-- Phase A：实体类型定义 -->
       <div v-if="currentStep === 0" class="phase-panel" v-loading="loading">
-        <!-- 模板载入入口（仅空白模式显示） -->
+        <!-- 元模型载入入口（仅空白模式显示） -->
         <el-card v-if="!templateMode" class="section-card">
           <template #header>
             <div class="panel-header">
-              <span>从模板载入（可选）</span>
+              <span>从元模型载入（可选）</span>
             </div>
           </template>
           <div class="template-loader">
             <el-select
               v-model="selectedTemplateId"
-              placeholder="选择模板一键预填实体类型 + 属性骨架"
+              placeholder="选择元模型一键预填实体类型 + 属性骨架"
               clearable
               style="width: 360px"
             >
@@ -47,21 +46,20 @@
               />
             </el-select>
             <el-button type="primary" :disabled="!selectedTemplateId" :loading="prefilling" @click="applyTemplate">
-              载入模板
+              载入元模型
             </el-button>
-            <el-button @click="openTemplateLibrary = true">管理模板库</el-button>
           </div>
         </el-card>
 
-        <!-- A · 实体类型树 -->
+        <!-- A1 · 添加实体类型 -->
         <el-card class="section-card">
           <template #header>
             <div class="panel-header">
-              <div class="panel-title">
-                <span>A · 实体类型定义（类型层）</span>
+              <div class="panel-title clickable" @click="openEntityTypeDialog()">
+                <el-icon :size="16"><Plus /></el-icon>
+                <span>A1 · 添加实体类型</span>
                 <span class="count-badge">{{ entityTypes.length }}</span>
               </div>
-              <el-button size="small" type="primary" :icon="Plus" @click="openEntityTypeDialog()">添加顶层类型</el-button>
             </div>
           </template>
           <el-empty
@@ -111,23 +109,15 @@
           </div>
         </el-card>
 
-        <!-- A · 类型间关系 -->
+        <!-- A2 · 添加类型间关系 -->
         <el-card class="section-card">
           <template #header>
             <div class="panel-header">
-              <div class="panel-title">
-                <span>A · 类型间关系（EntityTypeRelation）</span>
+              <div class="panel-title clickable" @click="openEntityTypeRelationDialog">
+                <el-icon :size="16"><Plus /></el-icon>
+                <span>A2 · 添加类型间关系</span>
                 <span class="count-badge">{{ entityTypeRelations.length }}</span>
               </div>
-              <el-button
-                size="small"
-                type="primary"
-                :icon="Plus"
-                :disabled="!entityTypes.length"
-                @click="openEntityTypeRelationDialog"
-              >
-                添加类型关系
-              </el-button>
             </div>
           </template>
 
@@ -177,7 +167,10 @@
 
         <!-- 步骤导航 -->
         <div class="step-nav">
-          <el-button @click="goBack">取消</el-button>
+          <div class="step-nav-left">
+            <el-button @click="goBack">取消</el-button>
+            <el-button :icon="Files" :loading="submitting" @click="saveAsTemplate">另存为元模型</el-button>
+          </div>
           <el-button type="primary" @click="goPhaseB">
             下一步：填实例
             <el-icon class="el-icon--right"><ArrowRight /></el-icon>
@@ -187,15 +180,15 @@
 
       <!-- Phase B：填实例 -->
       <div v-if="currentStep === 1" class="phase-panel" v-loading="loading">
-        <!-- B1 实体 -->
+        <!-- B1 · 添加实体 -->
         <el-card class="section-card">
           <template #header>
             <div class="panel-header">
-              <div class="panel-title">
-                <span>B1 · 实体（实例层）</span>
+              <div class="panel-title clickable" @click="openEntityDialog()">
+                <el-icon :size="16"><Plus /></el-icon>
+                <span>B1 · 添加实体</span>
                 <span class="count-badge">{{ entities.length }}</span>
               </div>
-              <el-button size="small" type="primary" :icon="Plus" @click="openEntityDialog()">添加实体</el-button>
             </div>
           </template>
           <el-empty v-if="!entities.length" description="暂无实体，请添加具体实例（如：A公司、张三、上海）" :image-size="80" />
@@ -204,7 +197,6 @@
               <div class="entity-card-header">
                 <span class="entity-dot" :style="{ background: entityTypeColorById(e.instance_of) }"></span>
                 <span class="entity-card-name">{{ e.name }}</span>
-                <el-tag v-if="e.is_primary" size="small" type="warning">主要</el-tag>
                 <el-tag size="small" type="info">{{ entityTypeMap[e.instance_of] || '未分类' }}</el-tag>
                 <span class="entity-card-actions">
                   <el-button size="small" link @click="openEntityDialog(e)">编辑</el-button>
@@ -222,15 +214,15 @@
           </div>
         </el-card>
 
-        <!-- B2 关系 -->
+        <!-- B2 · 添加实体间关系 -->
         <el-card class="section-card">
           <template #header>
             <div class="panel-header">
-              <div class="panel-title">
-                <span>B2 · 关系</span>
+              <div class="panel-title clickable" @click="openRelationDialog">
+                <el-icon :size="16"><Plus /></el-icon>
+                <span>B2 · 添加实体间关系</span>
                 <span class="count-badge">{{ relations.length }}</span>
               </div>
-              <el-button size="small" type="primary" :icon="Plus" @click="openRelationDialog">添加关系</el-button>
             </div>
           </template>
           <el-empty v-if="!relations.length" description="暂无关系" :image-size="80" />
@@ -269,7 +261,8 @@
           <el-form-item label="父类型">
             <el-select
               v-model="entityTypeForm.parent_entity_type_id"
-              placeholder="选择父类型（留空为顶层类型）"
+              :placeholder="parentLocked ? '子类型继承父类型属性骨架' : '选择父类型（留空为顶层类型）'"
+              :disabled="parentLocked"
               clearable
               style="width: 100%"
             >
@@ -280,7 +273,11 @@
                 :value="t.id"
               />
             </el-select>
-            <span class="form-hint">子类型自动继承父类型属性骨架；不可选择自身或后代作为父类型（防环）</span>
+            <span class="form-hint">
+              {{ parentLocked
+                ? '继承父类型属性骨架，可另外添加属性；如需调整父类型请编辑该类型'
+                : '子类型自动继承父类型属性骨架；不可选择自身或后代作为父类型（防环）' }}
+            </span>
           </el-form-item>
           <el-form-item label="颜色">
             <el-color-picker v-model="entityTypeForm.color" />
@@ -291,6 +288,9 @@
 
           <!-- 继承的属性骨架（只读展示） -->
           <el-divider v-if="inheritedProperties.length">继承自父类型的属性（只读）</el-divider>
+          <p v-if="inheritedProperties.length" class="form-hint" style="margin: -0.5rem 0 0.5rem 0.875rem;">
+            以下属性继承自父类型，自动生效，无需重复定义；可在下方为本类型另加属性。
+          </p>
           <div v-if="inheritedProperties.length" class="inherited-schema">
             <el-tag
               v-for="(p, i) in inheritedProperties"
@@ -411,13 +411,6 @@
               />
             </el-select>
           </el-form-item>
-          <el-form-item label="主要实体">
-            <el-switch v-model="entityForm.is_primary" />
-            <span class="form-hint">核心主体实体建议勾选，用于多本体耦合时的主轴</span>
-          </el-form-item>
-          <el-form-item label="原文出处">
-            <el-input v-model="entityForm.source_snippet" type="textarea" :rows="1" placeholder="实体出现的原文句子（可选）" />
-          </el-form-item>
           <el-divider>属性赋值</el-divider>
           <p class="form-hint" style="margin: -0.5rem 0 0.75rem 0.875rem;">
             选中类型后自动按其属性骨架（含继承）生成属性行，请填入具体值；也可手动添加额外属性。
@@ -431,7 +424,6 @@
                 <el-option label="指标型" value="metric" />
               </el-select>
               <el-input v-model="p.unit" placeholder="单位" size="small" style="width: 80px" />
-              <el-input v-model="p.source_snippet" placeholder="原文出处" size="small" style="width: 140px" />
               <el-button size="small" link type="danger" @click="entityForm.properties.splice(idx, 1)">删除</el-button>
             </div>
             <el-button size="small" @click="addPropRow">+ 添加属性</el-button>
@@ -477,22 +469,6 @@
           <el-button type="primary" :loading="submitting" @click="submitRelation">添加</el-button>
         </template>
       </el-dialog>
-
-      <!-- 模板库对话框（空白模式下从向导页直接管理模板） -->
-      <el-dialog v-model="openTemplateLibrary" title="本体模板库" width="720px" top="5vh">
-        <div class="template-library" v-loading="templateLoading">
-          <el-empty v-if="!templates.length && !templateLoading" description="暂无模板" :image-size="80" />
-          <div v-else class="tpl-list">
-            <div v-for="tpl in templates" :key="tpl.id" class="tpl-row">
-              <div class="tpl-row-main">
-                <span class="tpl-row-name">{{ tpl.name }}</span>
-                <el-tag size="small" type="info">{{ tpl.concepts_count }} 类型</el-tag>
-              </div>
-              <el-button size="small" type="primary" @click="selectTemplateFromLibrary(tpl.id)">载入</el-button>
-            </div>
-          </div>
-        </div>
-      </el-dialog>
     </div>
   </Layout>
 </template>
@@ -524,10 +500,11 @@ import {
   deleteRelation
 } from '@/services/ontology'
 import {
-  getTemplateList,
-  getTemplate,
-  saveTemplateFromOntology
-} from '@/services/ontologyTemplate'
+  getMetaModelList,
+  getMetaModel,
+  saveMetaModelFromOntology
+} from '@/services/ontologyMetaModel'
+import { getBuildJobList, completeBuildJob } from '@/services/ontologyBuild'
 
 const route = useRoute()
 const router = useRouter()
@@ -561,10 +538,14 @@ const templateName = ref('')
 const templates = ref<any[]>([])
 const templateLoading = ref(false)
 const selectedTemplateId = ref('')
-const openTemplateLibrary = ref(false)
+
+// 当前本体对应的手动构建任务（用于「完成构建」时标记完成）
+const manualJobId = ref('')
 
 // 实体类型对话框
 const showEntityTypeDialog = ref(false)
+// 是否锁定父类型（通过「添加子类型」入口打开时为 true，防止误改父类型）
+const parentLocked = ref(false)
 const entityTypeForm = ref({
   id: '',
   name: '',
@@ -590,8 +571,6 @@ const entityForm = ref({
   id: '',
   name: '',
   instance_of: '',
-  is_primary: false,
-  source_snippet: '',
   properties: [] as any[]
 })
 
@@ -754,12 +733,24 @@ const loadRelations = async () => {
 const loadTemplates = async () => {
   templateLoading.value = true
   try {
-    const res: any = await getTemplateList()
-    templates.value = res.data || []
+    const res: any = await getMetaModelList()
+    templates.value = res.items || res.data || []
   } catch {
     // 静默失败，模板库非必需
   } finally {
     templateLoading.value = false
+  }
+}
+
+// 查找当前本体对应的手动构建任务（用于完成时标记 completed）
+const loadManualJob = async () => {
+  try {
+    const res: any = await getBuildJobList()
+    const jobs = ((res as any).data || []) as any[]
+    const job = jobs.find(j => j.build_type === 'manual' && j.ontology_id === ontologyId)
+    if (job) manualJobId.value = job.id
+  } catch {
+    // 非必需：查不到则完成时不标记（仅影响任务列表展示）
   }
 }
 
@@ -783,7 +774,7 @@ const refreshAll = async () => {
 const applyTemplateById = async (tplId: string) => {
   prefilling.value = true
   try {
-    const res: any = await getTemplate(tplId)
+    const res: any = await getMetaModel(tplId)
     const tpl = res.data
     templateName.value = tpl.name
     templateMode.value = true
@@ -796,46 +787,60 @@ const applyTemplateById = async (tplId: string) => {
     await updateOntology(ontologyId, fd)
     await loadOntology()
 
-    // 2. 逐个创建实体类型（含属性骨架）；先创建无父类型的，再处理父子层级
+    // 2. 逐个创建实体类型（含属性骨架）
     let created = 0
     const nameToId: Record<string, string> = {}
-    const concepts = tpl.concepts || []
+    const entityTypes = tpl.entity_types || []
     // 第一遍：创建所有类型（暂不挂父层级）
-    for (const c of concepts) {
+    for (const et of entityTypes) {
       const cfd = new FormData()
-      cfd.append('name', c.name)
-      cfd.append('description', c.description || '')
-      cfd.append('color', c.color || '')
-      cfd.append('property_schema', JSON.stringify(c.property_schema || []))
+      cfd.append('name', et.name)
+      cfd.append('description', et.description || '')
+      cfd.append('color', et.color || '')
+      cfd.append('property_schema', JSON.stringify(et.property_schema || []))
       const createdRes: any = await createEntityType(ontologyId, cfd)
       const createdId = createdRes?.id || createdRes?.data?.id
-      if (createdId) nameToId[c.name] = createdId
+      if (createdId) nameToId[et.name] = createdId
       created++
     }
     await loadEntityTypes()
 
-    // 第二遍：对模板中标注 entity_type（父类型名）的，补挂 parent_entity_type_id
-    for (const c of concepts) {
-      if (!c.entity_type) continue
-      const typeId = nameToId[c.name]
-      const parentId = nameToId[c.entity_type]
+    // 3. 第二遍：对标注 parent_entity_type_name（父类型名）的，补挂 parent_entity_type_id
+    for (const et of entityTypes) {
+      if (!et.parent_entity_type_name) continue
+      const typeId = nameToId[et.name]
+      const parentId = nameToId[et.parent_entity_type_name]
       if (!typeId || !parentId || typeId === parentId) continue
       const parentType = entityTypes.value.find(t => t.id === parentId)
       const ufd = new FormData()
-      ufd.append('name', c.name)
-      ufd.append('description', c.description || '')
-      ufd.append('color', c.color || '')
-      ufd.append('property_schema', JSON.stringify(c.property_schema || []))
+      ufd.append('name', et.name)
+      ufd.append('description', et.description || '')
+      ufd.append('color', et.color || '')
+      ufd.append('property_schema', JSON.stringify(et.property_schema || []))
       ufd.append('parent_entity_type_id', parentId)
-      ufd.append('parent_entity_type_name', parentType?.name || c.entity_type)
+      ufd.append('parent_entity_type_name', parentType?.name || et.parent_entity_type_name)
       await updateEntityType(ontologyId, typeId, ufd)
     }
     await loadEntityTypes()
 
-    ElMessage.success(`模板「${tpl.name}」已载入：${created} 个实体类型`)
-    openTemplateLibrary.value = false
+    // 4. 载入类型间关系（按 name 映射到新建实体类型 ID 后创建）
+    const etypeRelations = tpl.entity_type_relations || []
+    for (const r of etypeRelations) {
+      const sourceId = nameToId[r.source_entity_type_name]
+      const targetId = nameToId[r.target_entity_type_name]
+      if (!sourceId || !targetId) continue
+      const rfd = new FormData()
+      rfd.append('source_entity_type_id', sourceId)
+      rfd.append('target_entity_type_id', targetId)
+      rfd.append('relation_type', r.relation_type)
+      rfd.append('description', r.description || '')
+      await createEntityTypeRelation(ontologyId, rfd)
+    }
+    await loadEntityTypeRelations()
+
+    ElMessage.success(`元模型「${tpl.name}」已载入：${created} 个实体类型`)
   } catch (e: any) {
-    ElMessage.error(e.serverMessage || '模板载入失败')
+    ElMessage.error(e.serverMessage || '元模型载入失败')
   } finally {
     prefilling.value = false
   }
@@ -844,11 +849,6 @@ const applyTemplateById = async (tplId: string) => {
 const applyTemplate = () => {
   if (!selectedTemplateId.value) return
   applyTemplateById(selectedTemplateId.value)
-}
-
-const selectTemplateFromLibrary = (tplId: string) => {
-  selectedTemplateId.value = tplId
-  applyTemplateById(tplId)
 }
 
 // ── 关系类型快捷管理（持久化到本体 relation_types） ──
@@ -889,9 +889,10 @@ const saveRelationTypes = async () => {
 }
 
 // ── 实体类型操作 ──
-// parentId：传入时表示添加子类型，预填 parent_entity_type_id
+// 打开实体类型弹框：entityType 为编辑对象；parentId 传入表示添加子类型（锁定父类型）
 const openEntityTypeDialog = (entityType?: any, parentId?: string) => {
   if (entityType) {
+    parentLocked.value = false
     entityTypeForm.value = {
       id: entityType.id,
       name: entityType.name,
@@ -902,6 +903,7 @@ const openEntityTypeDialog = (entityType?: any, parentId?: string) => {
       property_schema: JSON.parse(JSON.stringify(entityType.property_schema || []))
     }
   } else {
+    parentLocked.value = !!parentId
     entityTypeForm.value = {
       id: '',
       name: '',
@@ -1058,15 +1060,12 @@ const openEntityDialog = (entity?: any) => {
       id: entity.id,
       name: entity.name,
       instance_of: entity.instance_of || '',
-      is_primary: !!entity.is_primary,
-      source_snippet: entity.source_snippet || '',
       properties: (entity.properties || []).map((p: any) => ({
         name: p.name || '',
         value: p.value !== undefined && p.value !== null ? String(p.value) : '',
         category: p.category || 'descriptive',
         data_type: p.data_type || 'string',
-        unit: p.unit || '',
-        source_snippet: p.source_snippet || ''
+        unit: p.unit || ''
       }))
     }
   } else {
@@ -1074,8 +1073,6 @@ const openEntityDialog = (entity?: any) => {
       id: '',
       name: '',
       instance_of: '',
-      is_primary: false,
-      source_snippet: '',
       properties: []
     }
   }
@@ -1094,8 +1091,7 @@ const onEntityTypeChange = (typeId: string) => {
     value: '',
     category: ps.category || 'descriptive',
     data_type: ps.data_type || 'string',
-    unit: ps.unit || '',
-    source_snippet: ''
+    unit: ps.unit || ''
   }))
 }
 
@@ -1105,8 +1101,7 @@ const addPropRow = () => {
     value: '',
     category: 'descriptive',
     data_type: 'string',
-    unit: '',
-    source_snippet: ''
+    unit: ''
   })
 }
 
@@ -1120,8 +1115,6 @@ const submitEntity = async () => {
     const fd = new FormData()
     fd.append('name', entityForm.value.name.trim())
     fd.append('instance_of', entityForm.value.instance_of)
-    fd.append('is_primary', String(entityForm.value.is_primary))
-    fd.append('source_snippet', entityForm.value.source_snippet)
     fd.append('properties', JSON.stringify(entityForm.value.properties.filter(p => p.name)))
     if (entityForm.value.id) {
       await updateEntity(ontologyId, entityForm.value.id, fd)
@@ -1213,7 +1206,15 @@ const goPhaseB = () => {
   currentStep.value = 1
 }
 
-const finishBuild = () => {
+const finishBuild = async () => {
+  // 标记手动构建任务完成（从「进行中的构建任务」列表移除）
+  if (manualJobId.value) {
+    try {
+      await completeBuildJob(manualJobId.value)
+    } catch (e) {
+      console.warn('标记构建任务完成失败:', e)
+    }
+  }
   ElMessage.success('本体构建完成，可在详情页查看图谱')
   router.push(`/ontology/${ontologyId}`)
 }
@@ -1230,19 +1231,19 @@ const saveAsTemplate = async () => {
   let name = ''
   try {
     const result = await ElMessageBox.prompt(
-      '将当前本体的 schema 层（实体类型 + 属性骨架 + 类型间关系）抽取为模板，实例数据不会进入模板。',
-      '另存为模板',
+      '将当前本体的 schema 层（实体类型 + 属性骨架 + 类型间关系）抽取为元模型，实例数据不会进入元模型。',
+      '另存为元模型',
       {
         confirmButtonText: '保存',
         cancelButtonText: '取消',
-        inputPlaceholder: '请输入模板名称',
-        inputValue: `${ontology.value?.name || ''} 模板`
+        inputPlaceholder: '请输入元模型名称',
+        inputValue: `${ontology.value?.name || ''} 元模型`
       }
     )
     name = result.value
   } catch { return }
   if (!name?.trim()) {
-    ElMessage.warning('请输入模板名称')
+    ElMessage.warning('请输入元模型名称')
     return
   }
   submitting.value = true
@@ -1250,10 +1251,10 @@ const saveAsTemplate = async () => {
     const fd = new FormData()
     fd.append('name', name.trim())
     fd.append('description', ontology.value?.description || '')
-    await saveTemplateFromOntology(ontologyId, fd)
-    ElMessage.success('模板已保存，可在文档构建或新建本体时复用')
+    await saveMetaModelFromOntology(ontologyId, fd)
+    ElMessage.success('元模型已保存，可在文档构建或新建本体时复用')
   } catch (e: any) {
-    ElMessage.error(e.serverMessage || '保存模板失败')
+    ElMessage.error(e.serverMessage || '保存元模型失败')
   } finally {
     submitting.value = false
   }
@@ -1269,7 +1270,8 @@ onMounted(async () => {
       loadEntityTypeRelations(),
       loadEntities(),
       loadRelations(),
-      loadTemplates()
+      loadTemplates(),
+      loadManualJob()
     ])
     // 若带 template 查询参数，自动触发模板预填
     if (queryTemplateId) {
@@ -1342,6 +1344,20 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+/* 可点击的标题（点击打开对应添加对话框） */
+.panel-title.clickable {
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-md);
+  transition: background 0.2s, color 0.2s;
+  user-select: none;
+}
+
+.panel-title.clickable:hover {
+  background: var(--primary-50);
+  color: var(--primary-600);
 }
 
 .count-badge {
@@ -1554,6 +1570,11 @@ onMounted(async () => {
   padding: 1rem 0;
 }
 
+.step-nav-left {
+  display: flex;
+  gap: 0.5rem;
+}
+
 /* ── 对话框内编辑器 ── */
 .schema-editor,
 .props-editor {
@@ -1603,34 +1624,4 @@ onMounted(async () => {
   margin-left: 0.5rem;
 }
 
-/* ── 模板库对话框 ── */
-.template-library {
-  min-height: 160px;
-}
-
-.tpl-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.tpl-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
-}
-
-.tpl-row-main {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.tpl-row-name {
-  font-weight: 600;
-  color: var(--text-primary);
-}
 </style>
