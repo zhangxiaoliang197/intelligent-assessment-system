@@ -13,7 +13,7 @@
       "steps": ["汇聚多源态势数据并统一时间基准", "对比关键指标并识别异常区域", "生成图表、图层与态势说明"],
       "dataSources": ["t_deployment", "t_mission", "t_threat", "t_supply"],
       "chartTypes": ["radar", "bar", "pie"],
-      "mapLayerTypes": ["points", "areas", "heatmap"],
+      "mapLayerTypes": ["points", "areas"],
       "focusMetrics": ["综合态势指数", "区域力量对比", "任务状态构成"],
       "analysisGoal": "从全局视角描述兵力、威胁、行动和保障之间的关系，标明数据时间与重点关注区域。",
       "featured": true
@@ -111,7 +111,7 @@
       "steps": ["筛选有效威胁和告警", "计算位置权重与热点", "输出热区和高威胁目标"],
       "dataSources": ["t_threat", "t_warning_event", "t_recon_intelligence"],
       "chartTypes": ["heatmap", "bar", "pie"],
-      "mapLayerTypes": ["heatmap", "points", "areas"],
+      "mapLayerTypes": ["points", "areas"],
       "focusMetrics": ["威胁热度", "高威胁目标数", "告警等级构成"],
       "analysisGoal": "描述威胁热点、目标集聚和等级构成，清楚区分已核验与未核验信息。",
       "featured": true
@@ -160,7 +160,7 @@
       "steps": ["建立常态基线", "计算时空密度和离群程度", "聚合异常簇并回溯关联事件"],
       "dataSources": ["t_threat", "t_warning_event", "t_mission", "t_deployment"],
       "chartTypes": ["scatter", "heatmap", "line"],
-      "mapLayerTypes": ["clusters", "heatmap", "points"],
+      "mapLayerTypes": ["clusters", "points"],
       "focusMetrics": ["异常分数", "聚集密度", "关联事件数"],
       "analysisGoal": "将统计异常与业务事件关联展示，并明确异常不等同于已确认威胁。"
     },
@@ -419,7 +419,7 @@
       "steps": ["构建补给起止点和路线", "叠加威胁与异常区域", "评估路线暴露、运力和替代性"],
       "dataSources": ["t_supply", "t_threat", "t_warning_event"],
       "chartTypes": ["bar", "scatter", "gauge"],
-      "mapLayerTypes": ["routes", "heatmap", "points"],
+      "mapLayerTypes": ["routes", "points"],
       "focusMetrics": ["路线风险指数", "受威胁路段数", "替代通道能力"],
       "analysisGoal": "描述路线风险及证据来源，标记高风险路段和替代通道条件，不直接给出行动指令。"
     },
@@ -435,7 +435,7 @@
       "steps": ["汇总战损与任务记录", "按区域单位装备分组", "分析损失结构及战备影响"],
       "dataSources": ["t_combat_loss", "t_mission", "t_equipment", "t_force"],
       "chartTypes": ["bar", "pie", "line"],
-      "mapLayerTypes": ["heatmap", "points", "areas"],
+      "mapLayerTypes": ["points", "areas"],
       "focusMetrics": ["装备损失量", "人员伤亡量", "战备影响度"],
       "analysisGoal": "准确描述损失规模、结构、时间与空间分布，并区分原始记录与推算影响。",
       "featured": true
@@ -452,7 +452,7 @@
       "steps": ["构建损耗时间序列", "计算移动趋势与异常点", "关联任务和故障解释拐点"],
       "dataSources": ["t_combat_loss", "t_resource_consume", "t_maintenance"],
       "chartTypes": ["line", "scatter", "bar"],
-      "mapLayerTypes": ["heatmap", "points"],
+      "mapLayerTypes": ["points"],
       "focusMetrics": ["损耗量", "环比变化率", "异常拐点数"],
       "analysisGoal": "展示趋势、波动和拐点，并用关联事件解释而非把相关性表述为因果。"
     },
@@ -484,7 +484,7 @@
       "steps": ["盘点数据来源与更新时间", "检查缺失、重复、冲突和异常", "映射覆盖空白并评估影响"],
       "dataSources": ["admin", "indicator", "knowledge", "evaluation"],
       "chartTypes": ["gauge", "bar", "heatmap"],
-      "mapLayerTypes": ["areas", "heatmap"],
+      "mapLayerTypes": ["areas"],
       "focusMetrics": ["完整率", "时效性", "空间覆盖率"],
       "analysisGoal": "明确展示数据质量问题、影响范围和置信度，不用缺失值推断确定结论。"
     }

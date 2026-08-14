@@ -236,16 +236,14 @@ def build_map_messages(query: str, data_context: dict) -> list:
             '{\n'
             '  "layerId": "main",\n'
             '  "datasetRef": "数据集ID",\n'
-            '  "points": [{"name": "名称", "lng": 116.4, "lat": 39.9, "weight": 1.0, "raw": "描述"}],\n'
+            '  "points": [{"name": "名称", "lng": 116.4, "lat": 39.9, "raw": "描述"}],\n'
             '  "routes": [],\n'
             '  "areas": [],\n'
             '  "circles": [{"name": "名称", "center": {"lng": 113.27, "lat": 23.13}, "radiusKm": 120}],\n'
             '  "fieldMapping": {"lngField": "经度字段名", "latField": "纬度字段名", "nameField": "名称字段名", "routeIdField": "轨迹ID字段名", "orderField": "排序字段名"},\n'
-            '  "layerConfig": {"type": "heatmap", "color": "#e74c3c", "opacity": 0.85}\n'
+            '  "layerConfig": {"type": "points", "color": "#e74c3c", "opacity": 0.85}\n'
             '}\n'
-            "规则：layerConfig.type 取值 points（普通标点，默认）或 heatmap（热力图）。"
-            "当用户要求热力图/热度分布且数据含地理字段时，应设 type=heatmap，并为 points 中每个点带 weight（热度权重，数值越大越热，可用该位置的样本量或指标值归一化）；"
-            "type=points 时 weight 可省略。"
+            "规则：layerConfig.type 取值 points（普通标点，默认）。"
             "坐标必须来自证据中的 samples 地理字段，不得编造境外坐标；聚合证据默认不含 samples 时必须返回空图层；"
             "若数据无地理信息且问题不涉及空间分布，返回空 points/routes/areas/circles 数组（layerId 仍保留）；"
             "若数据含经纬度字段，必须在 fieldMapping 给出 lngField/latField（供前端用全量数据渲染轨迹/标点）；"

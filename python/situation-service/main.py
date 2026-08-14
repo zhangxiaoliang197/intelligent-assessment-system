@@ -787,11 +787,15 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
             "explanations": data.get("explanations", []),
             "mapExplanation": data.get("mapExplanation", ""),
         }
-        # 回填每个图表的 explanation 字段
+        # 回填每个图表的 explanation 字段（chart 可能是 dict 或 Pydantic 模型）
         exp_map = {e.get("chartId"): e.get("text", "") for e in data.get("explanations", [])}
         for c in report.charts:
-            if c["chartId"] in exp_map:
-                c["explanation"] = exp_map[c["chartId"]]
+            chart_id = c["chartId"] if isinstance(c, dict) else c.chartId
+            if chart_id in exp_map:
+                if isinstance(c, dict):
+                    c["explanation"] = exp_map[chart_id]
+                else:
+                    c.explanation = exp_map[chart_id]
         # 回填地图说明
         if data.get("mapExplanation"):
             report.map["explanation"] = data.get("mapExplanation", "")

@@ -32,7 +32,6 @@ export interface MapLayer {
   routes?: any[]
   areas?: any[]
   circles?: any[]
-  heatmap?: any[]
   clusters?: any[]
   flows?: any[]
   flow?: any[]
@@ -93,6 +92,7 @@ export interface ReportMeta {
   source: string
   status: string
   createTime?: string
+  createdAt?: string
 }
 
 export interface ResultEvidence {
@@ -362,7 +362,14 @@ export const useSituationStore = defineStore('situation', () => {
       return rebuildMapLayer(l, ds)
     })
     narrative.value = snapshot.narrative || { intro: '', explanations: [] }
-    mapExplanation.value = snapshot.map?.explanation || snapshot.mapExplanation || ''
+    mapExplanation.value = snapshot.map?.explanation || snapshot.mapExplanation || snapshot.narrative?.mapExplanation || ''
+    // 兜底：历史产物若 chart.explanation 缺失，用 narrative.explanations 回填逐图说明
+    const expMap = new Map<string, string>(
+      (narrative.value.explanations || []).map((e: any) => [e.chartId as string, e.text as string])
+    )
+    charts.value.forEach((c) => {
+      if (!c.explanation && expMap.has(c.chartId)) c.explanation = expMap.get(c.chartId)
+    })
     selectedRegion.value = snapshot.selectedRegion || snapshot.context?.selectedRegion || null
     selectedTimeRange.value = snapshot.selectedTimeRange || snapshot.context?.selectedTimeRange || null
     filters.value = snapshot.filters || snapshot.context?.filters || {}
@@ -532,7 +539,6 @@ export const useSituationStore = defineStore('situation', () => {
             routes: data.routes || [],
             areas: data.areas || [],
             circles: data.circles || [],
-            heatmap: data.heatmap || [],
             clusters: data.clusters || [],
             flows: data.flows || [],
             flow: data.flow || [],
@@ -558,7 +564,6 @@ export const useSituationStore = defineStore('situation', () => {
           if (data.routes) lyr.routes = data.routes
           if (data.areas) lyr.areas = data.areas
           if (data.circles) lyr.circles = data.circles
-          if (data.heatmap) lyr.heatmap = data.heatmap
           if (data.clusters) lyr.clusters = data.clusters
           if (data.flows) lyr.flows = data.flows
           if (data.flow) lyr.flow = data.flow

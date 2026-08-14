@@ -19,12 +19,7 @@
       </div>
     </div>
     <div ref="mapContainer" class="geo-map-content">
-      <div v-if="hasHeat" class="geo-map-legend">
-        <div class="geo-legend-title">热度</div>
-        <div class="geo-legend-gradient"></div>
-        <div class="geo-legend-axis"><span>低</span><span>高</span></div>
-      </div>
-      <div v-if="hasVector && !hasHeat" class="geo-map-legend">
+      <div v-if="hasVector" class="geo-map-legend">
         <div class="geo-legend-title">图例</div>
         <div class="geo-legend-item"><span class="geo-legend-dot" :style="{ background: '#e74c3c' }"></span>标点</div>
         <div class="geo-legend-item"><span class="geo-legend-line"></span>路线</div>
@@ -67,7 +62,6 @@ import { ref, onMounted, watch, onUnmounted, computed, nextTick } from 'vue'
 import L from 'leaflet'
 import 'leaflet-draw'
 import 'leaflet-draw/dist/leaflet.draw.css'
-import 'leaflet.heat'
 import gcoord from 'gcoord'
 import { type GeoPoint } from '@/utils/geoParser'
 import { type GeoRoute, type GeoArea } from '@/utils/geoAnnotation'
@@ -80,7 +74,6 @@ const props = withDefaults(defineProps<{
   routes?: GeoRoute[]
   areas?: GeoArea[]
   circles?: CircleArea[]
-  heatPoints?: { lng: number; lat: number; weight?: number }[]  // 热力图点（带热度权重）
   /** WGS84 视口。态势插槽恢复历史报告时以它为准。 */
   viewport?: { center: [number, number]; zoom: number }
   title?: string
@@ -104,7 +97,6 @@ let map: L.Map | null = null
 let markers: L.Marker[] = []
 let circleMarkers: L.CircleMarker[] = []
 let spiderLineLayer: L.FeatureGroup | null = null
-let heatLayer: any = null
 let routeLayers: L.Polyline[] = []
 let areaLayers: L.Polygon[] = []
 let circleLayers: L.Circle[] = []
@@ -117,9 +109,7 @@ const drawnCount = ref(0)
 
 const tableExpanded = ref(false)
 
-/** 是否存在热力图点（用于图例显示） */
-const hasHeat = computed(() => !!props.heatPoints && props.heatPoints.length > 0)
-/** 是否存在普通矢量标注（标点/路线/区域/圆），与热力图分开显示图例 */
+/** 是否存在普通矢量标注（标点/路线/区域/圆） */
 const hasVector = computed(
   () =>
     props.points.length > 0 ||
@@ -539,7 +529,6 @@ async function initMap() {
   addRoutes()
   addAreas()
   addCircles()
-  addHeatLayer()
 }
 
 /** 地图平移/缩放结束后向外发送 viewport（仅 emit，不回写，避免与 props 形成循环）。 */
@@ -862,33 +851,6 @@ function clearCircles() {
   circleLayers = []
 }
 
-function addHeatLayer() {
-  if (!map) return
-  clearHeatLayer()
-  if (!props.heatPoints || props.heatPoints.length === 0) return
-  // 热力点：WGS84 → GCJ02，并带热度权重（weight 缺省视为 1）
-  const data = props.heatPoints.map(p => {
-    const [lat, lng] = transformCoord(p.lng, p.lat)
-    return [lat, lng, p.weight ?? 1] as [number, number, number]
-  })
-  // leaflet.heat 权重上限（max）缺省为 1，权重 >1 会被压成 1 导致强度无差异，
-  // 故显式设为权重最大值，让高低热度得以区分。
-  const maxWeight = Math.max(1, ...data.map(d => d[2]))
-  heatLayer = (L as any).heatLayer(data, {
-    radius: 28,
-    blur: 18,
-    maxZoom: 12,
-    minOpacity: 0.35,
-    max: maxWeight,
-    gradient: { 0.2: '#2e86de', 0.45: '#48c9b0', 0.7: '#f39c12', 0.9: '#e74c3c' },
-  }).addTo(map)
-}
-
-function clearHeatLayer() {
-  if (heatLayer && map) map.removeLayer(heatLayer)
-  heatLayer = null
-}
-
 watch(() => props.points, () => {
   if (!map) return
   // compact/嵌入模式下容器尺寸常在挂载后才稳定，标注到达时先强制 leaflet 重测容器，
@@ -909,10 +871,6 @@ watch(() => props.areas, () => {
 
 watch(() => props.circles, () => {
   if (map) addCircles()
-}, { deep: true })
-
-watch(() => props.heatPoints, () => {
-  if (map) addHeatLayer()
 }, { deep: true })
 
 watch(() => props.viewport, () => {
@@ -938,7 +896,6 @@ onUnmounted(() => {
       map.removeControl(drawControl)
     }
     clearTileLayers()
-    clearHeatLayer()
     map.remove()
     map = null
   }
@@ -1037,24 +994,6 @@ onUnmounted(() => {
 .geo-legend-title {
   font-weight: 600;
   margin-bottom: 4px;
-}
-.geo-legend-gradient {
-  width: 120px;
-  height: 10px;
-  border-radius: 3px;
-  background: linear-gradient(
-    to right,
-    #2e86de 0%,
-    #48c9b0 28%,
-    #f39c12 55%,
-    #e74c3c 82%,
-    #c0392b 100%
-  );
-}
-.geo-legend-axis {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 2px;
 }
 .geo-legend-item {
   display: flex;

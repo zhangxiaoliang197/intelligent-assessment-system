@@ -354,7 +354,7 @@ def _map_payload(profile: Dict[str, Any]) -> Dict[str, Any]:
     if any(layer_type in {"routes", "flow"} for layer_type in layer_types):
         routes = [{"name": "主要态势链路", "points": [points[0], points[3], points[2]]}]
     areas = []
-    if any(layer_type in {"areas", "coverage", "heatmap"} for layer_type in layer_types):
+    if any(layer_type in {"areas", "coverage"} for layer_type in layer_types):
         areas = [{
             "name": "重点关注区域",
             "_regionId": "focus-area-1",
@@ -1227,6 +1227,7 @@ def _validate_llm_result(result: dict, profile: dict, bundles: list) -> tuple[li
     narrative = {
         "intro": str(raw_narrative.get("intro") or f"已围绕“{profile['skillName']}”汇聚真实数据并生成当前态势。"),
         "explanations": explanations,
+        "mapExplanation": str(raw_narrative.get("mapExplanation") or ""),
     }
     return charts, map_layer, narrative
 
@@ -1334,6 +1335,7 @@ def _data_fallback(query: str, profile: dict, bundles: list, context: Optional[d
             {"chartId": chart["chartId"], "text": f"该图直接使用 {chart['datasetRef']} 的真实记录生成。"}
             for chart in charts
         ],
+        "mapExplanation": "",
     }
     return charts, _fallback_map(profile, bundles, context), narrative
 

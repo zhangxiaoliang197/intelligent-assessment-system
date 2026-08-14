@@ -107,9 +107,10 @@ class MapLayerSpec(BaseModel):
 
 
 class Narrative(BaseModel):
-    """态势介绍 + 地图说明（逐图说明已随图表 explanation 字段生成）。"""
+    """态势介绍 + 地图说明 + 逐图说明（chartId → text）。"""
     intro: str = ""
     mapExplanation: str = ""
+    explanations: List[Dict[str, str]] = Field(default_factory=list)
 
 
 class DatasetSummary(BaseModel):

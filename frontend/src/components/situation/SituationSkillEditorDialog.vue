@@ -94,7 +94,7 @@ const emit = defineEmits<{
 }>()
 
 const chartOptions = ['bar', 'line', 'pie', 'radar', 'gauge', 'scatter', 'heatmap', 'relation', 'sankey', 'map']
-const mapOptions = ['points', 'routes', 'areas', 'heatmap', 'coverage', 'clusters', 'flow']
+const mapOptions = ['points', 'routes', 'areas', 'coverage', 'clusters', 'flow']
 const saving = ref(false)
 const form = reactive({
   name: '', category: '综合态势', description: '', analysisGoal: '',

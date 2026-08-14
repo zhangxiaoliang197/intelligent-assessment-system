@@ -6,7 +6,6 @@
       :routes="mergedRoutes"
       :areas="mergedAreas"
       :circles="mergedCircles"
-      :heat-points="heatPoints"
       :viewport="viewport"
       @marker-click="(p: any) => emit('marker-click', p)"
       @region-select="(p: any) => emit('region-select', p)"
@@ -56,25 +55,6 @@ const emit = defineEmits<{
   (e: 'draw-end', payload: { type: string; geojson: any; name?: string }): void
   (e: 'viewport-change', vp: Viewport): void
 }>()
-
-/** 合并所有图层 → GeoMap props */
-
-/** 热力图图层点（type=heatmap）→ GeoMap heatPoints（带热度权重） */
-const heatPoints = computed(() => {
-  const all: { lng: number; lat: number; weight?: number }[] = []
-  for (const layer of props.layers) {
-    if (layer.layerConfig?.type !== 'heatmap') continue
-    if (!layer.points) continue
-    for (const p of layer.points) {
-      all.push({
-        lng: p.lng ?? 0,
-        lat: p.lat ?? 0,
-        weight: typeof p.weight === 'number' ? p.weight : 1,
-      })
-    }
-  }
-  return all
-})
 
 function featureValue(feature: any, key: string): unknown {
   return feature?.[key] ?? feature?.props?.[key] ?? feature?.properties?.[key]
@@ -132,8 +112,6 @@ const mergedPoints = computed<GeoPoint[]>(() => {
   for (const layer of props.layers) {
     if (layer.layerConfig?.visible === false) continue
     const type = layerType(layer)
-    // 热力图图层不渲染为普通标点，交由 heatPoints（leaflet.heat）渲染
-    if (type === 'heatmap') continue
     const sourcePoints = [
       ...(layer.points || []),
       ...((layer as any).clusters || []),
