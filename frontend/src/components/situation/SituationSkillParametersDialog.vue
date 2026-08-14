@@ -97,9 +97,11 @@ const props = withDefaults(defineProps<{
   skill: SituationSkill | null
   parameters?: Record<string, unknown>
   query?: string
+  dataSourceId?: string
 }>(), {
   parameters: () => ({}),
   query: '',
+  dataSourceId: '',
 })
 
 const emit = defineEmits<{
@@ -131,7 +133,13 @@ watch(draft, () => {
 }, { deep: true })
 
 function fingerprint() {
-  return JSON.stringify(normalizedParameters(), Object.keys(normalizedParameters()).sort())
+  return JSON.stringify({
+    skillId: props.skill?.id || '',
+    revision: props.skill?.revision || 0,
+    query: props.query.trim(),
+    dataSourceId: props.dataSourceId,
+    parameters: normalizedParameters(),
+  })
 }
 
 function normalizedParameters() {
@@ -150,6 +158,7 @@ async function runPreflight() {
       props.skill.id,
       props.query || props.skill.recommendedQuestions?.[0] || '',
       normalizedParameters(),
+      props.dataSourceId,
     )
     preflightFingerprint.value = fingerprint()
     if (preflight.value.ready) {

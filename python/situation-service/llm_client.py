@@ -34,46 +34,23 @@ def load_llm_config() -> dict:
     Returns:
         包含 type/apiUrl/apiKey/model/temperature/maxTokens 的配置字典
     """
-    # 优先取活跃配置
+    # 仅走内部配置接口。API Key 属于服务端凭据，公开管理接口不得作为兜底。
     try:
         req = urllib.request.Request(
-            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/active",
+            f"{ADMIN_SERVICE_URL}/api/admin/internal/config/llm/active",
             method="GET"
         )
         req.add_header("Content-Type", "application/json")
+        req.add_header("X-Service-Token", config.INTERNAL_SERVICE_TOKEN)
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             if data.get("success") and data.get("data"):
                 return data["data"]
     except Exception as e:
-        logger.warning(f"从 admin-service 获取活跃 LLM 配置失败: {e}")
+        logger.warning("从 admin-service 内部接口获取活跃 LLM 配置失败: %s", e)
 
-    # 兜底：从配置列表取第一个可用配置
-    try:
-        req = urllib.request.Request(
-            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/list",
-            method="GET"
-        )
-        req.add_header("Content-Type", "application/json")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            list_data = json.loads(resp.read().decode("utf-8"))
-            configs = list_data.get("data") or list_data.get("configs")
-            if list_data.get("success") and configs:
-                if isinstance(configs, list) and len(configs) > 0:
-                    # 优先 vllm > openai > deepseek
-                    for pt in ["vllm", "openai", "deepseek"]:
-                        for c in configs:
-                            if c.get("type") == pt and c.get("apiUrl"):
-                                return c
-                    for c in configs:
-                        if c.get("apiUrl"):
-                            return c
-                    return configs[0]
-    except Exception as e:
-        logger.warning(f"从 admin-service 获取 LLM 配置列表失败: {e}")
-
-    # 最终兜底：硬编码默认值
-    logger.warning("没有可用的 LLM 配置，使用硬编码默认值")
+    # 保留无密钥默认值，让调用方明确失败并走基于真实数据的确定性降级。
+    logger.warning("没有可用的服务端 LLM 配置")
     return {
         "type": "deepseek",
         "apiUrl": "https://api.deepseek.com/v1",
@@ -101,20 +78,26 @@ def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000,
     Raises:
         RuntimeError: LLM 调用失败或配置缺失
     """
-    config = load_llm_config()
-    llm_type = config.get("type", "deepseek")
-    api_key = config.get("apiKey", "")
-    api_url = config.get("apiUrl", "https://api.deepseek.com/v1").rstrip("/")
-    model = config.get("model", "deepseek-chat")
+    llm_cfg = load_llm_config()
+    llm_type = llm_cfg.get("type", "deepseek")
+    api_key = llm_cfg.get("apiKey", "")
+    api_url = llm_cfg.get("apiUrl", "https://api.deepseek.com/v1").rstrip("/")
+    model = llm_cfg.get("model", "deepseek-chat")
 
     parsed_url = urllib.parse.urlparse(api_url)
     if parsed_url.scheme not in {"https", "http"} or not parsed_url.hostname:
         raise RuntimeError("大模型 API 地址无效")
+    hostname = parsed_url.hostname.lower()
+    if hostname not in config.LLM_ALLOWED_HOSTS:
+        raise RuntimeError(
+            f"大模型 API 主机不在允许清单中: {hostname}；"
+            "请通过 SITUATION_LLM_ALLOWED_HOSTS 由部署管理员显式授权"
+        )
     allow_insecure_http = os.getenv("LLM_ALLOW_INSECURE_HTTP", "false").lower() in {
         "1", "true", "yes", "on",
     }
     if parsed_url.scheme != "https" and not (
-        allow_insecure_http and parsed_url.hostname in {"localhost", "127.0.0.1", "::1"}
+        allow_insecure_http and hostname in {"localhost", "127.0.0.1", "::1"}
     ):
         raise RuntimeError("大模型 API 必须使用 HTTPS；本地 HTTP 需显式开启 LLM_ALLOW_INSECURE_HTTP")
 

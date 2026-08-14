@@ -11,6 +11,8 @@ import json
 import logging
 import os
 import re
+import threading
+import time
 import uuid
 from functools import lru_cache
 from pathlib import Path
@@ -63,7 +65,43 @@ _SELECT_OPTIONS = {
     "资源类型": ["全部", "弹药", "燃料", "备件", "物资"],
     "数据来源": ["全部", "业务数据", "指标", "知识库", "评估结果"],
 }
+_FIELD_ALIASES = {
+    "区域": "region", "关注区域": "region", "关键区域": "region",
+    "空间范围": "region", "任务范围": "region",
+    "参战方": "side_name", "双方标识": "side_name", "单位": "unit_id",
+    "参战单位": "unit_id", "军兵种": "force_type", "任务类型": "mission_type",
+    "目标类型": "target_type", "威胁等级": "threat_level", "损失类型": "loss_type",
+    "损耗类型": "loss_type", "资源类型": "resource_type", "弹药类型": "resource_type",
+    "装备型号": "model", "武器型号": "model", "武器类型": "weapon_type",
+    "指挥层级": "command_level", "防护类型": "defense_type",
+    "侦察手段": "intelligence_source", "计划编号": "plan_no", "任务": "mission_no",
+    "对象类型": "target_type", "数据来源": "_dataset",
+}
+_THRESHOLD_FIELDS = {
+    "安全库存": "stock_count", "保障天数": "support_days",
+    "超时阈值": "recovery_hours", "控制阈值": "defense_score",
+    "预警阈值": "risk_score", "异常阈值": "risk_score",
+    "响应阈值": "response_minutes", "战备阈值": "readiness_rate",
+    "质量阈值": "confidence_score",
+}
+_ANALYSIS_CONTROL_PARAMETERS = {
+    "成功判据", "代价口径", "对比维度", "评价维度", "效能口径", "协同环节",
+    "排序指标", "方案 ID", "路线", "基准周期", "截止时间", "评估日期", "时间点",
+    "时间容差", "预测周期",
+}
 _MARKDOWN_DEFINITION_FIELDS = _REQUIRED_FIELDS | {"featured", "parameters"}
+# 自定义 Skill 定义负载额外允许 markdownBody（在线编辑正文随定义存储），
+# 但 SKILL.md 的 YAML 头部校验（_read_markdown_override）仍不允许该字段。
+_PAYLOAD_FIELDS = _MARKDOWN_DEFINITION_FIELDS | {"markdownBody"}
+_PARAMETER_FIELDS = {
+    "key", "label", "type", "required", "options", "default",
+    "minimum", "maximum", "placeholder", "binding",
+}
+_BINDING_FIELDS = {"operator", "field"}
+_BINDING_OPERATORS = {
+    "equals", "contains", "numeric-threshold", "time-window", "limit",
+    "map-radius", "analysis-control",
+}
 
 logger = logging.getLogger("situation-service.skill_catalog")
 
@@ -162,6 +200,38 @@ def _validate_skill(skill: Any, seen: set[str]) -> None:
                 raise SkillCatalogError(f"Skill {skill_id} parameter key/label 无效或重复")
             if parameter_type not in _PARAMETER_TYPES:
                 raise SkillCatalogError(f"Skill {skill_id} parameter {key} 类型不支持")
+            unexpected = sorted(set(parameter) - _PARAMETER_FIELDS)
+            if unexpected:
+                raise SkillCatalogError(
+                    f"Skill {skill_id} parameter {key} 包含不支持字段: {', '.join(unexpected)}"
+                )
+            options = parameter.get("options")
+            if options is not None:
+                if parameter_type not in {"select", "multiselect"}:
+                    raise SkillCatalogError(f"Skill {skill_id} parameter {key} 仅选择类型可配置 options")
+                _validate_string_list(
+                    options, f"Skill {skill_id} parameter {key} options",
+                    maximum=30, item_maximum=100,
+                )
+            for bound in ("minimum", "maximum"):
+                if parameter.get(bound) is not None and (
+                    isinstance(parameter[bound], bool) or not isinstance(parameter[bound], (int, float))
+                ):
+                    raise SkillCatalogError(f"Skill {skill_id} parameter {key} {bound} 必须是数字")
+            if (
+                parameter.get("minimum") is not None
+                and parameter.get("maximum") is not None
+                and parameter["minimum"] > parameter["maximum"]
+            ):
+                raise SkillCatalogError(f"Skill {skill_id} parameter {key} 最小值不能大于最大值")
+            binding = parameter.get("binding")
+            if binding is not None:
+                if not isinstance(binding, dict) or set(binding) - _BINDING_FIELDS:
+                    raise SkillCatalogError(f"Skill {skill_id} parameter {key} binding 格式无效")
+                if binding.get("operator") not in _BINDING_OPERATORS:
+                    raise SkillCatalogError(f"Skill {skill_id} parameter {key} binding operator 不支持")
+                if "field" in binding:
+                    _validate_text(binding["field"], f"Skill {skill_id} parameter {key} binding field", 80)
             parameter_keys.add(key)
 
 
@@ -252,11 +322,18 @@ def _parameter_binding(definition: Dict[str, Any]) -> Dict[str, Any]:
     lowered = key.lower()
     if any(token in lowered for token in ("top n", "数量", "条数")):
         return {"operator": "limit"}
-    if any(token in key for token in ("阈值", "下限", "半径")):
-        return {"operator": "numeric-threshold", "field": key}
-    if any(token in key for token in ("天数", "时间窗", "日期", "时间范围")):
+    if key in _THRESHOLD_FIELDS or any(token in key for token in ("阈值", "下限")):
+        return {"operator": "numeric-threshold", "field": _THRESHOLD_FIELDS.get(key, key)}
+    if "半径" in key:
+        # Radius controls map rendering; it must not accidentally filter a dataset whose
+        # schema has no radius column.
+        return {"operator": "map-radius"}
+    if key in ("时间窗", "时间范围") or ("天数" in key and key != "保障天数"):
         return {"operator": "time-window", "field": key}
-    return {"operator": "equals", "field": key}
+    if key in _ANALYSIS_CONTROL_PARAMETERS:
+        return {"operator": "analysis-control"}
+    operator = "contains" if any(token in key for token in ("区域", "范围")) else "equals"
+    return {"operator": operator, "field": _FIELD_ALIASES.get(key, key)}
 
 
 def _enrich_skill(skill: Dict[str, Any], *, builtin: bool) -> Dict[str, Any]:
@@ -277,17 +354,47 @@ def _enrich_skill(skill: Dict[str, Any], *, builtin: bool) -> Dict[str, Any]:
     return item
 
 
+@lru_cache(maxsize=1)
 def _builtin_skills() -> List[Dict[str, Any]]:
     return [_enrich_skill(skill, builtin=True) for skill in _load_catalog()["skills"]]
 
 
-def _all_skills(user_id: str = "", *, include_archived: bool = False) -> List[Dict[str, Any]]:
-    skills = _builtin_skills()
+# 自定义 Skill 列表短缓存（TTL + 写操作失效），避免每个请求都开 SQLite 连接查询。
+_CUSTOM_CACHE_LOCK = threading.Lock()
+_CUSTOM_CACHE_TTL = 5.0
+_custom_skills_cache: Dict[tuple, tuple[float, List[Dict[str, Any]]]] = {}
+
+
+def _cached_custom_skills(user_id: str, include_archived: bool) -> List[Dict[str, Any]]:
+    key = (user_id, include_archived)
+    now = time.monotonic()
+    with _CUSTOM_CACHE_LOCK:
+        cached = _custom_skills_cache.get(key)
+        if cached and cached[0] > now:
+            return list(cached[1])
     try:
         custom = list_custom_skills(user_id, include_archived=include_archived)
     except SkillStoreError as exc:
         logger.warning("自定义态势 Skill 加载失败，回退内置目录: %s", exc)
         custom = []
+    with _CUSTOM_CACHE_LOCK:
+        _custom_skills_cache[key] = (now + _CUSTOM_CACHE_TTL, custom)
+        # 防膨胀：只清理已过期 key，保留活跃 key
+        if len(_custom_skills_cache) > 16:
+            expired = [k for k, v in _custom_skills_cache.items() if v[0] <= now]
+            for k in expired:
+                _custom_skills_cache.pop(k, None)
+    return custom
+
+
+def _custom_skills_cache_clear() -> None:
+    with _CUSTOM_CACHE_LOCK:
+        _custom_skills_cache.clear()
+
+
+def _all_skills(user_id: str = "", *, include_archived: bool = False) -> List[Dict[str, Any]]:
+    skills = list(_builtin_skills())  # 浅拷贝列表，避免 extend 污染 lru_cache 缓存
+    custom = _cached_custom_skills(user_id, include_archived)
     skills.extend(_enrich_skill(skill, builtin=False) for skill in custom)
     return skills
 
@@ -322,6 +429,8 @@ def clear_catalog_cache() -> None:
     """Invalidate built-in catalog data after an atomic Markdown override save."""
 
     _load_catalog.cache_clear()
+    _builtin_skills.cache_clear()
+    _custom_skills_cache_clear()
 
 
 def list_skills(
@@ -588,7 +697,12 @@ def build_skill_context(
             {
                 "sequence": index,
                 "name": step,
-                "operator": "collect" if index == 1 else "visualize" if index == len(skill["steps"]) else "transform",
+                "operator": (
+                    "collect" if index == 1 else
+                    "filter" if index == 2 and safe_parameters else
+                    "visualize" if index == len(skill["steps"]) else
+                    "transform"
+                ),
             }
             for index, step in enumerate(skill["steps"], start=1)
         ],
@@ -607,10 +721,15 @@ def build_skill_context(
 def _custom_definition(payload: Dict[str, Any], *, skill_id: str = "") -> Dict[str, Any]:
     if not isinstance(payload, dict):
         raise SkillCatalogError("Skill 定义必须是对象")
+    if len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")) > 128 * 1024:
+        raise SkillCatalogError("Skill 定义不能超过 128 KB")
+    unexpected = sorted(set(payload) - _PAYLOAD_FIELDS - _RUNTIME_FIELDS)
+    if unexpected:
+        raise SkillCatalogError(f"Skill 定义包含不支持字段: {', '.join(unexpected)}")
     definition = {
         key: copy.deepcopy(value)
         for key, value in payload.items()
-        if key not in _RUNTIME_FIELDS
+        if key in _PAYLOAD_FIELDS
     }
     name = str(definition.get("name") or "").strip()
     if not skill_id:
@@ -636,7 +755,9 @@ def create_skill_definition(payload: Dict[str, Any], user_id: str) -> Dict[str, 
     if any(skill["id"] == definition["id"] for skill in _builtin_skills()):
         raise SkillCatalogError("不能覆盖内置 Skill")
     try:
-        return _enrich_skill(create_custom_skill(definition, user_id), builtin=False)
+        result = _enrich_skill(create_custom_skill(definition, user_id), builtin=False)
+        _custom_skills_cache_clear()
+        return result
     except (SkillStoreConflict, SkillStoreError) as exc:
         raise SkillCatalogError(str(exc)) from exc
 
@@ -661,7 +782,7 @@ def update_skill_definition(
         retained_payload["markdownBody"] = current["markdownBody"]
     definition = _custom_definition(retained_payload, skill_id=skill_id)
     try:
-        return _enrich_skill(
+        result = _enrich_skill(
             update_custom_skill(
                 skill_id,
                 definition,
@@ -672,6 +793,8 @@ def update_skill_definition(
             ),
             builtin=False,
         )
+        _custom_skills_cache_clear()
+        return result
     except (SkillStoreConflict, SkillStoreNotFound, SkillStoreError) as exc:
         raise SkillCatalogError(str(exc)) from exc
 
@@ -682,10 +805,12 @@ def publish_skill_definition(skill_id: str, user_id: str, change_note: str = "")
         if not current:
             raise SkillStoreNotFound("自定义 Skill 不存在")
         _validate_skill(current, set())
-        return _enrich_skill(
+        result = _enrich_skill(
             publish_custom_skill(skill_id, user_id, change_note),
             builtin=False,
         )
+        _custom_skills_cache_clear()
+        return result
     except (SkillStoreConflict, SkillStoreNotFound, SkillStoreError) as exc:
         raise SkillCatalogError(str(exc)) from exc
 
@@ -694,7 +819,9 @@ def archive_skill_definition(skill_id: str, user_id: str) -> Dict[str, Any]:
     if any(skill["id"] == skill_id for skill in _builtin_skills()):
         raise SkillCatalogError("内置 Skill 不能归档")
     try:
-        return _enrich_skill(archive_custom_skill(skill_id, user_id), builtin=False)
+        result = _enrich_skill(archive_custom_skill(skill_id, user_id), builtin=False)
+        _custom_skills_cache_clear()
+        return result
     except (SkillStoreNotFound, SkillStoreError) as exc:
         raise SkillCatalogError(str(exc)) from exc
 
@@ -708,6 +835,8 @@ def list_skill_versions(skill_id: str, user_id: str) -> List[Dict[str, Any]]:
 
 def rollback_skill_definition(skill_id: str, version: int, user_id: str) -> Dict[str, Any]:
     try:
-        return _enrich_skill(rollback_custom_skill(skill_id, version, user_id), builtin=False)
+        result = _enrich_skill(rollback_custom_skill(skill_id, version, user_id), builtin=False)
+        _custom_skills_cache_clear()
+        return result
     except (SkillStoreNotFound, SkillStoreError) as exc:
         raise SkillCatalogError(str(exc)) from exc

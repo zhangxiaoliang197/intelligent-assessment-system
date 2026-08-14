@@ -7,8 +7,22 @@
       :areas="mergedAreas"
       :circles="mergedCircles"
       :heat-points="heatPoints"
-      @marker-click="(p: any) => emit('marker-click', { point: p })"
+      :viewport="viewport"
+      @marker-click="(p: any) => emit('marker-click', p)"
+      @region-select="(p: any) => emit('region-select', p)"
+      @draw-end="(p: any) => emit('draw-end', p)"
+      @viewport-change="(p: any) => emit('viewport-change', p)"
     />
+    <div v-if="layers.length" class="situation-layer-control" aria-label="态势图层">
+      <label v-for="layer in layers" :key="layer.layerId">
+        <input
+          type="checkbox"
+          :checked="layer.layerConfig?.visible !== false"
+          @change="emit('layer-toggle', { layerId: layer.layerId, visible: ($event.target as HTMLInputElement).checked })"
+        />
+        {{ layer.layerConfig?.name || layer.layerId }}
+      </label>
+    </div>
     <div v-if="explanation" class="map-explain">
       <el-icon><InfoFilled /></el-icon>
       <span>{{ explanation }}</span>
@@ -62,22 +76,87 @@ const heatPoints = computed(() => {
   return all
 })
 
+function featureValue(feature: any, key: string): unknown {
+  return feature?.[key] ?? feature?.props?.[key] ?? feature?.properties?.[key]
+}
+
+function featurePassesContext(feature: any): boolean {
+  if (!feature) return false
+
+  // 只在要素显式携带相应维度时做过滤，避免旧数据因没有上下文字段而被全部清空。
+  if (props.selectedRegion) {
+    const region = featureValue(feature, 'regionId')
+      ?? featureValue(feature, 'region')
+      ?? featureValue(feature, 'areaId')
+    if (region != null && String(region) !== props.selectedRegion) return false
+  }
+
+  if (props.timeRange) {
+    const rawTime = featureValue(feature, 'timestamp')
+      ?? featureValue(feature, 'time')
+      ?? featureValue(feature, 'recordTime')
+      ?? featureValue(feature, 'record_time')
+    if (rawTime != null) {
+      const parsed = typeof rawTime === 'number' ? rawTime : Date.parse(String(rawTime))
+      const milliseconds = parsed < 10_000_000_000 ? parsed * 1000 : parsed
+      if (Number.isFinite(milliseconds)
+        && (milliseconds < props.timeRange[0] || milliseconds > props.timeRange[1])) return false
+    }
+  }
+
+  for (const [key, expected] of Object.entries(props.filters || {})) {
+    if (expected == null || expected === '' || (Array.isArray(expected) && expected.length === 0)) continue
+    const actual = featureValue(feature, key)
+    if (actual == null) continue
+    if (Array.isArray(expected)) {
+      if (!expected.map(String).includes(String(actual))) return false
+    } else if (String(actual) !== String(expected)) {
+      return false
+    }
+  }
+  return true
+}
+
+function layerType(layer: MapLayer): string {
+  return String(layer.layerConfig?.type || 'points').toLowerCase()
+}
+
+function valueScale(value: unknown, minimum = 7, maximum = 26): number {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return minimum
+  return Math.min(maximum, Math.max(minimum, minimum + Math.sqrt(Math.max(0, number)) * 1.7))
+}
+
 const mergedPoints = computed<GeoPoint[]>(() => {
   const all: GeoPoint[] = []
   for (const layer of props.layers) {
-    if (!layer.points) continue
-    // 热力图图层不渲染为普通标点，交由 heatPoints 渲染
-    if (layer.layerConfig?.type === 'heatmap') continue
+    if (layer.layerConfig?.visible === false) continue
+    const type = layerType(layer)
+    // 热力图图层不渲染为普通标点，交由 heatPoints（leaflet.heat）渲染
+    if (type === 'heatmap') continue
+    const sourcePoints = [
+      ...(layer.points || []),
+      ...((layer as any).clusters || []),
+    ]
+    if (!sourcePoints.length) continue
     const color = layer.layerConfig?.color || '#e74c3c'
-    for (const p of layer.points) {
+    for (const p of sourcePoints) {
+      if (!featurePassesContext(p)) continue
+      const center = p.center || p.coordinate || p
+      const isIntensityLayer = type === 'clusters'
       all.push({
         name: p.name || '',
-        lng: p.lng ?? 0,
-        lat: p.lat ?? 0,
-        raw: p.raw || `${p.lng}, ${p.lat}`,
-        props: p.props,
+        lng: center.lng ?? center.longitude ?? 0,
+        lat: center.lat ?? center.latitude ?? 0,
+        raw: p.raw || `${center.lng ?? center.longitude}, ${center.lat ?? center.latitude}`,
+        props: p.props || p.properties || {},
         routeName: p.routeName,
-        color,
+        color: p.color || color,
+        radius: isIntensityLayer ? valueScale(p.value ?? p.count ?? p.weight) : layer.layerConfig?.radius,
+        fillOpacity: isIntensityLayer ? layer.layerConfig?.fillOpacity ?? 0.55 : layer.layerConfig?.fillOpacity,
+        _layerId: layer.layerId,
+        _datasetRef: p.datasetRef || props.dataset?.datasetId || '',
+        _featureId: p.featureId || '',
       } as any)
     }
   }
@@ -87,17 +166,32 @@ const mergedPoints = computed<GeoPoint[]>(() => {
 const mergedRoutes = computed<GeoRoute[]>(() => {
   const all: GeoRoute[] = []
   for (const layer of props.layers) {
-    if (!layer.routes || layer.routes.length === 0) continue
+    if (layer.layerConfig?.visible === false) continue
+    const sourceRoutes = [
+      ...(layer.routes || []),
+      ...((layer as any).flows || []),
+      ...((layer as any).flow || []),
+    ]
+    if (!sourceRoutes.length) continue
     const color = layer.layerConfig?.color || '#e74c3c'
-    for (const r of layer.routes) {
-      const pts: GeoPoint[] = (r.points || []).map((p: any) => ({
+    for (const r of sourceRoutes) {
+      if (!featurePassesContext(r)) continue
+      const routePoints = r.points || (r.from && r.to ? [r.from, r.to] : [])
+      const pts: GeoPoint[] = routePoints.map((p: any) => ({
         name: '',
         lng: p.lng ?? 0,
         lat: p.lat ?? 0,
         raw: `${p.lng}, ${p.lat}`,
         color,
       } as any))
-      all.push({ name: r.name || '', points: pts, color })
+      all.push({
+        name: r.name || '', points: pts, color: r.color || color,
+        weight: layer.layerConfig?.weight,
+        opacity: layer.layerConfig?.opacity,
+        dashArray: layerType(layer) === 'flow' ? false : layer.layerConfig?.dashArray,
+        _layerId: layer.layerId,
+        _datasetRef: r.datasetRef || props.dataset?.datasetId || '',
+      } as any)
     }
   }
   return all
@@ -106,9 +200,15 @@ const mergedRoutes = computed<GeoRoute[]>(() => {
 const mergedAreas = computed<GeoArea[]>(() => {
   const all: GeoArea[] = []
   for (const layer of props.layers) {
-    if (!layer.areas || layer.areas.length === 0) continue
+    if (layer.layerConfig?.visible === false) continue
+    const sourceAreas = [
+      ...(layer.areas || []),
+      ...((layer as any).coverage?.areas || []),
+    ]
+    if (!sourceAreas.length) continue
     const color = layer.layerConfig?.color || '#3498db'
-    for (const a of layer.areas) {
+    for (const a of sourceAreas) {
+      if (!featurePassesContext(a)) continue
       const pts: GeoPoint[] = (a.points || []).map((p: any) => ({
         name: '',
         lng: p.lng ?? 0,
@@ -116,7 +216,16 @@ const mergedAreas = computed<GeoArea[]>(() => {
         raw: `${p.lng}, ${p.lat}`,
         color,
       } as any))
-      all.push({ name: a.name || '', points: pts, color })
+      all.push({
+        name: a.name || '', points: pts, color: a.color || color,
+        weight: layer.layerConfig?.weight,
+        opacity: layer.layerConfig?.opacity,
+        fillOpacity: layer.layerConfig?.fillOpacity,
+        _layerId: layer.layerId,
+        _regionId: a.featureId || a.regionId || a.name || '',
+        _selected: Boolean(props.selectedRegion && props.selectedRegion === (a.featureId || a.regionId || a.name)),
+        _datasetRef: a.datasetRef || props.dataset?.datasetId || '',
+      } as any)
     }
   }
   return all
@@ -125,14 +234,27 @@ const mergedAreas = computed<GeoArea[]>(() => {
 const mergedCircles = computed<CircleArea[]>(() => {
   const all: CircleArea[] = []
   for (const layer of props.layers) {
-    if (!layer.circles || layer.circles.length === 0) continue
-    for (const c of layer.circles) {
+    if (layer.layerConfig?.visible === false) continue
+    const sourceCircles = [
+      ...(layer.circles || []),
+      ...((layer as any).coverage?.circles || []),
+      ...((layer as any).coverages || []),
+    ]
+    if (!sourceCircles.length) continue
+    for (const c of sourceCircles) {
+      if (!featurePassesContext(c)) continue
       all.push({
         name: c.name || '',
         center: { lng: c.center?.lng ?? 0, lat: c.center?.lat ?? 0 },
         radiusKm: c.radiusKm || 50,
-        props: c.props,
-      })
+        props: c.props || c.properties || {},
+        color: c.color || layer.layerConfig?.color,
+        weight: layer.layerConfig?.weight,
+        opacity: layer.layerConfig?.opacity,
+        fillOpacity: layer.layerConfig?.fillOpacity,
+        _layerId: layer.layerId,
+        _datasetRef: c.datasetRef || props.dataset?.datasetId || '',
+      } as any)
     }
   }
   return all
@@ -141,6 +263,7 @@ const mergedCircles = computed<CircleArea[]>(() => {
 
 <style scoped>
 .situation-map-slot {
+  position: relative;
   width: 100%;
   height: 100%;
   display: flex;
@@ -159,4 +282,19 @@ const mergedCircles = computed<CircleArea[]>(() => {
   border-radius: 4px;
   flex-shrink: 0;
 }
+.situation-layer-control {
+  position: absolute;
+  z-index: 500;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  gap: 4px;
+  max-width: 220px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 92%);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 18%);
+  font-size: 12px;
+}
+.situation-layer-control label { display: flex; align-items: center; gap: 6px; }
 </style>

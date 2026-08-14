@@ -56,6 +56,16 @@ async def validate_required_skill_catalog():
 # LLM 配置现在从 Java admin-service 的 MySQL 数据库中获取
 # 支持多配置管理和活跃配置切换
 ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
+INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "").strip()
+
+
+def _admin_request(path: str, *, data: bytes = None, method: str = "GET") -> urllib.request.Request:
+    """Build authenticated service-to-service requests for protected admin APIs."""
+    req = urllib.request.Request(f"{ADMIN_SERVICE_URL}{path}", data=data, method=method)
+    req.add_header("Content-Type", "application/json")
+    if INTERNAL_SERVICE_TOKEN:
+        req.add_header("X-Service-Token", INTERNAL_SERVICE_TOKEN)
+    return req
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 IMAGES_DIR = os.path.join(DATA_DIR, 'images')
@@ -100,51 +110,16 @@ def _smart_truncate(text: str, max_len: int = 200) -> str:
 def load_llm_config():
     """从 Java admin-service API 获取当前活跃的大模型配置"""
     try:
-        req = urllib.request.Request(
-            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/active",
-            method="GET"
-        )
-        req.add_header("Content-Type", "application/json")
+        req = _admin_request("/api/admin/internal/config/llm/active")
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             if data.get("success") and data.get("data"):
                 return data["data"]
-            # 没有活跃配置，尝试从配置列表中取第一个可用配置作为兜底
-            logger.warning("没有找到活跃的 LLM 配置，尝试从配置列表兜底...")
+            logger.warning("没有找到活跃的 LLM 配置")
     except Exception as e:
         logger.warning(f"从 admin-service 获取 LLM 配置失败: {e}")
 
-    # 兜底：从配置列表中取第一个可用配置（优先 vllm > openai > deepseek > 其他）
-    try:
-        req = urllib.request.Request(
-            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/list",
-            method="GET"
-        )
-        req.add_header("Content-Type", "application/json")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            list_data = json.loads(resp.read().decode("utf-8"))
-            if list_data.get("success") and list_data.get("data"):
-                configs = list_data["data"]
-                if isinstance(configs, list) and len(configs) > 0:
-                    # 优先找 vllm/openai/deepseek 类型的配置
-                    priority_order = ["vllm", "openai", "deepseek"]
-                    for pt in priority_order:
-                        for c in configs:
-                            if c.get("type") == pt and c.get("apiUrl"):
-                                logger.info(f"使用配置列表中的 {pt} 配置: model={c.get('model')}, url={c.get('apiUrl')}")
-                                return c
-                    # 没匹配到优先类型，取第一个有 apiUrl 的
-                    for c in configs:
-                        if c.get("apiUrl"):
-                            logger.info(f"使用兜底配置: type={c.get('type')}, model={c.get('model')}")
-                            return c
-                    # 所有配置都没有 apiUrl，取第一个
-                    logger.info(f"使用配置列表中的第一个配置: type={configs[0].get('type')}")
-                    return configs[0]
-    except Exception:
-        pass
-
-    logger.warning("没有可用的 LLM 配置，使用硬编码默认值")
+    logger.warning("没有可用的服务端 LLM 配置")
     return {
         "type": "deepseek",
         "apiUrl": "https://api.deepseek.com/v1",
@@ -1141,11 +1116,7 @@ async def clear_history(session_id: str):
 async def get_llm_config():
     """获取当前活跃的大模型配置"""
     try:
-        req = urllib.request.Request(
-            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/active",
-            method="GET"
-        )
-        req.add_header("Content-Type", "application/json")
+        req = _admin_request("/api/admin/config/llm/active")
         with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
@@ -1156,11 +1127,7 @@ async def get_llm_config():
 async def list_llm_configs():
     """列出所有大模型配置"""
     try:
-        req = urllib.request.Request(
-            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/list",
-            method="GET"
-        )
-        req.add_header("Content-Type", "application/json")
+        req = _admin_request("/api/admin/config/llm/list")
         with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
@@ -1171,11 +1138,7 @@ async def save_llm_config_endpoint(config: LlmConfigRequest):
     """保存新的大模型配置"""
     try:
         body = json.dumps(config.dict()).encode("utf-8")
-        req = urllib.request.Request(
-            f"{ADMIN_SERVICE_URL}/api/admin/config/llm",
-            data=body, method="POST"
-        )
-        req.add_header("Content-Type", "application/json")
+        req = _admin_request("/api/admin/config/llm", data=body, method="POST")
         with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
@@ -1185,11 +1148,7 @@ async def save_llm_config_endpoint(config: LlmConfigRequest):
 async def activate_llm_config(config_id: str):
     """激活指定的大模型配置"""
     try:
-        req = urllib.request.Request(
-            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/{config_id}/activate",
-            method="PUT"
-        )
-        req.add_header("Content-Type", "application/json")
+        req = _admin_request(f"/api/admin/config/llm/{config_id}/activate", method="PUT")
         with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
@@ -1199,11 +1158,7 @@ async def activate_llm_config(config_id: str):
 async def delete_llm_config(config_id: str):
     """删除大模型配置"""
     try:
-        req = urllib.request.Request(
-            f"{ADMIN_SERVICE_URL}/api/admin/config/llm/{config_id}",
-            method="DELETE"
-        )
-        req.add_header("Content-Type", "application/json")
+        req = _admin_request(f"/api/admin/config/llm/{config_id}", method="DELETE")
         with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:

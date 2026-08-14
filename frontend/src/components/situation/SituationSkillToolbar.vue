@@ -1,98 +1,106 @@
 <template>
   <div class="situation-skill-toolbar">
-    <div class="skill-selector-zone">
-      <div class="skill-toolbar-title">
-        <span class="title-icon"><el-icon><MagicStick /></el-icon></span>
-        <span>Skill</span>
-        <span class="skill-total">{{ skillTotal }}</span>
+    <div class="toolbar-primary-row">
+      <div class="skill-selector-zone">
+        <div class="skill-toolbar-title">
+          <span class="title-icon"><el-icon><MagicStick /></el-icon></span>
+          <span>Skill</span>
+          <span class="skill-total">{{ skillTotal }}</span>
+        </div>
+
+        <el-select
+          v-model="selectedCategory"
+          class="category-select"
+          clearable
+          placeholder="全部分类"
+          :disabled="loading || !usableSkills.length"
+        >
+          <el-option
+            v-for="item in categories"
+            :key="item.name"
+            :label="`${item.name} (${item.count})`"
+            :value="item.name"
+          />
+        </el-select>
+
+        <el-select
+          :model-value="activeSkill?.id || ''"
+          class="skill-select"
+          filterable
+          clearable
+          :loading="loading"
+          :disabled="loading || !usableSkills.length"
+          placeholder="搜索并选择一个 Skill"
+          no-match-text="没有匹配的 Skill"
+          @change="onSkillChange"
+          @clear="emit('clear')"
+        >
+          <el-option
+            v-for="skill in selectableSkills"
+            :key="skill.id"
+            :label="skill.name"
+            :value="skill.id"
+          >
+            <span class="option-name">{{ skill.name }}</span>
+            <span class="option-category">{{ skill.category }}</span>
+          </el-option>
+        </el-select>
+
+        <el-button :icon="Collection" :loading="loading" @click="emit('open-library')">
+          技能库
+        </el-button>
       </div>
 
-      <el-select
-        v-model="selectedCategory"
-        class="category-select"
-        clearable
-        placeholder="全部分类"
-        :disabled="loading || !usableSkills.length"
-      >
-        <el-option
-          v-for="item in categories"
-          :key="item.name"
-          :label="`${item.name} (${item.count})`"
-          :value="item.name"
-        />
-      </el-select>
+      <!-- 数据源选择固定在第一行右侧，不再挤压当前 Skill 信息。 -->
+      <div v-if="$slots.append" class="append-zone">
+        <slot name="append" />
+      </div>
+    </div>
 
-      <el-select
-        :model-value="activeSkill?.id || ''"
-        class="skill-select"
-        filterable
-        clearable
-        :loading="loading"
-        :disabled="loading || !usableSkills.length"
-        placeholder="搜索并选择一个 Skill"
-        no-match-text="没有匹配的 Skill"
-        @change="onSkillChange"
-        @clear="emit('clear')"
-      >
-        <el-option
-          v-for="skill in selectableSkills"
+    <div class="toolbar-secondary-row">
+      <div v-if="activeSkill" class="active-skill-zone">
+        <div class="active-skill-summary">
+          <span class="active-status"><span class="status-dot" />已启用</span>
+          <strong :title="activeSkill.name">{{ activeSkill.name }}</strong>
+          <el-tag size="small" effect="plain">{{ activeSkill.category }}</el-tag>
+          <span class="active-description" :title="activeSkill.description">{{ activeSkill.description }}</span>
+        </div>
+        <div class="active-skill-actions">
+          <el-button
+            v-if="selectedSkill?.recommendedQuestions?.length"
+            text
+            type="primary"
+            @click="useRecommendedQuestion"
+          >
+            填入示例问题
+          </el-button>
+          <el-button :icon="Document" plain size="small" @click="emit('open-markdown')">
+            SKILL.md
+          </el-button>
+          <el-button :icon="Setting" plain size="small" @click="emit('configure')">
+            参数配置
+            <span v-if="configuredCount" class="configured-count">{{ configuredCount }}</span>
+          </el-button>
+          <el-button text :icon="Close" title="取消使用当前 Skill" @click="emit('clear')" />
+        </div>
+      </div>
+
+      <div v-else class="recommend-zone">
+        <span class="recommend-label">智能推荐</span>
+        <button
+          v-for="skill in recommendations"
           :key="skill.id"
-          :label="skill.name"
-          :value="skill.id"
+          type="button"
+          class="recommend-chip"
+          :title="skill.description"
+          @click="emit('select', skill)"
         >
-          <span class="option-name">{{ skill.name }}</span>
-          <span class="option-category">{{ skill.category }}</span>
-        </el-option>
-      </el-select>
-
-      <el-button :icon="Collection" :loading="loading" @click="emit('open-library')">
-        技能库
-      </el-button>
-    </div>
-
-    <div v-if="activeSkill" class="active-skill-zone">
-      <span class="active-status"><span class="status-dot" />已启用</span>
-      <strong :title="activeSkill.name">{{ activeSkill.name }}</strong>
-      <el-tag size="small" effect="plain">{{ activeSkill.category }}</el-tag>
-      <span class="active-description" :title="activeSkill.description">{{ activeSkill.description }}</span>
-      <el-button
-        v-if="selectedSkill?.recommendedQuestions?.length"
-        text
-        type="primary"
-        @click="useRecommendedQuestion"
-      >
-        填入示例问题
-      </el-button>
-      <el-button :icon="Document" plain size="small" @click="emit('open-markdown')">
-        SKILL.md
-      </el-button>
-      <el-button :icon="Setting" plain size="small" @click="emit('configure')">
-        参数配置
-        <span v-if="configuredCount" class="configured-count">{{ configuredCount }}</span>
-      </el-button>
-      <el-button text :icon="Close" title="取消使用当前 Skill" @click="emit('clear')" />
-    </div>
-
-    <div v-else class="recommend-zone">
-      <span class="recommend-label">智能推荐</span>
-      <button
-        v-for="skill in recommendations"
-        :key="skill.id"
-        type="button"
-        class="recommend-chip"
-        :title="skill.description"
-        @click="emit('select', skill)"
-      >
-        {{ skill.name }}
-      </button>
-      <span v-if="!recommendations.length" class="empty-recommendation">
-        输入问题后会自动推荐，也可以直接从左侧选择
-      </span>
-    </div>
-
-    <!-- 数据源选择插槽（与指标分析 top-bar 一致：技能选择与数据源同行） -->
-    <div v-if="$slots.append" class="append-zone">
-      <slot name="append" />
+          {{ skill.name }}
+        </button>
+        <span v-if="!recommendations.length" class="empty-recommendation">
+          输入问题后会自动推荐，也可以直接从上方选择
+        </span>
+      </div>
     </div>
   </div>
 </template>
@@ -168,13 +176,24 @@ function useRecommendedQuestion() {
 
 <style scoped>
 .situation-skill-toolbar {
-  min-height: 52px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 9px 16px;
+  padding: 10px 16px 9px;
   border-bottom: 1px solid #e5e7eb;
   background: linear-gradient(90deg, #f8fbff 0%, #fff 45%);
+}
+.toolbar-primary-row,
+.toolbar-secondary-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.toolbar-primary-row {
+  gap: 20px;
+}
+.toolbar-secondary-row {
+  min-height: 32px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #edf1f7;
 }
 .skill-selector-zone,
 .skill-toolbar-title,
@@ -184,7 +203,8 @@ function useRecommendedQuestion() {
   align-items: center;
 }
 .skill-selector-zone {
-  flex: 0 0 auto;
+  min-width: 0;
+  flex: 1 1 auto;
   gap: 9px;
 }
 .skill-toolbar-title {
@@ -221,7 +241,9 @@ function useRecommendedQuestion() {
   width: 148px;
 }
 .skill-select {
-  width: 250px;
+  min-width: 240px;
+  max-width: 380px;
+  flex: 1 1 320px;
 }
 .option-name {
   float: left;
@@ -235,11 +257,26 @@ function useRecommendedQuestion() {
 .active-skill-zone,
 .recommend-zone {
   min-width: 0;
-  flex: 1 1 auto;
+  width: 100%;
+  flex: 1 1 100%;
   gap: 8px;
-  padding-left: 14px;
-  border-left: 1px solid #e5e7eb;
+}
+.active-skill-zone {
+  justify-content: space-between;
+}
+.active-skill-summary,
+.active-skill-actions {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+.active-skill-summary {
+  flex: 1 1 auto;
   overflow: hidden;
+}
+.active-skill-actions {
+  flex: 0 0 auto;
 }
 /* 数据源选择区（右侧，与技能同行） */
 .append-zone {
@@ -247,10 +284,13 @@ function useRecommendedQuestion() {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-left: 14px;
+  padding-left: 20px;
   border-left: 1px solid #e5e7eb;
   margin-left: auto;
   white-space: nowrap;
+}
+.append-zone :deep(.data-source-select) {
+  width: 250px;
 }
 .append-zone :deep(.label) {
   font-size: 13px;
@@ -327,20 +367,16 @@ function useRecommendedQuestion() {
   background: #eff6ff;
 }
 @media (max-width: 1180px) {
-  .situation-skill-toolbar {
-    align-items: flex-start;
+  .toolbar-primary-row {
+    align-items: stretch;
     flex-direction: column;
-    gap: 8px;
-  }
-  .active-skill-zone,
-  .recommend-zone {
-    width: 100%;
-    padding: 0;
-    border-left: 0;
+    gap: 9px;
   }
   .append-zone {
     width: 100%;
-    padding: 0;
+    justify-content: flex-end;
+    padding: 8px 0 0;
+    border-top: 1px dashed #e5e7eb;
     border-left: 0;
     margin-left: 0;
   }
@@ -353,14 +389,30 @@ function useRecommendedQuestion() {
   .category-select,
   .skill-select {
     width: calc(50% - 5px);
+    min-width: 0;
   }
   .skill-toolbar-title {
     width: 100%;
+  }
+  .active-skill-zone {
+    align-items: flex-start;
+    flex-direction: column;
   }
   .active-description,
   .recommend-label,
   .recommend-chip:nth-of-type(n + 3) {
     display: none;
+  }
+  .active-skill-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .append-zone {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .append-zone :deep(.data-source-select) {
+    width: min(100%, 260px);
   }
 }
 </style>

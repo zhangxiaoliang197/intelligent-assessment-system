@@ -59,7 +59,27 @@ LOG_ENV="${LOG_ENV:-prod}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
 LOG_MAX_SIZE_MB="${LOG_MAX_SIZE_MB:-100}"
-INTERNAL_SERVICE_TOKEN="${INTERNAL_SERVICE_TOKEN:-local-development-token}"
+INTERNAL_SERVICE_TOKEN="${INTERNAL_SERVICE_TOKEN:-}"
+ADMIN_API_TOKEN="${ADMIN_API_TOKEN:-}"
+ADMIN_UI_PASSWORD="${ADMIN_UI_PASSWORD:-}"
+SITUATION_LLM_ALLOWED_HOSTS="${SITUATION_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}"
+if [ ${#INTERNAL_SERVICE_TOKEN} -lt 24 ] || [ "$INTERNAL_SERVICE_TOKEN" = "local-development-token" ]; then
+    echo "ERROR: INTERNAL_SERVICE_TOKEN 必须显式配置为至少 24 位随机值"
+    exit 1
+fi
+if [ ${#ADMIN_API_TOKEN} -lt 24 ]; then
+    echo "ERROR: ADMIN_API_TOKEN 必须显式配置为至少 24 位随机值"
+    exit 1
+fi
+if [ ${#ADMIN_UI_PASSWORD} -lt 16 ] || [ "$ADMIN_UI_PASSWORD" = "$ADMIN_API_TOKEN" ] || [ "$ADMIN_UI_PASSWORD" = "$INTERNAL_SERVICE_TOKEN" ]; then
+    echo "ERROR: ADMIN_UI_PASSWORD 必须为至少 16 位且与服务凭据不同的随机值"
+    exit 1
+fi
+case "$ADMIN_UI_PASSWORD" in
+    *'$'*) echo "ERROR: ADMIN_UI_PASSWORD 不能包含美元符号"; exit 1 ;;
+esac
+
+export INTERNAL_SERVICE_TOKEN ADMIN_API_TOKEN ADMIN_UI_PASSWORD
 
 echo "  数据目录: $DATA_DIR"
 echo "  日志目录: $LOG_DIR_HOST"
@@ -110,6 +130,7 @@ fi
 SERVICE_CONTAINERS=(
     assessment-frontend
     assessment-admin
+    assessment-situation
     assessment-ontology
     assessment-evaluation
     assessment-indicator
@@ -169,10 +190,54 @@ for i in $(seq 1 30); do
 done
 echo "  (admin 服务启动后将自动建库建表)"
 
-# ─── 1-6. Python 服务 ───
+# ─── 2. 先启动 Java 管理服务（Python 服务启动后会立即读取受保护配置）───
 echo ""
 echo "========================================"
-echo "[2/9] 启动 Python 服务..."
+echo "[2/9] 启动基础管理服务..."
+echo "========================================"
+
+echo "[启动] 基础管理服务 (10258)..."
+docker run -d --name assessment-admin \
+    --network "$NET_NAME" \
+    -p 127.0.0.1:10258:10258 \
+    -v drivers-data:/app/drivers \
+    -e MYSQL_HOST="$MYSQL_HOST" \
+    -e MYSQL_PORT="$MYSQL_PORT" \
+    -e MYSQL_DATABASE="$MYSQL_DATABASE" \
+    -e MYSQL_USER="$MYSQL_USER" \
+    -e MYSQL_PASSWORD="$MYSQL_PASSWORD" \
+    -e DB_TYPE="$DB_TYPE" \
+    -e SPRING_PROFILES_ACTIVE="$LOG_ENV" \
+    -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
+    -e ADMIN_API_TOKEN="$ADMIN_API_TOKEN" \
+    -e LOG_PATH="/app/logs" \
+    -e LOG_LEVEL="$LOG_LEVEL" \
+    -v "$LOG_DIR_HOST/admin:/app/logs" \
+    --log-driver json-file \
+    --log-opt max-size=50m \
+    --log-opt max-file=5 \
+    --restart always \
+    assessment-admin:latest
+
+ADMIN_READY=0
+for i in $(seq 1 90); do
+    if curl -fsS http://127.0.0.1:10258/actuator/health >/dev/null 2>&1; then
+        ADMIN_READY=1
+        echo "  管理服务健康检查通过 (${i}s)"
+        break
+    fi
+    sleep 1
+done
+if [ "$ADMIN_READY" -ne 1 ]; then
+    echo "ERROR: 管理服务未通过健康检查"
+    docker logs --tail 100 assessment-admin
+    exit 1
+fi
+
+# ─── 3. Python 服务 ───
+echo ""
+echo "========================================"
+echo "[3/9] 启动 Python 服务..."
 echo "========================================"
 
 echo "[启动] 知识库服务 (10252)..."
@@ -200,6 +265,7 @@ docker run -d --name assessment-qa \
     -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
     -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
     -e ONTOLOGY_SERVICE_URL="http://assessment-ontology:10256" \
+    -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
     -e EVALUATION_SKILLS_DIR="/app/config/skills" \
     -e EVALUATION_SKILL_MD_OVERRIDE_DIR="/app/data/skill-markdown-overrides" \
     -e LOG_ENV="$LOG_ENV" \
@@ -226,6 +292,7 @@ docker run -d --name assessment-indicator \
     -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
     -e EVALUATION_API_URL="http://assessment-qa:10253" \
     -e ONTOLOGY_SERVICE_URL="http://assessment-ontology:10256" \
+    -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
     -e LOG_ENV="$LOG_ENV" \
     -e LOG_LEVEL="$LOG_LEVEL" \
     -e LOG_DIR="/app/logs" \
@@ -259,6 +326,8 @@ echo "[启动] 本体模型服务 (10256)..."
 docker run -d --name assessment-ontology \
     --network "$NET_NAME" \
     -p 10256:10256 \
+    -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
+    -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
     -e LOG_ENV="$LOG_ENV" \
     -e LOG_LEVEL="$LOG_LEVEL" \
     -e LOG_DIR="/app/logs" \
@@ -275,7 +344,7 @@ docker run -d --name assessment-ontology \
 echo "[启动] 态势图服务 (10257)..."
 docker run -d --name assessment-situation \
     --network "$NET_NAME" \
-    -p 10257:10257 \
+    -p 127.0.0.1:10257:10257 \
     -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
     -e QA_SERVICE_URL="http://assessment-qa:10253" \
     -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
@@ -292,6 +361,8 @@ docker run -d --name assessment-situation \
     -e SITUATION_MAX_PER_USER="${SITUATION_MAX_PER_USER:-2}" \
     -e SITUATION_GENERATION_TIMEOUT="${SITUATION_GENERATION_TIMEOUT:-240}" \
     -e SITUATION_LLM_EVIDENCE_ROWS="${SITUATION_LLM_EVIDENCE_ROWS:-0}" \
+    -e SITUATION_LLM_ALLOWED_HOSTS="$SITUATION_LLM_ALLOWED_HOSTS" \
+    -e SITUATION_CORS_ORIGINS="${SITUATION_CORS_ORIGINS:-http://localhost:10086,http://127.0.0.1:10086}" \
     -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
     -e LLM_MAX_TOKENS="24000" \
     -e LOG_ENV="$LOG_ENV" \
@@ -307,54 +378,17 @@ docker run -d --name assessment-situation \
     --restart always \
     assessment-situation:latest
 
-# ─── 7. Java 服务 (需要 MySQL 环境变量) ───
+# ─── 4. 启动前端 ───
 echo ""
 echo "========================================"
-echo "[3/9] 启动 Java 服务..."
+echo "[4/9] 启动前端..."
 echo "========================================"
-
-echo "[启动] 基础管理服务 (10258)..."
-docker run -d --name assessment-admin \
-    --network "$NET_NAME" \
-    -p 10258:10258 \
-    -v drivers-data:/app/drivers \
-    -e MYSQL_HOST="$MYSQL_HOST" \
-    -e MYSQL_PORT="$MYSQL_PORT" \
-    -e MYSQL_DATABASE="$MYSQL_DATABASE" \
-    -e MYSQL_USER="$MYSQL_USER" \
-    -e MYSQL_PASSWORD="$MYSQL_PASSWORD" \
-    -e DB_TYPE="$DB_TYPE" \
-    -e SPRING_PROFILES_ACTIVE="$LOG_ENV" \
-    -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
-    -e LOG_PATH="/app/logs" \
-    -e LOG_LEVEL="$LOG_LEVEL" \
-    -v "$LOG_DIR_HOST/admin:/app/logs" \
-    --log-driver json-file \
-    --log-opt max-size=50m \
-    --log-opt max-file=5 \
-    --restart always \
-    assessment-admin:latest
-
-# ─── 9. 等待管理服务就绪后启动前端 ───
-echo ""
-echo "========================================"
-echo "[4/9] 等待管理服务就绪..."
-echo "========================================"
-for i in $(seq 1 90); do
-    if curl -s http://127.0.0.1:10258/actuator/health >/dev/null 2>&1; then
-        echo "  管理服务已就绪 (${i}s)"
-        break
-    fi
-    if [ $i -eq 90 ]; then
-        echo "  WARNING: 管理服务超时, 前端启动可能失败"
-    fi
-    sleep 1
-done
-
 echo "[启动] 前端界面 (10086)..."
 docker run -d --name assessment-frontend \
     --network "$NET_NAME" \
     -p 10086:80 \
+    -e ADMIN_API_TOKEN="$ADMIN_API_TOKEN" \
+    -e ADMIN_UI_PASSWORD="$ADMIN_UI_PASSWORD" \
     --log-driver json-file \
     --log-opt max-size=20m \
     --log-opt max-file=3 \
@@ -399,6 +433,27 @@ if ! echo "$SKILL_RESPONSE" | grep -Eq '"builtInTotal"[[:space:]]*:[[:space:]]*3
 fi
 echo "  Skill 目录接口校验通过: 30 个内置 Skill"
 
+SITUATION_READY=0
+for i in $(seq 1 60); do
+    if curl -fsS http://127.0.0.1:10257/situation/health >/dev/null 2>&1; then
+        SITUATION_READY=1
+        echo "  态势服务健康检查通过 (${i}s)"
+        break
+    fi
+    sleep 1
+done
+if [ "$SITUATION_READY" -ne 1 ]; then
+    echo "ERROR: 态势服务未通过健康检查"
+    docker logs --tail 100 assessment-situation
+    exit 1
+fi
+SITUATION_SKILLS="$(curl -fsS http://127.0.0.1:10257/situation/skills?limit=100)"
+if ! echo "$SITUATION_SKILLS" | grep -Eq '"catalogTotal"[[:space:]]*:[[:space:]]*30'; then
+    echo "ERROR: 态势 Skill 目录未返回 30 个 Skill"
+    exit 1
+fi
+echo "  态势 Skill 目录校验通过: 30 个内置 Skill"
+
 # ─── 状态汇总 ───
 echo ""
 echo "========================================"
@@ -410,5 +465,6 @@ IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [ -z "$IP" ] && IP="<服务器IP>"
 echo "  访问地址: http://${IP}:10086"
 echo "  MySQL:    ${MYSQL_USER}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DATABASE}"
-echo "  共启动 8 个服务"
+echo "  共启动 9 个服务"
+echo "  SECURITY: 生产环境必须在 10086 前配置 TLS，Basic Auth 禁止经明文 HTTP 跨网传输"
 echo "========================================"

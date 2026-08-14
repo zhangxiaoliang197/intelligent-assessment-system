@@ -1,5 +1,6 @@
 package com.assessment.admin.model;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
@@ -64,6 +65,8 @@ public class LlmConfig {
     public void setType(String type) { this.type = type; }
     public String getApiUrl() { return apiUrl; }
     public void setApiUrl(String apiUrl) { this.apiUrl = apiUrl; }
+    /** Never include the stored bearer secret when an entity is serialized accidentally. */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     public String getApiKey() { return apiKey; }
     public void setApiKey(String apiKey) { this.apiKey = apiKey; }
     public String getModel() { return model; }

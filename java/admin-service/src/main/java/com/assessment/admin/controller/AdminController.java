@@ -14,6 +14,7 @@ import com.assessment.admin.repository.FieldAnnotationRepository;
 import com.assessment.admin.repository.IndicatorRepository;
 import com.assessment.admin.repository.LlmConfigRepository;
 import com.assessment.admin.repository.MapServiceConfigRepository;
+import com.assessment.admin.service.SqlExecutionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -64,6 +65,9 @@ public class AdminController {
 
     @Autowired
     private MapServiceConfigRepository mapConfigRepo;
+
+    @Autowired
+    private SqlExecutionService sqlExecutionService;
 
     @Autowired
     private com.assessment.admin.service.IndicatorSpecService indicatorSpecService;
@@ -567,90 +571,17 @@ public class AdminController {
     }
 
     /**
-     * 执行数据集查询，返回数据行（通用能力，数据源无关）。
-     * 优先执行 dataset.sql_text；为空则回退为 SELECT * FROM tableName。
-     * 安全：仅允许 SELECT/WITH 语句，限制行数与超时，防注入与误写。
-     * 供 situation-service Agent 在 Phase 2 取真实数据画图。
+     * 管理员兼容查询入口。始终使用服务端数据集字段投影，忽略自定义 SQL，
+     * 不允许未配置字段白名单的数据集回退为全字段查询。
      */
     @GetMapping("/dataset/{datasetId}/data")
     public ResponseEntity<Map<String, Object>> getDatasetData(
             @PathVariable String datasetId,
             @RequestParam(value = "limit", defaultValue = "200") int limit) {
-        Optional<Dataset> optDs = datasetRepo.findById(datasetId);
-        if (optDs.isEmpty()) return ResponseEntity.notFound().build();
-        Dataset ds = optDs.get();
-
-        if (ds.getDatabaseId() == null) {
-            return ResponseEntity.ok(errorMap("数据集未关联数据库"));
-        }
-        Optional<DatabaseConfig> optDb = dbConfigRepo.findById(ds.getDatabaseId());
-        if (optDb.isEmpty()) return ResponseEntity.ok(errorMap("关联的数据库配置不存在"));
-        DatabaseConfig db = optDb.get();
-
-        // 确定查询 SQL：优先 sql_text，否则回退 SELECT * FROM tableName
-        String sql = ds.getSqlText();
-        if (sql == null || sql.trim().isEmpty()) {
-            if (ds.getTableName() == null || ds.getTableName().isEmpty()) {
-                return ResponseEntity.ok(errorMap("数据集既无 SQL 也未指定表名"));
-            }
-            sql = "SELECT * FROM " + ds.getTableName();
-        }
-        // 安全：仅允许只读查询，拦截 INSERT/UPDATE/DELETE/DROP/ALTER 等
-        String trimmed = sql.trim();
-        String upper = trimmed.toUpperCase();
-        if (!upper.startsWith("SELECT") && !upper.startsWith("WITH")) {
-            return ResponseEntity.ok(errorMap("仅允许 SELECT/WITH 查询，当前 SQL 开头不被允许"));
-        }
-
-        Driver driver = findDriverByType(db.getType());
-        if (driver == null) return ResponseEntity.ok(errorMap("未找到驱动: " + db.getType()));
-
-        String url = (driver.getUrlTemplate() != null ? driver.getUrlTemplate() : "")
-                .replace("{host}", db.getHost())
-                .replace("{port}", String.valueOf(db.getPort()))
-                .replace("{database}", db.getDbName());
-
-        int safeLimit = Math.max(1, Math.min(limit, 1000));  // 行数硬上限 1000
-        long start = System.currentTimeMillis();
-        try (Connection conn = getJdbcConnection(driver, url, db.getUsername(), db.getPassword())) {
-            try (Statement stmt = conn.createStatement(
-                    ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
-                stmt.setMaxRows(safeLimit);
-                stmt.setQueryTimeout(30);  // 30 秒超时保护
-                try (ResultSet rs = stmt.executeQuery(trimmed)) {
-                    int colCount = rs.getMetaData().getColumnCount();
-                    List<String> columns = new ArrayList<>();
-                    for (int i = 1; i <= colCount; i++) {
-                        columns.add(rs.getMetaData().getColumnLabel(i));
-                    }
-                    List<Map<String, Object>> rows = new ArrayList<>();
-                    while (rs.next() && rows.size() < safeLimit) {
-                        Map<String, Object> row = new LinkedHashMap<>();
-                        for (int i = 1; i <= colCount; i++) {
-                            Object val = rs.getObject(i);
-                            // 序列化友好：字节流/大对象转字符串，避免 JSON 序列化失败
-                            if (val instanceof byte[]) val = "[BLOB]";
-                            row.put(columns.get(i - 1), val);
-                        }
-                        rows.add(row);
-                    }
-                    long elapsed = System.currentTimeMillis() - start;
-                    return ResponseEntity.ok(Map.of(
-                            "success", true,
-                            "datasetId", datasetId,
-                            "datasetName", ds.getName(),
-                            "columns", columns,
-                            "rows", rows,
-                            "total", rows.size(),
-                            "truncated", rows.size() >= safeLimit,
-                            "latency", elapsed + "ms"
-                    ));
-                }
-            }
-        } catch (Exception e) {
-            return ResponseEntity.ok(errorMap("数据查询失败: " + e.getClass().getSimpleName()
-                    + ": " + e.getMessage()));
-        }
+        // Compatibility endpoint remains administrator-only at the perimeter and uses the
+        // exact same server-owned projection as the runtime query API. Caller SQL and
+        // SELECT * fallbacks are deliberately ignored.
+        return ResponseEntity.ok(sqlExecutionService.queryDataset(datasetId, limit));
     }
 
     // ==================== 指标管理（MySQL持久化） ====================
@@ -732,7 +663,8 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> listLlmConfigs() {
         List<LlmConfig> configs = llmConfigRepo.findAll();
         if (configs.isEmpty()) {
-            // 首次使用，返回默认配置提示
+            // Read endpoints stay side-effect free. Return a safe unsaved template so an
+            // unauthenticated compatibility read cannot mutate configuration state.
             LlmConfig defaultCfg = new LlmConfig();
             defaultCfg.setId("llm_default");
             defaultCfg.setName("DeepSeek 默认");
@@ -744,10 +676,13 @@ public class AdminController {
             defaultCfg.setMaxTokens(2000);
             defaultCfg.setTopP(0.9);
             defaultCfg.setIsActive(false);
-            llmConfigRepo.save(defaultCfg);
-            configs = llmConfigRepo.findAll();
+            configs = List.of(defaultCfg);
         }
-        return ResponseEntity.ok(Map.of("success", true, "configs", configs, "total", configs.size()));
+        List<Map<String, Object>> safeConfigs = new ArrayList<>();
+        for (LlmConfig config : configs) safeConfigs.add(toSafeLlmConfig(config));
+        return ResponseEntity.ok()
+                .header("Cache-Control", "no-store")
+                .body(Map.of("success", true, "configs", safeConfigs, "total", safeConfigs.size()));
     }
 
     /** 保存/创建大模型配置 */
@@ -780,7 +715,11 @@ public class AdminController {
         if (body.containsKey("name")) config.setName((String) body.get("name"));
         if (body.containsKey("type")) config.setType((String) body.get("type"));
         if (body.containsKey("apiUrl")) config.setApiUrl((String) body.get("apiUrl"));
-        if (body.containsKey("apiKey")) config.setApiKey((String) body.get("apiKey"));
+        if (body.containsKey("apiKey")) {
+            String apiKey = (String) body.get("apiKey");
+            // The masked sentinel returned to browsers never overwrites the stored secret.
+            if (apiKey != null && !apiKey.isBlank() && !apiKey.matches("\\*+")) config.setApiKey(apiKey);
+        }
         if (body.containsKey("model")) config.setModel((String) body.get("model"));
         if (body.containsKey("temperature")) config.setTemperature(parseDouble(body.get("temperature"), config.getTemperature()));
         if (body.containsKey("maxTokens")) config.setMaxTokens(parseInt(body.get("maxTokens"), config.getMaxTokens()));
@@ -830,7 +769,8 @@ public class AdminController {
                         "data", Map.of(
                                 "type", config.getType(),
                                 "apiUrl", config.getApiUrl(),
-                                "apiKey", config.getApiKey(),
+                                "apiKey", "",
+                                "hasApiKey", config.getApiKey() != null && !config.getApiKey().isBlank(),
                                 "model", config.getModel(),
                                 "temperature", config.getTemperature() != null ? config.getTemperature() : 0.7,
                                 "maxTokens", config.getMaxTokens() != null ? config.getMaxTokens() : 2000,
@@ -956,6 +896,24 @@ public class AdminController {
         map.put("success", false);
         map.put("message", message);
         return map;
+    }
+
+    private Map<String, Object> toSafeLlmConfig(LlmConfig config) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("id", config.getId());
+        result.put("name", config.getName());
+        result.put("type", config.getType());
+        result.put("apiUrl", config.getApiUrl());
+        result.put("apiKey", "");
+        result.put("hasApiKey", config.getApiKey() != null && !config.getApiKey().isBlank());
+        result.put("model", config.getModel());
+        result.put("temperature", config.getTemperature());
+        result.put("maxTokens", config.getMaxTokens());
+        result.put("topP", config.getTopP());
+        result.put("isActive", config.getIsActive());
+        result.put("createTime", config.getCreateTime() == null ? "" : config.getCreateTime().toString());
+        result.put("updateTime", config.getUpdateTime() == null ? "" : config.getUpdateTime().toString());
+        return result;
     }
 
     // ==================== 数据表结构读取 ====================

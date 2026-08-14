@@ -155,7 +155,12 @@ def _timestamp(path: Path) -> str:
     return value.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def get_skill_markdown(skill_id: str, user_id: str) -> Dict[str, Any]:
+def get_skill_markdown(
+    skill_id: str,
+    user_id: str,
+    *,
+    is_admin: bool = False,
+) -> Dict[str, Any]:
     skill = get_skill(skill_id, user_id, include_archived=True)
     if not skill:
         raise SkillCatalogError("态势图 Skill 不存在或当前用户无权查看")
@@ -176,15 +181,16 @@ def get_skill_markdown(skill_id: str, user_id: str) -> Dict[str, Any]:
             overridden = False
             relative_path = f"config/situation_skills.json#{skill_id}"
             last_modified = ""
-        # Markdown 在线编辑对所有登录用户开放（仍受字段安全校验与顺序约束）。
-        editable = True
+        editable = is_admin and bool(user_id)
     else:
         content = _serialize_markdown(skill)
         storage = "custom"
         overridden = False
         relative_path = f"custom-skills/{skill_id}/SKILL.md"
         last_modified = str(skill.get("updatedAt") or skill.get("createdAt") or "")
-        editable = skill.get("status") != "archived"
+        editable = skill.get("status") != "archived" and (
+            (is_admin and bool(user_id)) or str(skill.get("ownerId") or "") == user_id
+        )
     return {
         "skillId": skill_id,
         "skillName": skill.get("name", skill_id),
@@ -205,9 +211,11 @@ def update_skill_markdown(
     content: str,
     expected_hash: str,
     user_id: str,
+    *,
+    is_admin: bool = False,
 ) -> Dict[str, Any]:
     with _WRITE_LOCK:
-        current_document = get_skill_markdown(skill_id, user_id)
+        current_document = get_skill_markdown(skill_id, user_id, is_admin=is_admin)
         if not current_document["editable"]:
             raise SkillCatalogError("当前用户没有编辑此 Skill Markdown 的权限")
         if expected_hash != current_document["contentHash"]:
@@ -259,7 +267,9 @@ def update_skill_markdown(
                 candidate,
                 user_id,
                 expected_revision=int(current_document["revision"]),
-                allow_any_editor=True,
-                preserve_status=True,
+                allow_any_editor=is_admin,
+                # Editing an already published definition creates a draft revision. The
+                # changed execution contract becomes public only after explicit publish.
+                preserve_status=False,
             )
-        return get_skill_markdown(skill_id, user_id)
+        return get_skill_markdown(skill_id, user_id, is_admin=is_admin)

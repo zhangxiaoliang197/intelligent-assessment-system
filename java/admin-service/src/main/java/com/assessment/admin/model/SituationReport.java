@@ -40,6 +40,9 @@ public class SituationReport {
     @Column(name = "share_token", length = 64)
     private String shareToken;            // 分享 token，null 表示未分享
 
+    @Column(name = "share_expires_at")
+    private LocalDateTime shareExpiresAt;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -77,6 +80,8 @@ public class SituationReport {
     public void setSnapshotJson(String snapshotJson) { this.snapshotJson = snapshotJson; }
     public String getShareToken() { return shareToken; }
     public void setShareToken(String shareToken) { this.shareToken = shareToken; }
+    public LocalDateTime getShareExpiresAt() { return shareExpiresAt; }
+    public void setShareExpiresAt(LocalDateTime shareExpiresAt) { this.shareExpiresAt = shareExpiresAt; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }

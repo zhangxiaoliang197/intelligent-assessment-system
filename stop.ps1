@@ -1,4 +1,25 @@
-﻿# ========================================
+﻿# ============================================================
+# 自举引导：强制使用 PowerShell 7+（pwsh）运行本脚本。
+# 若由 Windows PowerShell 5.1（或更低）启动，自动用 pwsh 重启自身。
+# ============================================================
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    $pwshPath = $null
+    $pwshCmd = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+    if ($pwshCmd) { $pwshPath = $pwshCmd.Source }
+    if (-not $pwshPath) {
+        foreach ($c in @("$env:ProgramFiles\PowerShell\7\pwsh.exe", "${env:ProgramFiles(x86)}\PowerShell\7\pwsh.exe")) {
+            if ($c -and (Test-Path $c)) { $pwshPath = $c; break }
+        }
+    }
+    if ($pwshPath) {
+        & $pwshPath -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath @args
+        exit $LASTEXITCODE
+    }
+    Write-Host "[ERROR] 本脚本需要 PowerShell 7+ (pwsh)，但未检测到。请安装 PowerShell 7 后重试。" -ForegroundColor Red
+    exit 1
+}
+
+# ========================================
 # Intelligent Assessment System - Stop Script
 # Usage: .\stop.ps1
 # ========================================

@@ -18,6 +18,10 @@ from .catalog import SkillCatalogError, get_skill, validate_skill_parameters
 _CACHE_LOCK = threading.Lock()
 _SOURCE_CACHE: Dict[str, Dict[str, Any]] = {}
 
+# 服务探活短缓存：服务不可达时单次探活最多卡 1.5s，多个服务源串行探测会明显拖慢 preflight。
+_PROBE_TTL = 5.0
+_probe_cache: Dict[str, tuple[float, bool]] = {}
+
 
 def _actor_cache_key(actor: Dict[str, Any] = None) -> str:
     actor = actor or {}
@@ -52,6 +56,7 @@ def _dataset_snapshot(actor: Dict[str, Any] = None) -> Dict[str, Any]:
     snapshot = {
         "expires": now + 15.0,
         "tables": tables,
+        "datasets": datasets,
         "adminReady": bool(response.get("success")) if isinstance(response, dict) else False,
     }
     with _CACHE_LOCK:
@@ -69,6 +74,19 @@ def _probe_health(base_url: str) -> bool:
             return str(body.get("status") or "healthy").lower() in {"healthy", "ok"}
     except (urllib.error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
         return False
+
+
+def _cached_probe_health(base_url: str) -> bool:
+    """带短 TTL 的探活：5 秒内同一地址复用上次结果，避免不可达服务反复拖慢 preflight。"""
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        cached = _probe_cache.get(base_url)
+        if cached and cached[0] > now:
+            return cached[1]
+    ready = _probe_health(base_url)
+    with _CACHE_LOCK:
+        _probe_cache[base_url] = (now + _PROBE_TTL, ready)
+    return ready
 
 
 def _source_check(source: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
@@ -92,7 +110,7 @@ def _source_check(source: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
         "evaluation": config.QA_SERVICE_URL,
     }
     if source in service_urls:
-        ready = _probe_health(service_urls[source])
+        ready = _cached_probe_health(service_urls[source])
         return {
             "source": source,
             # 外围服务不可用给出警告；物理数据仍可支持降级执行。
@@ -114,6 +132,7 @@ def preflight_skill(
     user_id: str = "",
     team_ids: Optional[List[str]] = None,
     role: str = "viewer",
+    data_source_id: str = "",
 ) -> Dict[str, Any]:
     skill = get_skill(skill_id, user_id)
     if not skill:
@@ -144,6 +163,29 @@ def preflight_skill(
         })
 
     snapshot = _dataset_snapshot({"userId": user_id, "teamIds": team_ids or [], "role": role})
+    selected_database = str(data_source_id or "").strip()
+    if selected_database:
+        selected_datasets = [
+            item for item in snapshot.get("datasets", [])
+            if str(item.get("databaseId") or item.get("dataSourceId") or "").strip() == selected_database
+        ]
+        snapshot = {
+            **snapshot,
+            "datasets": selected_datasets,
+            "tables": {
+                str(item.get("tableName") or "").strip()
+                for item in selected_datasets if item.get("tableName")
+            },
+        }
+        checks.append({
+            "key": "database",
+            "label": "选定数据源",
+            "status": "passed" if selected_datasets else "error",
+            "message": (
+                f"选定数据源包含 {len(selected_datasets)} 个已授权数据集"
+                if selected_datasets else "选定数据源没有当前用户可访问的数据集"
+            ),
+        })
     source_checks = [_source_check(source, snapshot) for source in skill["dataSources"]]
     for item in source_checks:
         checks.append({

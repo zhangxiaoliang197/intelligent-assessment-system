@@ -32,6 +32,15 @@
       <el-form-item label="输入参数提示（逗号分隔）" required>
         <el-input v-model="form.inputHints" placeholder="例如：时间范围, 区域, 单位" />
       </el-form-item>
+      <el-form-item class="full-row" label="结构化参数 Schema（JSON，可选）">
+        <el-input
+          v-model="form.parametersJson"
+          type="textarea"
+          :rows="6"
+          placeholder='例如：[{"key":"区域","label":"区域","type":"text","binding":{"operator":"contains","field":"region"}}]'
+        />
+        <div class="field-tip">支持 required/default/options/minimum/maximum，以及明确的 field/operator 执行绑定；留空时按参数提示自动生成。</div>
+      </el-form-item>
       <el-form-item class="full-row" label="推荐问题（每行一个）" required>
         <el-input v-model="form.recommendedQuestions" type="textarea" :rows="2" />
       </el-form-item>
@@ -90,7 +99,8 @@ const saving = ref(false)
 const form = reactive({
   name: '', category: '综合态势', description: '', analysisGoal: '',
   triggers: '', recommendedQuestions: '', inputHints: '', steps: '',
-  dataSources: '', focusMetrics: '', chartTypes: ['bar'] as string[], mapLayerTypes: ['points'] as string[],
+  parametersJson: '', dataSources: '', focusMetrics: '',
+  chartTypes: ['bar'] as string[], mapLayerTypes: ['points'] as string[],
 })
 
 const dialogTitle = computed(() => ({
@@ -112,6 +122,7 @@ watch(
       triggers: skill.triggers.join(', '),
       recommendedQuestions: skill.recommendedQuestions.join('\n'),
       inputHints: skill.inputHints.join(', '),
+      parametersJson: skill.parameters?.length ? JSON.stringify(skill.parameters, null, 2) : '',
       steps: skill.steps.join('\n'),
       dataSources: skill.dataSources.join(', '),
       focusMetrics: skill.focusMetrics.join(', '),
@@ -120,6 +131,7 @@ watch(
     } : {
       name: '', category: '综合态势', description: '', analysisGoal: '',
       triggers: '', recommendedQuestions: '', inputHints: '',
+      parametersJson: '',
       steps: '汇聚并校验相关数据\n计算关键指标并识别异常\n生成图表、地图和态势说明',
       dataSources: 'admin', focusMetrics: '', chartTypes: ['bar'], mapLayerTypes: ['points'],
     })
@@ -130,8 +142,8 @@ watch(
 const splitComma = (value: string) => value.split(/[,，]/).map((item) => item.trim()).filter(Boolean)
 const splitLines = (value: string) => value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
 
-function definition() {
-  return {
+function definition(parameters?: unknown[]) {
+  const payload: Record<string, unknown> = {
     name: form.name.trim(),
     category: form.category.trim(),
     description: form.description.trim(),
@@ -146,10 +158,25 @@ function definition() {
     mapLayerTypes: [...form.mapLayerTypes],
     featured: false,
   }
+  if (parameters?.length) payload.parameters = parameters
+  return payload
 }
 
 async function save() {
-  const payload = definition()
+  let parameters: unknown[] | undefined
+  if (form.parametersJson.trim()) {
+    try {
+      const parsed = JSON.parse(form.parametersJson)
+      if (!Array.isArray(parsed) || parsed.length > 20 || parsed.some((item) => !item || typeof item !== 'object')) {
+        throw new Error('参数 Schema 必须是最多 20 项的 JSON 数组')
+      }
+      parameters = parsed
+    } catch (error: any) {
+      ElMessage.warning(error?.message || '参数 Schema 不是合法 JSON')
+      return
+    }
+  }
+  const payload = definition(parameters) as any
   if (!payload.name || !payload.category || !payload.description || !payload.analysisGoal) {
     ElMessage.warning('请填写名称、分类、用途说明和分析目标')
     return
@@ -184,6 +211,7 @@ async function save() {
   margin-top: 18px;
 }
 .full-row { grid-column: 1 / -1; }
+.field-tip { margin-top: 6px; color: var(--el-text-color-secondary); font-size: 12px; }
 @media (max-width: 640px) {
   .skill-editor { grid-template-columns: 1fr; }
   .full-row { grid-column: auto; }
