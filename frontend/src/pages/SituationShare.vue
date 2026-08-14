@@ -15,7 +15,7 @@
       <div class="situation-capture-root">
         <div class="share-body">
           <div class="body-left">
-            <SituationChartGrid :charts="store.charts" />
+            <SituationChartGrid :charts="store.charts" :body-height="230" :row-min-height="300" />
           </div>
           <div class="body-right">
             <SituationMapSlot

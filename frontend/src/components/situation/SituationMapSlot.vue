@@ -118,7 +118,7 @@ const mergedPoints = computed<GeoPoint[]>(() => {
         raw: p.raw || `${center.lng ?? center.longitude}, ${center.lat ?? center.latitude}`,
         props: p.props || p.properties || {},
         routeName: p.routeName,
-        color: p.color,
+        color: p.color || layer.layerConfig?.color,
         radius: isIntensityLayer ? valueScale(p.value ?? p.count ?? p.weight) : layer.layerConfig?.radius,
         fillOpacity: isIntensityLayer ? layer.layerConfig?.fillOpacity ?? 0.55 : layer.layerConfig?.fillOpacity,
         _layerId: layer.layerId,
@@ -150,7 +150,7 @@ const mergedRoutes = computed<GeoRoute[]>(() => {
         raw: `${p.lng}, ${p.lat}`,
       } as any))
       all.push({
-        name: r.name || '', points: pts, color: r.color,
+        name: r.name || '', points: pts, color: r.color || layer.layerConfig?.color,
         weight: layer.layerConfig?.weight,
         opacity: layer.layerConfig?.opacity,
         dashArray: layerType(layer) === 'flow' ? false : layer.layerConfig?.dashArray,
@@ -180,7 +180,7 @@ const mergedAreas = computed<GeoArea[]>(() => {
         raw: `${p.lng}, ${p.lat}`,
       } as any))
       all.push({
-        name: a.name || '', points: pts, color: a.color,
+        name: a.name || '', points: pts, color: a.color || layer.layerConfig?.color,
         weight: layer.layerConfig?.weight,
         opacity: layer.layerConfig?.opacity,
         fillOpacity: layer.layerConfig?.fillOpacity,
@@ -211,7 +211,7 @@ const mergedCircles = computed<CircleArea[]>(() => {
         center: { lng: c.center?.lng ?? 0, lat: c.center?.lat ?? 0 },
         radiusKm: c.radiusKm || 50,
         props: c.props || c.properties || {},
-        color: c.color,
+        color: c.color || layer.layerConfig?.color,
         weight: layer.layerConfig?.weight,
         opacity: layer.layerConfig?.opacity,
         fillOpacity: layer.layerConfig?.fillOpacity,

@@ -168,7 +168,7 @@
                     <div class="ai-response">
                       <!-- 图表区 -->
                       <div v-if="store.charts.length" class="tree-section">
-                        <SituationChartGrid :charts="store.charts" :loading="store.isGenerating" />
+                        <SituationChartGrid :charts="store.charts" :loading="store.isGenerating" :cols="1" :body-height="360" />
                       </div>
 
                       <!-- 地图（仅有图层时显示） -->
@@ -1112,7 +1112,7 @@ async function deleteHistory(targetId: string) {
 .ai-response { display: flex; flex-direction: column; gap: 1rem; width: 100%; }
 .tree-section, .references-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
 .data-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
-.ai-map-section { padding: 0; overflow: hidden; height: 420px; }
+.ai-map-section { padding: 0; overflow: hidden; height: 460px; }
 .evidence-strip {
   display: flex;
   flex-wrap: wrap;

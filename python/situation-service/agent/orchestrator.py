@@ -890,14 +890,23 @@ def _safe_point(value: Any) -> Optional[dict]:
         and _valid_coord(value.get("lat"), -90, 90)
     ):
         return None
-    return {
+    point = {
         "name": _safe_text(value.get("name") or "点位"),
         "lng": float(value["lng"]),
         "lat": float(value["lat"]),
         "raw": _safe_text(value.get("raw")),
-        **({"featureId": _safe_id(value.get("featureId"))} if value.get("featureId") else {}),
-        **({"datasetRef": _safe_text(value.get("datasetRef"), 80)} if value.get("datasetRef") else {}),
     }
+    # 保留后端语义配色与路线归属，前端据此做「同路线同色、不同路线不同色」
+    if isinstance(value.get("routeName"), str) and value["routeName"]:
+        point["routeName"] = _safe_text(value["routeName"], 80)
+    color = value.get("color")
+    if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        point["color"] = color
+    if value.get("featureId"):
+        point["featureId"] = _safe_id(value.get("featureId"))
+    if value.get("datasetRef"):
+        point["datasetRef"] = _safe_text(value.get("datasetRef"), 80)
+    return point
 
 
 def _coordinate_evidence(bundles: list) -> set[tuple[float, float]]:
@@ -940,12 +949,18 @@ def _safe_path(value: Any, minimum_points: int) -> Optional[dict]:
     points = [point for item in value["points"][:500] if (point := _safe_point(item))]
     if len(points) < minimum_points:
         return None
-    return {
+    path = {
         "name": _safe_text(value.get("name") or "图形"),
         "points": points,
-        **({"featureId": _safe_id(value.get("featureId"))} if value.get("featureId") else {}),
-        **({"datasetRef": _safe_text(value.get("datasetRef"), 80)} if value.get("datasetRef") else {}),
     }
+    color = value.get("color")
+    if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        path["color"] = color
+    if value.get("featureId"):
+        path["featureId"] = _safe_id(value.get("featureId"))
+    if value.get("datasetRef"):
+        path["datasetRef"] = _safe_text(value.get("datasetRef"), 80)
+    return path
 
 
 def _sanitize_map_layer(value: Any, profile: dict, context: Optional[dict] = None) -> dict:
@@ -970,13 +985,19 @@ def _sanitize_map_layer(value: Any, profile: dict, context: Optional[dict] = Non
         center = _safe_point(item["center"])
         radius = _as_number(item.get("radiusKm"))
         if center and radius is not None and 0 < radius <= 5000:
-            circles.append({
+            circle = {
                 "name": _safe_text(item.get("name") or "圆形区域"),
                 "center": {"lng": center["lng"], "lat": center["lat"]},
                 "radiusKm": radius,
-                **({"featureId": _safe_id(item.get("featureId"))} if item.get("featureId") else {}),
-                **({"datasetRef": _safe_text(item.get("datasetRef"), 80)} if item.get("datasetRef") else {}),
-            })
+            }
+            color = item.get("color")
+            if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+                circle["color"] = color
+            if item.get("featureId"):
+                circle["featureId"] = _safe_id(item.get("featureId"))
+            if item.get("datasetRef"):
+                circle["datasetRef"] = _safe_text(item.get("datasetRef"), 80)
+            circles.append(circle)
     layer_config = value.get("layerConfig", {}) if isinstance(value.get("layerConfig"), dict) else {}
     color = str(layer_config.get("color") or "#e74c3c")
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):

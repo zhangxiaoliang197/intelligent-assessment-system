@@ -355,24 +355,6 @@
               placeholder="请输入本体描述" 
             />
           </el-form-item>
-          <el-form-item label="载入元模型">
-            <el-select
-              v-model="buildForm.templateId"
-              placeholder="不载入元模型（从零推荐）"
-              clearable
-              style="width: 100%"
-            >
-              <el-option
-                v-for="tpl in templates"
-                :key="tpl.id"
-                :label="`${tpl.name}（${tpl.entity_types_count || tpl.concepts_count} 实体类型）`"
-                :value="tpl.id"
-              />
-            </el-select>
-            <div style="font-size: 0.75rem; color: #909399; margin-top: 4px;">
-              载入后，将强制大模型严格按该元模型的实体类型层级/属性骨架/类型间关系进行提取
-            </div>
-          </el-form-item>
           <el-form-item label="选择文档" required>
             <el-upload
               ref="buildUploadRef"
@@ -544,7 +526,6 @@ const uploadRef = ref()
 const buildForm = ref({
   name: '',
   description: '',
-  templateId: '',
   file: null as File | null
 })
 const buildUploadRef = ref()
@@ -945,14 +926,11 @@ const startBuild = async () => {
     fd.append('file', buildForm.value.file)
     fd.append('name', buildForm.value.name)
     fd.append('description', buildForm.value.description)
-    if (buildForm.value.templateId) {
-      fd.append('template_id', buildForm.value.templateId)
-    }
 
     const res: any = await createBuildJob(fd)
     ElMessage.success('构建任务创建成功')
     showBuildDialog.value = false
-    buildForm.value = { name: '', description: '', templateId: '', file: null }
+    buildForm.value = { name: '', description: '', file: null }
     await loadData()
 
     // 跳转到构建页面
@@ -1020,7 +998,7 @@ const formatTime = (time: string) => {
 // ── 生命周期 ──
 onMounted(() => {
   loadData()
-  // 预加载元模型列表，供文档构建对话框下拉使用
+  // 预加载元模型列表，供元模型管理与「基于元模型新建本体」使用
   loadTemplates()
 })
 </script>

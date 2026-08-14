@@ -54,12 +54,11 @@ const DEFAULT_PALETTE = [
   '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#6e7074',
 ]
 
-// ── 默认后处理：注入统一标题样式与配色（不覆盖 LLM 已给定的）──
+// ── 默认后处理：统一配色（标题由卡片头部展示，图表内部不渲染，避免与图例重叠）──
 function defaultBuild(spec: { option: any; title?: string; index?: number }): any {
   const opt = spec.option || {}
-  if (spec.title && !opt.title) {
-    opt.title = { text: spec.title, left: 'center', textStyle: { fontSize: 14 } }
-  }
+  // 标题统一由卡片头部展示；移除 LLM 可能内联的 title，防止内部标题与图例重叠
+  if (opt.title) delete opt.title
   if (!opt.tooltip) opt.tooltip = { trigger: 'item' }
   // 按图表序号轮转色板起始位置，让不同图表拥有不同主色，避免整页清一色
   if (!opt.color) {
