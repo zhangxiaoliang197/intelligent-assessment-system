@@ -61,7 +61,9 @@ def _coord(region, spread=2.5):
     return round(clng + random.uniform(-spread, spread), 4), round(clat + random.uniform(-spread, spread), 4)
 
 def _time():
-    return datetime.datetime(2026, 1, 1) + datetime.timedelta(
+    # 以“现在”为锚点向过去铺开：演示数据在任意时间重跑都有近 24 小时内的记录，
+    # 否则时间窗类 Skill（近24小时/近7天）会在数据整体过期后过滤不到任何行。
+    return datetime.datetime.now() - datetime.timedelta(
         days=random.randint(0, 220), hours=random.randint(0, 23),
         minutes=random.randint(0, 59), seconds=random.randint(0, 59))
 

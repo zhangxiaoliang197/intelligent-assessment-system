@@ -1,4 +1,5 @@
 import asyncio
+import datetime as dt
 import unittest
 from unittest.mock import patch
 
@@ -112,6 +113,42 @@ class RealOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[1]["appliedOperators"][0]["operator"], "equals")
         self.assertEqual(events[2]["focusMetrics"], ["完好率"])
         self.assertEqual(events[3]["plannedCharts"], 1)
+
+    def test_empty_time_window_is_relaxed_progressively(self):
+        now = dt.datetime.now(dt.timezone.utc)
+        bundles = [{
+            "source": "t_threat", "summary": "2 rows", "rows": 2,
+            "payload": {"rows": [
+                {"region": "A", "detect_time": (now - dt.timedelta(days=2)).isoformat()},
+                {"region": "B", "detect_time": (now - dt.timedelta(days=8)).isoformat()},
+            ]},
+        }]
+        profile = {"parameterBindings": {"时间范围": {"operator": "time-window", "field": "时间范围"}}}
+        context = {"skill": {"parameters": {"时间范围": "近24小时"}}}
+        # 近 24 小时全空 → 近 7 天命中（2 天前的记录保留、8 天前的被过滤）
+        transformed, notice = orchestrator._relax_empty_time_windows(bundles, profile, context)
+        self.assertEqual(notice, "所选时间范围无匹配数据，已自动放宽为近 7 天")
+        self.assertEqual(len(transformed[0]["payload"]["rows"]), 1)
+        self.assertEqual(transformed[0]["payload"]["rows"][0]["region"], "A")
+        self.assertEqual(transformed[0]["execution"]["outputRows"], 1)
+
+    def test_relaxation_keeps_original_when_non_time_filters_exclude_everything(self):
+        now = dt.datetime.now(dt.timezone.utc)
+        bundles = [{
+            "source": "t_threat", "summary": "1 row", "rows": 1,
+            "payload": {"rows": [
+                {"threat_level": "低", "detect_time": (now - dt.timedelta(days=2)).isoformat()},
+            ]},
+        }]
+        profile = {"parameterBindings": {
+            "威胁等级": {"operator": "equals", "field": "threat_level"},
+            "时间范围": {"operator": "time-window", "field": "时间范围"},
+        }}
+        context = {"skill": {"parameters": {"威胁等级": "高", "时间范围": "近24小时"}}}
+        # 威胁等级=高 排空全部记录，放宽时间窗也无效，保持原结果交由调用方报错
+        transformed, notice = orchestrator._relax_empty_time_windows(bundles, profile, context)
+        self.assertIsNone(notice)
+        self.assertIs(transformed, bundles)
 
     def test_llm_evidence_is_aggregated_and_sensitive_fields_removed(self):
         bundle = {

@@ -202,6 +202,45 @@ def _apply_execution_plan(bundles: list, profile: dict, context: dict) -> list[d
     return execution
 
 
+def _time_window_parameter_keys(profile: dict) -> list:
+    """收集绑定到 time-window 过滤的参数键。"""
+    bindings = profile.get("parameterBindings") or {}
+    return [
+        key for key, binding in bindings.items()
+        if isinstance(binding, dict) and binding.get("operator") == "time-window"
+    ]
+
+
+def _relax_empty_time_windows(bundles: list, profile: dict, context: dict) -> tuple[list, Optional[str]]:
+    """时间窗过滤结果为空时按 近7天 → 近30天 → 近90天 → 不限 依次放宽。
+
+    bundles 必须是执行计划应用前的原始采集结果（过滤后的 payload 行已被替换，
+    无法再次解析字段）。演示/作战数据的采集时间可能整体早于所选时间窗（例如
+    默认的近 24 小时），此时直接失败会让推荐问题不可用。任一档位有行匹配即
+    返回放宽结果与提示；全部落空（被其他过滤条件排空）时保持原结果，由调用
+    方继续报错。
+    """
+    time_keys = _time_window_parameter_keys(profile)
+    if not time_keys:
+        return bundles, None
+    skill_context = dict(context.get("skill") or {})
+    parameters = dict(skill_context.get("parameters") or {})
+    for days in (7, 30, 90):
+        relaxed = {key: (days if key in time_keys else value) for key, value in parameters.items()}
+        attempt = _apply_execution_plan(
+            bundles, profile, {**context, "skill": {**skill_context, "parameters": relaxed}},
+        )
+        if any(_rows_from_payload(bundle.get("payload")) for bundle in attempt):
+            return attempt, f"所选时间范围无匹配数据，已自动放宽为近 {days} 天"
+    dropped = {key: value for key, value in parameters.items() if key not in time_keys}
+    attempt = _apply_execution_plan(
+        bundles, profile, {**context, "skill": {**skill_context, "parameters": dropped}},
+    )
+    if any(_rows_from_payload(bundle.get("payload")) for bundle in attempt):
+        return attempt, "所选时间范围无匹配数据，已忽略时间过滤"
+    return bundles, None
+
+
 def _workflow_events(profile: dict, bundles: list) -> list[dict]:
     """Materialize workflow stages with deterministic input/output facts."""
     input_rows = sum(int((bundle.get("execution") or {}).get("inputRows", 0)) for bundle in bundles)
@@ -1437,7 +1476,18 @@ async def real_generate(
     if not bundles:
         raise RuntimeError("没有取得可用于态势分析的真实数据，请检查 Skill 数据源和相关服务")
 
-    bundles = _apply_execution_plan(bundles, profile, runtime_context)
+    collected = bundles
+    bundles = _apply_execution_plan(collected, profile, runtime_context)
+    relaxed_notice = None
+    if not any(_rows_from_payload(bundle.get("payload")) for bundle in bundles):
+        bundles, relaxed_notice = _relax_empty_time_windows(collected, profile, runtime_context)
+        if relaxed_notice:
+            logger.warning("时间窗过滤无匹配数据，已放宽: reportId=%s %s", report_id, relaxed_notice)
+            yield "error", {
+                "stage": "filter",
+                "message": relaxed_notice,
+                "fatal": False,
+            }
     if not any(_rows_from_payload(bundle.get("payload")) for bundle in bundles):
         raise RuntimeError("Skill 参数执行后没有匹配数据，请调整过滤条件")
 
@@ -1467,7 +1517,7 @@ async def real_generate(
             "data": rows,
         }
 
-    partial = False
+    llm_fallback = False
     try:
         result = await asyncio.to_thread(_run_llm_orchestration, query, profile, runtime_context, bundles)
         result["context"] = runtime_context
@@ -1475,7 +1525,7 @@ async def real_generate(
     except Exception as exc:
         if not config.SITUATION_ALLOW_DATA_FALLBACK:
             raise
-        partial = True
+        llm_fallback = True
         logger.warning("LLM 编排失败，使用真实数据降级渲染: reportId=%s error=%s", report_id, exc)
         yield "error", {
             "stage": "llm",
@@ -1483,6 +1533,7 @@ async def real_generate(
             "fatal": False,
         }
         charts, map_layer, narrative = _data_fallback(query, profile, bundles, runtime_context)
+    partial = llm_fallback or bool(relaxed_notice)
 
     # 远端特性：优先用 map_builder 从全量真实数据自动标注（确定性、无需 LLM 产图）；
     # 无地理列或坐标未通过证据校验时保留 LLM 地图（其坐标已通过同一证据校验）。
@@ -1528,7 +1579,7 @@ async def real_generate(
         "skillId": profile["skillId"],
         "skillName": profile["skillName"],
         "dataMode": "real",
-        "orchestration": "data-fallback" if partial else "llm",
+        "orchestration": "data-fallback" if llm_fallback else "llm",
     }
     logger.info(
         "真实态势生成完成: reportId=%s datasets=%s charts=%s partial=%s",
