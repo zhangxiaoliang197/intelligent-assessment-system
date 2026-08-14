@@ -181,16 +181,18 @@ def get_skill_markdown(
             overridden = False
             relative_path = f"config/situation_skills.json#{skill_id}"
             last_modified = ""
-        editable = is_admin and bool(user_id)
+        # Keep the Markdown workbench consistent with the evaluation Skill module:
+        # every user who can see a Skill may edit its SKILL.md.  Built-in edits are
+        # still isolated in the writable override layer and pass the same strict
+        # schema, id, order and unsafe-field validation before becoming visible.
+        editable = True
     else:
         content = _serialize_markdown(skill)
         storage = "custom"
         overridden = False
         relative_path = f"custom-skills/{skill_id}/SKILL.md"
         last_modified = str(skill.get("updatedAt") or skill.get("createdAt") or "")
-        editable = skill.get("status") != "archived" and (
-            (is_admin and bool(user_id)) or str(skill.get("ownerId") or "") == user_id
-        )
+        editable = skill.get("status") != "archived"
     return {
         "skillId": skill_id,
         "skillName": skill.get("name", skill_id),
@@ -267,9 +269,10 @@ def update_skill_markdown(
                 candidate,
                 user_id,
                 expected_revision=int(current_document["revision"]),
-                allow_any_editor=is_admin,
-                # Editing an already published definition creates a draft revision. The
-                # changed execution contract becomes public only after explicit publish.
-                preserve_status=False,
+                # Markdown editing is deliberately collaborative for every user who can
+                # view the Skill.  Preserve a published Skill's status so the editor can
+                # still read the updated record after the cross-owner write.
+                allow_any_editor=True,
+                preserve_status=True,
             )
         return get_skill_markdown(skill_id, user_id, is_admin=is_admin)
