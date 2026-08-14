@@ -192,6 +192,7 @@ def build_chart_messages(query: str, data_context: dict, plan: dict) -> list:
             "返回 JSON 数组（仅 JSON）：\n"
             '[{"chartId": "c_1", "type": "line", "title": "标题", "option": {ECharts完整option(内联样本数据)}, "datasetRef": "数据集ID", "fieldMapping": {"xField": "分类字段名", "yFields": ["数值字段1", "数值字段2"]}, "explanation": "一句话说明"}]\n'
             "规则：chartId 用 c_1/c_2...；option 必须是合法 ECharts 配置（含 series/xAxis/yAxis 等）；"
+            "图表类型必须互不相同（每个 type 只能出现一次），并优先覆盖上方图表规划给出的不同类型，禁止生成两个相同类型的图表；"
             "数据只能来自上方聚合证据，不得编造；series 中每个数值必须逐字等于证据中出现的 sum/avg/count 值，"
             "禁止估算、取整或跨字段换算；datasetRef 必须使用所列数据集 ID；若无合适数据可降级为说明性图表；"
             "若图表基于数据集明细行直接可视化（bar/line/scatter/pie），必须在 fieldMapping 给出 xField（分类/X轴字段）与 yFields（数值/Y轴字段列表），供前端用全量数据重建；"

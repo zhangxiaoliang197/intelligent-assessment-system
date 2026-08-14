@@ -28,6 +28,8 @@ import type { ChartSpec } from '@/stores/situation'
 
 const props = defineProps<{
   spec: ChartSpec
+  /** 图表在列表中的序号，用于配色轮转，避免所有图表同色 */
+  index?: number
 }>()
 
 const highlighted = ref(false)
@@ -38,7 +40,7 @@ const typeLabel = computed(() => chartDef.value?.name || props.spec.type)
 
 const builtOption = computed(() => {
   if (!chartDef.value?.buildOption) return props.spec.option
-  return chartDef.value.buildOption({ option: props.spec.option, title: props.spec.title })
+  return chartDef.value.buildOption({ option: props.spec.option, title: props.spec.title, index: props.index })
 })
 
 // 暴露给父组件：滚动到此图并高亮

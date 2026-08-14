@@ -10,10 +10,11 @@
       :style="gridStyle"
     >
       <SituationChartCard
-        v-for="c in charts"
+        v-for="(c, index) in charts"
         :key="c.chartId"
         :ref="(el) => setCardRef(el, c.chartId)"
         :spec="c"
+        :index="index"
       />
     </div>
   </div>
