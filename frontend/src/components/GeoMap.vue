@@ -18,7 +18,33 @@
         </span>
       </div>
     </div>
-    <div ref="mapContainer" class="geo-map-content"></div>
+    <div ref="mapContainer" class="geo-map-content">
+      <div v-if="mapGroups.length > 1" class="geo-route-sidebar" :class="{ 'is-collapsed': !legendExpanded }">
+        <div class="geo-route-sidebar-toggle" :title="legendExpanded ? '收起图层' : '图层'" @click="legendExpanded = !legendExpanded">
+          <svg class="geo-route-sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+        </div>
+        <div v-show="legendExpanded" class="geo-route-sidebar-body">
+          <div class="geo-route-sidebar-header">
+            <span class="geo-route-sidebar-title">图层 ({{ visibleGroupCount }}/{{ mapGroups.length }})</span>
+            <div class="geo-route-sidebar-actions">
+              <span class="geo-route-sidebar-action" @click="showAllGroups">全选</span>
+              <span class="geo-route-sidebar-action" @click="hideAllGroups">隐藏</span>
+            </div>
+          </div>
+          <div class="geo-route-sidebar-list">
+            <label v-for="g in mapGroups" :key="g" class="geo-route-sidebar-item">
+              <input type="checkbox" :checked="!hiddenGroups.has(g)" @change="toggleGroup(g)" />
+              <span class="geo-route-sidebar-color" :style="{ background: getColorByName(g) }"></span>
+              <span class="geo-route-sidebar-name" :title="g">{{ g }}</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
     <div v-if="!compact && points.length > 0" class="geo-point-table">
       <div class="geo-table-header" @click="tableExpanded = !tableExpanded" style="cursor:pointer; user-select:none">
         <span class="geo-table-title">{{ tableExpanded ? '▼' : '▶' }} 提取坐标点 ({{ points.length }})</span>
@@ -101,6 +127,34 @@ let drawControl: L.Control.Draw | null = null
 const drawnCount = ref(0)
 
 const tableExpanded = ref(false)
+
+// ── 图层控制：按分组(路线名/站名)捆绑显隐，路线与对应点联动 ──
+const hiddenGroups = ref<Set<string>>(new Set())
+const legendExpanded = ref(false)
+
+const pointGroupKey = (p: GeoPoint) => p.routeName || p.name || ''
+const routeGroupKey = (r: GeoRoute) => r.name || ''
+
+/** 所有可显隐的分组（路线名 + 点所属路线名 去重） */
+const mapGroups = computed(() => {
+  const keys: string[] = []
+  const seen = new Set<string>()
+  const push = (k: string) => {
+    if (!k || seen.has(k)) return
+    seen.add(k)
+    keys.push(k)
+  }
+  for (const r of props.routes || []) push(routeGroupKey(r))
+  for (const p of props.points || []) push(pointGroupKey(p))
+  for (const a of props.areas || []) push(a.name)
+  for (const c of props.circles || []) push(c.name)
+  return keys
+})
+
+const visibleGroupCount = computed(() => {
+  const hidden = hiddenGroups.value
+  return mapGroups.value.filter((k) => !hidden.has(k)).length
+})
 
 /** 动态发现所有点共同的附加属性列（排除 lng/lat/name/raw） */
 const extraColumns = computed(() => {
@@ -588,7 +642,7 @@ function updateLayerOpacity() {
   })
 }
 
-function addMarkers() {
+function addMarkers(fit = true) {
   if (!map) return
   clearMarkers()
 
@@ -597,6 +651,7 @@ function addMarkers() {
   const groups = new Map<string, { lat: number; lng: number; points: typeof props.points }>()
 
   props.points.forEach((p) => {
+    if (hiddenGroups.value.has(pointGroupKey(p))) return
     const [lat, lng] = transformCoord(p.lng, p.lat)
     const key = coordKey(lat, lng)
     if (!groups.has(key)) {
@@ -676,7 +731,7 @@ function addMarkers() {
     })
   })
 
-  if (props.points.length > 0 && !props.viewport) {
+  if (fit && props.points.length > 0 && !props.viewport) {
     const bounds = props.points.map(p => {
       const [lat, lng] = transformCoord(p.lng, p.lat)
       return [lat, lng] as L.LatLngTuple
@@ -712,6 +767,7 @@ function addRoutes() {
   if (!map || !props.routes) return
   clearRoutes()
   props.routes.forEach((route) => {
+    if (hiddenGroups.value.has(route.name)) return
     const latlngs = route.points.map(p => {
       const [lat, lng] = transformCoord(p.lng, p.lat)
       return [lat, lng] as L.LatLngTuple
@@ -762,10 +818,38 @@ function clearRoutes() {
   arrowMarkers = []
 }
 
+/** 统一刷新可见图层（路线/点/区域/圆形） */
+function refreshVisibleLayers() {
+  addRoutes()
+  addMarkers(false)
+  addAreas()
+  addCircles()
+}
+
+/** 切换某个分组（路线/站/区域）的显示/隐藏，路线与对应点/区域联动 */
+function toggleGroup(key: string) {
+  const next = new Set(hiddenGroups.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  hiddenGroups.value = next
+  refreshVisibleLayers()
+}
+
+function showAllGroups() {
+  hiddenGroups.value = new Set()
+  refreshVisibleLayers()
+}
+
+function hideAllGroups() {
+  hiddenGroups.value = new Set(mapGroups.value)
+  refreshVisibleLayers()
+}
+
 function addAreas() {
   if (!map || !props.areas) return
   clearAreas()
   props.areas.forEach((area) => {
+    if (hiddenGroups.value.has(area.name)) return
     const latlngs = area.points.map(p => {
       const [lat, lng] = transformCoord(p.lng, p.lat)
       return [lat, lng] as L.LatLngTuple
@@ -802,6 +886,7 @@ function addCircles() {
   if (!map || !props.circles) return
   clearCircles()
   props.circles.forEach((c) => {
+    if (hiddenGroups.value.has(c.name)) return
     const [lat, lng] = transformCoord(c.center.lng, c.center.lat)
     const radiusMeters = c.radiusKm * 1000
     const circleStyle = c as any
@@ -836,6 +921,7 @@ function clearCircles() {
 }
 
 watch(() => props.points, () => {
+  hiddenGroups.value = new Set()
   if (!map) return
   // compact/嵌入模式下容器尺寸常在挂载后才稳定，标注到达时先强制 leaflet 重测容器，
   // 否则 addMarkers 内的 fitBounds 会用旧像素尺寸算 zoom，导致部分点落在视口外。
@@ -846,6 +932,7 @@ watch(() => props.points, () => {
 }, { deep: true })
 
 watch(() => props.routes, () => {
+  hiddenGroups.value = new Set()
   if (map) addRoutes()
 }, { deep: true })
 
@@ -951,11 +1038,113 @@ onUnmounted(() => {
 }
 
 .geo-map-content {
+  position: relative;
   height: 420px;
 }
 .geo-map-container.is-compact .geo-map-content {
   flex: 1;
   height: auto;
+}
+
+.geo-route-sidebar {
+  position: absolute;
+  top: 84px;
+  left: 10px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  font-size: 12px;
+}
+.geo-route-sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: #fff;
+  border: 1px solid var(--border-light, #e5e7eb);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  color: #333;
+  cursor: pointer;
+  user-select: none;
+}
+.geo-route-sidebar-toggle:hover {
+  background: #f5f5f5;
+}
+.geo-route-sidebar-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.geo-route-sidebar-body {
+  width: 190px;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid var(--border-light, #e5e7eb);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  margin-top: 6px;
+}
+.geo-route-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-bottom: 1px solid #f0f0f0;
+  background: #fafafa;
+}
+.geo-route-sidebar-title {
+  font-weight: 600;
+  color: #303133;
+}
+.geo-route-sidebar-actions {
+  display: flex;
+  gap: 8px;
+}
+.geo-route-sidebar-action {
+  color: #409eff;
+  cursor: pointer;
+  user-select: none;
+}
+.geo-route-sidebar-action:hover {
+  text-decoration: underline;
+}
+.geo-route-sidebar-list {
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.geo-route-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.geo-route-sidebar-item:hover {
+  background: #f5f7fa;
+}
+.geo-route-sidebar-item input[type='checkbox'] {
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.geo-route-sidebar-color {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.geo-route-sidebar-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #606266;
 }
 
 .geo-point-table {

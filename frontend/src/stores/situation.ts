@@ -164,7 +164,7 @@ function rebuildMapLayer(layer: MapLayer, ds: DatasetSummary | undefined): MapLa
   const clone: MapLayer = JSON.parse(JSON.stringify(layer))
 
   if (routeIdField) {
-    // 轨迹数据：按轨迹ID分组，组内按排序字段排序，生成 routes
+    // 轨迹数据：按轨迹ID分组，组内按排序字段排序，生成 routes + 起点/终点 points
     const groups = new Map<string, any[]>()
     for (const r of rows) {
       const rid = String(r[routeIdField] ?? 'default')
@@ -172,6 +172,7 @@ function rebuildMapLayer(layer: MapLayer, ds: DatasetSummary | undefined): MapLa
       groups.get(rid)!.push(r)
     }
     const routes: any[] = []
+    const points: any[] = []
     for (const [rid, pts] of groups) {
       if (orderField) {
         pts.sort((a, b) => toNum(a[orderField]) - toNum(b[orderField]))
@@ -181,9 +182,19 @@ function rebuildMapLayer(layer: MapLayer, ds: DatasetSummary | undefined): MapLa
         name,
         points: pts.map((p) => ({ lng: toNum(p[lngField]), lat: toNum(p[latField]) })),
       })
+      // 每条路线生成起点/终点标记，routeName 关联路线名，供图层联动显隐
+      const mk = (row: any, suffix: string) => ({
+        name: `${name}${suffix}`,
+        lng: toNum(row[lngField]),
+        lat: toNum(row[latField]),
+        routeName: name,
+        raw: `${name}${suffix}: ${row[lngField]},${row[latField]}`,
+      })
+      if (pts.length) points.push(mk(pts[0], '-起点'))
+      if (pts.length > 1) points.push(mk(pts[pts.length - 1], '-终点'))
     }
     clone.routes = routes
-    clone.points = []
+    clone.points = points
   } else {
     // 标点数据：逐行生成 points
     const nf = nameField ?? ''
