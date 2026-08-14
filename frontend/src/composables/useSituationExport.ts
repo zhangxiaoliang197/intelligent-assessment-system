@@ -2,11 +2,35 @@
  * 态势图导出（html2canvas + jsPDF，ADR-12）。
  *
  * 截取 .situation-capture-root 节点为 canvas → 分页写入 A4 PDF。
- * 注意：Leaflet 地图瓦片需 crossOrigin，否则截图跨域瓦片空白（docs/situation-map/05 §9）。
+ *
+ * 地图底图说明：
+ * - 瓦片走 vite/nginx 同源代理（/geowebcache → GeoServer:9090），浏览器视角是同源；
+ * - 因此 html2canvas 用 useCORS:false 直接读取同源瓦片即可，canvas 不会被跨域污染；
+ * - 若打开 useCORS:true，html2canvas 会给瓦片 <img> 加 crossorigin=anonymous，
+ *   经代理转发到 GeoServer 后因服务端未返回 CORS 头而加载失败，导致底图空白。
  */
 import { ElMessage } from 'element-plus'
 
 export function useSituationExport() {
+  /** 等待当前视口内的 Leaflet 瓦片全部加载完成（或超时），避免截图时底图空白。 */
+  async function waitForTiles(root: HTMLElement, timeout = 4000): Promise<void> {
+    const imgs = Array.from(root.querySelectorAll<HTMLImageElement>('img.leaflet-tile'))
+    if (!imgs.length) return
+    await Promise.race([
+      Promise.all(
+        imgs.map((img) =>
+          img.complete
+            ? Promise.resolve()
+            : new Promise<void>((resolve) => {
+                img.addEventListener('load', () => resolve(), { once: true })
+                img.addEventListener('error', () => resolve(), { once: true })
+              }),
+        ),
+      ),
+      new Promise<void>((resolve) => setTimeout(resolve, timeout)),
+    ])
+  }
+
   async function exportPDF(rootSelector = '.situation-capture-root', fileName = '态势图.pdf') {
     const node = document.querySelector(rootSelector) as HTMLElement
     if (!node) {
@@ -19,9 +43,11 @@ export function useSituationExport() {
         import('jspdf'),
       ])
       const jsPDF = jsPdfMod.jsPDF || jsPdfMod.default
+      await waitForTiles(node)
       const canvas = await html2canvas(node, {
         scale: 2,
-        useCORS: true,
+        useCORS: false,
+        preferCSSPageSize: true,
         backgroundColor: '#fff',
         logging: false,
       } as any)
@@ -60,9 +86,11 @@ export function useSituationExport() {
     }
     try {
       const { default: html2canvas } = await import('html2canvas')
+      await waitForTiles(node)
       const canvas = await html2canvas(node, {
         scale: 2,
-        useCORS: true,
+        useCORS: false,
+        preferCSSPageSize: true,
         backgroundColor: '#fff',
         logging: false,
       } as any)

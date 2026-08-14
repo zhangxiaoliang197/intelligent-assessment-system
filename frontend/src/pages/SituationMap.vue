@@ -220,13 +220,13 @@
                   :rows="3"
                   :placeholder="inputPlaceholder"
                   resize="none"
-                  @keydown.enter.exact.prevent="onGenerate"
+                  @keydown.enter.exact.prevent="onGenerate()"
                 />
                 <div class="input-actions">
                   <el-button v-if="store.isGenerating" type="danger" plain @click="onStop">
                     <el-icon><CircleClose /></el-icon> 取消
                   </el-button>
-                  <el-button v-else type="primary" @click="onGenerate">
+                  <el-button v-else type="primary" @click="onGenerate()">
                     <el-icon><Promotion /></el-icon> 生成态势
                   </el-button>
                 </div>
@@ -696,7 +696,8 @@ async function onGenerate(q?: string) {
     ElMessage.warning('请输入问题')
     return
   }
-  inputText.value = text
+  // 发送后立即清空输入框，避免问题残留
+  inputText.value = ''
   try {
     // 已启用 Skill 时先执行前检查（preflight）
     if (activeFullSkill.value) {
@@ -706,6 +707,7 @@ async function onGenerate(q?: string) {
         store.skillParameters,
       )
       if (!preflight.ready) {
+        inputText.value = text
         ElMessage.error(preflight.errors.join('；') || 'Skill 执行前检查未通过')
         return
       }
@@ -720,6 +722,7 @@ async function onGenerate(q?: string) {
     store.fetchHistory()
     void loadSkillPreferences()
   } catch (e: any) {
+    inputText.value = text
     ElMessage.error('生成失败：' + (e?.serverMessage || e?.message || '未知错误'))
   }
 }
@@ -744,7 +747,6 @@ async function loadReportById(rid: string) {
     const resp: any = await api.get(`/situation/reports/${rid}`)
     if (resp?.success !== false) {
       store.loadReport(resp.data || resp)
-      inputText.value = store.query
     }
   } catch (e) {
     console.warn('产物加载失败', e)
@@ -813,7 +815,7 @@ function stepStatusClass(s: string) {
   if (s === 'error') return 'error'
   return 'in-progress'
 }
-function formatTime(t: string): string {
+function formatTime(t?: string): string {
   if (!t) return ''
   const d = new Date(t)
   if (isNaN(d.getTime())) return t

@@ -101,6 +101,9 @@ DRAFT_TTL = int(os.getenv("DRAFT_TTL", "3600"))
 # ── 跨服务 HTTP 调用超时（秒）──
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "20"))
 
+# SQL 执行（LLM 生成的精确查询）可能较慢，单独放宽超时（与评估分析对齐）
+SQL_QUERY_TIMEOUT = int(os.getenv("SQL_QUERY_TIMEOUT", "120"))
+
 # ── 真实生成时单数据集查询行数上限（传给 admin-service /dataset/{id}/data）──
 DATA_QUERY_LIMIT = int(os.getenv("DATA_QUERY_LIMIT", "200"))
 

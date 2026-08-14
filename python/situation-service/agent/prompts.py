@@ -108,6 +108,51 @@ def _format_data(data: dict, max_rows: int = 30) -> str:
     return _trim(text, 6000)
 
 
+def _format_schema_for_sql(schema: dict) -> str:
+    """把单个数据集 schema 格式化为 SQL 生成所需的表结构文本。
+
+    与 _format_meta 不同：这里展示该数据集的完整字段（含业务含义），
+    供 LLM 生成精确 WHERE/聚合/GROUP BY，而不是仅用于数据发现。
+    """
+    lines = [f"表: {schema.get('tableName', '')}（数据集: {schema.get('datasetName', '')}）"]
+    if schema.get("description"):
+        lines.append(f"描述: {schema['description']}")
+    fields = schema.get("fields", [])
+    lines.append("列:")
+    for f in fields:
+        biz = f.get("businessMeaning") or f.get("annotation") or f.get("comment") or ""
+        pk = " [主键]" if f.get("isPrimaryKey") else ""
+        lines.append(f"  - {f.get('column', '')} ({f.get('type', '')}){pk}: {biz}")
+    if not fields:
+        lines.append("  （无字段元数据）")
+    return "\n".join(lines)
+
+
+def build_sql_messages(query: str, schema: dict, intent: str = "") -> list:
+    """阶段2（取数）：让 LLM 基于单个数据集表结构生成一条精确 SELECT。
+
+    复用评估分析 Text-to-SQL 的思路：按问题意图生成带 WHERE/聚合/GROUP BY
+    的精确查询，替代原来整表拉取（SELECT * 或数据集预定义 sql_text）。
+    仅返回 {"sql": "..."} JSON，由编排器提取后交给 admin-service 执行。
+    """
+    intent_text = f"\n查询意图：{intent}" if intent else ""
+    return [
+        {"role": "system", "content": get_system_prompt() +
+            "\n\n【当前阶段：取数】\n"
+            "你是 SQL 生成专家。根据用户问题与下方单个数据集的表结构，生成一条精确的只读 SELECT 查询。\n"
+            "返回 JSON（仅 JSON，无其它文字）：\n"
+            '{"sql": "SELECT ..."}\n'
+            "规则：\n"
+            "1. 只能生成一条 SELECT 语句，禁止 INSERT/UPDATE/DELETE/DROP/ALTER/CREATE；\n"
+            "2. 表名与列名必须严格来自下方表结构，不得跨表混用字段；\n"
+            "3. 根据问题与查询意图生成精确过滤（WHERE）、聚合（COUNT/SUM/AVG/MAX/MIN）与分组（GROUP BY），必要时 ORDER BY 排序；\n"
+            "4. 聚合列与非聚合列必须满足 GROUP BY 规则；\n"
+            "5. 使用标准 SQL 语法（ANSI），避免厂商专用函数；不要添加 LIMIT，返回全部数据（行数由后端统一限制）；\n"
+            "6. 若问题只需明细数据，可直接 SELECT 相关列并加必要的 WHERE 过滤，无需强行聚合。"},
+        {"role": "user", "content": f"用户问题：{query}\n{intent_text}\n\n表结构：\n{_format_schema_for_sql(schema)}"},
+    ]
+
+
 def build_plan_messages(query: str, meta: dict) -> list:
     """阶段1：规划。LLM 据可用数据集元数据决定查什么、画什么。"""
     return [
@@ -144,10 +189,12 @@ def build_chart_messages(query: str, data_context: dict, plan: dict) -> list:
             "基于真实数据行，一次性生成 ECharts option JSON 数组，并随每个图表一并给出该图的详细说明（explanation）。"
             "每个图表的 option 必须内联具体数据值，禁止占位符。\n"
             "返回 JSON 数组（仅 JSON）：\n"
-            '[{"chartId": "c_1", "type": "line", "title": "标题", "option": {ECharts完整option}, "datasetRef": "数据集ID", "explanation": "该图详细说明"}]\n'
+            '[{"chartId": "c_1", "type": "line", "title": "标题", "option": {ECharts完整option(内联样本数据)}, "datasetRef": "数据集ID", "fieldMapping": {"xField": "分类字段名", "yFields": ["数值字段1", "数值字段2"]}, "explanation": "该图详细说明"}]\n'
             "规则：chartId 用 c_1/c_2...；option 必须是合法 ECharts 配置（含 series/xAxis/yAxis 等）；"
             "explanation 是该图的逐图说明（用于态势报告的图表解读，需说明图表展示的内容、关键数据特征与分析要点，1-3 句，中文）；"
-            "数据来自上方真实数据行，不得编造；若无合适数据可降级为说明性图表。"},
+            "数据来自上方真实数据行，不得编造；若无合适数据可降级为说明性图表；"
+            "若图表基于数据集明细行直接可视化（bar/line/scatter/pie），必须在 fieldMapping 给出 xField（分类/X轴字段）与 yFields（数值/Y轴字段列表），供前端用全量数据重建；"
+            "若图表是聚合汇总结果（option 已内联全部聚合值），fieldMapping 可省略。"},
         {"role": "user", "content": f"用户问题：{query}\n\n图表规划：\n{plans_text}\n\n真实数据：\n{data_text}"},
     ]
 
@@ -166,17 +213,21 @@ def build_map_messages(query: str, data_context: dict) -> list:
             "返回 JSON（仅 JSON）：\n"
             '{\n'
             '  "layerId": "main",\n'
+            '  "datasetRef": "数据集ID",\n'
             '  "points": [{"name": "名称", "lng": 116.4, "lat": 39.9, "weight": 1.0, "raw": "描述"}],\n'
             '  "routes": [],\n'
             '  "areas": [],\n'
             '  "circles": [{"name": "名称", "center": {"lng": 113.27, "lat": 23.13}, "radiusKm": 120}],\n'
+            '  "fieldMapping": {"lngField": "经度字段名", "latField": "纬度字段名", "nameField": "名称字段名", "routeIdField": "轨迹ID字段名", "orderField": "排序字段名"},\n'
             '  "layerConfig": {"type": "heatmap", "color": "#e74c3c", "opacity": 0.85}\n'
             '}\n'
             "规则：layerConfig.type 取值 points（普通标点，默认）或 heatmap（热力图）。"
             "当用户要求热力图/热度分布且数据含地理字段时，应设 type=heatmap，并为 points 中每个点带 weight（热度权重，数值越大越热，可用该位置的样本量或指标值归一化）；"
             "type=points 时 weight 可省略。"
             "坐标必须来自数据中的地理字段（若有），不得编造境外坐标；"
-            "若数据无地理信息且问题不涉及空间分布，返回空 points/routes/areas/circles 数组（layerId 仍保留）。"},
+            "若数据无地理信息且问题不涉及空间分布，返回空 points/routes/areas/circles 数组（layerId 仍保留）；"
+            "若数据含经纬度字段，必须在 fieldMapping 给出 lngField/latField（供前端用全量数据渲染轨迹/标点）；"
+            "若轨迹数据含轨迹ID与排序字段，给出 routeIdField/orderField。"},
         {"role": "user", "content": f"用户问题：{query}\n\n真实数据：\n{data_text}"},
     ]
 

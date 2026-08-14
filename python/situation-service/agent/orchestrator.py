@@ -13,6 +13,61 @@ import config
 logger = logging.getLogger("situation-service")
 
 
+def _query_dataset_with_sql(
+    ds_id: str,
+    query: str,
+    schema: Optional[Dict[str, Any]],
+    intent: str,
+    limit: int,
+) -> Dict[str, Any]:
+    """Phase 2 取数：优先用 LLM 生成精确 SQL 执行，失败回退整表查询。
+
+    复用评估分析 Text-to-SQL 能力（LLM 生成 WHERE/聚合/GROUP BY），
+    只有 schema 无字段元数据或 SQL 生成/执行失败时才回退原 query_admin_data，
+    保证态势图整体流程（5 阶段）不因取数方式升级而中断。
+    """
+    from agent import tools
+
+    # 无 schema 或字段元数据 → 直接回退原整表/预定义查询
+    if not schema or not schema.get("fields"):
+        return tools.query_admin_data(ds_id, limit)
+
+    from llm_client import call_llm_json
+    from agent import prompts
+
+    try:
+        sql_result = call_llm_json(
+            prompts.build_sql_messages(query, schema, intent),
+            0.3,
+            config.LLM_MAX_TOKENS,
+        )
+        sql = ""
+        if isinstance(sql_result, dict):
+            sql = str(sql_result.get("sql") or "").strip()
+        elif isinstance(sql_result, str):
+            sql = sql_result.strip()
+        if not sql:
+            logger.warning("LLM 未生成 SQL，回退整表查询: datasetId=%s", ds_id)
+            return tools.query_admin_data(ds_id, limit)
+    except Exception as exc:
+        logger.warning("SQL 生成失败，回退整表查询: datasetId=%s err=%s", ds_id, exc)
+        return tools.query_admin_data(ds_id, limit)
+
+    data = tools.execute_dataset_sql(ds_id, sql)
+    if not data.get("success"):
+        logger.warning(
+            "SQL 执行失败，回退整表查询: datasetId=%s sql=%s err=%s",
+            ds_id, sql[:200], data.get("message", "")[:200],
+        )
+        return tools.query_admin_data(ds_id, limit)
+
+    # 统一字段：execute-sql 返回 rowCount，而 /dataset/{id}/data 返回 total，
+    # 补齐 total 供下游（dataset 事件 / _format_data）统一读取。
+    if "total" not in data and "rowCount" in data:
+        data["total"] = data["rowCount"]
+    return data
+
+
 async def real_generate(
     query: str,
     report_id: str,
@@ -69,21 +124,36 @@ async def real_generate(
             "plan": {"charts": charts_plan, "mapLayers": map_plan},
         }
 
-        # ── 阶段2：取数（按 plan 查数据集，非 LLM）──
+        # ── 阶段2：取数（LLM 生成精确 SQL 后执行，替代整表拉取）──
         stage = "data"
         data_context: Dict[str, Any] = {}
+        # 建立 datasetId → schema 映射，供 SQL 生成使用（/export/for-llm 已含字段与表名）
+        schemas_by_id: Dict[str, Any] = {}
+        if isinstance(meta, dict):
+            meta_data = meta.get("data") or {}
+            for s in (meta_data.get("schemas") or []):
+                if isinstance(s, dict) and s.get("datasetId"):
+                    schemas_by_id[s["datasetId"]] = s
+
         for ds in datasets_plan:
             ds_id = ds.get("datasetId", "")
             if not ds_id:
                 continue
+            intent = ds.get("intent", "") or ""
             limit = int(ds.get("limit", config.DATA_QUERY_LIMIT))
-            data = await asyncio.to_thread(tools.query_admin_data, ds_id, limit)
+            schema = schemas_by_id.get(ds_id)
+            data = await asyncio.to_thread(
+                _query_dataset_with_sql, ds_id, query, schema, intent, limit,
+            )
             data_context[ds_id] = data
             yield "dataset", {
                 "datasetId": ds_id,
-                "source": ds.get("intent", "") or ds_id,
+                "source": intent or ds_id,
                 "summary": f"数据集 {ds_id}（{data.get('total', 0)} 行）",
                 "rows": data.get("total", 0),
+                # 全量数据下发：前端据此用 fieldMapping 全量渲染，替代 LLM 内联样本
+                "columns": data.get("columns", []),
+                "data": data.get("rows", []),
             }
 
         # 可选：知识库检索（结果暂不注入 chart/map prompt，预留扩展点）
@@ -125,6 +195,35 @@ async def real_generate(
                 yield "chart", c
 
         stage = "map"
+        # 组合：优先用 map_builder 扫描全量数据自动标注（对齐评估分析 _auto_build_map_annotations），
+        # 生成完整 points/routes/areas/circles 并携带业务 props；无地理列或失败时，
+        # 回退到阶段3已并行取到的 LLM 地图图层（map_layer，含热力图能力）。
+        try:
+            from agent import map_builder
+            for ds_id, data in data_context.items():
+                rows = data.get("rows", []) if isinstance(data, dict) else []
+                ann = map_builder.build_map_annotations(rows)
+                if ann and (ann.get("points") or ann.get("routes") or ann.get("areas") or ann.get("circles")):
+                    map_layer = {
+                        "layerId": f"ds_{ds_id}",
+                        "datasetRef": ds_id,
+                        "points": ann.get("points", []),
+                        "routes": ann.get("routes", []),
+                        "areas": ann.get("areas", []),
+                        "circles": ann.get("circles", []),
+                        "layerConfig": {
+                            "name": f"数据集 {ds_id}",
+                            "type": "points",
+                            "supportedTypes": ["points", "routes", "areas", "circles"],
+                            "color": "#8b5cf6",
+                            "opacity": 0.85,
+                            "visible": True,
+                        },
+                    }
+                    break
+        except Exception as exc:
+            logger.warning("map_builder 自动标注失败，回退 LLM 地图: %s", exc)
+
         if isinstance(map_layer, dict):
             yield "map_layer", map_layer
 

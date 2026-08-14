@@ -708,7 +708,8 @@ def build_step3_group_messages(
         group_idx: 当前组索引（0-based）
         total_groups: 总组数
         stage_hint: 用户为该阶段注入的提示词
-        template: 参考模板快照，注入 prompt 作软约束
+        template: 元模型快照，注入 prompt 作约束
+        template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
         OpenAI 格式的 messages 列表
@@ -776,7 +777,8 @@ def build_step3_cross_group_messages(
         existing_relations: 已有组内关系
         relation_types: 已确认的关系类型
         stage_hint: 用户为该阶段注入的提示词
-        template: 参考模板快照，注入 prompt 作软约束
+        template: 元模型快照，注入 prompt 作约束
+        template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
         OpenAI 格式的 messages 列表

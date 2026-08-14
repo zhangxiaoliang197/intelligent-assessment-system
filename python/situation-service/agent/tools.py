@@ -41,6 +41,28 @@ def _http_get(url: str, timeout: int = None) -> dict:
         return {"success": False, "message": str(e)[:200]}
 
 
+def _http_post(url: str, body: dict, timeout: int = None) -> dict:
+    """POST 请求并返回解析后的 JSON。失败返回 {success:False, message}。
+
+    态势图专用端点（如 SQL 执行）走 X-Service-Token 服务身份，而非管理员角色。
+    """
+    timeout = timeout or config.HTTP_TIMEOUT
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("X-Service-Token", config.INTERNAL_SERVICE_TOKEN)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="ignore")
+        logger.warning("POST %s 失败 HTTP %s: %s", url, e.code, err_body[:200])
+        return {"success": False, "message": f"HTTP {e.code}: {err_body[:200]}"}
+    except Exception as e:
+        logger.warning("POST %s 失败: %s", url, e)
+        return {"success": False, "message": str(e)[:200]}
+
+
 def query_datasets_meta(database_id: str = "") -> dict:
     """取数据集 schema + 指标定义（调 admin-service /export/for-llm）。
 
@@ -66,6 +88,22 @@ def query_admin_data(dataset_id: str, limit: int = 200) -> dict:
     return _http_get(
         f"{config.ADMIN_SERVICE_URL}/api/admin/dataset/{dataset_id}/data?limit={limit}",
         timeout=config.HTTP_TIMEOUT,
+    )
+
+
+def execute_dataset_sql(dataset_id: str, sql: str) -> dict:
+    """在数据集关联的数据库上执行 LLM 生成的只读 SQL（态势图专用端点）。
+
+    复用评估分析的 Text-to-SQL 执行能力：SQL 由 LLM 按该数据集的表结构生成，
+    可含 WHERE 过滤、聚合、GROUP BY、排序与 LIMIT，解决原 /dataset/{id}/data
+    只能按数据集预定义 sql_text 或整表拉取、无法针对问题精确取数的问题。
+
+    返回 {success, columns, rows, rowCount, ...}。失败返回 {success:False, message}。
+    """
+    return _http_post(
+        f"{config.ADMIN_SERVICE_URL}/api/admin/dataset/{dataset_id}/execute-query",
+        {"sql": sql},
+        timeout=config.SQL_QUERY_TIMEOUT,
     )
 
 
