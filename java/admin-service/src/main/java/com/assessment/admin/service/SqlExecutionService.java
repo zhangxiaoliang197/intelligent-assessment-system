@@ -131,14 +131,31 @@ public class SqlExecutionService {
         if (optDs.isEmpty()) return errorMap("数据集不存在");
         Dataset ds = optDs.get();
         String tableName = ds.getTableName() == null ? "" : ds.getTableName().trim();
-        if (!tableName.matches("[A-Za-z_][A-Za-z0-9_.$]*")) {
+        if (!tableName.matches("[A-Za-z_][A-Za-z0-9_$]*(\\.[A-Za-z_][A-Za-z0-9_$]*){0,2}")) {
             return errorMap("数据集未绑定安全的物理表");
         }
+        if (!identifiersValid(ds.getAllowedColumns())) {
+            return errorMap("数据集允许字段配置包含非法标识符");
+        }
+        if (!identifiersValid(ds.getSensitiveColumns())) {
+            return errorMap("数据集敏感字段配置包含非法标识符");
+        }
         List<String> allowed = safeIdentifiers(ds.getAllowedColumns());
-        Set<String> sensitive = new HashSet<>(safeIdentifiers(ds.getSensitiveColumns()));
-        allowed.removeIf(sensitive::contains);
-        String projection = allowed.isEmpty() ? "*" : String.join(", ", allowed);
-        String sql = "SELECT " + projection + " FROM " + tableName;
+        if (allowed.isEmpty()) {
+            return errorMap("数据集未配置允许读取的字段，已拒绝默认全字段查询");
+        }
+        Set<String> sensitive = new HashSet<>();
+        for (String item : safeIdentifiers(ds.getSensitiveColumns())) {
+            sensitive.add(item.toLowerCase(Locale.ROOT));
+        }
+        allowed.removeIf(item -> sensitive.contains(item.toLowerCase(Locale.ROOT)));
+        if (allowed.isEmpty()) {
+            return errorMap("移除敏感字段后没有可读取字段");
+        }
+        String projection = String.join(", ", allowed);
+        // 随机采样：ORDER BY RAND() 返回随机行序，再由下方 subList 截取前 N 行，
+        // 避免每次都命中物理表最旧的固定行，让态势图/预览都能看到多样样本。
+        String sql = "SELECT " + projection + " FROM " + tableName + " ORDER BY RAND()";
         Map<String, Object> result = executeSql(datasetId, sql);
         int limit = Math.max(1, Math.min(requestedLimit, 1000));
         Object rowsValue = result.get("rows");
@@ -154,12 +171,23 @@ public class SqlExecutionService {
 
     private List<String> safeIdentifiers(String csv) {
         if (csv == null || csv.isBlank()) return new ArrayList<>();
-        List<String> result = new ArrayList<>();
+        Map<String, String> result = new LinkedHashMap<>();
         for (String item : csv.split(",")) {
             String value = item.trim();
-            if (value.matches("[A-Za-z_][A-Za-z0-9_$]*")) result.add(value);
+            if (value.matches("[A-Za-z_][A-Za-z0-9_$]*")) {
+                result.putIfAbsent(value.toLowerCase(Locale.ROOT), value);
+            }
         }
-        return result;
+        return new ArrayList<>(result.values());
+    }
+
+    private boolean identifiersValid(String csv) {
+        if (csv == null || csv.isBlank()) return true;
+        for (String item : csv.split(",", -1)) {
+            String value = item.trim();
+            if (!value.matches("[A-Za-z_][A-Za-z0-9_$]*")) return false;
+        }
+        return true;
     }
 
     /**

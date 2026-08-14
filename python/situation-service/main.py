@@ -19,8 +19,7 @@
   POST /situation/reports/{reportId}/share  生成分享 token
   GET  /situation/share/{token}           公开查看（分享，无需登录）
 
-Phase 1：生成走 mock_generate（canned 数据），验证前端管线端到端。
-Phase 2：切换为 real_generate（LLM tool-calling，见 agent/orchestrator.py）。
+生成默认走真实数据 + LLM 编排；mock 仅能通过环境变量显式启用。
 """
 
 from dotenv import load_dotenv, find_dotenv
@@ -31,7 +30,9 @@ import json
 import logging
 import time
 import uuid
-from typing import Optional
+import hashlib
+import hmac
+from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -91,10 +92,13 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=list(config.SITUATION_CORS_ORIGINS),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID",
+        "X-User-Id", "X-Team-Ids", "X-User-Role", "X-Actor-Signature",
+    ],
 )
 
 
@@ -117,14 +121,31 @@ def _gen_report_id() -> str:
 
 def _read_headers(request: Request) -> tuple:
     """从请求头读取用户身份（skill governance 约定）。"""
-    user_id = request.headers.get("X-User-Id", "local-admin")
+    actor = _actor(request)
+    return actor["userId"], actor["teamIds"]
+
+
+def _actor(request: Request) -> dict:
+    user_id = request.headers.get("X-User-Id", "").strip() or "local-user"
     team_ids_raw = request.headers.get("X-Team-Ids", "")
-    team_ids = [t for t in team_ids_raw.split(",") if t] if team_ids_raw else []
-    return user_id, team_ids
-
-
-def _is_admin(request: Request) -> bool:
-    return request.headers.get("X-User-Role", "admin").strip().lower() == "admin"
+    team_ids = [item.strip() for item in team_ids_raw.split(",") if item.strip()]
+    role = request.headers.get("X-User-Role", "viewer").strip().lower() or "viewer"
+    signature = request.headers.get("X-Actor-Signature", "").strip()
+    actor_payload = f"{user_id}|{','.join(team_ids)}|{role}".encode("utf-8")
+    expected = hmac.new(
+        config.INTERNAL_SERVICE_TOKEN.encode("utf-8"), actor_payload, hashlib.sha256,
+    ).hexdigest()
+    trusted = bool(signature) and hmac.compare_digest(signature, expected)
+    if not trusted:
+        # Unsigned browser headers are never an identity assertion. Development keeps one
+        # least-privileged local actor; production gateways should HMAC-sign every actor.
+        user_id, team_ids, role = "local-user", [], "viewer"
+    return {
+        "userId": user_id,
+        "teamIds": team_ids,
+        "role": role,
+        "trusted": trusted,
+    }
 
 
 # ──────────────────────────────────────────────────────────
@@ -253,16 +274,21 @@ def apply_situation_skill(skill_id: str, req: SkillApplyRequest, request: Reques
 
 @app.post("/situation/skills/{skill_id}/preflight")
 def preflight_situation_skill(skill_id: str, req: SkillApplyRequest, request: Request):
-    user_id, _ = _read_headers(request)
-    result = preflight_skill(skill_id, req.query, req.parameters, user_id=user_id)
+    actor = _actor(request)
+    user_id = actor["userId"]
+    result = preflight_skill(
+        skill_id, req.query, req.parameters, user_id=user_id,
+        team_ids=actor["teamIds"], role=actor["role"], data_source_id=req.dataSourceId,
+    )
     return _ok(result, "执行前检查完成")
 
 
 @app.get("/situation/skills/{skill_id}/markdown")
 def get_situation_skill_markdown(skill_id: str, request: Request):
-    user_id, _ = _read_headers(request)
+    actor = _actor(request)
+    user_id = actor["userId"]
     try:
-        document = get_skill_markdown(skill_id, user_id, is_admin=_is_admin(request))
+        document = get_skill_markdown(skill_id, user_id, is_admin=actor["role"] == "admin")
     except SkillCatalogError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _ok(document)
@@ -274,14 +300,15 @@ def update_situation_skill_markdown(
     req: SkillMarkdownUpdateRequest,
     request: Request,
 ):
-    user_id, _ = _read_headers(request)
+    actor = _actor(request)
+    user_id = actor["userId"]
     try:
         document = update_skill_markdown(
             skill_id,
             req.content,
             req.expectedHash,
             user_id,
-            is_admin=_is_admin(request),
+            is_admin=actor["role"] == "admin",
         )
     except SkillCatalogError as exc:
         message = str(exc)
@@ -375,15 +402,20 @@ def get_situation_skill(skill_id: str, request: Request):
 # 3. 草稿态（跨功能跳转入口）
 # ──────────────────────────────────────────────────────────
 @app.post("/situation/draft")
-def create_draft(req: DraftRequest):
+def create_draft(req: DraftRequest, request: Request):
+    actor = _actor(request)
+    req.userId, req.teamIds = actor["userId"], actor["teamIds"]
     draft_id = draft_store.create_draft(req)
     logger.info("草稿态已创建: draftId=%s source=%s", draft_id, req.source)
     return _ok({"draftId": draft_id, "expiresIn": config.DRAFT_TTL})
 
 
 @app.get("/situation/draft/{draft_id}")
-def get_draft(draft_id: str):
-    item = draft_store.get_draft(draft_id)
+def get_draft(draft_id: str, request: Request):
+    actor = _actor(request)
+    item = draft_store.get_draft(
+        draft_id, user_id=actor["userId"], team_ids=actor["teamIds"], role=actor["role"],
+    )
     if not item:
         raise HTTPException(status_code=404, detail="草稿不存在或已过期")
     return _ok(item)
@@ -393,31 +425,158 @@ def get_draft(draft_id: str):
 # 4. 发起生成
 # ──────────────────────────────────────────────────────────
 # 生成中的产物暂存（reportId → 聚合中的 Report）
-# Phase 1 单机内存即可；Phase 2 多实例需换 Redis
+# 单机使用内存；多实例部署时应将会话事件替换为 Redis Stream。
 _INFLIGHT: dict = {}
 # reportId → Skill 执行上下文。与生成态生命周期一致，完成后释放。
 _INFLIGHT_SKILLS: dict = {}
 
 
+class _GenerationSession:
+    """一个 reportId 对应唯一生产任务，所有 SSE 客户端共享事件日志。"""
+
+    def __init__(self, report: Report, skill_context: Optional[dict], context: dict):
+        self.report = report
+        self.skill_context = skill_context
+        self.context = context
+        self.events: list[tuple[int, str, dict]] = []
+        self.condition = asyncio.Condition()
+        self.finished = False
+        self.task: Optional[asyncio.Task] = None
+
+    async def publish(self, event_type: str, data: dict) -> None:
+        async with self.condition:
+            sequence = len(self.events) + 1
+            self.events.append((sequence, event_type, data))
+            self.condition.notify_all()
+
+    async def finish(self) -> None:
+        async with self.condition:
+            self.finished = True
+            self.condition.notify_all()
+
+
+_STREAM_SESSIONS: dict[str, _GenerationSession] = {}
+_GENERATION_SEMAPHORE = asyncio.Semaphore(config.SITUATION_MAX_CONCURRENT)
+_IDEMPOTENCY: dict[str, tuple[float, str, str]] = {}
+
+
+@app.on_event("shutdown")
+async def shutdown_generation_tasks() -> None:
+    """Drain active producers on graceful shutdown and persist interrupted terminal state."""
+    tasks = [session.task for session in _STREAM_SESSIONS.values() if session.task and not session.task.done()]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        try:
+            await asyncio.wait(tasks, timeout=10)
+        except Exception:
+            logger.exception("关闭态势生成任务时发生异常")
+
+
+async def _cleanup_stream_session(report_id: str, session: _GenerationSession) -> None:
+    await asyncio.sleep(config.SITUATION_STREAM_REPLAY_TTL)
+    if _STREAM_SESSIONS.get(report_id) is session:
+        _STREAM_SESSIONS.pop(report_id, None)
+
+
+async def _run_generation(report_id: str, session: _GenerationSession) -> None:
+    """唯一生产者：聚合、持久化和使用记录均只执行一次。"""
+    report = session.report
+    terminal_data: Optional[dict] = None
+    try:
+        async with _GENERATION_SEMAPHORE:
+            async with asyncio.timeout(config.SITUATION_GENERATION_TIMEOUT):
+                async for event_type, data in generate(
+                    report.query, report_id, session.skill_context, session.context,
+                ):
+                    if event_type == "done":
+                        report.status = str(data.get("status") or "ready")
+                        terminal_data = data
+                        continue
+                    _apply_event(report, event_type, data)
+                    await session.publish(event_type, data)
+    except TimeoutError:
+        logger.warning("态势生成超时: reportId=%s", report_id)
+        report.status = "failed"
+        await session.publish("error", {"stage": "timeout", "message": "生成超过服务端时限", "fatal": True})
+        terminal_data = {"reportId": report_id, "status": "failed", "partial": False}
+    except asyncio.CancelledError:
+        logger.info("态势生成任务已取消: reportId=%s", report_id)
+        report.status = "failed"
+        await session.publish("error", {"stage": "cancelled", "message": "生成已取消", "fatal": True})
+        terminal_data = {"reportId": report_id, "status": "failed", "partial": False, "cancelled": True}
+    except Exception as exc:
+        logger.exception("生成异常: reportId=%s", report_id)
+        report.status = "failed"
+        await session.publish("error", {"stage": "llm", "message": str(exc)[:200], "fatal": True})
+        terminal_data = {"reportId": report_id, "status": "failed", "partial": False}
+    finally:
+        if terminal_data is None:
+            report.status = "failed"
+            terminal_data = {"reportId": report_id, "status": "failed", "partial": False}
+        persisted = await asyncio.to_thread(_persist, report)
+        if not persisted:
+            report.status = "failed"
+            terminal_data = {"reportId": report_id, "status": "failed", "partial": False, "persisted": False}
+            await session.publish("error", {"stage": "persist", "message": "产物持久化失败", "fatal": True})
+        else:
+            terminal_data["persisted"] = True
+        await session.publish("done", terminal_data)
+        await asyncio.to_thread(_finish_skill_usage, report_id, report.status)
+        _INFLIGHT.pop(report_id, None)
+        _INFLIGHT_SKILLS.pop(report_id, None)
+        await session.finish()
+        asyncio.create_task(_cleanup_stream_session(report_id, session))
+        logger.info("态势生成任务结束并已落库: reportId=%s status=%s", report_id, report.status)
+
+
+async def _stream_session(session: _GenerationSession, cursor: int = 0):
+    """从共享事件日志订阅；供 HTTP SSE 与单元测试复用。"""
+    cursor = max(0, cursor)
+    while True:
+        timed_out = False
+        async with session.condition:
+            if cursor >= len(session.events) and not session.finished:
+                try:
+                    await asyncio.wait_for(
+                        session.condition.wait_for(
+                            lambda: cursor < len(session.events) or session.finished
+                        ),
+                        timeout=15,
+                    )
+                except asyncio.TimeoutError:
+                    timed_out = True
+            batch = session.events[cursor:]
+            finished = session.finished
+        if timed_out and not batch:
+            yield ": keep-alive\n\n"
+            continue
+        for sequence, event_type, data in batch:
+            cursor = sequence
+            yield format_event(event_type, data, sequence)
+        if finished and cursor >= len(session.events):
+            break
+
+
 @app.post("/situation/generate")
-def generate_report(req: GenerateRequest, request: Request):
-    user_id, team_ids = _read_headers(request)
-    # 请求体未带 userId/teamIds 时回退到请求头
-    if not req.userId or req.userId == "local-admin":
-        req.userId = user_id
-    if not req.teamIds:
-        req.teamIds = team_ids
+async def generate_report(req: GenerateRequest, request: Request):
+    actor = _actor(request)
+    user_id, team_ids = actor["userId"], actor["teamIds"]
+    # 身份只能来自受信网关注入的请求头，请求体字段仅为旧客户端兼容输入。
+    req.userId, req.teamIds = user_id, team_ids
+    if len(_INFLIGHT) >= config.SITUATION_MAX_INFLIGHT:
+        raise HTTPException(status_code=429, detail="生成队列已满，请稍后重试")
+    if sum(1 for report in _INFLIGHT.values() if report.userId == user_id) >= config.SITUATION_MAX_PER_USER:
+        raise HTTPException(status_code=429, detail="当前用户在途生成任务已达上限")
 
     skill_context = None
     skill_preflight = None
     if req.skillId:
         if not get_skill(req.skillId, user_id):
             raise HTTPException(status_code=404, detail="态势图 Skill 不存在")
-        skill_preflight = preflight_skill(
-            req.skillId,
-            req.query,
-            req.skillParameters,
-            user_id=user_id,
+        skill_preflight = await asyncio.to_thread(
+            preflight_skill, req.skillId, req.query, req.skillParameters,
+            user_id=user_id, team_ids=team_ids, role=actor["role"], data_source_id=req.dataSourceId,
         )
         if not skill_preflight["ready"]:
             message = "；".join(skill_preflight["errors"]) or "Skill 执行前检查未通过"
@@ -432,39 +591,77 @@ def generate_report(req: GenerateRequest, request: Request):
         except SkillCatalogError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    normalized_query = skill_context["query"] if skill_context else req.query.strip()
+    idem_key = request.headers.get("Idempotency-Key", "").strip()[:128]
+    if idem_key:
+        fingerprint = hashlib.sha256(json.dumps({
+            "userId": user_id, "query": normalized_query, "source": req.source,
+            "skillId": req.skillId, "parameters": req.skillParameters, "context": req.context,
+        }, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        previous = _IDEMPOTENCY.get(idem_key)
+        if previous and previous[0] > time.time():
+            if previous[1] != fingerprint:
+                raise HTTPException(status_code=409, detail="幂等键已用于不同生成请求")
+            return _ok({"reportId": previous[2], "status": "generating", "streamUrl": f"/situation/stream/{previous[2]}", "reused": True})
+        # Bound the in-memory index even when clients continuously create unique keys.
+        now = time.time()
+        expired = [key for key, value in _IDEMPOTENCY.items() if value[0] <= now]
+        for key in expired:
+            _IDEMPOTENCY.pop(key, None)
+        if len(_IDEMPOTENCY) > 5000:
+            for key, _value in sorted(_IDEMPOTENCY.items(), key=lambda item: item[1][0])[:1000]:
+                _IDEMPOTENCY.pop(key, None)
     report_id = _gen_report_id()
     # 若带 draftId，合并草稿态上下文
     context = dict(req.context or {})
     if req.draftId:
-        d = draft_store.get_draft(req.draftId)
-        if d:
-            context = {**d.get("context", {}), **context}
-            if not req.source or req.source == "manual":
-                req.source = d.get("source", "manual")
+        d = draft_store.get_draft(
+            req.draftId, user_id=user_id, team_ids=team_ids, role=actor["role"], consume=True,
+        )
+        if not d:
+            raise HTTPException(status_code=404, detail="草稿不存在、已过期或无权访问")
+        context = {**d.get("context", {}), **context}
+        if not req.source or req.source == "manual":
+            req.source = d.get("source", "manual")
     if skill_context:
         context["skill"] = skill_context
+    context["_actor"] = actor
+    context["dataSourceId"] = req.dataSourceId
 
     report = Report(
         reportId=report_id,
-        title=req.query[:60] if req.query else "态势图",
-        query=req.query,
+        title=normalized_query[:60] if normalized_query else "态势图",
+        query=normalized_query,
         source=req.source,
         skillId=skill_context["skillId"] if skill_context else "",
         skillName=skill_context["skillName"] if skill_context else "",
         skillCategory=skill_context["category"] if skill_context else "",
         skillParameters=skill_context["parameters"] if skill_context else {},
+        skillRevision=skill_context.get("revision", 1) if skill_context else 1,
+        skillVersion=skill_context.get("version", 1) if skill_context else 1,
+        skillContentHash=skill_context.get("contentHash", "") if skill_context else "",
         userId=req.userId,
         teamIds=req.teamIds,
         status="generating",
         dataSourceId=req.dataSourceId,
     )
+    # 先持久化 generating 状态再启动后台任务。进程异常退出时仍能审计和恢复，
+    # 而不是给客户端一个只存在于当前进程内存中的 reportId。
+    if not await asyncio.to_thread(_persist, report):
+        raise HTTPException(status_code=503, detail="无法创建持久化生成任务，请稍后重试")
     _INFLIGHT[report_id] = report
+    if idem_key:
+        _IDEMPOTENCY[idem_key] = (time.time() + config.SITUATION_IDEMPOTENCY_TTL, fingerprint, report_id)
     if skill_context:
         _INFLIGHT_SKILLS[report_id] = skill_context
         try:
             start_usage(report_id, req.userId, skill_context["skillId"], req.query)
         except SkillStoreError as exc:
             logger.warning("Skill 使用记录创建失败: reportId=%s error=%s", report_id, exc)
+
+    session = _GenerationSession(report, skill_context, context)
+    _STREAM_SESSIONS[report_id] = session
+    session.task = asyncio.create_task(_run_generation(report_id, session))
 
     logger.info(
         "发起态势生成: reportId=%s query=%s source=%s skillId=%s",
@@ -497,46 +694,49 @@ def generate_report(req: GenerateRequest, request: Request):
 # 5. SSE 流式接收
 # ──────────────────────────────────────────────────────────
 @app.get("/situation/stream/{report_id}")
-def stream_report(report_id: str):
-    """SSE 推送生成事件。Phase 1 走 mock_generate。"""
-    report = _INFLIGHT.get(report_id)
-    if not report:
+async def stream_report(report_id: str, request: Request):
+    """订阅单一生成任务；断线按 Last-Event-ID 回放，绝不重新执行生成。"""
+    session = _STREAM_SESSIONS.get(report_id)
+    actor = _actor(request)
+    if not session:
         # 不在内存中：可能是已完成的历史产物，回查 admin-service
-        resp = admin_client.get_report(report_id)
+        resp = await asyncio.to_thread(admin_client.get_report, report_id, actor)
         if resp.get("success"):
+            detail = resp.get("data") or resp
+            saved_status = str(detail.get("status") or (detail.get("snapshot") or {}).get("status") or "failed")
             # 已有产物，立即推 done 事件
             async def _replay():
-                yield format_event("done", {"reportId": report_id, "status": "ready", "partial": False})
+                yield format_event("done", {"reportId": report_id, "status": saved_status, "partial": saved_status == "partial", "persisted": True}, 1)
             return sse_response(_replay())
         raise HTTPException(status_code=404, detail="reportId 不存在")
 
-    async def _event_stream():
-        try:
-            skill_context = _INFLIGHT_SKILLS.get(report_id)
-            async for event_type, data in generate(report.query, report_id, skill_context, report.dataSourceId):
-                # 同步聚合到内存 Report（供完成后落库）
-                _apply_event(report, event_type, data)
-                yield format_event(event_type, data)
-        except Exception as e:
-            logger.exception("生成异常: reportId=%s", report_id)
-            yield format_event("error", {"stage": "llm", "message": str(e)[:200], "fatal": True})
-            yield format_event("done", {"reportId": report_id, "status": "failed", "partial": False})
-            report.status = "failed"
-            _persist(report)
-            _finish_skill_usage(report_id, "failed")
-            _INFLIGHT.pop(report_id, None)
-            _INFLIGHT_SKILLS.pop(report_id, None)
-            return
+    if session.report.userId != actor["userId"] and not set(session.report.teamIds).intersection(actor["teamIds"]) and actor["role"] != "admin":
+        raise HTTPException(status_code=403, detail="无权订阅该产物")
+    try:
+        cursor = max(0, int(request.headers.get("Last-Event-ID", "0") or "0"))
+    except ValueError:
+        cursor = 0
 
-        # 正常完成 → 落库
-        report.status = "ready"
-        _persist(report)
-        _finish_skill_usage(report_id, "ready")
-        _INFLIGHT.pop(report_id, None)
-        _INFLIGHT_SKILLS.pop(report_id, None)
-        logger.info("SSE 流结束并已落库: reportId=%s", report_id)
+    return sse_response(_stream_session(session, cursor))
 
-    return sse_response(_event_stream())
+
+@app.delete("/situation/generate/{report_id}")
+async def cancel_generation(report_id: str, request: Request):
+    session = _STREAM_SESSIONS.get(report_id)
+    if not session or session.finished:
+        raise HTTPException(status_code=404, detail="生成任务不存在或已结束")
+    actor = _actor(request)
+    if session.report.userId != actor["userId"] and actor["role"] != "admin":
+        raise HTTPException(status_code=403, detail="无权取消该任务")
+    if session.task:
+        session.task.cancel()
+    return _ok({"reportId": report_id, "status": "cancelling"})
+
+
+@app.post("/situation/cancel/{report_id}")
+async def cancel_generation_compat(report_id: str, request: Request):
+    """前端兼容端点；与 DELETE /situation/generate/{reportId} 使用同一取消逻辑。"""
+    return await cancel_generation(report_id, request)
 
 
 def _finish_skill_usage(report_id: str, status: str) -> None:
@@ -550,24 +750,34 @@ def _finish_skill_usage(report_id: str, status: str) -> None:
 def _apply_event(report: Report, event_type: str, data: dict) -> None:
     """将 SSE 事件聚合到内存 Report，供生成完成后落库 snapshot。"""
     if event_type == "chart":
-        report.charts.append({
+        item = {
             "chartId": data.get("chartId", ""),
             "type": data.get("type", ""),
             "title": data.get("title", ""),
             "option": data.get("option", {}),
             "explanation": "",
             "datasetRef": data.get("datasetRef", ""),
-        })
+            "provenance": data.get("provenance", {}),
+            "verification": data.get("verification", {}),
+        }
+        report.charts = [
+            chart for chart in report.charts
+            if (chart.get("chartId") if isinstance(chart, dict) else chart.chartId) != item["chartId"]
+        ]
+        report.charts.append(item)
     elif event_type == "map_layer":
         layers = report.map.setdefault("layers", [])
-        layers.append({
+        item = {
             "layerId": data.get("layerId", ""),
             "points": data.get("points", []),
             "routes": data.get("routes", []),
             "areas": data.get("areas", []),
             "circles": data.get("circles", []),
             "layerConfig": data.get("layerConfig", {}),
-        })
+            "verification": data.get("verification", {}),
+        }
+        report.map["layers"] = [layer for layer in layers if layer.get("layerId") != item["layerId"]]
+        report.map["layers"].append(item)
     elif event_type == "narrative":
         report.narrative = {
             "intro": data.get("intro", ""),
@@ -579,15 +789,42 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
             if c["chartId"] in exp_map:
                 c["explanation"] = exp_map[c["chartId"]]
     elif event_type == "dataset":
-        report.datasets.append({
+        item = {
             "datasetId": data.get("datasetId", ""),
             "source": data.get("source", ""),
             "summary": data.get("summary", ""),
             "rows": data.get("rows", 0),
-        })
+            "physicalDatasetId": data.get("physicalDatasetId", ""),
+            "schemaVersion": data.get("schemaVersion", 1),
+            "truncated": data.get("truncated", False),
+            "evidenceHash": data.get("evidenceHash", ""),
+            "execution": data.get("execution", {}),
+        }
+        report.datasets = [
+            dataset for dataset in report.datasets
+            if (dataset.get("datasetId") if isinstance(dataset, dict) else dataset.datasetId) != item["datasetId"]
+        ]
+        report.datasets.append(item)
+    elif event_type == "step":
+        item = {
+            "sequence": data.get("sequence"),
+            "name": data.get("name", ""),
+            "operator": data.get("operator", ""),
+            "status": data.get("status", "completed"),
+            "datasets": data.get("datasets", []),
+            "inputRows": data.get("inputRows", 0),
+            "outputRows": data.get("outputRows", 0),
+            "appliedOperators": data.get("appliedOperators", []),
+            "focusMetrics": data.get("focusMetrics", []),
+            "plannedCharts": data.get("plannedCharts", 0),
+            "plannedMapLayers": data.get("plannedMapLayers", 0),
+        }
+        report.execution = [step for step in report.execution if step.get("sequence") != item["sequence"]]
+        report.execution.append(item)
+        report.execution.sort(key=lambda step: int(step.get("sequence") or 0))
 
 
-def _persist(report: Report) -> None:
+def _persist(report: Report) -> bool:
     """生成完成后调 admin-service 落库（snapshot_json）。失败仅记日志，不影响 SSE。"""
     try:
         snapshot = report.dict()
@@ -602,11 +839,14 @@ def _persist(report: Report) -> None:
             "status": report.status,
             "snapshot": snapshot,
         }
-        resp = admin_client.save_report(payload)
+        resp = admin_client.save_report(payload, actor={"userId": report.userId, "teamIds": report.teamIds, "role": "service"})
         if not resp.get("success"):
-            logger.warning("落库失败（不阻断 SSE）: reportId=%s msg=%s", report.reportId, resp.get("message"))
+            logger.warning("落库失败: reportId=%s msg=%s", report.reportId, resp.get("message"))
+            return False
+        return True
     except Exception as e:
         logger.exception("落库异常: reportId=%s", report.reportId)
+        return False
 
 
 # ──────────────────────────────────────────────────────────
@@ -624,24 +864,25 @@ def refresh_report(report_id: str):
 # ──────────────────────────────────────────────────────────
 @app.get("/situation/reports")
 def list_reports(request: Request, page: int = 1, size: int = 20):
-    user_id, team_ids = _read_headers(request)
-    resp = admin_client.list_reports(user_id, team_ids, page, size)
+    actor = _actor(request)
+    user_id, team_ids = actor["userId"], actor["teamIds"]
+    resp = admin_client.list_reports(user_id, team_ids, page, size, actor)
     if not resp.get("success"):
         return _fail(resp.get("message", "列表查询失败"))
     return resp
 
 
 @app.get("/situation/reports/{report_id}")
-def get_report_detail(report_id: str):
-    resp = admin_client.get_report(report_id)
+def get_report_detail(report_id: str, request: Request):
+    resp = admin_client.get_report(report_id, _actor(request))
     if not resp.get("success"):
         return _fail(resp.get("message", "产物不存在"), {"reportId": report_id})
     return resp
 
 
 @app.delete("/situation/reports/{report_id}")
-def delete_report(report_id: str):
-    resp = admin_client.delete_report(report_id)
+def delete_report(report_id: str, request: Request):
+    resp = admin_client.delete_report(report_id, _actor(request))
     if not resp.get("success"):
         return _fail(resp.get("message", "删除失败"))
     return resp
@@ -651,8 +892,8 @@ def delete_report(report_id: str):
 # 8. 分享
 # ──────────────────────────────────────────────────────────
 @app.post("/situation/reports/{report_id}/share")
-def create_share(report_id: str):
-    resp = admin_client.create_share(report_id)
+def create_share(report_id: str, request: Request):
+    resp = admin_client.create_share(report_id, _actor(request))
     if not resp.get("success"):
         return _fail(resp.get("message", "生成分享链接失败"))
     data = resp.get("data", {}) or {}

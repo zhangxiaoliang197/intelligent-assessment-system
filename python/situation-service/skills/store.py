@@ -40,7 +40,6 @@ def _connect() -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(str(path), timeout=8, isolation_level=None)
     connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA foreign_keys=ON")
     if not _SCHEMA_READY:
         with _SCHEMA_LOCK:
@@ -61,6 +60,8 @@ def _connection():
 
 
 def _ensure_schema(connection: sqlite3.Connection) -> None:
+    # journal_mode 是持久设置，仅需建库时执行一次；后续新连接自动使用 WAL。
+    connection.execute("PRAGMA journal_mode=WAL")
     connection.executescript(
         """
         CREATE TABLE IF NOT EXISTS situation_custom_skills (

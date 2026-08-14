@@ -5,6 +5,7 @@ import com.assessment.admin.model.Driver;
 import com.assessment.admin.repository.DatabaseConfigRepository;
 import com.assessment.admin.repository.DriverRepository;
 import com.assessment.admin.service.SqlExecutionService;
+import com.assessment.admin.security.TrustedRequestAuthorizer;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -28,12 +29,18 @@ public class DataQueryController {
     @Autowired
     private SqlExecutionService sqlExecutionService;
 
+    @Autowired
+    private TrustedRequestAuthorizer authorizer;
+
     @PostMapping("/execute")
     public ResponseEntity<Map<String, Object>> executeQuery(
-            @RequestHeader(value = "X-User-Role", required = false) String role,
+            @RequestHeader(value = "X-Admin-Token", required = false) String adminToken,
             @RequestBody Map<String, Object> body) {
-        if (!"admin".equalsIgnoreCase(role)) {
-            return ResponseEntity.status(403).body(errorMap("仅管理员可执行临时 SQL"));
+        if (!authorizer.isAdministrator(adminToken)) {
+            return ResponseEntity.status(401).body(errorMap("缺少可信管理凭据"));
+        }
+        if (!authorizer.isAdHocSqlEnabled()) {
+            return ResponseEntity.status(403).body(errorMap("临时 SQL 已禁用"));
         }
         String databaseId = (String) body.get("databaseId");
         String sql = (String) body.get("sql");

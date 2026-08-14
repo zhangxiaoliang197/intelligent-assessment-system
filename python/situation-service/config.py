@@ -5,6 +5,11 @@ Docker 部署时由 start-docker-run.sh 的 -e 覆盖为容器名。
 """
 import os
 
+# 自举加载 .env：任何入口（含测试）先 import config 也能拿到环境变量，
+# 避免依赖调用方先执行 load_dotenv 的隐式顺序。
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv(usecwd=True))
+
 _SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ── 跨服务地址（默认本地开发，Docker 由 -e 覆盖）──
@@ -19,6 +24,14 @@ INDICATOR_SERVICE_URL = os.getenv("INDICATOR_SERVICE_URL", "http://localhost:102
 
 # ── LLM 调用参数（与 ontology-service 对齐）──
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "24000"))
+LLM_ALLOWED_HOSTS = tuple(
+    host.strip().lower()
+    for host in os.getenv(
+        "SITUATION_LLM_ALLOWED_HOSTS",
+        "api.deepseek.com,localhost,127.0.0.1,::1",
+    ).split(",")
+    if host.strip()
+)
 
 # ── 态势生成模式 ──
 # 默认使用真实数据 + LLM；mock 仅用于显式的本地演示/测试。
@@ -46,7 +59,18 @@ SITUATION_IDEMPOTENCY_TTL = max(60, int(os.getenv("SITUATION_IDEMPOTENCY_TTL", "
 
 # situation-service 调 admin-service 数据查询专用端点时使用的服务身份。生产环境
 # 必须通过 Secret 注入并覆盖默认值；该值不会发送给浏览器或 LLM。
-INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "local-development-token")
+INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "").strip()
+
+# Direct-browser development origins. Production traffic is normally same-origin through
+# nginx; never combine wildcard origins with credentialed CORS.
+SITUATION_CORS_ORIGINS = tuple(
+    value.strip()
+    for value in os.getenv(
+        "SITUATION_CORS_ORIGINS",
+        "http://localhost:10086,http://127.0.0.1:10086",
+    ).split(",")
+    if value.strip()
+)
 
 # 原始记录不再直接外发。下面两项约束允许送给模型的脱敏/聚合证据大小。
 SITUATION_LLM_EVIDENCE_ROWS = max(0, min(
@@ -72,14 +96,6 @@ HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "20"))
 
 # ── Phase 1 mock 流式模拟间隔（秒）；Phase 2 接入真实 Agent 后移除 ──
 MOCK_STREAM_INTERVAL = float(os.getenv("MOCK_STREAM_INTERVAL", "0.6"))
-
-# ── 生成模式：true=Phase1 mock（canned 数据，不调 LLM）；false=Phase2 真实 LLM Agent ──
-# Phase 2 默认启用；调试或无 LLM 环境时设 SITUATION_USE_MOCK=true 回退 mock
-# 注意：os.getenv 返回字符串，"false" 在 Python 中为 truthy，必须显式解析为 bool
-USE_MOCK = os.getenv("SITUATION_USE_MOCK", "false").strip().lower() in ("true", "1", "yes", "on")
-
-# ── 真实生成时单数据集查询行数上限（传给 admin-service /dataset/{id}/data）──
-DATA_QUERY_LIMIT = int(os.getenv("DATA_QUERY_LIMIT", "200"))
 
 # ── Skill 生命周期 / 收藏 / 使用记录持久化（SQLite）──
 SITUATION_SKILL_DB = os.getenv(

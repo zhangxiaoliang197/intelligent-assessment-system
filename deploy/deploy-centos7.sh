@@ -76,6 +76,9 @@ log_info "共加载 $IMAGE_COUNT 个镜像"
 log_info "校验 assessment-qa:latest 内置 Skill 目录..."
 docker run --rm --entrypoint python assessment-qa:latest \
     -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 30; print('Skill catalog OK:', len(catalog['skills']))"
+log_info "校验 assessment-situation:latest 内置 Skill 测试..."
+docker run --rm --entrypoint python assessment-situation:latest \
+    -m unittest discover -s tests -p 'test_*.py' -v
 
 # ---------- 部署项目 ----------
 log_info "Step 3/4: 部署项目文件..."
@@ -88,6 +91,10 @@ MYSQL_DATABASE="${MYSQL_DATABASE:-assessment}"
 MYSQL_USER="${MYSQL_USER:-root}"
 MYSQL_PASSWORD="${MYSQL_PASSWORD:-}"
 DB_TYPE="${DB_TYPE:-mysql}"
+INTERNAL_SERVICE_TOKEN="${INTERNAL_SERVICE_TOKEN:-}"
+ADMIN_API_TOKEN="${ADMIN_API_TOKEN:-}"
+ADMIN_UI_PASSWORD="${ADMIN_UI_PASSWORD:-}"
+SITUATION_LLM_ALLOWED_HOSTS="${SITUATION_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}"
 
 # ─── 日志环境变量（可被外部环境变量覆盖）───
 LOG_ENV="${LOG_ENV:-prod}"
@@ -101,6 +108,21 @@ if [ -z "$MYSQL_HOST" ]; then
     echo "  示例: MYSQL_HOST=192.168.1.100 MYSQL_PASSWORD=xxx bash deploy-centos7.sh"
     exit 1
 fi
+if [ ${#INTERNAL_SERVICE_TOKEN} -lt 24 ] || [ "$INTERNAL_SERVICE_TOKEN" = "local-development-token" ]; then
+    log_error "INTERNAL_SERVICE_TOKEN 必须显式配置为至少 24 位随机值"
+    exit 1
+fi
+if [ ${#ADMIN_API_TOKEN} -lt 24 ]; then
+    log_error "ADMIN_API_TOKEN 必须显式配置为至少 24 位随机值"
+    exit 1
+fi
+if [ ${#ADMIN_UI_PASSWORD} -lt 16 ] || [ "$ADMIN_UI_PASSWORD" = "$ADMIN_API_TOKEN" ] || [ "$ADMIN_UI_PASSWORD" = "$INTERNAL_SERVICE_TOKEN" ]; then
+    log_error "ADMIN_UI_PASSWORD 必须为至少 16 位且与服务凭据不同的随机值"
+    exit 1
+fi
+case "$ADMIN_UI_PASSWORD" in
+    *'$'*) log_error "ADMIN_UI_PASSWORD 不能包含美元符号"; exit 1 ;;
+esac
 
 cat > "$DEPLOY_TARGET/docker-compose.yml" << DOCKERCOMPOSE
 services:
@@ -122,6 +144,9 @@ services:
     ports:
       - "10086:80"
     restart: always
+    environment:
+      - ADMIN_API_TOKEN=$ADMIN_API_TOKEN
+      - ADMIN_UI_PASSWORD=$ADMIN_UI_PASSWORD
     networks:
       - assessment-net
     logging:
@@ -164,6 +189,7 @@ services:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
       - ONTOLOGY_SERVICE_URL=http://assessment-ontology:10256
+      - INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN
       - EVALUATION_SKILLS_DIR=/app/config/skills
       - LOG_ENV=\${LOG_ENV:-prod}
       - LOG_LEVEL=\${LOG_LEVEL:-INFO}
@@ -195,6 +221,7 @@ services:
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
       - EVALUATION_API_URL=http://assessment-qa:10253
       - ONTOLOGY_SERVICE_URL=http://assessment-ontology:10256
+      - INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN
       - LOG_ENV=\${LOG_ENV:-prod}
       - LOG_LEVEL=\${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -241,6 +268,8 @@ services:
       - "10256:10256"
     restart: always
     environment:
+      - ADMIN_SERVICE_URL=http://assessment-admin:10258
+      - INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN
       - LOG_ENV=\${LOG_ENV:-prod}
       - LOG_LEVEL=\${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -257,11 +286,55 @@ services:
         max-size: "50m"
         max-file: "5"
 
+  situation-service:
+    image: assessment-situation:latest
+    container_name: assessment-situation
+    ports:
+      - "127.0.0.1:10257:10257"
+    restart: always
+    environment:
+      - ADMIN_SERVICE_URL=http://assessment-admin:10258
+      - QA_SERVICE_URL=http://assessment-qa:10253
+      - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
+      - INDICATOR_SERVICE_URL=http://assessment-indicator:10254
+      - SITUATION_GENERATION_MODE=real
+      - SITUATION_ALLOW_DATA_FALLBACK=true
+      - SITUATION_MAX_INFLIGHT=8
+      - SITUATION_MAX_CONCURRENT=2
+      - SITUATION_MAX_PER_USER=2
+      - SITUATION_GENERATION_TIMEOUT=240
+      - SITUATION_LLM_EVIDENCE_ROWS=0
+      - SITUATION_LLM_ALLOWED_HOSTS=$SITUATION_LLM_ALLOWED_HOSTS
+      - SITUATION_CORS_ORIGINS=${SITUATION_CORS_ORIGINS:-http://localhost:10086,http://127.0.0.1:10086}
+      - INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN
+      - SITUATION_SKILL_DB=/app/data/situation_skills.sqlite3
+      - SITUATION_SKILL_MD_OVERRIDE_DIR=/app/data/situation-skill-markdown-overrides
+      - LOG_ENV=prod
+      - LOG_DIR=/app/logs
+    volumes:
+      - "$DEPLOY_TARGET/data/situation:/app/data"
+      - "$DEPLOY_TARGET/logs/situation:/app/logs"
+    networks:
+      - assessment-net
+    depends_on:
+      - admin-service
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:10257/situation/health',timeout=3)); h=d.get('data',{}); assert d.get('success') and h.get('skills',0)>=30 and h.get('skillStorage')=='healthy'"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
   admin-service:
     image: assessment-admin:latest
     container_name: assessment-admin
     ports:
-      - "10258:10258"
+      - "127.0.0.1:10258:10258"
     restart: always
     environment:
       - MYSQL_HOST=$MYSQL_HOST
@@ -270,12 +343,20 @@ services:
       - MYSQL_USER=$MYSQL_USER
       - MYSQL_PASSWORD=$MYSQL_PASSWORD
       - DB_TYPE=$DB_TYPE
+      - INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN
+      - ADMIN_API_TOKEN=$ADMIN_API_TOKEN
       - SPRING_PROFILES_ACTIVE=\${LOG_ENV:-prod}
       - LOG_PATH=/app/logs
       - LOG_LEVEL=\${LOG_LEVEL:-INFO}
     volumes:
       - drivers-data:/app/drivers
       - "$DEPLOY_TARGET/logs/admin:/app/logs"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:10258/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
     networks:
       - assessment-net
     logging:
@@ -292,8 +373,8 @@ volumes:
   drivers-data:
 DOCKERCOMPOSE
 
-mkdir -p "$DEPLOY_TARGET/data"/{knowledge,qa,ontology,evaluation,indicator,qdrant,config}
-mkdir -p "$DEPLOY_TARGET/logs"/{knowledge,qa,indicator,evaluation,ontology,admin}
+mkdir -p "$DEPLOY_TARGET/data"/{knowledge,qa,ontology,evaluation,indicator,situation,qdrant,config}
+mkdir -p "$DEPLOY_TARGET/logs"/{knowledge,qa,indicator,evaluation,ontology,situation,admin}
 
 # drivers 使用命名卷 drivers-data，首次启动时自动从镜像内 /app/drivers 复制驱动。
 # 如需补充 Oracle/达梦等驱动，请通过管理后台「驱动管理」页面上传，或重新构建镜像。
@@ -333,6 +414,8 @@ set -euo pipefail
 echo "智能评估系统 - 启动所有服务..."
 cd /opt/intelligent-assessment
 
+# docker-compose.yml 已写入经部署期强校验的凭据值。
+
 if docker compose version >/dev/null 2>&1; then
     COMPOSE=(docker compose)
 elif command -v docker-compose >/dev/null 2>&1; then
@@ -347,6 +430,7 @@ fi
 SERVICE_CONTAINERS=(
     assessment-frontend
     assessment-admin
+    assessment-situation
     assessment-ontology
     assessment-evaluation
     assessment-indicator
@@ -397,6 +481,27 @@ if ! echo "$SKILL_RESPONSE" | grep -Eq '"builtInTotal"[[:space:]]*:[[:space:]]*3
 fi
 echo "Skill 目录接口校验通过: 30 个内置 Skill"
 
+SITUATION_READY=0
+for i in $(seq 1 60); do
+    if curl -fsS http://127.0.0.1:10257/situation/health >/dev/null 2>&1; then
+        SITUATION_READY=1
+        echo "态势服务健康检查通过 (${i}s)"
+        break
+    fi
+    sleep 1
+done
+if [[ "$SITUATION_READY" -ne 1 ]]; then
+    echo "ERROR: 态势服务未通过健康检查"
+    docker logs --tail 100 assessment-situation
+    exit 1
+fi
+SITUATION_SKILLS="$(curl -fsS http://127.0.0.1:10257/situation/skills?limit=100)"
+if ! echo "$SITUATION_SKILLS" | grep -Eq '"catalogTotal"[[:space:]]*:[[:space:]]*30'; then
+    echo "ERROR: 态势 Skill 目录未返回 30 个 Skill"
+    exit 1
+fi
+echo "态势服务校验通过: 30 个内置 Skill"
+
 echo ""
 echo "服务状态:"
 "${COMPOSE[@]}" ps
@@ -434,7 +539,7 @@ chmod +x "$DEPLOY_TARGET"/*.sh
 # ---------- 防火墙 ----------
 if systemctl is-active --quiet firewalld 2>/dev/null; then
     log_info "配置防火墙..."
-    for port in 10086 10252 10253 10254 10255 10256 10258 6333; do
+    for port in 10086 10252 10253 10254 10255 10256 6333; do
         firewall-cmd --permanent --add-port=$port/tcp 2>/dev/null || true
     done
     firewall-cmd --reload 2>/dev/null || true
@@ -454,4 +559,5 @@ echo "查看状态: cd $DEPLOY_TARGET && bash status.sh"
 echo "重启服务: cd $DEPLOY_TARGET && bash restart.sh"
 echo ""
 echo "访问地址: http://$(hostname -I | awk '{print $1}'):10086"
+echo "SECURITY: 生产环境必须在 10086 前配置 TLS，Basic Auth 禁止经明文 HTTP 跨网传输"
 echo "========================================"

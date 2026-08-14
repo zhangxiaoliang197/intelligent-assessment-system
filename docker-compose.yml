@@ -8,6 +8,9 @@
 #   MYSQL_USER     — 元数据库用户名（默认 root）
 #   MYSQL_PASSWORD — 元数据库密码（无默认值，必须通过 .env 或环境变量配置）
 #   DB_TYPE        — 元数据库类型（默认 mysql，可选 h2/postgresql）
+#   INTERNAL_SERVICE_TOKEN — 后端服务间凭据（至少 24 位，不得使用历史开发默认值）
+#   ADMIN_API_TOKEN        — 独立管理面凭据（至少 24 位，仅前端 nginx 与 admin 持有）
+#   ADMIN_UI_PASSWORD      — 管理页面 Basic Auth 强密码（至少 16 位；生产入口必须启用 TLS）
 #
 # drivers 命名卷说明：
 #   首次启动时 Docker 会把镜像内 /app/drivers 的驱动（MySQL/PostgreSQL/
@@ -34,6 +37,11 @@ services:
     ports:
       - "10086:80"
     restart: always
+    environment:
+      # nginx entrypoint 的 envsubst 仅处理 /etc/nginx/templates/*.template。
+      # ADMIN_API_TOKEN 不会写入浏览器包，只在同一容器内注入到管理 API 反向代理请求。
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be configured}
+      - ADMIN_UI_PASSWORD=${ADMIN_UI_PASSWORD:?ADMIN_UI_PASSWORD must be configured}
     networks:
       - assessment-net
     logging:
@@ -78,6 +86,7 @@ services:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
       - ONTOLOGY_SERVICE_URL=http://assessment-ontology:10256
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be configured}
       - EVALUATION_SKILLS_DIR=/app/config/skills
       - EVALUATION_SKILL_MD_OVERRIDE_DIR=/app/data/skill-markdown-overrides
       - LOG_ENV=${LOG_ENV:-prod}
@@ -109,6 +118,7 @@ services:
       - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
       - EVALUATION_API_URL=http://assessment-qa:10253
       - ONTOLOGY_SERVICE_URL=http://assessment-ontology:10256
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be configured}
       - LOG_ENV=${LOG_ENV:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -155,6 +165,8 @@ services:
     networks:
       - assessment-net
     environment:
+      - ADMIN_SERVICE_URL=http://assessment-admin:10258
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be configured}
       - LOG_ENV=${LOG_ENV:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -173,7 +185,7 @@ services:
     image: assessment-situation:latest
     container_name: assessment-situation
     ports:
-      - "10257:10257"
+      - "127.0.0.1:10257:10257"
     restart: always
     networks:
       - assessment-net
@@ -193,7 +205,9 @@ services:
       - SITUATION_MAX_PER_USER=${SITUATION_MAX_PER_USER:-2}
       - SITUATION_GENERATION_TIMEOUT=${SITUATION_GENERATION_TIMEOUT:-240}
       - SITUATION_LLM_EVIDENCE_ROWS=${SITUATION_LLM_EVIDENCE_ROWS:-0}
-      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-local-development-token}
+      - SITUATION_CORS_ORIGINS=${SITUATION_CORS_ORIGINS:-http://localhost:10086,http://127.0.0.1:10086}
+      - SITUATION_LLM_ALLOWED_HOSTS=${SITUATION_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be configured}
       - SITUATION_SKILL_DB=/app/data/situation_skills.sqlite3
       - SITUATION_SKILL_MD_OVERRIDE_DIR=/app/data/situation-skill-markdown-overrides
       - LLM_MAX_TOKENS=24000
@@ -207,6 +221,12 @@ services:
       - ./logs/situation-service:/app/logs
     depends_on:
       - admin-service
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:10257/situation/health',timeout=3)); h=d.get('data',{}); assert d.get('success') and h.get('skills',0)>=30 and h.get('skillStorage')=='healthy'"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
     logging:
       driver: json-file
       options:
@@ -217,7 +237,7 @@ services:
     image: assessment-admin:latest
     container_name: assessment-admin
     ports:
-      - "10258:10258"
+      - "127.0.0.1:10258:10258"
     restart: always
     networks:
       - assessment-net
@@ -234,7 +254,8 @@ services:
       - MYSQL_USER=${MYSQL_USER:-root}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD:-}
       - SPRING_PROFILES_ACTIVE=${LOG_ENV:-prod}
-      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-local-development-token}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be configured}
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be configured}
       - LOG_PATH=/app/logs
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     # Linux 下让 host.docker.internal 解析到宿主机网关
@@ -247,6 +268,12 @@ services:
     volumes:
       - drivers-data:/app/drivers
       - ./logs/admin-service:/app/logs
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:10258/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
     logging:
       driver: json-file
       options:

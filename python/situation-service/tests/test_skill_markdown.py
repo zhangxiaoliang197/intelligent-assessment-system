@@ -85,20 +85,28 @@ class SituationSkillMarkdownTests(unittest.TestCase):
         skill_store._SCHEMA_READY = False
         self.temp_dir.cleanup()
 
-    def test_builtin_markdown_is_editable_by_any_user(self) -> None:
+    def test_builtin_markdown_requires_admin(self) -> None:
         viewer_headers = _actor_headers("viewer", "viewer")
         initial = self.client.get(
             f"/situation/skills/{BUILTIN_ID}/markdown",
             headers=viewer_headers,
         ).json()["data"]
-        self.assertTrue(initial["editable"])
+        self.assertFalse(initial["editable"])
         self.assertEqual("catalog", initial["storage"])
 
         description = "通过态势 Skill Markdown 在线编辑更新的说明。"
         changed = _replace_metadata(initial["content"], description=description)
-        saved_response = self.client.put(
+        denied_response = self.client.put(
             f"/situation/skills/{BUILTIN_ID}/markdown",
             headers=viewer_headers,
+            json={"content": changed, "expectedHash": initial["contentHash"]},
+        )
+        self.assertEqual(403, denied_response.status_code, denied_response.text)
+
+        admin_headers = _actor_headers("admin", "admin")
+        saved_response = self.client.put(
+            f"/situation/skills/{BUILTIN_ID}/markdown",
+            headers=admin_headers,
             json={"content": changed, "expectedHash": initial["contentHash"]},
         )
         self.assertEqual(200, saved_response.status_code, saved_response.text)
@@ -109,7 +117,7 @@ class SituationSkillMarkdownTests(unittest.TestCase):
 
         stale = self.client.put(
             f"/situation/skills/{BUILTIN_ID}/markdown",
-            headers=viewer_headers,
+            headers=admin_headers,
             json={"content": initial["content"], "expectedHash": initial["contentHash"]},
         )
         self.assertEqual(409, stale.status_code)
@@ -143,7 +151,7 @@ class SituationSkillMarkdownTests(unittest.TestCase):
         self.assertIn("该正文需要完整保留", saved["content"])
         self.assertEqual(description, get_skill(created["id"], "alice")["description"])
 
-    def test_custom_markdown_is_editable_by_other_users(self) -> None:
+    def test_custom_markdown_is_not_editable_by_other_users(self) -> None:
         alice_headers = _actor_headers("alice", "editor")
         created_response = self.client.post(
             "/situation/skills",
@@ -164,7 +172,7 @@ class SituationSkillMarkdownTests(unittest.TestCase):
             f"/situation/skills/{created['id']}/markdown",
             headers=bob_headers,
         ).json()["data"]
-        self.assertTrue(initial["editable"])
+        self.assertFalse(initial["editable"])
 
         description = "Bob 修改了 Alice 的自定义 Skill Markdown。"
         changed = _replace_metadata(initial["content"], description=description)
@@ -173,9 +181,8 @@ class SituationSkillMarkdownTests(unittest.TestCase):
             headers=bob_headers,
             json={"content": changed, "expectedHash": initial["contentHash"]},
         )
-        self.assertEqual(200, saved.status_code, saved.text)
-        self.assertEqual(initial["revision"] + 1, saved.json()["data"]["revision"])
-        self.assertEqual(description, get_skill(created["id"], "alice")["description"])
+        self.assertEqual(403, saved.status_code, saved.text)
+        self.assertNotEqual(description, get_skill(created["id"], "alice")["description"])
 
     def test_unsafe_markdown_is_rejected_without_changing_catalog(self) -> None:
         headers = _actor_headers("admin", "admin")

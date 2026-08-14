@@ -1,6 +1,6 @@
 FROM eclipse-temurin:17-jdk-alpine
 WORKDIR /app
-RUN apk add --no-cache maven
+RUN apk add --no-cache maven wget
 COPY docker/settings.xml /root/.m2/settings.xml
 COPY java/admin-service/pom.xml .
 COPY java/admin-service/src ./src
@@ -10,4 +10,6 @@ ENV LOG_PATH=/app/logs
 ENV SPRING_PROFILES_ACTIVE=dev
 RUN mkdir -p /app/logs
 EXPOSE 10258
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD wget -q --spider http://127.0.0.1:10258/actuator/health || exit 1
 ENTRYPOINT ["java", "-jar", "app.jar"]

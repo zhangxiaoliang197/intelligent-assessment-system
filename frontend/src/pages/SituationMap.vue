@@ -32,7 +32,7 @@
                 <el-icon><MapLocation /></el-icon>
                 <div class="history-item-content">
                   <span class="history-item-title">{{ item.title || item.query || '未命名态势' }}</span>
-                  <span class="history-item-time">{{ formatTime(item.createTime) }}</span>
+                  <span class="history-item-time">{{ formatTime(item.createTime || '') }}</span>
                 </div>
               </div>
             </div>
@@ -66,9 +66,9 @@
             <span class="label">数据源：</span>
             <el-select
               v-model="store.dataSourceId"
+              class="data-source-select"
               placeholder="选择数据源"
               size="small"
-              style="width: 200px"
               @change="onDataSourceChange"
             >
               <el-option
@@ -190,6 +190,20 @@
                         <SituationNarrative :narrative="store.narrative" :loading="store.isGenerating" />
                       </div>
 
+                      <div v-if="hasVerificationEvidence" class="evidence-strip" aria-label="结果验证信息">
+                        <el-tag
+                          size="small"
+                          :type="verificationPassed ? 'success' : 'warning'"
+                          effect="plain"
+                        >
+                          {{ verificationPassed ? '结果已验证' : '结果待复核' }}
+                        </el-tag>
+                        <span v-if="evidenceHashText" :title="evidenceHashText">
+                          证据 {{ evidenceHashText.slice(0, 12) }}
+                        </span>
+                        <span v-if="provenanceDatasetCount">{{ provenanceDatasetCount }} 个来源数据集</span>
+                      </div>
+
                       <!-- 错误提示 -->
                       <div v-if="store.errorMsg">
                         <el-alert :title="store.errorMsg" type="error" :closable="false" show-icon />
@@ -216,13 +230,13 @@
                   :rows="3"
                   :placeholder="inputPlaceholder"
                   resize="none"
-                  @keydown.enter.exact.prevent="onGenerate"
+                  @keydown.enter.exact.prevent="onGenerate()"
                 />
                 <div class="input-actions">
                   <el-button v-if="store.isGenerating" type="danger" plain @click="onStop">
                     <el-icon><CircleClose /></el-icon> 取消
                   </el-button>
-                  <el-button v-else type="primary" @click="onGenerate">
+                  <el-button v-else type="primary" :loading="generatePending || store.requestPending" @click="onGenerate()">
                     <el-icon><Promotion /></el-icon> 生成态势
                   </el-button>
                 </div>
@@ -354,6 +368,7 @@
       :skill="activeFullSkill"
       :parameters="store.skillParameters"
       :query="inputText"
+      :data-source-id="store.dataSourceId"
       @save="onSaveSkillParameters"
     />
 
@@ -449,6 +464,7 @@ const skillUsageLoading = ref(false)
 const skillParametersVisible = ref(false)
 const skillMarkdownVisible = ref(false)
 const dataSourceDialogVisible = ref(false)
+const generatePending = ref(false)
 let recommendTimer: ReturnType<typeof setTimeout> | undefined
 let recommendRequest = 0
 
@@ -484,6 +500,27 @@ const suggests = [
 const isEmpty = computed(() =>
   !store.query && !store.isGenerating && store.status === 'idle'
 )
+
+const verificationRecords = computed(() => [
+  store.evidence.verification,
+  ...store.charts.map((chart) => chart.verification),
+  ...store.mapLayers.map((layer) => layer.verification),
+].filter((item): item is Record<string, any> => Boolean(item && Object.keys(item).length)))
+
+const hasVerificationEvidence = computed(() => Boolean(
+  store.evidence.evidenceHash
+  || verificationRecords.value.length
+  || store.charts.some((chart) => chart.provenance && Object.keys(chart.provenance).length)
+))
+const verificationPassed = computed(() => verificationRecords.value.length > 0
+  && verificationRecords.value.every((item) => item.verified === true || item.valid === true || item.status === 'verified'))
+const evidenceHashText = computed(() => store.evidence.evidenceHash
+  || store.datasets.find((dataset) => dataset.evidenceHash)?.evidenceHash
+  || '')
+const provenanceDatasetCount = computed(() => new Set([
+  ...store.datasets.map((dataset) => dataset.datasetId),
+  ...store.charts.map((chart) => String(chart.provenance?.datasetId || '')).filter(Boolean),
+]).size)
 
 const filteredHistory = computed(() => {
   const kw = historySearch.value.trim().toLowerCase()
@@ -525,6 +562,7 @@ watch(() => store.charts.length + store.mapLayers.length + store.executionSteps.
 
 onUnmounted(() => {
   if (recommendTimer) clearTimeout(recommendTimer)
+  store.closeStream()
 })
 
 // 输入变化时防抖刷新 Skill 智能推荐
@@ -662,12 +700,14 @@ function onClearSkill() {
 
 // ── 交互 ──
 async function onGenerate(q?: string) {
+  if (generatePending.value || store.isGenerating || store.requestPending) return
   const text = (typeof q === 'string' ? q : inputText.value) || ''
   if (!text.trim()) {
     ElMessage.warning('请输入问题')
     return
   }
   inputText.value = text
+  generatePending.value = true
   try {
     // 已启用 Skill 时先执行前检查（preflight）
     if (activeFullSkill.value) {
@@ -675,6 +715,7 @@ async function onGenerate(q?: string) {
         activeFullSkill.value.id,
         text,
         store.skillParameters,
+        store.dataSourceId,
       )
       if (!preflight.ready) {
         ElMessage.error(preflight.errors.join('；') || 'Skill 执行前检查未通过')
@@ -685,17 +726,21 @@ async function onGenerate(q?: string) {
         ElMessage.warning(`执行前检查通过：${preflight.warnings[0]}`)
       }
     }
-    await store.generate(text)
-    store.fetchHistory()
-    void loadSkillPreferences()
+    const started = await store.generate(text)
+    if (started) {
+      void store.fetchHistory()
+      void loadSkillPreferences()
+    }
   } catch (e: any) {
     ElMessage.error('生成失败：' + (e?.serverMessage || e?.message || '未知错误'))
+  } finally {
+    generatePending.value = false
   }
 }
 
-function onStop() {
-  store.closeStream()
-  if (store.isGenerating) store.status = 'failed'
+async function onStop() {
+  await store.cancelGeneration()
+  ElMessage.info('已取消本次生成')
 }
 
 function onNewSession() {
@@ -1022,6 +1067,19 @@ function formatTime(t: string): string {
 .tree-section, .references-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
 .data-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
 .ai-map-section { padding: 0; overflow: hidden; height: 420px; }
+.evidence-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 10px;
+  padding: 9px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  color: #64748b;
+  background: #f8fbff;
+  font-size: 12px;
+}
 .ai-map-section :deep(.map-container) { height: 100%; }
 
 /* ── 操作按钮 ── */

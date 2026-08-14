@@ -6,7 +6,7 @@
     "version": "1.0.0",
     "entity_types": [
       {
-        "id": "concept_b43c66d1",
+        "id": "concept_267de0c0",
         "ontology_id": "ont_61daa626",
         "name": "金融实体",
         "description": "迁移自动生成：金融实体 类概念",
@@ -15,11 +15,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.336243",
-        "update_time": "2026-08-10 16:23:43.336243"
+        "create_time": "2026-08-11 08:43:07.086211",
+        "update_time": "2026-08-11 08:43:07.086211"
       },
       {
-        "id": "concept_f666ae14",
+        "id": "concept_f1d7d938",
         "ontology_id": "ont_61daa626",
         "name": "信贷业务",
         "description": "迁移自动生成：信贷业务 类概念",
@@ -28,11 +28,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.336243",
-        "update_time": "2026-08-10 16:23:43.336243"
+        "create_time": "2026-08-11 08:43:07.086211",
+        "update_time": "2026-08-11 08:43:07.086211"
       },
       {
-        "id": "concept_bb051d95",
+        "id": "concept_14c6b668",
         "ontology_id": "ont_61daa626",
         "name": "事件活动",
         "description": "迁移自动生成：事件活动 类概念",
@@ -41,11 +41,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.336243",
-        "update_time": "2026-08-10 16:23:43.336243"
+        "create_time": "2026-08-11 08:43:07.086211",
+        "update_time": "2026-08-11 08:43:07.086211"
       },
       {
-        "id": "concept_c54daa2f",
+        "id": "concept_8a6423bc",
         "ontology_id": "ont_61daa626",
         "name": "财务指标",
         "description": "迁移自动生成：财务指标 类概念",
@@ -54,11 +54,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.336243",
-        "update_time": "2026-08-10 16:23:43.336243"
+        "create_time": "2026-08-11 08:43:07.086211",
+        "update_time": "2026-08-11 08:43:07.086211"
       },
       {
-        "id": "concept_b73c3ac7",
+        "id": "concept_d1d392bb",
         "ontology_id": "ont_61daa626",
         "name": "风险因素",
         "description": "迁移自动生成：风险因素 类概念",
@@ -67,11 +67,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.336243",
-        "update_time": "2026-08-10 16:23:43.336243"
+        "create_time": "2026-08-11 08:43:07.086211",
+        "update_time": "2026-08-11 08:43:07.086211"
       },
       {
-        "id": "concept_e6aa7a34",
+        "id": "concept_dbcb2cfb",
         "ontology_id": "ont_61daa626",
         "name": "政策措施",
         "description": "迁移自动生成：政策措施 类概念",
@@ -80,8 +80,8 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-10 16:23:43.336243",
-        "update_time": "2026-08-10 16:23:43.336243"
+        "create_time": "2026-08-11 08:43:07.086211",
+        "update_time": "2026-08-11 08:43:07.086211"
       }
     ],
     "relation_types": [

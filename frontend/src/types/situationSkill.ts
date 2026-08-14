@@ -5,6 +5,10 @@ export interface SituationSkillCategory {
 
 export type SituationSkillParameterType = 'text' | 'number' | 'select' | 'multiselect'
 
+export type SituationSkillParameterOperator =
+  | 'equals' | 'contains' | 'numeric-threshold' | 'time-window'
+  | 'limit' | 'map-radius' | 'analysis-control'
+
 export interface SituationSkillParameterDefinition {
   key: string
   label: string
@@ -16,6 +20,10 @@ export interface SituationSkillParameterDefinition {
   minimum?: number
   maximum?: number
   description?: string
+  binding?: {
+    operator: SituationSkillParameterOperator
+    field?: string
+  }
 }
 
 export interface SituationSkill {

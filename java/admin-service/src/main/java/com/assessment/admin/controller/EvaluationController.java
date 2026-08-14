@@ -4,7 +4,7 @@ import com.assessment.admin.service.SchemaService;
 import com.assessment.admin.service.SqlExecutionService;
 import com.assessment.admin.model.Dataset;
 import com.assessment.admin.repository.DatasetRepository;
-import org.springframework.beans.factory.annotation.Value;
+import com.assessment.admin.security.TrustedRequestAuthorizer;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -28,8 +28,8 @@ public class EvaluationController {
     @Autowired
     private DatasetRepository datasetRepository;
 
-    @Value("${internal.service-token:local-development-token}")
-    private String internalServiceToken;
+    @Autowired
+    private TrustedRequestAuthorizer authorizer;
 
     /** Minimal, actor-filtered catalog used only by situation-service preflight/runtime. */
     @GetMapping("/dataset/authorized-list")
@@ -38,7 +38,7 @@ public class EvaluationController {
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-Team-Ids", required = false) String teamIds,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
-        if (!Objects.equals(internalServiceToken, serviceToken)) {
+        if (!authorizer.isTrustedService(serviceToken)) {
             return ResponseEntity.status(401).body(Map.of("success", false, "message", "服务身份校验失败"));
         }
         List<Map<String, Object>> datasets = new ArrayList<>();
@@ -47,6 +47,8 @@ public class EvaluationController {
             Map<String, Object> item = new HashMap<>();
             item.put("id", dataset.getId());
             item.put("name", dataset.getName());
+            item.put("description", dataset.getDescription() == null ? "" : dataset.getDescription());
+            item.put("databaseId", dataset.getDatabaseId() == null ? "" : dataset.getDatabaseId());
             item.put("tableName", dataset.getTableName());
             item.put("schemaVersion", dataset.getSchemaVersion() == null ? 1 : dataset.getSchemaVersion());
             item.put("sensitiveColumns", new ArrayList<>(csvSet(dataset.getSensitiveColumns())));
@@ -67,7 +69,7 @@ public class EvaluationController {
             @RequestHeader(value = "X-Team-Ids", required = false) String teamIds,
             @RequestHeader(value = "X-User-Role", required = false) String role,
             @RequestBody(required = false) Map<String, Object> body) {
-        if (!Objects.equals(internalServiceToken, serviceToken)) {
+        if (!authorizer.isTrustedService(serviceToken)) {
             return ResponseEntity.status(401).body(Map.of("success", false, "message", "服务身份校验失败"));
         }
         Optional<Dataset> dataset = datasetRepository.findById(datasetId);
@@ -107,11 +109,14 @@ public class EvaluationController {
     @PostMapping("/dataset/{datasetId}/execute-sql")
     public ResponseEntity<Map<String, Object>> executeSqlOnDataset(
             @PathVariable String datasetId,
-            @RequestHeader(value = "X-User-Role", required = false) String role,
+            @RequestHeader(value = "X-Admin-Token", required = false) String adminToken,
             @RequestBody Map<String, String> body) {
 
-        if (!"admin".equalsIgnoreCase(role)) {
-            return ResponseEntity.status(403).body(Map.of("success", false, "message", "仅管理员可执行临时 SQL"));
+        if (!authorizer.isAdministrator(adminToken)) {
+            return ResponseEntity.status(401).body(Map.of("success", false, "message", "缺少可信管理凭据"));
+        }
+        if (!authorizer.isAdHocSqlEnabled()) {
+            return ResponseEntity.status(403).body(Map.of("success", false, "message", "临时 SQL 已禁用"));
         }
 
         String sql = body.get("sql");
@@ -130,11 +135,19 @@ public class EvaluationController {
     @PostMapping("/database/{dbId}/execute-sql")
     public ResponseEntity<Map<String, Object>> executeSqlOnDatabase(
             @PathVariable String dbId,
-            @RequestHeader(value = "X-User-Role", required = false) String role,
+            @RequestHeader(value = "X-Service-Token", required = false) String serviceToken,
+            @RequestHeader(value = "X-Admin-Token", required = false) String adminToken,
             @RequestBody Map<String, String> body) {
 
-        if (!"admin".equalsIgnoreCase(role)) {
-            return ResponseEntity.status(403).body(Map.of("success", false, "message", "仅管理员可执行临时 SQL"));
+        boolean trustedRuntime = authorizer.isTrustedService(serviceToken);
+        boolean administrator = authorizer.isAdministrator(adminToken);
+        if (!trustedRuntime && !administrator) {
+            return ResponseEntity.status(401).body(Map.of("success", false, "message", "缺少可信管理凭据"));
+        }
+        // Backend QA execution is a normal runtime capability. Interactive administrator
+        // ad-hoc SQL remains separately disabled unless explicitly enabled.
+        if (administrator && !trustedRuntime && !authorizer.isAdHocSqlEnabled()) {
+            return ResponseEntity.status(403).body(Map.of("success", false, "message", "临时 SQL 已禁用"));
         }
 
         String sql = body.get("sql");
@@ -159,7 +172,7 @@ public class EvaluationController {
     private boolean canRead(Dataset dataset, String userId, String teamIds, String role) {
         if ("admin".equalsIgnoreCase(role)) return true;
         Set<String> users = csvSet(dataset.getAllowedUserIds());
-        if (userId != null && users.contains(userId.trim())) return true;
+        if (userId != null && users.contains(normalizePrincipal(userId))) return true;
         Set<String> allowedTeams = csvSet(dataset.getAllowedTeamIds());
         for (String team : csvSet(teamIds)) {
             if (allowedTeams.contains(team)) return true;
@@ -171,8 +184,12 @@ public class EvaluationController {
         if (csv == null || csv.isBlank()) return Set.of();
         Set<String> result = new HashSet<>();
         for (String item : csv.split(",")) {
-            if (!item.isBlank()) result.add(item.trim());
+            if (!item.isBlank()) result.add(normalizePrincipal(item));
         }
         return result;
+    }
+
+    private String normalizePrincipal(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 }

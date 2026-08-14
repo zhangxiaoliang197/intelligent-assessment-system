@@ -5,13 +5,43 @@
 # ============================================================
 
 param(
-    [string]$HostName = $env:MYSQL_HOST ?? "localhost",
-    [string]$Port     = $env:MYSQL_PORT ?? "3306",
-    [string]$User     = $env:MYSQL_USER ?? "root",
-    [string]$Password = $env:MYSQL_PASSWORD ?? "",
-    [string]$Database = $env:MYSQL_DATABASE ?? "assessment",
+    [string]$HostName = $(if ($env:MYSQL_HOST) { $env:MYSQL_HOST } else { "localhost" }),
+    [string]$Port     = $(if ($env:MYSQL_PORT) { $env:MYSQL_PORT } else { "3306" }),
+    [string]$User     = $(if ($env:MYSQL_USER) { $env:MYSQL_USER } else { "root" }),
+    [string]$Password = $(if ($env:MYSQL_PASSWORD) { $env:MYSQL_PASSWORD } else { "" }),
+    [string]$Database = $(if ($env:MYSQL_DATABASE) { $env:MYSQL_DATABASE } else { "assessment" }),
     [switch]$SkipConfirm
 )
+
+# ============================================================
+# 自举引导：强制使用 PowerShell 7+（pwsh）运行本脚本。
+# 若由 Windows PowerShell 5.1（或更低）启动，自动用 pwsh 重启自身（含参数透传）。
+# ============================================================
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    $pwshPath = $null
+    $pwshCmd = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+    if ($pwshCmd) { $pwshPath = $pwshCmd.Source }
+    if (-not $pwshPath) {
+        foreach ($c in @("$env:ProgramFiles\PowerShell\7\pwsh.exe", "${env:ProgramFiles(x86)}\PowerShell\7\pwsh.exe")) {
+            if ($c -and (Test-Path $c)) { $pwshPath = $c; break }
+        }
+    }
+    if ($pwshPath) {
+        $relaunchArgs = @()
+        foreach ($entry in $PSBoundParameters.GetEnumerator()) {
+            if ($entry.Value -is [System.Management.Automation.SwitchParameter]) {
+                if ($entry.Value) { $relaunchArgs += "-$($entry.Key)" }
+            } else {
+                $relaunchArgs += "-$($entry.Key)"
+                $relaunchArgs += [string]$entry.Value
+            }
+        }
+        & $pwshPath -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath @relaunchArgs
+        exit $LASTEXITCODE
+    }
+    Write-Host "[ERROR] 本脚本需要 PowerShell 7+ (pwsh)，但未检测到。请安装 PowerShell 7 后重试。" -ForegroundColor Red
+    exit 1
+}
 
 $ErrorActionPreference = "Stop"
 $root = "$PSScriptRoot"

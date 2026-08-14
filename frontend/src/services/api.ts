@@ -13,12 +13,10 @@ service.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
-    // The current application has no dedicated identity endpoint yet.  Skill
-    // governance therefore uses a small, gateway-friendly actor contract.  A
-    // real authentication gateway can overwrite these values, while local
-    // deployments keep the backwards-compatible administrator identity.
-    config.headers['X-User-Id'] = localStorage.getItem('skill_user_id') || 'local-admin'
-    config.headers['X-User-Role'] = localStorage.getItem('skill_user_role') || 'admin'
+    // Production authorization is enforced again by backend services. The browser never
+    // defaults itself to administrator; a gateway/session may replace this local actor.
+    config.headers['X-User-Id'] = localStorage.getItem('skill_user_id') || 'local-user'
+    config.headers['X-User-Role'] = localStorage.getItem('skill_user_role') || 'viewer'
     const teamIds = localStorage.getItem('skill_team_ids')
     if (teamIds) config.headers['X-Team-Ids'] = teamIds
     return config

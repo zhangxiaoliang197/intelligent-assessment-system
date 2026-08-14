@@ -2,6 +2,7 @@ import os
 
 QA_SERVICE_URL = os.getenv("QA_SERVICE_URL", "http://localhost:10253")
 ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
+INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "").strip()
 KNOWLEDGE_SERVICE_URL = os.getenv("KNOWLEDGE_SERVICE_URL", "http://localhost:10252")
 EVALUATION_API_URL = os.getenv("EVALUATION_API_URL", "http://localhost:10253")
 ONTOLOGY_SERVICE_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://localhost:10256")
