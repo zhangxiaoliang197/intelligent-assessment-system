@@ -190,8 +190,8 @@
                       </div>
 
                       <!-- 分析结论 -->
-                      <div v-if="store.narrative.intro || store.isGenerating" class="references-section">
-                        <SituationNarrative :narrative="store.narrative" :loading="store.isGenerating" />
+                      <div v-if="store.narrative.intro" class="references-section">
+                        <SituationNarrative :narrative="store.narrative" />
                       </div>
 
                       <!-- 错误提示 -->

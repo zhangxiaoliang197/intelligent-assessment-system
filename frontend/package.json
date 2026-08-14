@@ -19,6 +19,7 @@
     "jspdf": "^2.5.2",
     "leaflet": "^1.9.4",
     "leaflet-draw": "^1.0.4",
+    "leaflet.heat": "^0.2.0",
     "lucide-vue-next": "^1.0.0",
     "marked": "^18.0.7",
     "md5": "^2.3.0",

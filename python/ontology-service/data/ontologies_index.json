@@ -241,9 +241,8 @@
       }
     ],
     "create_time": "2026-08-12 16:32:32.509367",
-    "update_time": "2026-08-12 16:32:32.511486",
-    "status": "活跃",
-    "is_default": false,
+    "update_time": "2026-08-13 11:09:01.987020",
+    "status": "归档",
     "schema_version": 3
   },
   {
@@ -798,7 +797,6 @@
     "create_time": "2026-08-12 17:56:45.017751",
     "update_time": "2026-08-12 17:56:45.019645",
     "status": "活跃",
-    "is_default": false,
     "schema_version": 3
   },
   {
@@ -808,7 +806,7 @@
     "version": "1.0.0",
     "entity_types": [
       {
-        "id": "concept_3b58aad2",
+        "id": "concept_c1cc0e10",
         "ontology_id": "ont_61daa626",
         "name": "金融实体",
         "description": "迁移自动生成：金融实体 类概念",
@@ -817,11 +815,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:35:31.812496",
-        "update_time": "2026-08-11 08:35:31.812496"
+        "create_time": "2026-08-13 08:38:04.940466",
+        "update_time": "2026-08-13 08:38:04.940466"
       },
       {
-        "id": "concept_245f956f",
+        "id": "concept_fc19d67f",
         "ontology_id": "ont_61daa626",
         "name": "信贷业务",
         "description": "迁移自动生成：信贷业务 类概念",
@@ -830,11 +828,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:35:31.812496",
-        "update_time": "2026-08-11 08:35:31.812496"
+        "create_time": "2026-08-13 08:38:04.940466",
+        "update_time": "2026-08-13 08:38:04.940466"
       },
       {
-        "id": "concept_0a0fdaee",
+        "id": "concept_1992d2e1",
         "ontology_id": "ont_61daa626",
         "name": "事件活动",
         "description": "迁移自动生成：事件活动 类概念",
@@ -843,11 +841,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:35:31.812496",
-        "update_time": "2026-08-11 08:35:31.812496"
+        "create_time": "2026-08-13 08:38:04.940466",
+        "update_time": "2026-08-13 08:38:04.940466"
       },
       {
-        "id": "concept_690fb949",
+        "id": "concept_6dfe35a0",
         "ontology_id": "ont_61daa626",
         "name": "财务指标",
         "description": "迁移自动生成：财务指标 类概念",
@@ -856,11 +854,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:35:31.812496",
-        "update_time": "2026-08-11 08:35:31.812496"
+        "create_time": "2026-08-13 08:38:04.940466",
+        "update_time": "2026-08-13 08:38:04.940466"
       },
       {
-        "id": "concept_a8a6ab6b",
+        "id": "concept_6d221f43",
         "ontology_id": "ont_61daa626",
         "name": "风险因素",
         "description": "迁移自动生成：风险因素 类概念",
@@ -869,11 +867,11 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:35:31.812496",
-        "update_time": "2026-08-11 08:35:31.812496"
+        "create_time": "2026-08-13 08:38:04.940466",
+        "update_time": "2026-08-13 08:38:04.940466"
       },
       {
-        "id": "concept_47d2182f",
+        "id": "concept_c3d4ce6a",
         "ontology_id": "ont_61daa626",
         "name": "政策措施",
         "description": "迁移自动生成：政策措施 类概念",
@@ -882,8 +880,8 @@
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-11 08:35:31.812496",
-        "update_time": "2026-08-11 08:35:31.812496"
+        "create_time": "2026-08-13 08:38:04.940466",
+        "update_time": "2026-08-13 08:38:04.940466"
       }
     ],
     "relation_types": [
@@ -915,7 +913,6 @@
     "create_time": "2026-08-04 16:27:17.072121",
     "update_time": "2026-08-04 16:27:17.072121",
     "status": "活跃",
-    "is_default": false,
     "schema_version": 3
   },
   {
@@ -1032,7 +1029,6 @@
     "create_time": "2026-08-06 15:17:18.426741",
     "update_time": "2026-08-06 15:17:18.426741",
     "status": "活跃",
-    "is_default": false,
     "schema_version": 3
   },
   {
@@ -1119,7 +1115,6 @@
     "create_time": "2026-08-06 16:32:20.288710",
     "update_time": "2026-08-06 16:32:20.288710",
     "status": "活跃",
-    "is_default": false,
     "schema_version": 3
   },
   {
@@ -2002,42 +1997,14 @@
     "create_time": "2026-08-11 16:52:30.921177",
     "update_time": "2026-08-11 16:52:30.921177",
     "status": "活跃",
-    "is_default": false,
     "schema_version": 3
   },
   {
-    "id": "ont_fe9aceee",
-    "name": "未命名本体",
-    "description": "手动构建本体",
+    "id": "ont_f6256867",
+    "name": "123",
+    "description": "",
     "version": "1.0.0",
-    "entity_types": [
-      {
-        "id": "et_6c5f1000",
-        "ontology_id": "",
-        "name": "概念",
-        "description": "",
-        "color": "#5470c6",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 08:59:15.685297",
-        "update_time": "2026-08-12 08:59:15.685297"
-      },
-      {
-        "id": "et_6bcaaeb5",
-        "ontology_id": "",
-        "name": "实体",
-        "description": "",
-        "color": "#91cc75",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 08:59:15.685325",
-        "update_time": "2026-08-12 08:59:15.685325"
-      }
-    ],
+    "entity_types": [],
     "relation_types": [
       {
         "name": "关联",
@@ -2048,45 +2015,1099 @@
         "description": ""
       }
     ],
-    "create_time": "2026-08-11 16:57:55.565957",
-    "update_time": "2026-08-11 16:57:55.565957",
-    "status": "活跃",
-    "is_default": false,
+    "create_time": "2026-08-13 11:00:07.582281",
+    "update_time": "2026-08-13 11:00:07.582388",
+    "status": "构建中",
     "schema_version": 3
   },
   {
-    "id": "ont_4e6a2b97",
-    "name": "未命名本体",
-    "description": "手动构建本体",
+    "id": "ont_9f734c65",
+    "name": "家庭",
+    "description": "",
     "version": "1.0.0",
     "entity_types": [
       {
-        "id": "et_9153fb0a",
-        "ontology_id": "",
-        "name": "概念",
-        "description": "",
+        "id": "et_079b7646",
+        "ontology_id": "ont_9f734c65",
+        "name": "人",
+        "description": "家庭成员，具有身份、年龄和角色等属性",
         "color": "#5470c6",
-        "property_schema": [],
-        "source_snippet": "",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "人员唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "姓名"
+          },
+          {
+            "name": "age",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "岁",
+            "required": false,
+            "description": "年龄"
+          },
+          {
+            "name": "role",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "家庭角色，如父亲、儿子等"
+          }
+        ],
+        "source_snippet": "Person (人)\tid, name(姓名), age(年龄), role(角色)\t家庭成员",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-12 08:59:15.688096",
-        "update_time": "2026-08-12 08:59:15.688096"
+        "create_time": "2026-08-13 14:58:05.638795",
+        "update_time": "2026-08-13 14:58:05.638795"
       },
       {
-        "id": "et_816e3061",
-        "ontology_id": "",
-        "name": "实体",
-        "description": "",
+        "id": "et_e5cffe34",
+        "ontology_id": "ont_9f734c65",
+        "name": "房间",
+        "description": "家庭中的空间单元，具有位置和面积属性",
         "color": "#91cc75",
-        "property_schema": [],
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "房间唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "房间名称"
+          },
+          {
+            "name": "floor",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "楼层信息，如1楼、2楼"
+          },
+          {
+            "name": "area",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "m²",
+            "required": false,
+            "description": "房间面积"
+          }
+        ],
+        "source_snippet": "Room (房间)\tid, name(名称), floor(楼层), area(面积/m²)\t家庭空间",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 14:58:05.638795",
+        "update_time": "2026-08-13 14:58:05.638795"
+      },
+      {
+        "id": "et_5820db56",
+        "ontology_id": "ont_9f734c65",
+        "name": "设备",
+        "description": "智能家居设备，具有品牌和工作状态属性",
+        "color": "#fac858",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "设备唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "设备名称"
+          },
+          {
+            "name": "brand",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "品牌"
+          },
+          {
+            "name": "status",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "设备开关状态，取值为on或off"
+          }
+        ],
+        "source_snippet": "Device (设备)\tid, name(名称), brand(品牌), status(状态: on/off)\t智能家居设备",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 14:58:05.638795",
+        "update_time": "2026-08-13 14:58:05.638795"
+      },
+      {
+        "id": "et_d7f63940",
+        "ontology_id": "ont_9f734c65",
+        "name": "宠物",
+        "description": "家庭中饲养的动物，具有物种和习性属性",
+        "color": "#ee6666",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "宠物唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "宠物昵称"
+          },
+          {
+            "name": "species",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "物种，如猫、狗"
+          },
+          {
+            "name": "hobby",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "习性爱好"
+          }
+        ],
+        "source_snippet": "Pet (宠物)\tid, name(昵称), species(物种), hobby(习性)\t家庭宠物",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 14:58:05.638795",
+        "update_time": "2026-08-13 14:58:05.638795"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "cares_for",
+        "description": ""
+      },
+      {
+        "name": "controls",
+        "description": ""
+      },
+      {
+        "name": "located_in",
+        "description": ""
+      },
+      {
+        "name": "owns",
+        "description": ""
+      },
+      {
+        "name": "plays_with",
+        "description": ""
+      },
+      {
+        "name": "resides_in",
+        "description": ""
+      },
+      {
+        "name": "位于",
+        "description": ""
+      },
+      {
+        "name": "居住于",
+        "description": ""
+      },
+      {
+        "name": "拥有",
+        "description": ""
+      },
+      {
+        "name": "操控",
+        "description": ""
+      },
+      {
+        "name": "照看",
+        "description": ""
+      },
+      {
+        "name": "玩耍",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-13 14:58:05.638795",
+    "update_time": "2026-08-13 14:58:05.640823",
+    "status": "活跃",
+    "schema_version": 3
+  },
+  {
+    "id": "ont_f2c31eca",
+    "name": "111",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [],
+    "relation_types": [
+      {
+        "name": "cares_for",
+        "description": ""
+      },
+      {
+        "name": "controls",
+        "description": ""
+      },
+      {
+        "name": "located_in",
+        "description": ""
+      },
+      {
+        "name": "owns",
+        "description": ""
+      },
+      {
+        "name": "plays_with",
+        "description": ""
+      },
+      {
+        "name": "resides_in",
+        "description": ""
+      },
+      {
+        "name": "位于",
+        "description": ""
+      },
+      {
+        "name": "居住于",
+        "description": ""
+      },
+      {
+        "name": "拥有",
+        "description": ""
+      },
+      {
+        "name": "操控",
+        "description": ""
+      },
+      {
+        "name": "照看",
+        "description": ""
+      },
+      {
+        "name": "玩耍",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-13 14:58:29.041087",
+    "update_time": "2026-08-13 14:58:38.925592",
+    "status": "构建中",
+    "schema_version": 3
+  },
+  {
+    "id": "ont_6fc65a45",
+    "name": "12",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [],
+    "relation_types": [
+      {
+        "name": "cares_for",
+        "description": ""
+      },
+      {
+        "name": "controls",
+        "description": ""
+      },
+      {
+        "name": "located_in",
+        "description": ""
+      },
+      {
+        "name": "owns",
+        "description": ""
+      },
+      {
+        "name": "plays_with",
+        "description": ""
+      },
+      {
+        "name": "resides_in",
+        "description": ""
+      },
+      {
+        "name": "位于",
+        "description": ""
+      },
+      {
+        "name": "居住于",
+        "description": ""
+      },
+      {
+        "name": "拥有",
+        "description": ""
+      },
+      {
+        "name": "操控",
+        "description": ""
+      },
+      {
+        "name": "照看",
+        "description": ""
+      },
+      {
+        "name": "玩耍",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-13 14:59:17.612976",
+    "update_time": "2026-08-13 14:59:24.085381",
+    "status": "构建中",
+    "schema_version": 3
+  },
+  {
+    "id": "ont_3d5b7603",
+    "name": "13",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "id": "concept_6ae3fa4b",
+        "ontology_id": "ont_3d5b7603",
+        "name": "Person",
+        "description": "家庭成员，包含身份信息与家庭角色。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "姓名"
+          },
+          {
+            "name": "age",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "岁",
+            "required": false,
+            "description": "年龄"
+          },
+          {
+            "name": "role",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "在家庭中的角色，如父亲、儿子等"
+          }
+        ],
         "source_snippet": "",
         "parent_entity_type_id": null,
         "parent_entity_type_name": null,
-        "create_time": "2026-08-12 08:59:15.688121",
-        "update_time": "2026-08-12 08:59:15.688121"
+        "create_time": "2026-08-13 15:05:14.767957",
+        "update_time": "2026-08-13 15:05:14.767957"
+      },
+      {
+        "id": "concept_11d969b4",
+        "ontology_id": "ont_3d5b7603",
+        "name": "Room",
+        "description": "家庭空间，描述房间位置与面积。",
+        "color": "#91cc75",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "房间名称"
+          },
+          {
+            "name": "floor",
+            "category": "descriptive",
+            "data_type": "number",
+            "unit": "",
+            "required": false,
+            "description": "所在楼层"
+          },
+          {
+            "name": "area",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "m²",
+            "required": false,
+            "description": "房间面积"
+          }
+        ],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 15:05:14.805624",
+        "update_time": "2026-08-13 15:05:14.805624"
+      },
+      {
+        "id": "concept_ab88a0b8",
+        "ontology_id": "ont_3d5b7603",
+        "name": "Device",
+        "description": "智能家居设备，具有品牌和开关状态。",
+        "color": "#fac858",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "设备名称"
+          },
+          {
+            "name": "brand",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "品牌"
+          },
+          {
+            "name": "status",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "设备状态，枚举 on/off"
+          }
+        ],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 15:05:14.842047",
+        "update_time": "2026-08-13 15:05:14.842047"
+      },
+      {
+        "id": "concept_d422f724",
+        "ontology_id": "ont_3d5b7603",
+        "name": "Pet",
+        "description": "家庭宠物，包含物种与习性。",
+        "color": "#ee6666",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "宠物昵称"
+          },
+          {
+            "name": "species",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "物种，如猫、狗"
+          },
+          {
+            "name": "hobby",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "习性爱好"
+          }
+        ],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 15:05:14.877651",
+        "update_time": "2026-08-13 15:05:14.877651"
       }
     ],
+    "relation_types": [
+      {
+        "name": "cares_for",
+        "description": ""
+      },
+      {
+        "name": "controls",
+        "description": ""
+      },
+      {
+        "name": "located_in",
+        "description": ""
+      },
+      {
+        "name": "owns",
+        "description": ""
+      },
+      {
+        "name": "plays_with",
+        "description": ""
+      },
+      {
+        "name": "resides_in",
+        "description": ""
+      },
+      {
+        "name": "位于",
+        "description": ""
+      },
+      {
+        "name": "居住于",
+        "description": ""
+      },
+      {
+        "name": "拥有",
+        "description": ""
+      },
+      {
+        "name": "操控",
+        "description": ""
+      },
+      {
+        "name": "照看",
+        "description": ""
+      },
+      {
+        "name": "玩耍",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-13 15:05:08.773978",
+    "update_time": "2026-08-13 15:05:15.186186",
+    "status": "构建中",
+    "schema_version": 3
+  },
+  {
+    "id": "ont_ccb44544",
+    "name": "家庭 元模型 - 副本",
+    "description": "基于元模型「家庭 元模型」创建",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "id": "concept_c6ae8e78",
+        "ontology_id": "ont_ccb44544",
+        "name": "Person",
+        "description": "家庭成员，包含身份信息与家庭角色。",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "姓名"
+          },
+          {
+            "name": "age",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "岁",
+            "required": false,
+            "description": "年龄"
+          },
+          {
+            "name": "role",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "在家庭中的角色，如父亲、儿子等"
+          }
+        ],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 15:28:28.590630",
+        "update_time": "2026-08-13 15:28:28.590630"
+      },
+      {
+        "id": "concept_c9f2f1ee",
+        "ontology_id": "ont_ccb44544",
+        "name": "Room",
+        "description": "家庭空间，描述房间位置与面积。",
+        "color": "#91cc75",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "房间名称"
+          },
+          {
+            "name": "floor",
+            "category": "descriptive",
+            "data_type": "number",
+            "unit": "",
+            "required": false,
+            "description": "所在楼层"
+          },
+          {
+            "name": "area",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "m²",
+            "required": false,
+            "description": "房间面积"
+          }
+        ],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 15:28:28.630794",
+        "update_time": "2026-08-13 15:28:28.630794"
+      },
+      {
+        "id": "concept_d984c874",
+        "ontology_id": "ont_ccb44544",
+        "name": "Device",
+        "description": "智能家居设备，具有品牌和开关状态。",
+        "color": "#fac858",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "设备名称"
+          },
+          {
+            "name": "brand",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "品牌"
+          },
+          {
+            "name": "status",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "设备状态，枚举 on/off"
+          }
+        ],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 15:28:28.677910",
+        "update_time": "2026-08-13 15:28:28.677910"
+      },
+      {
+        "id": "concept_8a7e54b3",
+        "ontology_id": "ont_ccb44544",
+        "name": "Pet",
+        "description": "家庭宠物，包含物种与习性。",
+        "color": "#ee6666",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "宠物昵称"
+          },
+          {
+            "name": "species",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "物种，如猫、狗"
+          },
+          {
+            "name": "hobby",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "习性爱好"
+          }
+        ],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 15:28:28.711882",
+        "update_time": "2026-08-13 15:28:28.711882"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "位于",
+        "description": ""
+      },
+      {
+        "name": "居住于",
+        "description": ""
+      },
+      {
+        "name": "拥有",
+        "description": ""
+      },
+      {
+        "name": "操控",
+        "description": ""
+      },
+      {
+        "name": "照看",
+        "description": ""
+      },
+      {
+        "name": "玩耍",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-13 15:28:28.419366",
+    "update_time": "2026-08-13 15:28:29.026862",
+    "status": "活跃",
+    "schema_version": 3
+  },
+  {
+    "id": "ont_197de5aa",
+    "name": "14",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [
+      {
+        "id": "et_61f7c34a",
+        "ontology_id": "ont_197de5aa",
+        "name": "人",
+        "description": "家庭成员，具有身份信息、年龄和家庭角色",
+        "color": "#5470c6",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "实体唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "姓名"
+          },
+          {
+            "name": "age",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "岁",
+            "required": false,
+            "description": "年龄"
+          },
+          {
+            "name": "role",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "家庭成员角色（如父亲、儿子、叔叔、阿姨）"
+          }
+        ],
+        "source_snippet": "Person (人) id, name(姓名), age(年龄), role(角色) 家庭成员",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 16:55:39.351207",
+        "update_time": "2026-08-13 16:55:39.351207"
+      },
+      {
+        "id": "et_1cd06d45",
+        "ontology_id": "ont_197de5aa",
+        "name": "房间",
+        "description": "家庭中的物理空间，包含楼层和面积信息",
+        "color": "#91cc75",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "实体唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "房间名称"
+          },
+          {
+            "name": "floor",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "层",
+            "required": false,
+            "description": "所在楼层"
+          },
+          {
+            "name": "area",
+            "category": "metric",
+            "data_type": "number",
+            "unit": "m²",
+            "required": false,
+            "description": "房间面积"
+          }
+        ],
+        "source_snippet": "Room (房间) id, name(名称), floor(楼层), area(面积/m²) 家庭空间",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 16:55:39.351207",
+        "update_time": "2026-08-13 16:55:39.351207"
+      },
+      {
+        "id": "et_b9ffe38a",
+        "ontology_id": "ont_197de5aa",
+        "name": "设备",
+        "description": "智能家居设备，具有品牌和开关状态",
+        "color": "#fac858",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "实体唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "设备名称"
+          },
+          {
+            "name": "brand",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "品牌"
+          },
+          {
+            "name": "status",
+            "category": "descriptive",
+            "data_type": "enum",
+            "unit": "",
+            "required": false,
+            "description": "设备状态：on/off"
+          }
+        ],
+        "source_snippet": "Device (设备) id, name(名称), brand(品牌), status(状态: on/off) 智能家居设备",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 16:55:39.351207",
+        "update_time": "2026-08-13 16:55:39.351207"
+      },
+      {
+        "id": "et_032a2098",
+        "ontology_id": "ont_197de5aa",
+        "name": "宠物",
+        "description": "家庭宠物，包含物种和习性信息",
+        "color": "#ee6666",
+        "property_schema": [
+          {
+            "name": "id",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "实体唯一标识"
+          },
+          {
+            "name": "name",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": true,
+            "description": "宠物昵称"
+          },
+          {
+            "name": "species",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "物种（如猫、狗）"
+          },
+          {
+            "name": "hobby",
+            "category": "descriptive",
+            "data_type": "string",
+            "unit": "",
+            "required": false,
+            "description": "习性爱好（如爱晒太阳、爱追球）"
+          }
+        ],
+        "source_snippet": "Pet (宠物) id, name(昵称), species(物种), hobby(习性) 家庭宠物",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-08-13 16:55:39.351207",
+        "update_time": "2026-08-13 16:55:39.351207"
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "cares_for",
+        "description": ""
+      },
+      {
+        "name": "controls",
+        "description": ""
+      },
+      {
+        "name": "located_in",
+        "description": ""
+      },
+      {
+        "name": "owns",
+        "description": ""
+      },
+      {
+        "name": "plays_with",
+        "description": ""
+      },
+      {
+        "name": "resides_in",
+        "description": ""
+      },
+      {
+        "name": "位于",
+        "description": ""
+      },
+      {
+        "name": "居住于",
+        "description": ""
+      },
+      {
+        "name": "拥有",
+        "description": ""
+      },
+      {
+        "name": "操控",
+        "description": ""
+      },
+      {
+        "name": "照看",
+        "description": ""
+      },
+      {
+        "name": "玩耍",
+        "description": ""
+      }
+    ],
+    "create_time": "2026-08-13 16:55:39.351207",
+    "update_time": "2026-08-13 16:55:39.353362",
+    "status": "活跃",
+    "schema_version": 3
+  },
+  {
+    "id": "ont_ef49ae02",
+    "name": "111",
+    "description": "",
+    "version": "1.0.0",
+    "entity_types": [],
     "relation_types": [
       {
         "name": "关联",
@@ -2097,59 +3118,9 @@
         "description": ""
       }
     ],
-    "create_time": "2026-08-11 17:00:49.253443",
-    "update_time": "2026-08-11 17:00:49.253443",
-    "status": "活跃",
-    "is_default": false,
-    "schema_version": 3
-  },
-  {
-    "id": "ont_c9af1c35",
-    "name": "未命名本体",
-    "description": "手动构建本体",
-    "version": "1.0.0",
-    "entity_types": [
-      {
-        "id": "et_6436d3b8",
-        "ontology_id": "",
-        "name": "概念",
-        "description": "",
-        "color": "#5470c6",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 08:59:15.691649",
-        "update_time": "2026-08-12 08:59:15.691649"
-      },
-      {
-        "id": "et_82e23a08",
-        "ontology_id": "",
-        "name": "实体",
-        "description": "",
-        "color": "#91cc75",
-        "property_schema": [],
-        "source_snippet": "",
-        "parent_entity_type_id": null,
-        "parent_entity_type_name": null,
-        "create_time": "2026-08-12 08:59:15.691674",
-        "update_time": "2026-08-12 08:59:15.691674"
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "关联",
-        "description": ""
-      },
-      {
-        "name": "影响",
-        "description": ""
-      }
-    ],
-    "create_time": "2026-08-11 17:32:19.713538",
-    "update_time": "2026-08-11 17:32:19.713538",
-    "status": "活跃",
-    "is_default": false,
+    "create_time": "2026-08-14 08:41:34.678761",
+    "update_time": "2026-08-14 08:41:34.678887",
+    "status": "构建中",
     "schema_version": 3
   }
 ]

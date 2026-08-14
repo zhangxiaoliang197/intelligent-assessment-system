@@ -18,7 +18,19 @@
         </span>
       </div>
     </div>
-    <div ref="mapContainer" class="geo-map-content"></div>
+    <div ref="mapContainer" class="geo-map-content">
+      <div v-if="hasHeat" class="geo-map-legend">
+        <div class="geo-legend-title">热度</div>
+        <div class="geo-legend-gradient"></div>
+        <div class="geo-legend-axis"><span>低</span><span>高</span></div>
+      </div>
+      <div v-if="hasVector && !hasHeat" class="geo-map-legend">
+        <div class="geo-legend-title">图例</div>
+        <div class="geo-legend-item"><span class="geo-legend-dot" :style="{ background: '#e74c3c' }"></span>标点</div>
+        <div class="geo-legend-item"><span class="geo-legend-line"></span>路线</div>
+        <div class="geo-legend-item"><span class="geo-legend-sw" :style="{ borderColor: '#3498db' }"></span>区域</div>
+      </div>
+    </div>
     <div v-if="!compact && points.length > 0" class="geo-point-table">
       <div class="geo-table-header" @click="tableExpanded = !tableExpanded" style="cursor:pointer; user-select:none">
         <span class="geo-table-title">{{ tableExpanded ? '▼' : '▶' }} 提取坐标点 ({{ points.length }})</span>
@@ -55,6 +67,7 @@ import { ref, onMounted, watch, onUnmounted, computed, nextTick } from 'vue'
 import L from 'leaflet'
 import 'leaflet-draw'
 import 'leaflet-draw/dist/leaflet.draw.css'
+import 'leaflet.heat'
 import gcoord from 'gcoord'
 import { type GeoPoint } from '@/utils/geoParser'
 import { type GeoRoute, type GeoArea } from '@/utils/geoAnnotation'
@@ -67,6 +80,7 @@ const props = withDefaults(defineProps<{
   routes?: GeoRoute[]
   areas?: GeoArea[]
   circles?: CircleArea[]
+  heatPoints?: { lng: number; lat: number; weight?: number }[]  // 热力图点（带热度权重）
   title?: string
   compact?: boolean  // 紧凑模式：隐藏标题栏和坐标表，适用于嵌入其他面板
   showHeader?: boolean   // 隐藏“坐标可视化”头部
@@ -88,6 +102,7 @@ let map: L.Map | null = null
 let markers: L.Marker[] = []
 let circleMarkers: L.CircleMarker[] = []
 let spiderLineLayer: L.FeatureGroup | null = null
+let heatLayer: any = null
 let routeLayers: L.Polyline[] = []
 let areaLayers: L.Polygon[] = []
 let circleLayers: L.Circle[] = []
@@ -99,6 +114,17 @@ let drawControl: L.Control.Draw | null = null
 const drawnCount = ref(0)
 
 const tableExpanded = ref(false)
+
+/** 是否存在热力图点（用于图例显示） */
+const hasHeat = computed(() => !!props.heatPoints && props.heatPoints.length > 0)
+/** 是否存在普通矢量标注（标点/路线/区域/圆），与热力图分开显示图例 */
+const hasVector = computed(
+  () =>
+    props.points.length > 0 ||
+    (props.routes?.length ?? 0) > 0 ||
+    (props.areas?.length ?? 0) > 0 ||
+    (props.circles?.length ?? 0) > 0
+)
 
 /** 动态发现所有点共同的附加属性列（排除 lng/lat/name/raw） */
 const extraColumns = computed(() => {
@@ -483,6 +509,7 @@ async function initMap() {
   addRoutes()
   addAreas()
   addCircles()
+  addHeatLayer()
 }
 
 /** 地图平移/缩放结束后向外发送 viewport（仅 emit，不回写，避免与 props 形成循环）。 */
@@ -774,6 +801,33 @@ function clearCircles() {
   circleLayers = []
 }
 
+function addHeatLayer() {
+  if (!map) return
+  clearHeatLayer()
+  if (!props.heatPoints || props.heatPoints.length === 0) return
+  // 热力点：WGS84 → GCJ02，并带热度权重（weight 缺省视为 1）
+  const data = props.heatPoints.map(p => {
+    const [lat, lng] = transformCoord(p.lng, p.lat)
+    return [lat, lng, p.weight ?? 1] as [number, number, number]
+  })
+  // leaflet.heat 权重上限（max）缺省为 1，权重 >1 会被压成 1 导致强度无差异，
+  // 故显式设为权重最大值，让高低热度得以区分。
+  const maxWeight = Math.max(1, ...data.map(d => d[2]))
+  heatLayer = (L as any).heatLayer(data, {
+    radius: 28,
+    blur: 18,
+    maxZoom: 12,
+    minOpacity: 0.35,
+    max: maxWeight,
+    gradient: { 0.2: '#2e86de', 0.45: '#48c9b0', 0.7: '#f39c12', 0.9: '#e74c3c' },
+  }).addTo(map)
+}
+
+function clearHeatLayer() {
+  if (heatLayer && map) map.removeLayer(heatLayer)
+  heatLayer = null
+}
+
 watch(() => props.points, () => {
   if (!map) return
   // compact/嵌入模式下容器尺寸常在挂载后才稳定，标注到达时先强制 leaflet 重测容器，
@@ -796,6 +850,10 @@ watch(() => props.circles, () => {
   if (map) addCircles()
 }, { deep: true })
 
+watch(() => props.heatPoints, () => {
+  if (map) addHeatLayer()
+}, { deep: true })
+
 onMounted(() => {
   initMap().then(() => {
     // 等布局就绪后重测一次，避免 flex/grid 嵌套下初始容器高度为 0 导致视野/瓦片错位
@@ -815,6 +873,7 @@ onUnmounted(() => {
       map.removeControl(drawControl)
     }
     clearTileLayers()
+    clearHeatLayer()
     map.remove()
     map = null
   }
@@ -886,11 +945,76 @@ onUnmounted(() => {
 }
 
 .geo-map-content {
+  position: relative;
   height: 420px;
 }
 .geo-map-container.is-compact .geo-map-content {
   flex: 1;
   height: auto;
+}
+
+/* ── 地图图例（覆盖层，右下角） ── */
+.geo-map-legend {
+  position: absolute;
+  right: 10px;
+  bottom: 14px;
+  z-index: 500;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  line-height: 1.5;
+  pointer-events: none;
+}
+.geo-legend-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.geo-legend-gradient {
+  width: 120px;
+  height: 10px;
+  border-radius: 3px;
+  background: linear-gradient(
+    to right,
+    #2e86de 0%,
+    #48c9b0 28%,
+    #f39c12 55%,
+    #e74c3c 82%,
+    #c0392b 100%
+  );
+}
+.geo-legend-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+.geo-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.geo-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.geo-legend-line {
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+  background: #e74c3c;
+  display: inline-block;
+}
+.geo-legend-sw {
+  width: 12px;
+  height: 10px;
+  border: 2px solid #3498db;
+  border-radius: 2px;
+  display: inline-block;
 }
 
 .geo-point-table {

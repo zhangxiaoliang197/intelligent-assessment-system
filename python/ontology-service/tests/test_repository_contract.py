@@ -263,20 +263,16 @@ def test_export_matches(json_repo, neo4j_repo, all_ontology_ids):
 
 
 # ──────────────────────────────────────────────────────────────
-# 测试 8：默认本体
+# 测试 8：归档本体
 # ──────────────────────────────────────────────────────────────
 
-def test_default_ontology_matches(json_repo, neo4j_repo):
-    """get_default_ontology 行为一致（要么都返回 None，要么返回相同 id）。"""
-    j_def = json_repo.get_default_ontology()
-    n_def = neo4j_repo.get_default_ontology()
-    if j_def is None and n_def is None:
-        return  # 都无默认，一致
-    assert j_def is not None and n_def is not None, (
-        f"默认本体不一致: JSON={'None' if j_def is None else j_def.id} "
-        f"Neo4j={'None' if n_def is None else n_def.id}"
+def test_archived_ontologies_matches(json_repo, neo4j_repo):
+    """list_archived_ontologies 行为一致（返回的归档本体 id 集合一致）。"""
+    j_ids = sorted(o.id for o in json_repo.list_archived_ontologies())
+    n_ids = sorted(o.id for o in neo4j_repo.list_archived_ontologies())
+    assert j_ids == n_ids, (
+        f"归档本体 id 集合不一致 JSON={j_ids} Neo4j={n_ids}"
     )
-    assert j_def.id == n_def.id, f"默认本体 id 不一致 JSON={j_def.id} Neo4j={n_def.id}"
 
 
 # ──────────────────────────────────────────────────────────────

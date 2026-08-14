@@ -41,7 +41,6 @@ export interface DatasetSummary {
 
 export interface Narrative {
   intro: string
-  explanations: Array<{ chartId: string; text: string }>
   mapExplanation?: string
 }
 
@@ -86,7 +85,7 @@ export const useSituationStore = defineStore('situation', () => {
   const activeDatasetId = ref<string | null>(null)
   const charts = ref<ChartSpec[]>([])
   const mapLayers = ref<MapLayer[]>([])
-  const narrative = ref<Narrative>({ intro: '', explanations: [] })
+  const narrative = ref<Narrative>({ intro: '' })
   const mapExplanation = ref('')
 
   // ── 联动共享状态（图表 ↔ 地图，ADR-04/13）──
@@ -144,7 +143,7 @@ export const useSituationStore = defineStore('situation', () => {
     activeDatasetId.value = null
     charts.value = []
     mapLayers.value = []
-    narrative.value = { intro: '', explanations: [] }
+    narrative.value = { intro: '' }
     mapExplanation.value = ''
     selectedRegion.value = null
     selectedTimeRange.value = null
@@ -184,7 +183,7 @@ export const useSituationStore = defineStore('situation', () => {
     status.value = (data.status || snapshot.status || 'ready') as SituationStatus
     charts.value = snapshot.charts || []
     mapLayers.value = snapshot.map?.layers || snapshot.mapLayers || []
-    narrative.value = snapshot.narrative || { intro: '', explanations: [] }
+    narrative.value = snapshot.narrative || { intro: '' }
     mapExplanation.value = snapshot.map?.explanation || snapshot.mapExplanation || ''
     datasets.value = snapshot.datasets || []
     executionSteps.value = []   // 历史产物不回放步骤
@@ -272,6 +271,7 @@ export const useSituationStore = defineStore('situation', () => {
           type: data.type,
           title: data.title,
           option: data.option,
+          explanation: data.explanation || '',
           datasetRef: data.datasetRef || '',
         })
         pushStep('chart', `生成图表：${data.title || data.chartId}`, 'completed')
@@ -305,17 +305,9 @@ export const useSituationStore = defineStore('situation', () => {
       case 'narrative':
         narrative.value = {
           intro: data.intro || '',
-          explanations: data.explanations || [],
           mapExplanation: data.mapExplanation || '',
         }
         mapExplanation.value = data.mapExplanation || ''
-        // 回填每个图表的 explanation
-        const expMap = new Map<string, string>(
-          (data.explanations || []).map((e: any) => [e.chartId as string, e.text as string])
-        )
-        charts.value.forEach((c) => {
-          if (expMap.has(c.chartId)) c.explanation = expMap.get(c.chartId)
-        })
         pushStep('narrative', '撰写态势介绍', 'completed')
         break
       case 'done':

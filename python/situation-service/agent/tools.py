@@ -115,6 +115,6 @@ def render_map_layer(layer_id: str, points: list = None, routes: list = None,
             "layerConfig": layer_config or {}}
 
 
-def write_narrative(intro: str, explanations: list) -> dict:
-    """产出态势介绍 + 逐图说明（最后调用，非结论先行）。"""
-    return {"intro": intro, "explanations": explanations}
+def write_narrative(intro: str, map_explanation: str = "") -> dict:
+    """产出态势介绍 + 地图说明（逐图说明已随图表 explanation 字段生成）。"""
+    return {"intro": intro, "mapExplanation": map_explanation}

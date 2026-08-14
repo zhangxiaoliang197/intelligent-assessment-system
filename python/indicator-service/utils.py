@@ -72,8 +72,9 @@ def fetch_available_databases(admin_service_url: str) -> list:
 def fetch_ontology_context(ontology_id: str = "", question: str = "", top_k: int = 20):
     """获取本体上下文（B 阶段数据联动，供 LLM prompt 注入）。
 
-    - ontology_id 为空 → 调 GET /ontology/default/context（取默认本体）
-    - 非空 → 调 GET /ontology/{id}/context（取指定本体）
+    仅归档本体参与下游数据联动：
+    - ontology_id 为空 → 调 GET /ontology/archived/context（合并所有归档本体）
+    - 非空 → 调 GET /ontology/{id}/context（取指定本体，未归档返回空）
     - 失败/超时返回 None（优雅降级，三服务 prompt 不含本体时正常工作）
 
     Returns:
@@ -86,7 +87,7 @@ def fetch_ontology_context(ontology_id: str = "", question: str = "", top_k: int
         if ontology_id:
             url = f"{ONTOLOGY_SERVICE_URL}/ontology/{ontology_id}/context?{params}"
         else:
-            url = f"{ONTOLOGY_SERVICE_URL}/ontology/default/context?{params}"
+            url = f"{ONTOLOGY_SERVICE_URL}/ontology/archived/context?{params}"
         data = http_get(url, timeout=8)
         if data and data.get("success") and data.get("data"):
             return data["data"]

@@ -3,9 +3,9 @@
 采用多阶段 JSON 协议（不依赖原生 function-calling，兼容所有 OpenAI 兼容模型）：
   阶段1 plan      规划要查哪些数据集、画什么图
   阶段2 data      编排器按 plan 取真实数据行（非 LLM）
-  阶段3 chart     LLM 基于真实数据生成 ECharts option 数组
+  阶段3 chart     LLM 基于真实数据一次性生成 ECharts option 与逐图说明
   阶段4 map       LLM 生成地图图层标注（WGS84）
-  阶段5 narrative LLM 撰写态势介绍 + 逐图说明
+  阶段5 narrative LLM 撰写态势介绍 + 地图说明
 
 时序硬约束（ADR-08）：图表/地图先出，文本为介绍+说明，最后产出。
 地图标注 Skill 从 qa-service/skill/map_*.md 动态加载。
@@ -129,7 +129,7 @@ def build_plan_messages(query: str, meta: dict) -> list:
 
 
 def build_chart_messages(query: str, data_context: dict, plan: dict) -> list:
-    """阶段3：产图。LLM 基于真实数据行生成 ECharts option 数组。"""
+    """阶段3：产图。LLM 基于真实数据行一次性生成 ECharts option 与逐图说明。"""
     plans = plan.get("chartsPlan", [])
     plans_text = "\n".join(f"- {p.get('type','')}: {p.get('title','')}（{p.get('intent','')}）"
                            for p in plans) or "（规划阶段未指定图表，请根据数据自行设计 1-4 个最贴切问题的图表，按需选择图表个数）"
@@ -141,10 +141,12 @@ def build_chart_messages(query: str, data_context: dict, plan: dict) -> list:
     return [
         {"role": "system", "content": get_system_prompt() +
             "\n\n【当前阶段：产图】\n"
-            "基于真实数据行，生成 ECharts option JSON 数组。每个图表的 option 必须内联具体数据值，禁止占位符。\n"
+            "基于真实数据行，一次性生成 ECharts option JSON 数组，并随每个图表一并给出该图的详细说明（explanation）。"
+            "每个图表的 option 必须内联具体数据值，禁止占位符。\n"
             "返回 JSON 数组（仅 JSON）：\n"
-            '[{"chartId": "c_1", "type": "line", "title": "标题", "option": {ECharts完整option}, "datasetRef": "数据集ID", "explanation": "一句话说明"}]\n'
+            '[{"chartId": "c_1", "type": "line", "title": "标题", "option": {ECharts完整option}, "datasetRef": "数据集ID", "explanation": "该图详细说明"}]\n'
             "规则：chartId 用 c_1/c_2...；option 必须是合法 ECharts 配置（含 series/xAxis/yAxis 等）；"
+            "explanation 是该图的逐图说明（用于态势报告的图表解读，需说明图表展示的内容、关键数据特征与分析要点，1-3 句，中文）；"
             "数据来自上方真实数据行，不得编造；若无合适数据可降级为说明性图表。"},
         {"role": "user", "content": f"用户问题：{query}\n\n图表规划：\n{plans_text}\n\n真实数据：\n{data_text}"},
     ]
@@ -164,20 +166,23 @@ def build_map_messages(query: str, data_context: dict) -> list:
             "返回 JSON（仅 JSON）：\n"
             '{\n'
             '  "layerId": "main",\n'
-            '  "points": [{"name": "名称", "lng": 116.4, "lat": 39.9, "raw": "描述"}],\n'
+            '  "points": [{"name": "名称", "lng": 116.4, "lat": 39.9, "weight": 1.0, "raw": "描述"}],\n'
             '  "routes": [],\n'
             '  "areas": [],\n'
             '  "circles": [{"name": "名称", "center": {"lng": 113.27, "lat": 23.13}, "radiusKm": 120}],\n'
-            '  "layerConfig": {"color": "#e74c3c", "opacity": 0.85}\n'
+            '  "layerConfig": {"type": "heatmap", "color": "#e74c3c", "opacity": 0.85}\n'
             '}\n'
-            "规则：坐标必须来自数据中的地理字段（若有），不得编造境外坐标；"
+            "规则：layerConfig.type 取值 points（普通标点，默认）或 heatmap（热力图）。"
+            "当用户要求热力图/热度分布且数据含地理字段时，应设 type=heatmap，并为 points 中每个点带 weight（热度权重，数值越大越热，可用该位置的样本量或指标值归一化）；"
+            "type=points 时 weight 可省略。"
+            "坐标必须来自数据中的地理字段（若有），不得编造境外坐标；"
             "若数据无地理信息且问题不涉及空间分布，返回空 points/routes/areas/circles 数组（layerId 仍保留）。"},
         {"role": "user", "content": f"用户问题：{query}\n\n真实数据：\n{data_text}"},
     ]
 
 
 def build_narrative_messages(query: str, charts: list, map_layer: dict) -> list:
-    """阶段5：文本。LLM 撰写态势介绍 + 逐图说明（介绍性，非结论先行）。"""
+    """阶段5：文本。LLM 撰写态势介绍 + 地图说明（逐图说明已在产图阶段随图生成）。"""
     charts_summary = "\n".join(f"- {c.get('chartId','')}: {c.get('title','')}（{c.get('explanation','')}）"
                                for c in charts) or "（无图表）"
     points = map_layer.get("points", []) if map_layer else []
@@ -192,11 +197,10 @@ def build_narrative_messages(query: str, charts: list, map_layer: dict) -> list:
     return [
         {"role": "system", "content": get_system_prompt() +
             "\n\n【当前阶段：文本】\n"
-            "撰写态势介绍 + 逐图说明 + 地图说明。intro 是介绍性描述（非先验结论），"
-            "explanations 对应每个图表，mapExplanation 对应地图（若存在地图则必填，否则为空字符串）。\n"
+            "撰写态势介绍 + 地图说明。intro 是介绍性描述（非先验结论），mapExplanation 对应地图（若存在地图则必填，否则为空字符串）。"
+            "逐图说明已在产图阶段随各图表生成，无需在此重复。\n"
             "返回 JSON（仅 JSON）：\n"
-            '{"intro": "态势介绍段落", "explanations": [{"chartId": "c_1", "text": "该图说明"}], "mapExplanation": "地图说明"}\n'
-            "规则：explanations 的 chartId 必须命中已产出图表；mapExplanation 需说明地图展示的内容与联动分析要点；"
-            "intro 不超过 300 字；中文。"},
+            '{"intro": "态势介绍段落", "mapExplanation": "地图说明"}\n'
+            "规则：intro 不超过 300 字；中文。"},
         {"role": "user", "content": f"用户问题：{query}\n\n已产出图表：\n{charts_summary}\n\n地图：{map_summary}"},
     ]

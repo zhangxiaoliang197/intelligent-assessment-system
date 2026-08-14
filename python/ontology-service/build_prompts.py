@@ -2,14 +2,14 @@
 
 集中管理五步 LLM 调用的 prompt，便于迭代调优：
 - Step 0 (meta): 根据文档推荐元模型（实体类型 + 关系类型）
-- Step 1: 从文档提取概念清单（类型层，含属性骨架 property_schema）
-- Step 2: 从文档提取实体+属性（实例层，instance_of 指向 step1 概念）
+- Step 1: 从文档提取实体类型清单（类型层，含属性骨架 property_schema）
+- Step 2: 从文档提取实体+属性（实例层，instance_of 指向 step1 实体类型）
 - Step 3: 在已确认实体间建立关系（分组 + 跨组补充）
-- Step 4: LLM 自检验证 + 生成简报
+- Step 4: LLM 自检验证（标记存疑项）
 
 设计原则：
 - 每步输出严格 JSON，便于程序解析
-- 每个概念/实体/属性/关系必须带原文出处 source_snippet，防幻觉
+- 每个实体类型/实体/属性/关系必须带原文出处 source_snippet，防幻觉
 - 实体名、关系类型必须受元模型约束
 - 三档粒度（coarse/medium/fine）通过数量区间软约束提取数量
 - 阶段提示词 stage_hints 注入到对应步骤 prompt 末尾
@@ -51,11 +51,12 @@ def _stage_hint_text(stage_hint: str) -> str:
     return f"\n\n【用户特别提示】{stage_hint.strip()}"
 
 
-def _template_hint_text(template: Optional[dict], stage: str) -> str:
-    """格式化参考模板提示词，按阶段裁剪输出（v3）。
+def _template_hint_text(template: Optional[dict], stage: str, template_mode: str = "soft_constraint") -> str:
+    """格式化元模型提示词，按阶段裁剪输出（v3）。
 
-    模板作为软约束注入各阶段 prompt：LLM 参考模板的 schema（实体类型层级/属性骨架/类型间关系/关系类型），
-    但仍可结合本文档特征增删改，不是硬性约束。
+    模板使用模式：
+    - hard_constraint：用户已「载入元模型」，LLM 必须严格按元模型 schema 提取，不得增删改
+    - soft_constraint（默认）：元模型作参考，LLM 可结合本文档特征增删改
 
     v3 变更：
     - 读取 template.entity_types（v2 读 template.concepts，已合并）
@@ -65,14 +66,19 @@ def _template_hint_text(template: Optional[dict], stage: str) -> str:
     Args:
         template: TemplateModel.dict() 快照，None 或无 id 时返回空串（向后兼容）
         stage: "meta" | "concepts" | "entities" | "relations" | "verification"
+        template_mode: soft_constraint | hard_constraint | skip_step1
 
     Returns:
-        追加到 user_prompt 末尾的模板参考文本，无模板时返回空串
+        追加到 user_prompt 末尾的模板提示文本，无模板时返回空串
     """
     if not template or not template.get("id"):
         return ""
+    hard = template_mode == "hard_constraint"
     name = template.get("name", "")
-    header = f"\n\n【参考模板】用户已选择「{name}」作为参考模板，"
+    if hard:
+        header = f"\n\n【已载入元模型（强制约束）】用户已载入元模型「{name}」，后续提取必须严格遵循该元模型，不得偏离。"
+    else:
+        header = f"\n\n【参考模板】用户已选择「{name}」作为参考模板，"
 
     # v3：优先读 entity_types，回退 concepts（兼容旧模板快照）
     entity_types = template.get("entity_types", []) or []
@@ -82,6 +88,13 @@ def _template_hint_text(template: Optional[dict], stage: str) -> str:
     if stage == "meta":
         et_names = "、".join(t.get("name", "") for t in entity_types if t.get("name"))
         rt_names = "、".join(t.get("name", "") for t in template.get("relation_types", []) if t.get("name"))
+        if hard:
+            return (
+                header
+                + "本体的实体类型与关系类型必须严格采用以下定义，不得新增、删除或修改：\n"
+                + f"- 实体类型：{et_names}\n"
+                + f"- 关系类型：{rt_names}"
+            )
         return (
             header
             + "该模板的实体类型和关系类型如下，请在参考的基础上结合本文档特征增删改：\n"
@@ -90,7 +103,7 @@ def _template_hint_text(template: Optional[dict], stage: str) -> str:
         )
 
     if stage == "concepts":
-        # v3 step1：实体类型提取参考
+        # v3 step1：实体类型提取
         if not entity_types:
             return header + "该模板未定义实体类型，请结合本文档自行提取。"
         # 实体类型超过 30 个时截断，避免 prompt 过长
@@ -120,7 +133,19 @@ def _template_hint_text(template: Optional[dict], stage: str) -> str:
             )
         rel_section = ""
         if rel_lines:
-            rel_section = "\n该模板定义的实体类型间关系：\n" + "\n".join(rel_lines)
+            rel_section = "\n该元模型定义的实体类型间关系：\n" + "\n".join(rel_lines)
+        if hard:
+            return (
+                header
+                + "你必须严格按照该元模型定义的实体类型层级、属性骨架与类型间关系进行提取：\n"
+                + "\n".join(lines)
+                + suffix
+                + rel_section
+                + "\n\n硬性约束：不得新增、删除、改名或调整任何实体类型的层级；"
+                + "每个实体类型的 property_schema 必须与元模型一致；"
+                + "实体类型间关系必须与元模型一致。若文档未涉及某个实体类型可省略该类型，"
+                + "但不得自行发明元模型之外的类型、属性或关系。"
+            )
         return (
             header
             + "该模板已定义以下实体类型及其属性骨架，请参考（可增删改，保持类似粒度和命名风格）：\n"
@@ -130,6 +155,13 @@ def _template_hint_text(template: Optional[dict], stage: str) -> str:
         )
 
     if stage == "entities":
+        if hard:
+            return (
+                header
+                + "实体必须 instance_of 该元模型定义的实体类型，"
+                + "且每个实体必须严格按对应实体类型在元模型中的 property_schema 填充属性，"
+                + "不得自创属性名，也不得改变属性的分类（descriptive/metric）或单位。"
+            )
         return (
             header
             + "实体类型清单已基于模板生成，请按各实体类型的 property_schema 填充属性，"
@@ -138,6 +170,11 @@ def _template_hint_text(template: Optional[dict], stage: str) -> str:
 
     if stage == "relations":
         rt_names = "、".join(t.get("name", "") for t in template.get("relation_types", []) if t.get("name"))
+        if hard:
+            return (
+                header
+                + "关系类型必须严格在元模型定义范围内选择，不得新增或自创：" + rt_names
+            )
         return (
             header
             + "关系类型应在模板定义的范围内：" + rt_names
@@ -145,16 +182,22 @@ def _template_hint_text(template: Optional[dict], stage: str) -> str:
         )
 
     if stage == "verification":
+        if hard:
+            return (
+                header
+                + "请对照元模型 schema 检查实体类型覆盖度、属性骨架一致性与关系类型合规性，"
+                + "任何偏离元模型（新增/删除类型、属性骨架不一致、关系类型超出范围）的项都必须标记为存疑项。"
+            )
         return (
             header
             + "请对照模板 schema 检查实体类型覆盖度与属性骨架一致性，"
-            + "在简报中说明本次提取与模板的差异（新增/删除的实体类型、属性骨架偏差等）。"
+            + "标记与模板的差异项（新增/删除的实体类型、属性骨架偏差等）为存疑项。"
         )
 
     return ""
 
 
-def build_meta_messages(doc_text: str, name: str, template: Optional[dict] = None) -> list:
+def build_meta_messages(doc_text: str, name: str, template: Optional[dict] = None, template_mode: str = "soft_constraint") -> list:
     """Step 0: 根据文档推荐元模型（实体类型 + 关系类型）。
 
     在 upload 时调用，LLM 分析文档领域特征，推荐一套适合该文档的元模型标准。
@@ -163,7 +206,8 @@ def build_meta_messages(doc_text: str, name: str, template: Optional[dict] = Non
     Args:
         doc_text: 文档纯文本（已截断）
         name: 用户输入的本体名称
-        template: 参考模板快照（TemplateModel.dict()），注入 prompt 作软约束，None 则不注入
+        template: 参考模板快照（TemplateModel.dict()），注入 prompt 作约束，None 则不注入
+        template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
         OpenAI 格式的 messages 列表
@@ -171,7 +215,7 @@ def build_meta_messages(doc_text: str, name: str, template: Optional[dict] = Non
     system_prompt = (
         SYSTEM_BASE
         + "\n\n你的任务是分析文档内容，为本体「" + name + "」推荐一套合适的元模型。"
-        + "\n元模型定义了本体内允许的实体类型和关系类型，是后续构建概念和关系的基础约束。"
+        + "\n元模型定义了本体内允许的实体类型和关系类型，是后续构建实体类型和关系的基础约束。"
     )
 
     user_prompt = (
@@ -181,12 +225,12 @@ def build_meta_messages(doc_text: str, name: str, template: Optional[dict] = Non
         f'{{"entity_types": [{{"name": "类型名", "color": "#hex颜色", "description": "类型说明"}}], '
         f'"relation_types": [{{"name": "关系名", "description": "关系说明"}}]}}\n\n'
         f"要求：\n"
-        f"1. entity_types 推荐 3-6 个类型，应覆盖文档中的核心概念分类（如：概念、实体、属性、事件、指标等）\n"
+        f"1. entity_types 推荐 3-6 个类型，应覆盖文档中的核心实体类型分类（如：实体类型、实体、属性、事件、指标等）\n"
         f"2. relation_types 推荐 3-6 个关系，应反映文档中的语义关联（如：包含、关联、影响、衡量、继承等）\n"
         f"3. 类型名简洁中文，2-4 个字\n"
         f"4. color 从以下调色板选择: {', '.join(DEFAULT_COLORS)}\n"
         f"5. 只返回 JSON，不要任何解释"
-        + _template_hint_text(template, "meta")
+        + _template_hint_text(template, "meta", template_mode)
     )
 
     return [
@@ -198,11 +242,11 @@ def build_meta_messages(doc_text: str, name: str, template: Optional[dict] = Non
 def build_step1_messages(
     doc_text: str, name: str, entity_types: list,
     granularity: str = "medium", stage_hint: str = "",
-    template: Optional[dict] = None
+    template: Optional[dict] = None, template_mode: str = "soft_constraint"
 ) -> list:
     """Step 1: 实体类型提取（v3 类型层，含层级 + 属性骨架 + 类型间关系）。
 
-    v3 重构：原 step1 概念提取 + step0 元模型推荐合并为此步。
+    v3 重构：原 step1 实体类型提取 + step0 元模型推荐合并为此步。
     从文档提取「实体类型」（抽象类型定义，如「企业」「上市企业」「财务指标」），
     形成树状层级（parent_entity_type_name），携带 property_schema（属性骨架），
     并总结实体类型之间的关系（EntityTypeRelation，为图谱类型层展示做准备）。
@@ -215,7 +259,8 @@ def build_step1_messages(
         entity_types: v3 中仅为兼容保留（模板已加载到 template 参数），通常为空列表
         granularity: 粒度预设，控制实体类型数量区间
         stage_hint: 用户为该阶段注入的提示词
-        template: 参考模板快照，注入 prompt 作软约束
+        template: 元模型快照，注入 prompt 作约束
+        template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
         OpenAI 格式的 messages 列表
@@ -274,7 +319,7 @@ def build_step1_messages(
         f"   - 若文档无明确的类型间关系，返回空数组\n"
         + (f"8. {count_hint}实体类型\n" if count_hint else "8. 通常提取 10-20 个实体类型\n")
         + f"9. 只返回 JSON，不要任何解释"
-        + _template_hint_text(template, "concepts")
+        + _template_hint_text(template, "concepts", template_mode)
         + _stage_hint_text(stage_hint)
     )
 
@@ -288,7 +333,7 @@ def build_step1_batch_messages(
     doc_text: str, name: str, entity_types: list,
     batch_idx: int, total_batches: int,
     granularity: str = "medium", stage_hint: str = "",
-    template: Optional[dict] = None
+    template: Optional[dict] = None, template_mode: str = "soft_constraint"
 ) -> list:
     """Step 1 分批版本（v3）：从本批文档提取实体类型 + 类型间关系。
 
@@ -307,7 +352,8 @@ def build_step1_batch_messages(
         total_batches: 总批数
         granularity: 粒度预设（作为整体参考，不限制单批）
         stage_hint: 用户为该阶段注入的提示词
-        template: 参考模板快照，注入 prompt 作软约束
+        template: 元模型快照，注入 prompt 作约束
+        template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
         OpenAI 格式的 messages 列表
@@ -359,7 +405,7 @@ def build_step1_batch_messages(
         f"7. 【类型间关系】总结本批内类型之间的语义关联（如包含/关联/影响/衡量）\n"
         f"8. 按本批内容自然提取，数量不限（跨批去重由系统自动完成）\n"
         f"9. 只返回 JSON，不要任何解释"
-        + _template_hint_text(template, "concepts")
+        + _template_hint_text(template, "concepts", template_mode)
         + _stage_hint_text(stage_hint)
     )
 
@@ -372,7 +418,7 @@ def build_step1_batch_messages(
 def build_step2_messages(
     doc_text: str, name: str, concepts: list, entity_types: list,
     granularity: str = "medium", stage_hint: str = "",
-    template: Optional[dict] = None
+    template: Optional[dict] = None, template_mode: str = "soft_constraint"
 ) -> list:
     """Step 2: 实体提取 + 实例间关系提取（v3 合并原 step2+step3）。
 
@@ -389,7 +435,8 @@ def build_step2_messages(
         entity_types: 兼容保留，v3 中通常为空列表
         granularity: 粒度预设，控制实体数量区间
         stage_hint: 用户为该阶段注入的提示词
-        template: 参考模板快照，注入 prompt 作软约束
+        template: 元模型快照，注入 prompt 作约束
+        template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
         OpenAI 格式的 messages 列表
@@ -417,7 +464,10 @@ def build_step2_messages(
         for etr in (template.get("entity_type_relations") or []):
             if etr.get("relation_type") and etr["relation_type"] not in rel_type_hints:
                 rel_type_hints.append(etr["relation_type"])
-    rel_types_str = "、".join(rel_type_hints) if rel_type_hints else "包含/关联/影响/衡量/属于（可酌情自选）"
+    if template_mode == "hard_constraint" and rel_type_hints:
+        rel_types_str = "允许的关系类型（必须从中选择，不可自创）：" + "、".join(rel_type_hints)
+    else:
+        rel_types_str = "、".join(rel_type_hints) if rel_type_hints else "包含/关联/影响/衡量/属于（可酌情自选）"
 
     system_prompt = (
         SYSTEM_BASE
@@ -428,9 +478,10 @@ def build_step2_messages(
         + "\n同时提取实体实例之间的关系（如「A公司」「投资」「B公司」）。"
     )
 
+    rel_types_label = "允许的关系类型" if template_mode == "hard_constraint" else "建议的关系类型参考"
     user_prompt = (
         f"已确认的实体类型清单（实体必须 instance_of 其中一个类型）：\n{concepts_str}\n\n"
-        f"建议的关系类型参考：{rel_types_str}\n\n"
+        f"{rel_types_label}：{rel_types_str}\n\n"
         f"文档内容：\n---\n{doc_text}\n---\n\n"
         f"请返回 JSON，格式如下：\n"
         f'{{"entities": [{{'
@@ -466,7 +517,7 @@ def build_step2_messages(
         f"   - 关系应体现层级包含、影响、关联等语义，不要强行凑数\n"
         + (f"8. {count_hint}实体\n" if count_hint else "8. 通常提取 20-40 个实体\n")
         + f"9. 只返回 JSON，不要任何解释"
-        + _template_hint_text(template, "entities")
+        + _template_hint_text(template, "entities", template_mode)
         + _stage_hint_text(stage_hint)
     )
 
@@ -480,7 +531,7 @@ def build_step2_batch_messages(
     doc_text: str, name: str, concepts: list, entity_types: list,
     batch_idx: int, total_batches: int,
     granularity: str = "medium", stage_hint: str = "",
-    template: Optional[dict] = None
+    template: Optional[dict] = None, template_mode: str = "soft_constraint"
 ) -> list:
     """Step 2 分批版本（v3）：从本批文档提取实体+属性+实例间关系。
 
@@ -499,7 +550,8 @@ def build_step2_batch_messages(
         total_batches: 总批数
         granularity: 粒度预设（整体参考）
         stage_hint: 用户为该阶段注入的提示词
-        template: 参考模板快照，注入 prompt 作软约束
+        template: 元模型快照，注入 prompt 作约束
+        template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
         OpenAI 格式的 messages 列表
@@ -524,7 +576,10 @@ def build_step2_batch_messages(
         for etr in (template.get("entity_type_relations") or []):
             if etr.get("relation_type") and etr["relation_type"] not in rel_type_hints:
                 rel_type_hints.append(etr["relation_type"])
-    rel_types_str = "、".join(rel_type_hints) if rel_type_hints else "包含/关联/影响/衡量/属于（可酌情自选）"
+    if template_mode == "hard_constraint" and rel_type_hints:
+        rel_types_str = "允许的关系类型（必须从中选择，不可自创）：" + "、".join(rel_type_hints)
+    else:
+        rel_types_str = "、".join(rel_type_hints) if rel_type_hints else "包含/关联/影响/衡量/属于（可酌情自选）"
 
     system_prompt = (
         SYSTEM_BASE
@@ -542,10 +597,11 @@ def build_step2_batch_messages(
         else ""
     )
 
+    rel_types_label = "允许的关系类型" if template_mode == "hard_constraint" else "建议的关系类型参考"
     user_prompt = (
         f"{batch_hint}"
         f"已确认的实体类型清单（实体必须 instance_of 其中一个类型）：\n{concepts_str}\n\n"
-        f"建议的关系类型参考：{rel_types_str}\n\n"
+        f"{rel_types_label}：{rel_types_str}\n\n"
         f"文档内容（第 {batch_idx + 1}/{total_batches} 批）：\n---\n{doc_text}\n---\n\n"
         f"请返回 JSON，格式如下：\n"
         f'{{"entities": [{{'
@@ -570,7 +626,7 @@ def build_step2_batch_messages(
         f"6. 【实体间关系】提取本批内实体间的关系（source/target 必须是本批 entities 中已定义的实体名）\n"
         f"7. 按本批内容自然提取，数量不限（跨批去重由系统自动完成）\n"
         f"8. 只返回 JSON，不要任何解释"
-        + _template_hint_text(template, "entities")
+        + _template_hint_text(template, "entities", template_mode)
         + _stage_hint_text(stage_hint)
     )
 
@@ -582,7 +638,7 @@ def build_step2_batch_messages(
 
 def build_step3_messages(
     entities: list, relation_types: list, stage_hint: str = "",
-    template: Optional[dict] = None
+    template: Optional[dict] = None, template_mode: str = "soft_constraint"
 ) -> list:
     """Step 3: 关系建模（单组/整体版本）。
 
@@ -593,7 +649,8 @@ def build_step3_messages(
         entities: step2 已确认的实体清单（仅用 name + instance_of）
         relation_types: 已确认的关系类型 [{"name":"..."}]
         stage_hint: 用户为该阶段注入的提示词
-        template: 参考模板快照，注入 prompt 作软约束
+        template: 元模型快照，注入 prompt 作约束
+        template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
         OpenAI 格式的 messages 列表
@@ -626,7 +683,7 @@ def build_step3_messages(
         f"4. source_snippet 必须是原文原话，支撑该关系的成立（若无明确依据则不要建立该关系）\n"
         f"5. 关系应体现层级包含、影响、关联等语义，不要强行凑数\n"
         f"6. 只返回 JSON，不要任何解释"
-        + _template_hint_text(template, "relations")
+        + _template_hint_text(template, "relations", template_mode)
         + _stage_hint_text(stage_hint)
     )
 
@@ -639,7 +696,7 @@ def build_step3_messages(
 def build_step3_group_messages(
     entities: list, relation_types: list,
     group_idx: int, total_groups: int, stage_hint: str = "",
-    template: Optional[dict] = None
+    template: Optional[dict] = None, template_mode: str = "soft_constraint"
 ) -> list:
     """Step 3 分组版本：明确告知 LLM 这是第 X/N 组，只建立组内实体间的关系。
 
@@ -693,7 +750,7 @@ def build_step3_group_messages(
         f"5. 只建立本组内实体间的关系，跨组关系由系统单独补充\n"
         f"6. 关系应有明确依据，不要强行凑数；若组内确无关系，返回空数组\n"
         f"7. 只返回 JSON，不要任何解释"
-        + _template_hint_text(template, "relations")
+        + _template_hint_text(template, "relations", template_mode)
         + _stage_hint_text(stage_hint)
     )
 
@@ -706,7 +763,7 @@ def build_step3_group_messages(
 def build_step3_cross_group_messages(
     entities: list, existing_relations: list, relation_types: list,
     stage_hint: str = "",
-    template: Optional[dict] = None
+    template: Optional[dict] = None, template_mode: str = "soft_constraint"
 ) -> list:
     """Step 3 跨组关系补充：分组合并后，由 LLM 补充跨组实体间的关系。
 
@@ -760,7 +817,7 @@ def build_step3_cross_group_messages(
         f"5. 关系应有明确的语义依据，不要强行凑数；若实体间确无跨组关系，返回空数组\n"
         f"6. weight 表示关系紧密程度，0-1 之间的小数\n"
         f"7. 只返回 JSON，不要任何解释"
-        + _template_hint_text(template, "relations")
+        + _template_hint_text(template, "relations", template_mode)
         + _stage_hint_text(stage_hint)
     )
 
@@ -773,19 +830,20 @@ def build_step3_cross_group_messages(
 def build_step4_verification_messages(
     concepts: list, entities: list, relations: list, doc_text: str,
     stage_hint: str = "",
-    template: Optional[dict] = None
+    template: Optional[dict] = None, template_mode: str = "soft_constraint"
 ) -> list:
-    """Step 4: 验证 + 报告生成（LLM 自检）。
+    """Step 4: 验证（LLM 自检，已移除简报生成）。
 
-    LLM 逐项检查实体/属性/关系是否可溯源，标记存疑项，并生成一份结构化简报。
+    LLM 逐项检查实体/属性/关系是否可溯源，标记存疑项。
 
     Args:
-        concepts: step1 已确认的概念清单
+        concepts: step1 已确认的实体类型清单
         entities: step2 已确认的实体清单（含属性）
         relations: step3 已确认的关系清单
         doc_text: 原文（已截断至 VERIFICATION_MAX_DOC_CHARS）
         stage_hint: 用户为该阶段注入的提示词
-        template: 参考模板快照，注入 prompt 作软约束
+        template: 元模型快照，注入 prompt 作约束
+        template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
         OpenAI 格式的 messages 列表
@@ -820,34 +878,28 @@ def build_step4_verification_messages(
 
     system_prompt = (
         SYSTEM_BASE
-        + "\n\n你的任务是对已构建的本体做自检验证，并生成一份简报。"
-        + "\n逐项检查实体/属性/关系是否可溯源到原文，标记存疑项；"
-        + "然后基于全部提取结果生成一份结构化简报。"
+        + "\n\n你的任务是对已构建的本体做自检验证。"
+        + "\n逐项检查实体/属性/关系是否可溯源到原文，标记存疑项。"
     )
 
     user_prompt = (
-        f"已确认的概念清单：\n{json.dumps(concepts_compact, ensure_ascii=False)}\n\n"
+        f"已确认的实体类型清单：\n{json.dumps(concepts_compact, ensure_ascii=False)}\n\n"
         f"已确认的实体清单（含属性）：\n{json.dumps(entities_compact, ensure_ascii=False)}\n\n"
         f"已确认的关系清单：\n{json.dumps(relations_compact, ensure_ascii=False)}\n\n"
         f"原文（用于核实溯源）：\n---\n{doc_text}\n---\n\n"
         f"请返回 JSON，格式如下：\n"
         f'{{"verified_count": 整数, "suspect_count": 整数, '
         f'"suspects": [{{"item_type": "entity|property|relation|concept", '
-        f'"item_name": "项名称", "reason": "存疑原因"}}], '
-        f'"report": "简报 markdown 文本"}}\n\n'
+        f'"item_name": "项名称", "reason": "存疑原因"}}]}}\n\n'
         f"验证要求：\n"
         f"1. 检查每个实体的 source_snippet 是否真实出现在原文（字符串匹配）\n"
         f"2. 检查每个属性值是否可溯源（source_snippet 是否支撑该值）\n"
         f"3. 检查每条关系是否有原文依据\n"
-        f"4. 检查概念的 property_schema 是否覆盖文档中该类实体的关键属性\n"
+        f"4. 检查实体类型的 property_schema 是否覆盖文档中该类实体的关键属性\n"
         f"5. 存疑项给出具体原因（如「source_snippet 在原文中未找到」「属性值75%与原文72%不符」）\n"
-        f"6. verified_count 为通过验证的项数，suspect_count 为存疑项数\n\n"
-        f"简报要求：\n"
-        f"1. report 为 markdown 格式文本（用 \\n 转义换行）\n"
-        f"2. 按主要实体组织，包含：实体概况、关键指标、核心关系、存疑提示\n"
-        f"3. 简洁明了，不超过 800 字\n"
-        f"4. 只返回 JSON，不要任何解释"
-        + _template_hint_text(template, "verification")
+        f"6. verified_count 为通过验证的项数，suspect_count 为存疑项数\n"
+        f"7. 只返回 JSON，不要任何解释"
+        + _template_hint_text(template, "verification", template_mode)
         + _stage_hint_text(stage_hint)
     )
 

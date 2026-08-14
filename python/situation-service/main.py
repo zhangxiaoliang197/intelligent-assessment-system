@@ -18,9 +18,6 @@
   DELETE /situation/reports/{reportId}    删除产物
   POST /situation/reports/{reportId}/share  生成分享 token
   GET  /situation/share/{token}           公开查看（分享，无需登录）
-
-Phase 1：生成走 mock_generate（canned 数据），验证前端管线端到端。
-Phase 2：切换为 real_generate（LLM tool-calling，见 agent/orchestrator.py）。
 """
 
 from dotenv import load_dotenv, find_dotenv
@@ -498,7 +495,7 @@ def generate_report(req: GenerateRequest, request: Request):
 # ──────────────────────────────────────────────────────────
 @app.get("/situation/stream/{report_id}")
 def stream_report(report_id: str):
-    """SSE 推送生成事件。Phase 1 走 mock_generate。"""
+    """SSE 推送生成事件。"""
     report = _INFLIGHT.get(report_id)
     if not report:
         # 不在内存中：可能是已完成的历史产物，回查 admin-service
@@ -555,7 +552,7 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
             "type": data.get("type", ""),
             "title": data.get("title", ""),
             "option": data.get("option", {}),
-            "explanation": "",
+            "explanation": data.get("explanation", ""),
             "datasetRef": data.get("datasetRef", ""),
         })
     elif event_type == "map_layer":
@@ -571,14 +568,8 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
     elif event_type == "narrative":
         report.narrative = {
             "intro": data.get("intro", ""),
-            "explanations": data.get("explanations", []),
             "mapExplanation": data.get("mapExplanation", ""),
         }
-        # 回填每个图表的 explanation 字段
-        exp_map = {e.get("chartId"): e.get("text", "") for e in data.get("explanations", [])}
-        for c in report.charts:
-            if c["chartId"] in exp_map:
-                c["explanation"] = exp_map[c["chartId"]]
         # 回填地图说明
         if data.get("mapExplanation"):
             report.map["explanation"] = data.get("mapExplanation", "")

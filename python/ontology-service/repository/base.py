@@ -41,7 +41,7 @@ class OntologyRepository(ABC):
 
     @abstractmethod
     def save_ontology(self, ontology_id: str) -> None:
-        """持久化单个本体（元信息 + 概念 + 实体 + 关系）。"""
+        """持久化单个本体（元信息 + 实体类型 + 实体 + 关系）。"""
 
     @abstractmethod
     def save_index(self) -> None:
@@ -51,10 +51,8 @@ class OntologyRepository(ABC):
     def delete_ontology(self, ontology_id: str) -> None: ...
 
     @abstractmethod
-    def set_default_ontology(self, ontology_id: str) -> None: ...
-
-    @abstractmethod
-    def get_default_ontology(self) -> Optional[OntologyModel]: ...
+    def list_archived_ontologies(self) -> List[OntologyModel]:
+        """返回所有已归档（参与下游数据联动）的本体列表。"""
 
     @abstractmethod
     def get_ontology_summary(self, ont: OntologyModel) -> Dict[str, Any]: ...

@@ -1,11 +1,11 @@
 """长文本分批切分模块。
 
 借鉴 knowledge-service chunk_text 的"分隔符切分 + 累加合并"思路，
-但参数为 LLM 调优（每批 9000 字、重叠 500 字），用于 Step 1 概念提取的分批处理。
+但参数为 LLM 调优（每批 9000 字、重叠 500 字），用于 Step 1 实体类型提取的分批处理。
 
 设计要点：
 - 句子边界优先，避免切在半句话中间
-- 相邻批重叠 overlap 字符，确保跨批边界概念不丢
+- 相邻批重叠 overlap 字符，确保跨批边界实体类型不丢
 - 单句超长（罕见）时硬切并按 overlap 步进
 - 短文本走快路径，返回 [text]
 """
@@ -66,7 +66,7 @@ def split_into_batches(text: str, max_chars: int = 9000, overlap: int = 500) -> 
         # 累加到 buf，超限则收尾成一批
         if len(buf) + len(sent) > max_chars:
             batches.append(buf)
-            # overlap：取上一批末尾 N 字符作为下一批开头，确保跨批边界概念不丢
+            # overlap：取上一批末尾 N 字符作为下一批开头，确保跨批边界实体类型不丢
             tail = buf[-overlap:] if overlap > 0 else ""
             buf = tail + sent
         else:

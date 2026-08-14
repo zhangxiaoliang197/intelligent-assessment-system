@@ -6,6 +6,7 @@
       :routes="mergedRoutes"
       :areas="mergedAreas"
       :circles="mergedCircles"
+      :heat-points="heatPoints"
       @marker-click="(p: any) => emit('marker-click', { point: p })"
     />
     <div v-if="explanation" class="map-explain">
@@ -44,10 +45,29 @@ const emit = defineEmits<{
 
 /** 合并所有图层 → GeoMap props */
 
+/** 热力图图层点（type=heatmap）→ GeoMap heatPoints（带热度权重） */
+const heatPoints = computed(() => {
+  const all: { lng: number; lat: number; weight?: number }[] = []
+  for (const layer of props.layers) {
+    if (layer.layerConfig?.type !== 'heatmap') continue
+    if (!layer.points) continue
+    for (const p of layer.points) {
+      all.push({
+        lng: p.lng ?? 0,
+        lat: p.lat ?? 0,
+        weight: typeof p.weight === 'number' ? p.weight : 1,
+      })
+    }
+  }
+  return all
+})
+
 const mergedPoints = computed<GeoPoint[]>(() => {
   const all: GeoPoint[] = []
   for (const layer of props.layers) {
     if (!layer.points) continue
+    // 热力图图层不渲染为普通标点，交由 heatPoints 渲染
+    if (layer.layerConfig?.type === 'heatmap') continue
     const color = layer.layerConfig?.color || '#e74c3c'
     for (const p of layer.points) {
       all.push({

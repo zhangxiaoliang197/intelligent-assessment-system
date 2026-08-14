@@ -54,7 +54,7 @@ def _build_minimal_ontology() -> tuple:
         ],
         relation_types=[RelationType(name="任职于")],
         create_time=now, update_time=now,
-        status="活跃", is_default=False,
+        status="活跃",
         schema_version=2,
     )
 

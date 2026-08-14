@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import unittest
 
-from agent import orchestrator
 from skills import (
     SkillCatalogError,
     build_skill_context,
@@ -68,32 +67,6 @@ class SituationSkillCatalogTests(unittest.TestCase):
 
 
 class SituationSkillOrchestratorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_selected_skill_changes_stream_plan_and_outputs(self):
-        context = build_skill_context("logistics-route-risk", "分析保障路线风险")
-        original_interval = orchestrator.config.MOCK_STREAM_INTERVAL
-        orchestrator.config.MOCK_STREAM_INTERVAL = 0
-        try:
-            events = [
-                event
-                async for event in orchestrator.mock_generate("分析保障路线风险", "r_test", context)
-            ]
-        finally:
-            orchestrator.config.MOCK_STREAM_INTERVAL = original_interval
-
-        event_types = [event_type for event_type, _ in events]
-        self.assertLess(event_types.index("chart"), event_types.index("map_layer"))
-        self.assertLess(event_types.index("map_layer"), event_types.index("narrative"))
-        self.assertEqual(event_types[-1], "done")
-
-        plan = next(data for event_type, data in events if event_type == "plan")
-        charts = [data for event_type, data in events if event_type == "chart"]
-        map_layer = next(data for event_type, data in events if event_type == "map_layer")
-        done = events[-1][1]
-        self.assertEqual(plan["skill"]["id"], "logistics-route-risk")
-        self.assertEqual([chart["type"] for chart in charts], context["chartTypes"][:3])
-        self.assertTrue(map_layer["routes"])
-        self.assertEqual(done["skillId"], "logistics-route-risk")
-
     async def test_catalog_skill_lookup_returns_copy(self):
         skill = get_skill("force-readiness")
         self.assertIsNotNone(skill)

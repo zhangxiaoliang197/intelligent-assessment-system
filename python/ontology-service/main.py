@@ -1,6 +1,6 @@
 """本体模型服务（ontology-service）。
 
-负责本体模型的构建与管理，建立概念之间的语义关系，提供知识图谱可视化数据。
+负责本体模型的构建与管理，建立实体类型之间的语义关系，提供知识图谱可视化数据。
 A 阶段实现：多本体隔离、元模型类型约束、JSON 属性、持久化加固、路径查询、示例数据。
 
 数据持久化策略：
@@ -80,9 +80,9 @@ app.add_middleware(
 
 # ---------- 默认元模型 ----------
 # 创建本体时若未指定类型，使用以下默认类型集
-# 元模型定义粗粒度类型分类（概念/实体/属性/事件），ConceptType 在此基础上做细粒度类型定义
+# 元模型定义粗粒度类型分类（实体类型/实体/属性/事件），实体类型在此基础上做细粒度类型定义
 DEFAULT_ENTITY_TYPES = [
-    {"name": "概念", "color": "#5470c6"},
+    {"name": "实体类型", "color": "#5470c6"},
     {"name": "实体", "color": "#91cc75"},
     {"name": "属性", "color": "#fac858"},
     {"name": "事件", "color": "#ee6666"},
@@ -163,7 +163,7 @@ def _emit_event(job_id: str, event_type: str, data: Any) -> None:
 
     Args:
         job_id: 构建任务 ID
-        event_type: 事件类型（batch_done / group_done / cross_group_done / step_done / error / progress）
+        event_type: 事件类型（parse_done / batch_done / group_done / cross_group_done / step_done / error / progress）
         data: 事件数据（将被 JSON 序列化）
 
     说明：
@@ -199,7 +199,7 @@ def _set_job_progress(job_id: str, running_step: int, progress: int, message: st
 def _normalize_name(name: str) -> str:
     """名称归一化：trim 空白 + 全角括号转半角，用于跨批/跨组去重比较。
 
-    防止"命中率（%）"与"命中率(%)"被误判为不同概念。
+    防止"命中率（%）"与"命中率(%)"被误判为不同实体类型。
     """
     if not name:
         return ""
@@ -214,7 +214,7 @@ def _normalize_name(name: str) -> str:
 def _merge_property_schemas(existing: list, incoming: list) -> list:
     """合并两个 property_schema 列表，按属性名去重（并集）。
 
-    跨批提取同一概念时，不同批次可能补充不同的属性骨架。
+    跨批提取同一实体类型时，不同批次可能补充不同的属性骨架。
     合并策略：按归一化属性名去重，首次出现的属性保留；后续同名属性补充缺失字段。
     """
     merged = list(existing or [])
@@ -239,7 +239,7 @@ def _merge_property_schemas(existing: list, incoming: list) -> list:
     return merged
 
 
-def _merge_concepts(all_concepts: list) -> list:
+def _merge_entity_types(all_concepts: list) -> list:
     """合并多批提取的实体类型，按 name 去重 + property_schema 并集 + 父类型解析（v3）。
 
     跨批冗余消除策略：
@@ -363,18 +363,17 @@ def _parse_step2_llm_response(resp: Any) -> tuple:
         return [], []
 
 
-def _group_concepts(concepts: list, group_size: int) -> list:
-    """按 type 聚类后再按 group_size 切分，同类型概念尽量同组。
-
-    同类型概念之间关系最密集，同组内能让 LLM 建立更完整的关系网。
-    某 type 概念过多仍切多组；某 type 概念极少单独成组。
+def _group_entity_types(concepts: list, group_size: int) -> list:
+    """按 type 聚类后再按 group_size 切分，同分类（entity_type）实体类型尽量同组。
+    同分类实体类型之间关系最密集，同组内能让 LLM 建立更完整的关系网。
+    某分类实体类型过多仍切多组；某分类实体类型极少单独成组。
 
     Args:
-        concepts: 已确认的概念清单
-        group_size: 每组概念数上限
+        concepts: 已确认的实体类型清单
+        group_size: 每组实体类型数上限
 
     Returns:
-        概念分组列表，每个元素是该组的概念子集
+        实体类型分组列表，每个元素是该组的实体类型子集
     """
     by_type = {}
     type_order = []  # 保持 type 首次出现顺序，避免分组顺序不稳定
@@ -398,7 +397,7 @@ def _merge_entities(all_entities: list) -> list:
 
     跨批冗余/矛盾消除策略：
     - 同名实体（归一化后）合并为一条
-    - instance_of 不覆盖（首次出现的已受概念清单约束）
+    - instance_of 不覆盖（首次出现的已受实体类型清单约束）
     - properties（List[Dict] 格式）按属性 name 去重并集：
       · 同名属性值矛盾时，优先取有 source_snippet 的值；都有则保留首次（记日志）
       · 现有值为空时用新值补充
@@ -426,7 +425,7 @@ def _merge_entities(all_entities: list) -> list:
             order.append(key)
         else:
             existing = merged[key]
-            # instance_of 不覆盖（首次出现的已受概念清单约束）
+            # instance_of 不覆盖（首次出现的已受实体类型清单约束）
             if not existing.get("instance_of") and e.get("instance_of"):
                 existing["instance_of"] = e["instance_of"]
             # source_snippet 取首个非空
@@ -489,8 +488,8 @@ def _merge_entities(all_entities: list) -> list:
     return [merged[k] for k in order]
 
 
-def _derive_concept_color(entity_type: str, meta_entity_types: list, used_colors: Optional[set] = None) -> str:
-    """根据概念的 entity_type 推导颜色。
+def _derive_type_color(entity_type: str, meta_entity_types: list, used_colors: Optional[set] = None) -> str:
+    """根据实体类型的 entity_type 推导颜色。
 
     颜色来源优先级：
     1. 元模型中该类型已配置的颜色（手动构建/模板场景保持用户选择）
@@ -498,7 +497,7 @@ def _derive_concept_color(entity_type: str, meta_entity_types: list, used_colors
        保证不同实体类型自动区分颜色；全部用过则从头循环
 
     Args:
-        entity_type: 概念归属的元模型类型名
+        entity_type: 实体类型归属的元模型类型名
         meta_entity_types: 已确认的元模型实体类型 [{"name","color"}]
         used_colors: 本批已分配的颜色集合（None 表示无状态，仅走元模型匹配）
 
@@ -517,37 +516,38 @@ def _derive_concept_color(entity_type: str, meta_entity_types: list, used_colors
     return build_prompts.DEFAULT_COLORS[len(used_colors) % len(build_prompts.DEFAULT_COLORS)]
 
 
-def _enrich_concepts_with_color(concepts: list, meta_entity_types: list) -> list:
-    """为合并后的概念列表填充 color 字段。
+def _enrich_types_with_color(concepts: list, meta_entity_types: list) -> list:
+    """为合并后的实体类型列表填充 color 字段。
 
     颜色优先级：
-    1. LLM 已输出 color（旧格式概念）则保留
+    1. LLM 已输出 color（旧格式实体类型）则保留
     2. 元模型按 entity_type 精确匹配
     3. 调色板轮转分配（保证不同实体类型颜色不同，避免全部默认蓝色）
 
     Args:
-        concepts: 合并去重后的概念列表
+        concepts: 合并去重后的实体类型列表
         meta_entity_types: 已确认的元模型实体类型
 
     Returns:
-        填充 color 后的概念列表（原地修改并返回）
+        填充 color 后的实体类型列表（原地修改并返回）
     """
     used_colors = set()
     for c in concepts:
         if not c.get("color"):
-            c["color"] = _derive_concept_color(c.get("entity_type", ""), meta_entity_types, used_colors)
+            c["color"] = _derive_type_color(c.get("entity_type", ""), meta_entity_types, used_colors)
         used_colors.add(c["color"])
     return concepts
 
 
 # ---------- 阶段进度跟踪（真实进度条）----------
 # progress_stages 记录每个阶段的开始/结束时间，前端按时间线展示真实进度
-# v3 四阶段：1=实体类型提取, 2=实体+关系提取, 3=验证+报告, 4=保留兼容旧任务
+# v3 四阶段（已更名为）：0=文档解析, 1=类型提取, 2=实体提取, 3=分析验证, 4=保留兼容旧任务
 _STAGE_NAMES = {
-    1: "实体类型提取",
-    2: "实体+关系提取",
-    3: "验证+报告",
-    4: "验证+报告",  # 兼容旧 v2 任务（旧 step4 = 验证）
+    0: "文档解析",
+    1: "类型提取",
+    2: "实体提取",
+    3: "分析验证",
+    4: "分析验证",  # 兼容旧 v2 任务（旧 step4 = 验证）
 }
 
 
@@ -626,7 +626,7 @@ def _deduplicate_relations(relations: list) -> list:
     return result
 
 
-async def _background_extract_concepts(job_id: str) -> None:
+async def _background_extract_entity_types(job_id: str) -> None:
     """后台任务：Step 1 实体类型提取（v3 类型层，LLM调用，支持长文档分批 + 断点续作）。
 
     v3 重构：从文档提取实体类型（含层级 parent_entity_type_name + property_schema）
@@ -704,7 +704,7 @@ async def _background_extract_concepts(job_id: str) -> None:
         if pending_indices:
             sem = asyncio.Semaphore(config.LLM_CONCURRENCY)
 
-            async def _run_concept_batch(idx: int):
+            async def _run_type_batch(idx: int):
                 """单批实体类型提取（并行任务单元）：调 LLM → 解析 v3 响应 → 持久化 → 推送 SSE。"""
                 async with sem:
                     batch_text = batches[idx] if idx < len(batches) else ""
@@ -712,9 +712,10 @@ async def _background_extract_concepts(job_id: str) -> None:
                         batch_text, job.name, job.meta_entity_types,
                         batch_idx=idx, total_batches=total,
                         granularity=job.granularity, stage_hint=stage_hint_1,
-                        template=job.template_snapshot
+                        template=job.template_snapshot, template_mode=job.template_mode
                     )
-                    raw_resp = await _llm_json_async(messages, temperature=0.3, max_tokens=config.LLM_MAX_TOKENS)
+                    step1_max_tokens, step1_thinking = config.get_llm_params("step1")
+                    raw_resp = await _llm_json_async(messages, temperature=0.3, max_tokens=step1_max_tokens, thinking_type=step1_thinking)
                     # v3：解析 LLM 响应（兼容 v2 数组和 v3 对象格式）
                     batch_entity_types, batch_et_relations = _parse_step1_llm_response(raw_resp)
                     if not isinstance(batch_entity_types, list):
@@ -762,7 +763,7 @@ async def _background_extract_concepts(job_id: str) -> None:
             )
             # 并行执行，return_exceptions=True 保证单批失败不影响其他批
             results = await asyncio.gather(
-                *[_run_concept_batch(idx) for idx in pending_indices],
+                *[_run_type_batch(idx) for idx in pending_indices],
                 return_exceptions=True
             )
             # 检查失败批次
@@ -793,10 +794,10 @@ async def _background_extract_concepts(job_id: str) -> None:
         _set_job_progress(job_id, 1, 96, "正在合并实体类型...")
         all_entity_types = [et for batch in job.step1_batch_results for et in batch]
         all_et_relations = [etr for batch in job.step1_batch_relations_results for etr in batch]
-        merged_types = _merge_concepts(all_entity_types)
+        merged_types = _merge_entity_types(all_entity_types)
         merged_et_relations = _merge_entity_type_relations(all_et_relations)
         # color 由后端按 entity_type 从元模型推导（LLM 不输出 color，避免不一致）
-        _enrich_concepts_with_color(merged_types, job.meta_entity_types)
+        _enrich_types_with_color(merged_types, job.meta_entity_types)
         async with build_lock:
             job.step1_entity_types = merged_types
             job.step1_entity_type_relations = merged_et_relations
@@ -934,9 +935,10 @@ async def _background_extract_entities(job_id: str) -> None:
                         batch_text, job.name, concepts, job.meta_entity_types,
                         batch_idx=idx, total_batches=total,
                         granularity=job.granularity, stage_hint=stage_hint_2,
-                        template=job.template_snapshot
+                        template=job.template_snapshot, template_mode=job.template_mode
                     )
-                    raw_resp = await _llm_json_async(messages, temperature=0.3, max_tokens=config.LLM_MAX_TOKENS)
+                    step2_max_tokens, step2_thinking = config.get_llm_params("step2")
+                    raw_resp = await _llm_json_async(messages, temperature=0.3, max_tokens=step2_max_tokens, thinking_type=step2_thinking)
                     # v3：解析 LLM 响应（兼容 v2 数组和 v3 对象格式）
                     batch_entities, batch_relations = _parse_step2_llm_response(raw_resp)
                     if not isinstance(batch_entities, list):
@@ -1067,10 +1069,10 @@ async def _background_extract_entities(job_id: str) -> None:
         _background_tasks.pop(job_id, None)
 
 
-def _group_entities_by_concept(entities: list, group_size: int) -> list:
-    """按 instance_of 概念聚类后再按 group_size 切分，同概念实体尽量同组。
+def _group_entities_by_type(entities: list, group_size: int) -> list:
+    """按 instance_of 实体类型聚类后再按 group_size 切分，同类型实体尽量同组。
 
-    同概念实体之间关系最密集，同组内能让 LLM 建立更完整的关系网。
+    同类型实体之间关系最密集，同组内能让 LLM 建立更完整的关系网。
 
     Args:
         entities: 已确认的实体清单
@@ -1098,7 +1100,7 @@ def _group_entities_by_concept(entities: list, group_size: int) -> list:
 async def _background_build_relations(job_id: str) -> None:
     """后台任务：Step 3 关系建模（LLM调用，支持实体分组 + 跨组关系补充 + 断点续作）。
 
-    在已确认的实体间建立关系。实体过多时按 instance_of 概念分组，同组内关系完整后
+    在已确认的实体间建立关系。实体过多时按 instance_of 实体类型分组，同组内关系完整后
     补充跨组关系。注入阶段提示词（stage_hints[3]）。
     """
     job = build_jobs_db.get(job_id)
@@ -1124,12 +1126,12 @@ async def _background_build_relations(job_id: str) -> None:
             _mark_stage_finished(job_id, 3)
             return
 
-        # ---- 2. 重建 groups（按 instance_of 概念分组）----
+        # ---- 2. 重建 groups（按 instance_of 实体类型分组）----
         if len(entities) <= config.STEP3_GROUP_THRESHOLD_ENTITIES:
             groups = [entities]
             total = 1
         else:
-            groups = _group_entities_by_concept(entities, config.STEP3_GROUP_SIZE)
+            groups = _group_entities_by_type(entities, config.STEP3_GROUP_SIZE)
             total = len(groups)
 
         if job.step3_groups_total == 0:
@@ -1170,9 +1172,10 @@ async def _background_build_relations(job_id: str) -> None:
                 messages = build_prompts.build_step3_group_messages(
                     group_entities, job.meta_relation_types,
                     group_idx=idx, total_groups=total, stage_hint=stage_hint_3,
-                    template=job.template_snapshot
+                    template=job.template_snapshot, template_mode=job.template_mode
                 )
-                result = await _llm_json_async(messages, temperature=0.3, max_tokens=config.LLM_MAX_TOKENS)
+                step3_group_max_tokens, step3_group_thinking = config.get_llm_params("step3_group")
+                result = await _llm_json_async(messages, temperature=0.3, max_tokens=step3_group_max_tokens, thinking_type=step3_group_thinking)
                 if not isinstance(result, dict):
                     raise ValueError(f"第 {idx + 1}/{total} 组返回格式异常（非对象），原始类型: {type(result).__name__}")
                 group_relations = result.get("relations", [])
@@ -1208,10 +1211,11 @@ async def _background_build_relations(job_id: str) -> None:
             cross_messages = build_prompts.build_step3_cross_group_messages(
                 entities_for_prompt, all_relations,
                 job.meta_relation_types, stage_hint=stage_hint_3,
-                template=job.template_snapshot
+                template=job.template_snapshot, template_mode=job.template_mode
             )
             try:
-                cross_result = await _llm_json_async(cross_messages, temperature=0.3, max_tokens=config.LLM_MAX_TOKENS)
+                step3_cross_max_tokens, step3_cross_thinking = config.get_llm_params("step3_cross")
+                cross_result = await _llm_json_async(cross_messages, temperature=0.3, max_tokens=step3_cross_max_tokens, thinking_type=step3_cross_thinking)
                 if not isinstance(cross_result, dict):
                     raise ValueError(f"跨组关系补充返回格式异常（非对象），原始类型: {type(cross_result).__name__}")
                 cross_relations = cross_result.get("relations", [])
@@ -1295,11 +1299,11 @@ async def _background_build_relations(job_id: str) -> None:
 
 
 async def _background_verify_and_report(job_id: str) -> None:
-    """后台任务：Step 3 验证 + 报告生成（v3 LLM 自检）。
+    """后台任务：Step 3 验证（v3 LLM 自检，已移除简报生成）。
 
     v3 重构：原 step4 验证 降为 step3。
-    LLM 逐项检查实体/属性/关系是否可溯源，标记存疑项，生成简报。
-    验证结果存入 step3_verification/step3_report（兼容旧 step4_verification/step4_report）。
+    LLM 逐项检查实体/属性/关系是否可溯源，标记存疑项。
+    验证结果存入 step3_verification（兼容旧 step4_verification）。
     本体生成在用户确认（build_confirm_step3）时触发，不在此任务内。
     """
     job = build_jobs_db.get(job_id)
@@ -1324,9 +1328,10 @@ async def _background_verify_and_report(job_id: str) -> None:
         _set_job_progress(job_id, 3, 40, "正在调用AI做自检验证...")
         messages = build_prompts.build_step4_verification_messages(
             concepts, entities, relations, doc_text, stage_hint=stage_hint,
-            template=job.template_snapshot
+            template=job.template_snapshot, template_mode=job.template_mode
         )
-        result = await _llm_json_async(messages, temperature=0.3, max_tokens=config.LLM_MAX_TOKENS)
+        step4_max_tokens, step4_thinking = config.get_llm_params("step4")
+        result = await _llm_json_async(messages, temperature=0.3, max_tokens=step4_max_tokens, thinking_type=step4_thinking)
         if not isinstance(result, dict):
             raise ValueError(f"验证返回格式异常（非对象），原始类型: {type(result).__name__}")
 
@@ -1335,15 +1340,12 @@ async def _background_verify_and_report(job_id: str) -> None:
             "suspect_count": result.get("suspect_count", 0),
             "suspects": result.get("suspects", []) if isinstance(result.get("suspects"), list) else [],
         }
-        report = result.get("report", "") or ""
 
         async with build_lock:
             # v3 字段
             job.step3_verification = verification
-            job.step3_report = report
             # 兼容旧字段
             job.step4_verification = verification
-            job.step4_report = report
             job.step = max(job.step, 3)
             job.running_step = -1
             job.progress = 100
@@ -1362,8 +1364,7 @@ async def _background_verify_and_report(job_id: str) -> None:
         )
         _emit_event(job_id, "step_done", {
             "step": 3,
-            "verification": verification,
-            "report": report
+            "verification": verification
         })
     except Exception as e:
         logger.error(f"[{job_id}] 后台验证失败: {e}")
@@ -1388,7 +1389,6 @@ def _generate_formal_ontology(job_id: str) -> str:
     - step1_entity_type_relations → EntityTypeRelation（类型间关系）
     - step2_entities → Entity（instance_of = 类型名 → 类型ID）
     - step2_relations → Relation（source/target = 实体名 → 实体ID）
-    - step3_report 挂到本体元信息（description 补充）
     - 兼容旧任务：step1_entity_types 为空时回退读 step1_concepts
 
     Returns:
@@ -1432,7 +1432,7 @@ def _generate_formal_ontology(job_id: str) -> str:
         # v3：EntityType 不再有 entity_type 字段（自身 name 即类型名）
         # 颜色优先取 LLM 输出，否则按 entity_type 名（兼容旧数据）从元模型推导
         et_name_for_color = cd.get("entity_type", "") or cd.get("name", "")
-        color = cd.get("color") or _derive_concept_color(et_name_for_color, job.meta_entity_types)
+        color = cd.get("color") or _derive_type_color(et_name_for_color, job.meta_entity_types)
         new_entity_types.append(EntityType(
             id=cid, ontology_id=new_oid, name=cname,
             description=cd.get("description", ""),
@@ -1543,7 +1543,7 @@ def _generate_formal_ontology(job_id: str) -> str:
 
     # 持久化到内存 + 文件
     ontologies_db[new_oid] = ont
-    concepts_db[new_oid] = new_entity_types                  # 历史命名，存 EntityType
+    entity_types_db[new_oid] = new_entity_types                  # 历史命名，存 EntityType
     entity_type_relations_db[new_oid] = new_et_relations     # v3 新增
     entities_db[new_oid] = new_entities
     relations_db[new_oid] = new_relations
@@ -1743,12 +1743,12 @@ def _parse_properties(props_input: Any, entity_id: str = "") -> List[Property]:
 
 # ---------- 内存数据（按 ontology_id 组织，实现多本体隔离）----------
 # ontologies_db: ontology_id -> OntologyModel
-# concepts_db: ontology_id -> List[EntityType]  （v3：变量名保留历史，实际存储 EntityType 实例）
+# entity_types_db: ontology_id -> List[EntityType]  （v3：变量名保留历史，实际存储 EntityType 实例）
 # entity_type_relations_db: ontology_id -> List[EntityTypeRelation]  （v3 新增：类型间关系）
 # entities_db: ontology_id -> List[Entity]
 # relations_db: ontology_id -> List[Relation]
 ontologies_db: Dict[str, OntologyModel] = {}
-concepts_db: Dict[str, List[EntityType]] = {}                       # 历史命名，存 EntityType
+entity_types_db: Dict[str, List[EntityType]] = {}                       # 历史命名，存 EntityType
 entity_type_relations_db: Dict[str, List[EntityTypeRelation]] = {}  # v3 新增
 entities_db: Dict[str, List[Entity]] = {}
 relations_db: Dict[str, List[Relation]] = {}
@@ -1762,17 +1762,17 @@ def save_ontology(ontology_id: str) -> None:
 
     v3：存储字段名从 `concepts` 改为 `entity_types`，新增 `entity_type_relations`。
     旧 `concepts` 字段不再写入（读取时兼容）。
-    同步策略：concepts_db 是 EntityType 的单一数据源，保存前同步到 ont.entity_types。
+    同步策略：entity_types_db 是 EntityType 的单一数据源，保存前同步到 ont.entity_types。
     """
     ont = ontologies_db.get(ontology_id)
     if not ont:
         return
-    # v3 同步：concepts_db → ont.entity_types（保持单一数据源一致性）
-    ont.entity_types = list(concepts_db.get(ontology_id, []))
+    # v3 同步：entity_types_db → ont.entity_types（保持单一数据源一致性）
+    ont.entity_types = list(entity_types_db.get(ontology_id, []))
     ont.update_time = datetime.now()
     data = {
         'ontology': ont.dict(),
-        'entity_types': [c.dict() for c in concepts_db.get(ontology_id, [])],
+        'entity_types': [c.dict() for c in entity_types_db.get(ontology_id, [])],
         'entity_type_relations': [
             r.dict() for r in entity_type_relations_db.get(ontology_id, [])
         ],
@@ -1791,7 +1791,7 @@ def save_index() -> None:
 
 
 # ---------- 本体模板持久化 ----------
-# 模板：从已有本体抽取的 schema 层（元模型 + 概念类 + 属性骨架），不含实例
+# 模板：从已有本体抽取的 schema 层（元模型 + 实体类型类 + 属性骨架），不含实例
 # 复刻 ontologies_db 的双层存储模式（独立文件 + 索引 + .bak 备份 + 文件锁）
 TEMPLATES_DIR = os.path.join(DATA_DIR, 'ontology_templates')
 TEMPLATES_INDEX = os.path.join(TEMPLATES_DIR, 'index.json')
@@ -1874,7 +1874,7 @@ def _extract_template_from_ontology(ontology_id: str, name: str, description: st
     """从已有本体抽取 schema 层生成模板（丢弃实例）。
 
     v3：
-    - entity_types：从 concepts_db（EntityType 列表）抽取为 TemplateEntityTypeSchema
+    - entity_types：从 entity_types_db（EntityType 列表）抽取为 TemplateEntityTypeSchema
       （含 parent_entity_type_name 层级 + property_schema）
     - entity_type_relations：从 entity_type_relations_db 抽取为 TemplateEntityTypeRelation
     - relation_types：直接复用本体 relation_types
@@ -1883,10 +1883,10 @@ def _extract_template_from_ontology(ontology_id: str, name: str, description: st
     ont = _get_ontology_or_404(ontology_id)
     now = datetime.now()
     # 构建 id→name 映射，用于将 parent_entity_type_id 解析为 name
-    et_id_to_name = {et.id: et.name for et in concepts_db.get(ontology_id, [])}
+    et_id_to_name = {et.id: et.name for et in entity_types_db.get(ontology_id, [])}
     # EntityType → TemplateEntityTypeSchema
     tpl_entity_types = []
-    for et in concepts_db.get(ontology_id, []):
+    for et in entity_types_db.get(ontology_id, []):
         parent_name = None
         if et.parent_entity_type_id:
             parent_name = et_id_to_name.get(et.parent_entity_type_id)
@@ -2027,9 +2027,9 @@ def load_db() -> None:
     3. 迁移后回写文件
     4. 加载到内存
     """
-    global ontologies_db, concepts_db, entities_db, relations_db
+    global ontologies_db, entity_types_db, entities_db, relations_db
     ontologies_db = {}
-    concepts_db = {}
+    entity_types_db = {}
     entities_db = {}
     relations_db = {}
 
@@ -2132,17 +2132,17 @@ def load_db() -> None:
 
         # 加载实体类型（v3：优先读 entity_types 字段，回退到旧 concepts 字段）
         # ConceptType 已是 EntityType 别名，统一用 EntityType 解析
-        conps = []
+        types = []
         et_data_list = data.get('entity_types')
         if et_data_list is None:
             # 旧 v2 数据：从 concepts 字段读取（ConceptType dict）
             et_data_list = data.get('concepts', [])
         for c in et_data_list:
             try:
-                conps.append(EntityType(**c))
+                types.append(EntityType(**c))
             except Exception as e2:
                 logger.warning(f"实体类型解析失败，跳过: {e2}")
-        concepts_db[ont.id] = conps
+        entity_types_db[ont.id] = types
 
         # 加载实体类型间关系（v3 新增）
         et_rels = []
@@ -2153,10 +2153,10 @@ def load_db() -> None:
                 logger.warning(f"实体类型关系解析失败，跳过: {e2}")
         entity_type_relations_db[ont.id] = et_rels
 
-        # v3 同步：concepts_db 是 EntityType 单一数据源，同步到 ont.entity_types
-        # 这确保手动创建的本体（ont.entity_types 有值但 concepts_db 空）也能正确展示图谱
-        if conps:
-            ont.entity_types = list(conps)
+        # v3 同步：entity_types_db 是 EntityType 单一数据源，同步到 ont.entity_types
+        # 这确保手动创建的本体（ont.entity_types 有值但 entity_types_db 空）也能正确展示图谱
+        if types:
+            ont.entity_types = list(types)
 
         # 加载实体
         ents = []
@@ -2182,7 +2182,7 @@ def load_db() -> None:
         logger.info(f"迁移完成：{migrated_count} 个本体已升级到 schema_version={SCHEMA_VERSION}")
 
     logger.info(f"加载完成: {len(ontologies_db)} 个本体, "
-                f"{sum(len(v) for v in concepts_db.values())} 个实体类型, "
+                f"{sum(len(v) for v in entity_types_db.values())} 个实体类型, "
                 f"{sum(len(v) for v in entity_type_relations_db.values())} 条类型关系, "
                 f"{sum(len(v) for v in entities_db.values())} 个实体, "
                 f"{sum(len(v) for v in relations_db.values())} 条关系")
@@ -2195,7 +2195,7 @@ def _count_entities(ontology_id: str) -> int:
 
 def _count_concepts(ontology_id: str) -> int:
     """统计某本体的实体类型数（v3：原概念数，变量名保留历史）。"""
-    return len(concepts_db.get(ontology_id, []))
+    return len(entity_types_db.get(ontology_id, []))
 
 
 def _count_entity_type_relations(ontology_id: str) -> int:
@@ -2227,9 +2227,9 @@ def _get_ontology_or_404(ontology_id: str) -> OntologyModel:
     return ont
 
 
-def _find_concept(ontology_id: str, concept_id: str) -> Optional[ConceptType]:
-    """在本体内查找概念。"""
-    for c in concepts_db.get(ontology_id, []):
+def _find_entity_type(ontology_id: str, concept_id: str) -> Optional[ConceptType]:
+    """在本体内查找实体类型。"""
+    for c in entity_types_db.get(ontology_id, []):
         if c.id == concept_id:
             return c
     return None
@@ -2270,7 +2270,7 @@ def _entity_dict_with_type(entity: Entity, ontology_id: str) -> Dict[str, Any]:
     """
     d = entity.dict()
     if not d.get("type"):
-        concept = _find_concept(ontology_id, entity.instance_of)
+        concept = _find_entity_type(ontology_id, entity.instance_of)
         if concept:
             d["type"] = concept.entity_type or concept.name
         else:
@@ -2282,15 +2282,15 @@ def _validate_instance_of(ontology_id: str, instance_of: str) -> None:
     """校验 instance_of 指向本体内存在的 ConceptType。
 
     迁移后的旧数据可能 instance_of 为空（防御性放行）；
-    新建实体必须指向有效概念。
+    新建实体必须指向有效实体类型。
     """
     if not instance_of:
         return  # 空值放行（兼容旧数据）
-    if _find_concept(ontology_id, instance_of):
+    if _find_entity_type(ontology_id, instance_of):
         return
     raise HTTPException(
         status_code=400,
-        detail=f"概念ID '{instance_of}' 在本体内不存在"
+        detail=f"实体类型ID '{instance_of}' 在本体内不存在"
     )
 
 
@@ -2342,7 +2342,7 @@ def seed_if_empty() -> None:
 
     与 v1 的关键差异：
     - 命中率/摧毁率/战损率 从独立实体改为「打击能力/生存能力」的指标型属性
-    - 新增概念层（ConceptType），每个实体 instance_of 指向概念
+    - 新增实体类型层（ConceptType），每个实体 instance_of 指向实体类型
     - 属性使用结构化 Property 对象，区分描述型/指标型
     """
     if ontologies_db:
@@ -2353,7 +2353,7 @@ def seed_if_empty() -> None:
     ont = OntologyModel(
         id=oid,
         name="作战效能评估本体",
-        description="作战指挥场景的示例本体，包含作战效能、打击/生存/保障能力及相关指标概念",
+        description="作战指挥场景的示例本体，包含作战效能、打击/生存/保障能力及相关指标实体类型",
         version="1.0.0",
         entity_types=[_entity_type_from_dict(t, oid, now) for t in DEFAULT_ENTITY_TYPES],
         relation_types=[RelationType(**t) for t in DEFAULT_RELATION_TYPES],
@@ -2364,11 +2364,11 @@ def seed_if_empty() -> None:
     )
     ontologies_db[oid] = ont
 
-    # ── 概念层（ConceptType）：类型定义 ──
-    # 每个概念属于元模型的一个 entity_type，携带属性骨架
+    # ── 实体类型层（EntityType）：类型定义 ──
+    # 每个实体类型属于元模型的一个 entity_type，携带属性骨架
     seed_concepts = [
         # (name, entity_type, description, color, property_schema)
-        ("能力维度", "概念", "作战能力的分类维度", "#5470c6", [
+        ("能力维度", "实体类型", "作战能力的分类维度", "#5470c6", [
             PropertySchema(name="权重", category="metric", data_type="number", unit="", description="该能力在综合评估中的权重"),
             PropertySchema(name="定义", category="descriptive", data_type="string"),
         ]),
@@ -2389,21 +2389,21 @@ def seed_if_empty() -> None:
         ]),
     ]
     concept_map = {}  # name -> id
-    conps = []
+    types = []
     for idx, (cname, etype, desc, color, pschema) in enumerate(seed_concepts):
         cid = f"concept_seed_{idx:02d}"
         concept_map[cname] = cid
-        conps.append(ConceptType(
+        types.append(ConceptType(
             id=cid, ontology_id=oid, name=cname, entity_type=etype,
             description=desc, color=color, property_schema=pschema,
             create_time=now, update_time=now,
         ))
-    concepts_db[oid] = conps
+    entity_types_db[oid] = types
 
     # ── 实体层（Entity）：具体实例 ──
     # 命中率/摧毁率/战损率 作为指标型属性融入对应实体，不再作为独立实体
     seed_entities = [
-        # (name, instance_of概念名, is_primary, properties)
+        # (name, instance_of实体类型名, is_primary, properties)
         ("作战效能", "能力维度", True, [
             _seed_property("prop_seed_00", "ent_seed_00", "定义", "综合评估指标", "descriptive"),
             _seed_property("prop_seed_01", "ent_seed_00", "权重", "1.0", "metric", data_type="number"),
@@ -2483,7 +2483,7 @@ def seed_if_empty() -> None:
 
     save_ontology(oid)
     save_index()
-    logger.info(f"已写入示例本体: {ont.name} ({len(conps)} 概念, {len(ents)} 实体, {len(rels)} 关系)")
+    logger.info(f"已写入示例本体: {ont.name} ({len(types)} 实体类型, {len(ents)} 实体, {len(rels)} 关系)")
 
 
 # 启动时加载数据并按需 seed
@@ -2501,7 +2501,7 @@ async def _retry_pending_build_jobs():
     - step3 已确认 + step4 未完成 → 重试 step4（验证+报告）
     - step2 已确认 + step3 未完成 → 重试 step3（关系建模）
     - step1 已确认 + step2 未完成 → 重试 step2（实体提取）
-    - meta 已确认 + step1 未完成 → 重试 step1（概念提取）
+    - meta 已确认 + step1 未完成 → 重试 step1（实体类型提取）
     """
     if not _pending_retries:
         return
@@ -2512,7 +2512,13 @@ async def _retry_pending_build_jobs():
         if not job or job.status == "completed":
             continue
         # 根据 confirmed 状态判断该重试哪一步（五阶段优先级从后往前）
-        if job.step3_confirmed and not job.step4_confirmed:
+        if not job.meta_confirmed and not job.source_text:
+            # 阶段 0「文档解析」尚未完成即被中断：重试解析
+            logger.info(f"[{job_id}] 自动重试阶段0（文档解析）")
+            _set_job_progress(job_id, 0, 5, "服务重启后自动重试文档解析...")
+            task = asyncio.create_task(_background_parse_document(job_id))
+            _background_tasks[job_id] = task
+        elif job.step3_confirmed and not job.step4_confirmed:
             logger.info(f"[{job_id}] 自动重试 step4（验证+报告）")
             _set_job_progress(job_id, 4, 5, "服务重启后自动重试...")
             task = asyncio.create_task(_background_verify_and_report(job_id))
@@ -2528,9 +2534,9 @@ async def _retry_pending_build_jobs():
             task = asyncio.create_task(_background_extract_entities(job_id))
             _background_tasks[job_id] = task
         elif job.meta_confirmed and not job.step1_confirmed:
-            logger.info(f"[{job_id}] 自动重试 step1（概念提取）")
+            logger.info(f"[{job_id}] 自动重试 step1（实体类型提取）")
             _set_job_progress(job_id, 1, 5, "服务重启后自动重试...")
-            task = asyncio.create_task(_background_extract_concepts(job_id))
+            task = asyncio.create_task(_background_extract_entity_types(job_id))
             _background_tasks[job_id] = task
     _pending_retries.clear()
 
@@ -2554,15 +2560,15 @@ def _graph_data(ontology_id: str) -> Dict[str, Any]:
     nodes = []
     links = []
     # 实体类型映射（et_id -> EntityType）；变量名 concept_map 保留历史
-    concept_map = {c.id: c for c in concepts_db.get(ontology_id, [])}
+    concept_map = {c.id: c for c in entity_types_db.get(ontology_id, [])}
 
     # 实体类型节点（v3：原概念节点，node_type="concept" 保留兼容前端）
-    for c in concepts_db.get(ontology_id, []):
+    for c in entity_types_db.get(ontology_id, []):
         nodes.append({
             "id": c.id,
             "name": c.name,
             # v3：entity_type 是 @property 返回 self.name，等价于 c.name
-            "type": c.entity_type or c.name or "概念",   # 类型名，供前端颜色匹配
+            "type": c.entity_type or c.name or "实体类型",   # 类型名，供前端颜色匹配
             "node_type": "concept",                        # 节点类型：类型/实体（历史命名）
             "entity_type": c.entity_type,
             "color": c.color,
@@ -2733,8 +2739,8 @@ def _build_ontology_context(ontology_id: str, question: str = "", top_k: int = 2
     ents = entities_db.get(ontology_id, [])
     rels = relations_db.get(ontology_id, [])
     ent_map = {e.id: e for e in ents}
-    # 概念ID→概念名映射，用于 summary 中展示实体类型
-    concept_name_map = {c.id: c.name for c in concepts_db.get(ontology_id, [])}
+    # 实体类型ID→实体类型名映射，用于 summary 中展示实体类型
+    concept_name_map = {c.id: c.name for c in entity_types_db.get(ontology_id, [])}
 
     selected = _select_entities_by_question(ents, question, top_k)
     selected_ids = {e.id for e in selected}
@@ -2806,20 +2812,22 @@ async def create_ontology(
     name: str = Form(...),
     description: str = Form(""),
     entity_types: str = Form(""),
-    relation_types: str = Form("")
+    relation_types: str = Form(""),
+    status: str = Form("活跃")
 ):
     """创建本体模型。
 
     Args:
         name: 本体名称
         description: 描述
-        entity_types: 实体类型定义 JSON 字符串，如 [{"name":"概念","color":"#xxx"}]
+        entity_types: 实体类型定义 JSON 字符串，如 [{"name":"实体类型","color":"#xxx"}]
         relation_types: 关系类型定义 JSON 字符串，如 [{"name":"包含"}]
     """
     et_list = _parse_json_arg(entity_types, None)
     rt_list = _parse_json_arg(relation_types, None)
     if et_list is None:
-        et_list = DEFAULT_ENTITY_TYPES
+        # 实体类型不预填：创建本体后由用户逐个添加（手动构建空白启动）
+        et_list = []
     if rt_list is None:
         rt_list = DEFAULT_RELATION_TYPES
 
@@ -2860,14 +2868,14 @@ async def create_ontology(
         relation_types=[RelationType(**t) for t in rt_list],
         create_time=now,
         update_time=now,
-        status="活跃",
+        status=status,
         schema_version=SCHEMA_VERSION,
     )
 
     async with db_lock:
         ontologies_db[ontology.id] = ontology
-        # v3：concepts_db 是 EntityType 单一数据源，手动创建时也要初始化
-        concepts_db[ontology.id] = list(new_entity_types)
+        # v3：entity_types_db 是 EntityType 单一数据源，手动创建时也要初始化
+        entity_types_db[ontology.id] = list(new_entity_types)
         entity_type_relations_db[ontology.id] = []
         entities_db[ontology.id] = []
         relations_db[ontology.id] = []
@@ -2902,8 +2910,8 @@ async def get_stats():
     total_concepts = 0
     for oid, ents in entities_db.items():
         total_entities += len(ents)
-        # 概念ID→概念名映射，用于按概念名统计
-        concept_name_map = {c.id: c.name for c in concepts_db.get(oid, [])}
+        # 实体类型ID→实体类型名映射，用于按实体类型名统计
+        concept_name_map = {c.id: c.name for c in entity_types_db.get(oid, [])}
         for e in ents:
             type_name = concept_name_map.get(e.instance_of, e.type or "未分类")
             entity_types[type_name] += 1
@@ -2911,7 +2919,7 @@ async def get_stats():
         total_relations += len(rels)
         for r in rels:
             relation_types[r.relation_type] += 1
-    total_concepts = sum(len(v) for v in concepts_db.values())
+    total_concepts = sum(len(v) for v in entity_types_db.values())
     return {
         "success": True,
         "data": {
@@ -2919,6 +2927,7 @@ async def get_stats():
             "total_relations": total_relations,
             "total_concepts": total_concepts,
             "total_ontologies": len(ontologies_db),
+            "total_meta_models": len(templates_db),
             "entity_types": dict(entity_types),
             "relation_types": dict(relation_types),
             "avg_relations_per_entity": total_relations / total_entities if total_entities else 0
@@ -2926,35 +2935,16 @@ async def get_stats():
     }
 
 
-@app.get("/ontology/default")
-async def get_default_ontology():
-    """获取默认本体。
-
-    优先返回 is_default=True 的本体；无则降级返回第一个；再无则 404。
-    注意：此静态路由必须声明在 /ontology/{ontology_id} 之前，否则 "default"
-    会被捕获为路径参数。
-    """
-    if not ontologies_db:
-        raise HTTPException(status_code=404, detail="尚无本体模型")
-    # 优先 is_default=True
-    for o in ontologies_db.values():
-        if o.is_default:
-            return {"success": True, "data": _ontology_summary(o)}
-    # 降级：返回第一个本体（不修改其 is_default 标志，仅作返回）
-    first = next(iter(ontologies_db.values()))
-    return {"success": True, "data": _ontology_summary(first)}
+# ---------- 元模型（本体模板）CRUD ----------
+# 路由顺序：所有 /ontology/meta-model/* 静态路由必须声明在 /ontology/{ontology_id} 之前，
+# 否则 "meta-model" 会被捕获为 ontology_id 路径参数。
+# 子顺序：/ontology/meta-model/list 必须在 /ontology/meta-model/{meta_model_id} 之前，
+# 否则 "list" 会被捕获为 meta_model_id。
 
 
-# ---------- 本体模板 CRUD ----------
-# 路由顺序：所有 /ontology/template/* 静态路由必须声明在 /ontology/{ontology_id} 之前，
-# 否则 "template" 会被捕获为 ontology_id 路径参数。
-# 子顺序：/ontology/template/list 必须在 /ontology/template/{template_id} 之前，
-# 否则 "list" 会被捕获为 template_id。
-
-
-@app.get("/ontology/template/list")
+@app.get("/ontology/meta-model/list")
 async def list_templates():
-    """列出所有本体模板（summary）。"""
+    """列出所有元模型（summary）。"""
     items = [_template_summary(t) for t in templates_db.values()]
     items.sort(key=lambda x: x["update_time"], reverse=True)
     return {
@@ -2964,7 +2954,7 @@ async def list_templates():
     }
 
 
-@app.post("/ontology/template")
+@app.post("/ontology/meta-model")
 async def create_template(
     name: str = Form(...),
     description: str = Form(""),
@@ -2973,10 +2963,10 @@ async def create_template(
     concepts: str = Form(""),
     entity_type_relations: str = Form("")
 ):
-    """手动向导独立创建模板（v3）。
+    """手动向导独立创建元模型（v3）。
 
     Args:
-        name: 模板名称
+        name: 元模型名称
         description: 描述
         entity_types: v3 实体类型 schema JSON，如 [{"name":"企业","color":"#xxx",
                       "property_schema":[...], "parent_entity_type_name":"..."}]
@@ -3046,13 +3036,13 @@ async def create_template(
     }
 
 
-@app.post("/ontology/template/save-from-ontology/{ontology_id}")
+@app.post("/ontology/meta-model/save-from-ontology/{ontology_id}")
 async def save_template_from_ontology(
     ontology_id: str,
     name: str = Form(""),
     description: str = Form("")
 ):
-    """从已有本体另存为模板（抽取 schema 层，丢弃实例）。"""
+    """从已有本体另存为元模型（抽取 schema 层，丢弃实例）。"""
     template = _extract_template_from_ontology(ontology_id, name, description)
     async with templates_lock:
         templates_db[template.id] = template
@@ -3065,16 +3055,16 @@ async def save_template_from_ontology(
     }
 
 
-@app.get("/ontology/template/{template_id}")
-async def get_template(template_id: str):
-    """模板详情（含完整 concepts 与 property_schema）。"""
-    tpl = _get_template_or_404(template_id)
+@app.get("/ontology/meta-model/{meta_model_id}")
+async def get_template(meta_model_id: str):
+    """元模型详情（含完整 concepts 与 property_schema）。"""
+    tpl = _get_template_or_404(meta_model_id)
     return {"success": True, "data": tpl.dict()}
 
 
-@app.put("/ontology/template/{template_id}")
+@app.put("/ontology/meta-model/{meta_model_id}")
 async def update_template(
-    template_id: str,
+    meta_model_id: str,
     name: str = Form(""),
     description: str = Form(""),
     entity_types: str = Form(""),
@@ -3082,8 +3072,8 @@ async def update_template(
     concepts: str = Form(""),
     entity_type_relations: str = Form("")
 ):
-    """更新模板字段（传空字符串的字段保持原值，v3）。"""
-    tpl = _get_template_or_404(template_id)
+    """更新元模型字段（传空字符串的字段保持原值，v3）。"""
+    tpl = _get_template_or_404(meta_model_id)
     if name:
         tpl.name = name
     if description:
@@ -3135,16 +3125,16 @@ async def update_template(
     }
 
 
-@app.delete("/ontology/template/{template_id}")
-async def delete_template(template_id: str):
-    """删除模板（不影响已基于该模板创建的本体/任务）。"""
-    _get_template_or_404(template_id)
+@app.delete("/ontology/meta-model/{meta_model_id}")
+async def delete_template(meta_model_id: str):
+    """删除元模型（不影响已基于该元模型创建的本体/任务）。"""
+    _get_template_or_404(meta_model_id)
     async with templates_lock:
-        templates_db.pop(template_id, None)
+        templates_db.pop(meta_model_id, None)
         save_templates_index()
         # 删除独立文件（含 .bak）
         for suffix in ('', '.bak'):
-            p = _template_file(template_id) + suffix
+            p = _template_file(meta_model_id) + suffix
             if os.path.exists(p):
                 try:
                     os.remove(p)
@@ -3191,12 +3181,12 @@ async def update_ontology(
 
 @app.delete("/ontology/{ontology_id}")
 async def delete_ontology(ontology_id: str):
-    """删除本体及其下属的所有概念/实体/关系（仅删该本体，不影响其他本体）。"""
+    """删除本体及其下属的所有实体类型/实体/关系（仅删该本体，不影响其他本体）。"""
     async with db_lock:
         if ontology_id not in ontologies_db:
             raise HTTPException(status_code=404, detail="本体模型不存在")
         ontologies_db.pop(ontology_id)
-        concepts_db.pop(ontology_id, None)
+        entity_types_db.pop(ontology_id, None)
         entity_type_relations_db.pop(ontology_id, None)   # v3：清理类型间关系
         entities_db.pop(ontology_id, None)
         relations_db.pop(ontology_id, None)
@@ -3237,22 +3227,22 @@ async def add_entity(
     ontology_id: str,
     name: str = Form(...),
     instance_of: str = Form(""),
-    entity_type: str = Form(""),       # 兼容旧前端：传类型名时自动查找/创建概念
+    entity_type: str = Form(""),       # 兼容旧前端：传类型名时自动查找/创建实体类型
     properties: str = Form("{}"),
     is_primary: bool = Form(False),
     source_snippet: str = Form("")
 ):
     """向指定本体添加实体。
 
-    新接口用 instance_of 指向概念ID；为兼容旧前端，也可传 entity_type（类型名），
-    系统会按类型名查找现有概念，找不到则自动创建一个。
+    新接口用 instance_of 指向实体类型ID；为兼容旧前端，也可传 entity_type（类型名），
+    系统会按类型名查找现有实体类型，找不到则自动创建一个。
     properties 兼容 Dict（旧）和 List（新）两种格式。
     """
     _get_ontology_or_404(ontology_id)
 
-    # 兼容：若 instance_of 为空但 entity_type 有值，按类型名查找/创建概念
+    # 兼容：若 instance_of 为空但 entity_type 有值，按类型名查找/创建实体类型
     if not instance_of and entity_type:
-        concept = next((c for c in concepts_db.get(ontology_id, []) if c.name == entity_type), None)
+        concept = next((c for c in entity_types_db.get(ontology_id, []) if c.name == entity_type), None)
         if concept:
             instance_of = concept.id
         else:
@@ -3267,10 +3257,10 @@ async def add_entity(
                 color=color,
                 create_time=now, update_time=now,
             )
-            concepts_db.setdefault(ontology_id, []).append(concept)
+            entity_types_db.setdefault(ontology_id, []).append(concept)
             instance_of = concept.id
     elif not instance_of and not entity_type:
-        raise HTTPException(status_code=400, detail="必须提供 instance_of（概念ID）或 entity_type（类型名）")
+        raise HTTPException(status_code=400, detail="必须提供 instance_of（实体类型ID）或 entity_type（类型名）")
 
     _validate_instance_of(ontology_id, instance_of)
 
@@ -3305,22 +3295,22 @@ async def add_entity(
 @app.get("/ontology/{ontology_id}/entity/list")
 async def list_entities(
     ontology_id: str,
-    entity_type: Optional[str] = None,      # 按概念名筛选（兼容旧前端）
-    instance_of: Optional[str] = None,      # 按概念ID筛选（新接口）
+    entity_type: Optional[str] = None,      # 按实体类型名筛选（兼容旧前端）
+    instance_of: Optional[str] = None,      # 按实体类型ID筛选（新接口）
     is_primary: Optional[bool] = None,      # 按主要实体筛选
     page: int = 1,
     page_size: int = 20
 ):
-    """列出某本体的实体（支持按概念/主要实体过滤与分页）。"""
+    """列出某本体的实体（支持按实体类型/主要实体过滤与分页）。"""
     _get_ontology_or_404(ontology_id)
     filtered = entities_db.get(ontology_id, [])
 
-    # 按概念ID筛选
+    # 按实体类型ID筛选
     if instance_of:
         filtered = [e for e in filtered if e.instance_of == instance_of]
-    # 按概念名筛选（兼容旧前端 entity_type 参数）
+    # 按实体类型名筛选（兼容旧前端 entity_type 参数）
     if entity_type:
-        concept_ids = {c.id for c in concepts_db.get(ontology_id, []) if c.name == entity_type}
+        concept_ids = {c.id for c in entity_types_db.get(ontology_id, []) if c.name == entity_type}
         filtered = [e for e in filtered if e.instance_of in concept_ids]
     # 按主要实体筛选
     if is_primary is not None:
@@ -3370,7 +3360,7 @@ async def update_entity(
 
     # 兼容：entity_type → instance_of
     if not instance_of and entity_type:
-        concept = next((c for c in concepts_db.get(ontology_id, []) if c.name == entity_type), None)
+        concept = next((c for c in entity_types_db.get(ontology_id, []) if c.name == entity_type), None)
         if concept:
             instance_of = concept.id
         else:
@@ -3385,7 +3375,7 @@ async def update_entity(
                 color=color,
                 create_time=now, update_time=now,
             )
-            concepts_db.setdefault(ontology_id, []).append(concept)
+            entity_types_db.setdefault(ontology_id, []).append(concept)
             instance_of = concept.id
 
     if instance_of:
@@ -3436,22 +3426,22 @@ async def delete_entity(ontology_id: str, entity_id: str):
     return {"success": True, "message": "实体删除成功"}
 
 
-# ---------- 概念 CRUD ----------
+# ---------- 实体类型 CRUD ----------
 @app.get("/ontology/{ontology_id}/concept/list")
-async def list_concepts(
+async def list_entity_types(
     ontology_id: str,
     entity_type: Optional[str] = None
 ):
-    """列出某本体的所有概念（类型定义），支持按元模型 entity_type 筛选。"""
+    """列出某本体的所有实体类型（类型定义），支持按元模型 entity_type 筛选。"""
     _get_ontology_or_404(ontology_id)
-    conps = concepts_db.get(ontology_id, [])
+    types = entity_types_db.get(ontology_id, [])
     if entity_type:
-        conps = [c for c in conps if c.entity_type == entity_type]
-    return {"success": True, "total": len(conps), "items": [c.dict() for c in conps]}
+        types = [c for c in types if c.entity_type == entity_type]
+    return {"success": True, "total": len(types), "items": [c.dict() for c in types]}
 
 
 @app.post("/ontology/{ontology_id}/concept")
-async def add_concept(
+async def add_entity_type(
     ontology_id: str,
     name: str = Form(...),
     entity_type: str = Form(""),                   # v2 兼容（元模型类型名），v3 中 EntityType 自身即类型
@@ -3488,7 +3478,7 @@ async def add_concept(
     # v3：父类型名 → 父类型ID 解析（前端传名时自动查找）
     resolved_parent_id = parent_entity_type_id or ""
     if not resolved_parent_id and parent_entity_type_name:
-        for c in concepts_db.get(ontology_id, []):
+        for c in entity_types_db.get(ontology_id, []):
             if c.name == parent_entity_type_name:
                 resolved_parent_id = c.id
                 break
@@ -3497,7 +3487,7 @@ async def add_concept(
     # 若 color 为空，从父类型继承或用默认色
     if not color:
         if resolved_parent_id:
-            parent_c = _find_concept(ontology_id, resolved_parent_id)
+            parent_c = _find_entity_type(ontology_id, resolved_parent_id)
             if parent_c and parent_c.color:
                 color = parent_c.color
             else:
@@ -3521,7 +3511,7 @@ async def add_concept(
     )
 
     async with db_lock:
-        concepts_db.setdefault(ontology_id, []).append(concept)
+        entity_types_db.setdefault(ontology_id, []).append(concept)
         ontologies_db[ontology_id].update_time = datetime.now()
         save_ontology(ontology_id)
         save_index()
@@ -3531,16 +3521,16 @@ async def add_concept(
 
 @app.get("/ontology/{ontology_id}/concept/{concept_id}")
 async def get_concept(ontology_id: str, concept_id: str):
-    """获取某个概念。"""
+    """获取某个实体类型。"""
     _get_ontology_or_404(ontology_id)
-    concept = _find_concept(ontology_id, concept_id)
+    concept = _find_entity_type(ontology_id, concept_id)
     if not concept:
-        raise HTTPException(status_code=404, detail="概念不存在")
+        raise HTTPException(status_code=404, detail="实体类型不存在")
     return {"success": True, "data": concept.dict()}
 
 
 @app.put("/ontology/{ontology_id}/concept/{concept_id}")
-async def update_concept(
+async def update_entity_type(
     ontology_id: str,
     concept_id: str,
     name: str = Form(None),
@@ -3559,7 +3549,7 @@ async def update_concept(
     """
     _get_ontology_or_404(ontology_id)
     async with db_lock:
-        concept = _find_concept(ontology_id, concept_id)
+        concept = _find_entity_type(ontology_id, concept_id)
         if not concept:
             raise HTTPException(status_code=404, detail="实体类型不存在")
         if name is not None:
@@ -3590,7 +3580,7 @@ async def update_concept(
             resolved = parent_entity_type_id
             # 父类型名 → ID 解析（当 ID 为空但传了名时）
             if not resolved and parent_entity_type_name:
-                for c in concepts_db.get(ontology_id, []):
+                for c in entity_types_db.get(ontology_id, []):
                     if c.name == parent_entity_type_name and c.id != concept_id:
                         resolved = c.id
                         break
@@ -3610,29 +3600,29 @@ async def update_concept(
 
 
 @app.delete("/ontology/{ontology_id}/concept/{concept_id}")
-async def delete_concept(ontology_id: str, concept_id: str):
-    """删除概念。
+async def delete_entity_type(ontology_id: str, concept_id: str):
+    """删除实体类型。
 
-    若有实体 instance_of 指向该概念，拒绝删除（提示先迁移实体）。
+    若有实体 instance_of 指向该实体类型，拒绝删除（提示先迁移实体）。
     """
     _get_ontology_or_404(ontology_id)
     async with db_lock:
-        concept = _find_concept(ontology_id, concept_id)
+        concept = _find_entity_type(ontology_id, concept_id)
         if not concept:
-            raise HTTPException(status_code=404, detail="概念不存在")
+            raise HTTPException(status_code=404, detail="实体类型不存在")
         # 检查是否有实体引用
         refs = [e for e in entities_db.get(ontology_id, []) if e.instance_of == concept_id]
         if refs:
             raise HTTPException(
                 status_code=400,
-                detail=f"有 {len(refs)} 个实体引用此概念，请先迁移或删除这些实体"
+                detail=f"有 {len(refs)} 个实体引用此实体类型，请先迁移或删除这些实体"
             )
-        concepts_db[ontology_id] = [c for c in concepts_db.get(ontology_id, []) if c.id != concept_id]
+        entity_types_db[ontology_id] = [c for c in entity_types_db.get(ontology_id, []) if c.id != concept_id]
         ontologies_db[ontology_id].update_time = datetime.now()
         save_ontology(ontology_id)
         save_index()
 
-    return {"success": True, "message": "概念删除成功"}
+    return {"success": True, "message": "实体类型删除成功"}
 
 
 # ---------- 实体类型间关系 CRUD（v3 新增）----------
@@ -3661,8 +3651,8 @@ async def add_entity_type_relation(
     """
     _get_ontology_or_404(ontology_id)
     # 校验源/目标类型存在
-    src = _find_concept(ontology_id, source_entity_type_id)
-    tgt = _find_concept(ontology_id, target_entity_type_id)
+    src = _find_entity_type(ontology_id, source_entity_type_id)
+    tgt = _find_entity_type(ontology_id, target_entity_type_id)
     if not src:
         raise HTTPException(status_code=400, detail="源实体类型不存在")
     if not tgt:
@@ -4184,44 +4174,38 @@ async def unbind_relation_indicator(ontology_id: str, relation_id: str):
     return {"success": True, "message": "关系指标绑定已解除"}
 
 
-@app.post("/ontology/{ontology_id}/set-default")
-async def set_default_ontology(ontology_id: str):
-    """将指定本体设为默认（其余本体取消默认标志）。
-
-    同一时刻仅一个本体 is_default=True。仅持久化实际发生变更的本体。
-    """
-    async with db_lock:
-        ont = _get_ontology_or_404(ontology_id)
-        changed_ids = []
-        for oid, o in ontologies_db.items():
-            new_val = (oid == ontology_id)
-            if o.is_default != new_val:
-                o.is_default = new_val
-                o.update_time = datetime.now()
-                changed_ids.append(oid)
-        save_index()
-        for oid in changed_ids:
-            save_ontology(oid)
-
-    return {"success": True, "message": f"已将「{ont.name}」设为默认本体"}
-
-
 @app.post("/ontology/{ontology_id}/archive")
 async def archive_ontology(ontology_id: str):
-    """将指定本体归档（status 置为「归档」），归档后不再作为默认本体。
+    """将指定本体归档（status 置为「归档」）。
 
+    归档即标记为「参与下游数据联动」：归档本体会在 /ontology/archived/context
+    中被合并返回给 qa/indicator 服务做 B 阶段数据联动。同一时刻允许多个本体归档。
     归档仅改变状态标记，不影响实体/关系数据；前端列表可通过「归档」筛选查看。
     """
     async with db_lock:
         ont = _get_ontology_or_404(ontology_id)
         ont.status = "归档"
         ont.update_time = datetime.now()
-        # 归档本体不应继续作为其他服务默认取用的默认本体
-        ont.is_default = False
         save_index()
         save_ontology(ontology_id)
 
-    return {"success": True, "message": f"已将「{ont.name}」归档"}
+    return {"success": True, "message": f"已将「{ont.name}」归档，参与下游数据联动"}
+
+
+@app.post("/ontology/{ontology_id}/unarchive")
+async def unarchive_ontology(ontology_id: str):
+    """将指定本体恢复为「活跃」（取消归档）。
+
+    恢复后该本体不再参与下游数据联动。
+    """
+    async with db_lock:
+        ont = _get_ontology_or_404(ontology_id)
+        ont.status = "活跃"
+        ont.update_time = datetime.now()
+        save_index()
+        save_ontology(ontology_id)
+
+    return {"success": True, "message": f"已将「{ont.name}」恢复为活跃"}
 
 
 @app.get("/ontology/{ontology_id}/bindings")
@@ -4231,7 +4215,7 @@ async def get_bindings(ontology_id: str):
     供前端 badge 展示与 B2 prompt 注入消费。
     """
     _get_ontology_or_404(ontology_id)
-    _concept_name_map = {c.id: c.name for c in concepts_db.get(ontology_id, [])}
+    _concept_name_map = {c.id: c.name for c in entity_types_db.get(ontology_id, [])}
     bound_entities = [
         {"id": e.id, "name": e.name,
          "type": _concept_name_map.get(e.instance_of, e.type or ""),
@@ -4259,25 +4243,45 @@ async def get_bindings(ontology_id: str):
 
 
 # ---------- 本体上下文接口（供 B2 三服务消费）----------
-@app.get("/ontology/default/context")
-async def get_default_context(question: str = "", top_k: int = 20):
-    """默认本体的上下文快捷接口（三服务最常用）。
+@app.get("/ontology/archived/context")
+async def get_archived_context(question: str = "", top_k: int = 20):
+    """归档本体的合并上下文快捷接口（三服务最常用）。
+
+    仅归档本体参与下游数据联动；未指定具体本体时，合并所有归档本体的上下文
+    一次性返回（summary_text 拼接、entities/relations 聚合）。
+    若无归档本体，返回空结构（消费方据此降级）。
 
     注意：此静态路由必须声明在 /ontology/{ontology_id}/context 之前，
-    否则 "default" 会被捕获为路径参数。
+    否则 "archived" 会被捕获为路径参数。
     """
-    if not ontologies_db:
-        raise HTTPException(status_code=404, detail="尚无本体模型")
-    # 取默认本体（优先 is_default=True，否则第一个）
-    target_id = None
-    for oid, o in ontologies_db.items():
-        if o.is_default:
-            target_id = oid
-            break
-    if not target_id:
-        target_id = next(iter(ontologies_db.keys()))
-    ctx = _build_ontology_context(target_id, question, top_k)
-    return {"success": True, "data": ctx}
+    archived = [o for o in ontologies_db.values() if o.status == "归档"]
+    if not archived:
+        return {
+            "success": True,
+            "data": {"summary_text": "", "entities": [], "relations": [], "ontology": None},
+        }
+    # 合并各归档本体的上下文
+    all_summary = []
+    all_entities = []
+    all_relations = []
+    ontologies_meta = []
+    for o in archived:
+        ctx = _build_ontology_context(o.id, question, top_k)
+        if ctx.get("summary_text"):
+            all_summary.append(ctx["summary_text"])
+        all_entities.extend(ctx.get("entities", []))
+        all_relations.extend(ctx.get("relations", []))
+        if ctx.get("ontology"):
+            ontologies_meta.append(ctx["ontology"])
+    return {
+        "success": True,
+        "data": {
+            "summary_text": "\n\n".join(all_summary),
+            "entities": all_entities,
+            "relations": all_relations,
+            "ontology": {"ontologies": ontologies_meta, "count": len(archived)},
+        },
+    }
 
 
 @app.get("/ontology/{ontology_id}/context")
@@ -4286,8 +4290,16 @@ async def get_ontology_context(
     question: str = "",
     top_k: int = 20
 ):
-    """指定本体的上下文接口（请求携带 ontology_id 时使用）。"""
-    _get_ontology_or_404(ontology_id)
+    """指定本体的上下文接口（请求携带 ontology_id 时使用）。
+
+    仅归档本体参与下游数据联动，未归档本体返回空结构（消费方据此降级）。
+    """
+    ont = _get_ontology_or_404(ontology_id)
+    if ont.status != "归档":
+        return {
+            "success": True,
+            "data": {"summary_text": "", "entities": [], "relations": [], "ontology": None},
+        }
     ctx = _build_ontology_context(ontology_id, question, top_k)
     return {"success": True, "data": ctx}
 
@@ -4320,7 +4332,7 @@ async def import_ontology(file: UploadFile = File(...)):
         desc_val = ont_data.get("description", "")
         ver_val = ont_data.get("version", "1.0.0")
     else:
-        et_list = data.get("entity_types") or DEFAULT_ENTITY_TYPES
+        et_list = data.get("entity_types") or []
         rt_list = data.get("relation_types") or DEFAULT_RELATION_TYPES
         name_val = data.get("name", "导入本体")
         desc_val = data.get("description", "")
@@ -4339,7 +4351,7 @@ async def import_ontology(file: UploadFile = File(...)):
         schema_version=SCHEMA_VERSION,
     )
 
-    # 用迁移函数统一格式（兼容 Dict/List 属性 + 自动生成概念）
+    # 用迁移函数统一格式（兼容 Dict/List 属性 + 自动生成实体类型）
     raw_data = {
         "ontology": {
             "id": new_oid, "name": name_val, "description": desc_val,
@@ -4418,7 +4430,7 @@ async def import_ontology(file: UploadFile = File(...)):
 
     async with db_lock:
         ontologies_db[new_oid] = ont
-        concepts_db[new_oid] = new_concepts
+        entity_types_db[new_oid] = new_concepts
         entity_type_relations_db[new_oid] = new_et_relations  # v3 新增
         entities_db[new_oid] = new_entities
         relations_db[new_oid] = new_relations
@@ -4439,7 +4451,7 @@ async def import_ontology(file: UploadFile = File(...)):
 
 @app.get("/ontology/export/{ontology_id}")
 async def export_ontology(ontology_id: str):
-    """导出本体为 JSON（含元模型 + 概念 + 实体 + 关系）。"""
+    """导出本体为 JSON（含元模型 + 实体类型 + 实体 + 关系）。"""
     ont = _get_ontology_or_404(ontology_id)
     data = {
         "name": ont.name,
@@ -4447,7 +4459,7 @@ async def export_ontology(ontology_id: str):
         "version": ont.version,
         "entity_types": [t.dict() for t in ont.entity_types],
         "relation_types": [t.dict() for t in ont.relation_types],
-        "concepts": [c.dict() for c in concepts_db.get(ontology_id, [])],
+        "concepts": [c.dict() for c in entity_types_db.get(ontology_id, [])],
         "entities": [e.dict() for e in entities_db.get(ontology_id, [])],
         "relations": [r.dict() for r in relations_db.get(ontology_id, [])],
         "entity_type_relations": [
@@ -4471,7 +4483,7 @@ async def export_ontology_owl(ontology_id: str):
             detail="OWL 导出模块不可用（owlready2 未安装或加载失败）"
         )
     ont = _get_ontology_or_404(ontology_id)
-    concepts = concepts_db.get(ontology_id, [])
+    concepts = entity_types_db.get(ontology_id, [])
     entities = entities_db.get(ontology_id, [])
     relations = relations_db.get(ontology_id, [])
     et_relations = entity_type_relations_db.get(ontology_id, [])
@@ -4499,12 +4511,12 @@ async def search_ontology(
     query: str = Form(...),
     ontology_id: str = Form(...)
 ):
-    """在某本体内搜索实体与关系（匹配名称、概念名、关系类型、属性名/值）。"""
+    """在某本体内搜索实体与关系（匹配名称、实体类型名、关系类型、属性名/值）。"""
     _get_ontology_or_404(ontology_id)
     query_lower = query.lower()
 
-    # 概念ID→概念名映射
-    concept_name_map = {c.id: c.name for c in concepts_db.get(ontology_id, [])}
+    # 实体类型ID→实体类型名映射
+    concept_name_map = {c.id: c.name for c in entity_types_db.get(ontology_id, [])}
 
     matched_entities = []
     for e in entities_db.get(ontology_id, []):
@@ -4542,11 +4554,12 @@ async def search_ontology(
 
 
 # ---------- 分步构建：辅助函数 ----------
-async def _llm_json_async(messages: list, temperature: float = 0.3, max_tokens: int = 4000):
+async def _llm_json_async(messages: list, temperature: float = 0.3, max_tokens: int = 4000,
+                          thinking_type: str = ""):
     """异步调用 LLM 并解析 JSON（在线程池中执行同步 urllib 调用，避免阻塞事件循环）。"""
     loop = __import__('asyncio').get_event_loop()
     return await loop.run_in_executor(
-        None, lambda: call_llm_json(messages, temperature, max_tokens)
+        None, lambda: call_llm_json(messages, temperature, max_tokens, thinking_type)
     )
 
 
@@ -4565,35 +4578,23 @@ async def build_upload(
     stage_hints: str = Form(""),
     template_id: str = Form("")
 ):
-    """上传文档创建构建任务，并同步调用 LLM 推荐元模型。
+    """上传文档创建构建任务（快速返回，不在此解析文档）。
 
     流程：
-    1. 解析文档为纯文本
-    2. 创建 BuildJob（step=0，携带 granularity + stage_hints）
-    3. 调用 LLM 推荐元模型（失败则用默认元模型兜底）
-    4. 持久化任务，返回 job_id + 推荐的元模型
+    1. 读取文件并持久化到构建任务目录（供后续「文档解析」阶段解析）
+    2. 创建 BuildJob（step=0，source_text 为空，携带 granularity + stage_hints）
+    3. 持久化任务，返回 job_id
 
-    用户后续可通过 PUT /ontology/build/{job_id}/meta 确认或编辑元模型 + 粒度 + 阶段提示词。
+    文档解析 + 元模型推荐由「文档解析」阶段（POST /ontology/build/{job_id}/parse）
+    在后台异步执行，上传接口只负责落盘与建任务，确保前端点「开始构建」后立即跳转。
 
     Args:
-        granularity: 粒度预设 coarse|medium|fine，控制 step1/step2 提取数量
+        granularity: 粒度预设 coarse|medium|fine，控制后续提取数量
         stage_hints: JSON 字符串，形如 {"1":"重点关注财务指标","2":"..."}，注入各阶段 prompt
     """
-    # 1. 读取并解析文档
+    # 1. 读取原始文件内容
     content = await file.read()
     filename = file.filename or "unknown.txt"
-    # 写入临时文件供解析器读取
-    tmp_path = os.path.join(BUILD_JOBS_DIR, f'_tmp_{uuid.uuid4().hex[:8]}')
-    try:
-        with open(tmp_path, 'wb') as f:
-            f.write(content)
-        doc_text = extract_text(tmp_path, filename)
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-
-    if not doc_text or len(doc_text.strip()) < 20:
-        raise HTTPException(status_code=400, detail="文档内容为空或过短，无法提取概念")
 
     # 解析粒度预设（非法值回退 medium）
     if granularity not in config.GRANULARITY_RANGES:
@@ -4608,10 +4609,7 @@ async def build_upload(
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"stage_hints 解析失败，忽略: {e}")
 
-    # 截断文本以适应 LLM 上下文
-    doc_text_truncated = truncate_for_llm(doc_text)
-
-    # 2. 创建构建任务
+    # 2. 创建构建任务（source_text 留空，待「文档解析」阶段填充）
     now = datetime.now()
     job_id = _gen_job_id()
     job = BuildJob(
@@ -4621,44 +4619,31 @@ async def build_upload(
         step=0,
         status="draft",
         source_filename=filename,
-        source_text=doc_text,
-        char_count=len(doc_text),
+        source_text="",
+        char_count=0,
         granularity=granularity,
         stage_hints=hints_dict,
         create_time=now,
         update_time=now,
     )
 
-    # 2.5 参考模板：upload 时一次性快照（防模板后续被改/删影响进行中任务）
+    # 2.5 载入元模型：upload 时一次性快照（防元模型后续被改/删影响进行中任务）
     if template_id:
         try:
             tpl = _get_template_or_404(template_id)
             job.template_id = tpl.id
             job.template_snapshot = tpl.dict()
+            # 选择了元模型即视为强制约束（后续可在构建配置阶段调整/清除）
+            job.template_mode = "hard_constraint"
         except HTTPException as e:
-            # 模板不存在不阻塞上传，仅告警
-            logger.warning(f"build_upload: 模板 {template_id} 不存在，忽略: {e.detail}")
+            # 元模型不存在不阻塞上传，仅告警
+            logger.warning(f"build_upload: 元模型 {template_id} 不存在，忽略: {e.detail}")
 
-    # 3. 调用 LLM 推荐元模型（失败用默认元模型兜底，不阻塞上传）
-    try:
-        messages = build_prompts.build_meta_messages(doc_text_truncated, name, template=job.template_snapshot)
-        meta = await _llm_json_async(messages, temperature=0.3, max_tokens=config.LLM_MAX_TOKENS)
-        job.meta_entity_types = meta.get("entity_types", [])
-        job.meta_relation_types = meta.get("relation_types", [])
-        if not job.meta_entity_types:
-            job.meta_entity_types = [{"name": t["name"], "color": t.get("color", "#5470c6")}
-                                     for t in DEFAULT_ENTITY_TYPES]
-        if not job.meta_relation_types:
-            job.meta_relation_types = [{"name": t["name"]} for t in DEFAULT_RELATION_TYPES]
-        meta_source = "llm"
-    except Exception as e:
-        logger.warning(f"LLM 推荐元模型失败，使用默认元模型: {e}")
-        job.meta_entity_types = [{"name": t["name"], "color": t.get("color", "#5470c6")}
-                                 for t in DEFAULT_ENTITY_TYPES]
-        job.meta_relation_types = [{"name": t["name"]} for t in DEFAULT_RELATION_TYPES]
-        meta_source = "default（LLM 调用失败）"
+    # 3. 持久化源文件（供「文档解析」阶段读取）+ 持久化任务
+    source_path = os.path.join(BUILD_JOBS_DIR, f'{job_id}_source')
+    with open(source_path, 'wb') as f:
+        f.write(content)
 
-    # 4. 持久化
     async with build_lock:
         build_jobs_db[job_id] = job
         save_build_job(job_id)
@@ -4666,19 +4651,183 @@ async def build_upload(
 
     return {
         "success": True,
-        "message": "文档上传成功，已推荐元模型",
+        "message": "文档上传成功，即将进入文档解析",
         "data": {
             "job_id": job_id,
-            "meta_source": meta_source,
-            "meta_entity_types": job.meta_entity_types,
-            "meta_relation_types": job.meta_relation_types,
             "granularity": job.granularity,
             "stage_hints": job.stage_hints,
-            "char_count": job.char_count,
             "template_id": job.template_id,
             "template_name": (job.template_snapshot or {}).get("name", ""),
         }
     }
+
+
+async def _background_parse_document(job_id: str) -> None:
+    """后台任务：阶段 0「文档解析」——解析文档 + 推荐元模型。
+
+    上传时只落盘了源文件与任务骨架，此任务在此真正解析文档：
+    1. 读取持久化源文件 → extract_text → truncate_for_llm
+    2. 写入 source_text / char_count
+    3. 调用 LLM 推荐元模型（失败用默认元模型兜底）
+    4. 标记阶段 0 完成，广播 parse_done 事件
+    """
+    job = build_jobs_db.get(job_id)
+    if not job or job.status == "completed":
+        return
+    try:
+        _mark_stage_started(job_id, 0)
+        _set_job_progress(job_id, 0, 10, "正在解析文档...")
+
+        # 1. 读取持久化源文件并解析
+        source_path = os.path.join(BUILD_JOBS_DIR, f'{job_id}_source')
+        if not os.path.exists(source_path):
+            raise ValueError("源文件不存在，无法解析")
+        doc_text = extract_text(source_path, job.source_filename)
+
+        if not doc_text or len(doc_text.strip()) < 20:
+            raise ValueError("文档内容为空或过短，无法提取实体类型")
+
+        # 2. 截断供 LLM 使用（source_text 保留完整原文）
+        doc_text_truncated = truncate_for_llm(doc_text)
+
+        # 3. LLM 推荐元模型（失败用默认兜底，不阻塞解析完成）
+        meta_source = "llm"
+        try:
+            messages = build_prompts.build_meta_messages(doc_text_truncated, job.name, template=job.template_snapshot, template_mode=job.template_mode)
+            meta_max_tokens, meta_thinking = config.get_llm_params("meta")
+            meta = await _llm_json_async(messages, temperature=0.3, max_tokens=meta_max_tokens, thinking_type=meta_thinking)
+            job.meta_entity_types = meta.get("entity_types", [])
+            job.meta_relation_types = meta.get("relation_types", [])
+            if not job.meta_entity_types:
+                job.meta_entity_types = [{"name": t["name"], "color": t.get("color", "#5470c6")}
+                                         for t in DEFAULT_ENTITY_TYPES]
+            if not job.meta_relation_types:
+                job.meta_relation_types = [{"name": t["name"]} for t in DEFAULT_RELATION_TYPES]
+        except Exception as e:
+            logger.warning(f"LLM 推荐元模型失败，使用默认元模型: {e}")
+            job.meta_entity_types = [{"name": t["name"], "color": t.get("color", "#5470c6")}
+                                     for t in DEFAULT_ENTITY_TYPES]
+            job.meta_relation_types = [{"name": t["name"]} for t in DEFAULT_RELATION_TYPES]
+            meta_source = "default（LLM 调用失败）"
+
+        # 4. 落库解析结果
+        async with build_lock:
+            job.source_text = doc_text
+            job.char_count = len(doc_text)
+            job.error_message = ""  # 解析成功，清除历史错误（如服务重启中断标记）
+            job.update_time = datetime.now()
+            save_build_job(job_id)
+
+        _set_job_progress(job_id, -1, 100, "文档解析完成")
+        _mark_stage_finished(job_id, 0)
+        _emit_event(job_id, "parse_done", {
+            "step": 0,
+            "char_count": job.char_count,
+            "source_filename": job.source_filename,
+            "meta_source": meta_source,
+            "meta_entity_types": job.meta_entity_types,
+            "meta_relation_types": job.meta_relation_types,
+        })
+    except Exception as e:
+        logger.exception(f"[{job_id}] 文档解析失败: {e}")
+        _mark_stage_finished(job_id, 0, success=False)
+        async with build_lock:
+            job.error_message = f"文档解析失败: {e}"
+            job.update_time = datetime.now()
+            save_build_job(job_id)
+        _set_job_progress(job_id, -1, 100, "文档解析失败")
+        _emit_event(job_id, "error", {"step": 0, "message": job.error_message})
+    finally:
+        _background_tasks.pop(job_id, None)
+
+
+@app.post("/ontology/build/{job_id}/parse")
+async def build_parse(job_id: str):
+    """阶段 0「文档解析」：解析上传的文档 + 推荐元模型（后台异步执行）。
+
+    立即返回，前端通过 SSE 订阅 parse_done/error 事件。
+    """
+    job = _get_job_or_404(job_id)
+    if job.status == "completed":
+        raise HTTPException(status_code=400, detail="任务已完成")
+    if job.meta_confirmed:
+        raise HTTPException(status_code=400, detail="文档已解析并确认配置，无需重复解析")
+    if job.running_step != -1:
+        raise HTTPException(status_code=400, detail="当前有步骤正在后台运行中，请等待完成")
+    # 已解析完成但未确认配置（如刷新页面后重进）：直接返回，避免重复解析
+    if job.source_text and job.char_count > 0:
+        return {"success": True, "message": "文档已解析", "data": {"job_id": job_id, "char_count": job.char_count}}
+
+    _set_job_progress(job_id, 0, 5, "正在准备解析文档...")
+    task = asyncio.create_task(_background_parse_document(job_id))
+    _background_tasks[job_id] = task
+
+    return {
+        "success": True,
+        "message": "文档解析已在后台开始",
+        "data": {"job_id": job_id, "running_step": 0}
+    }
+
+
+@app.post("/ontology/build/manual")
+async def build_manual(
+    name: str = Form(...),
+    description: str = Form(""),
+    ontology_id: str = Form(...),
+):
+    """创建手动构建任务（无文档，作为断点续作的「进行中任务」载体）。
+
+    手动构建向导（/ontology/manual/{id}）将数据实时 CRUD 到本体，
+    BuildJob 仅承担入口与完成标记：
+    - status=draft 时出现在「进行中的构建任务」列表，可点击继续进入向导页
+    - 用户点「完成构建」后通过 PUT /ontology/build/{job_id}/complete 标记完成
+    """
+    now = datetime.now()
+    job_id = _gen_job_id()
+    job = BuildJob(
+        id=job_id,
+        name=name,
+        description=description,
+        step=0,
+        status="draft",
+        build_type="manual",
+        source_filename="手动构建",
+        ontology_id=ontology_id,
+        create_time=now,
+        update_time=now,
+    )
+    async with build_lock:
+        build_jobs_db[job_id] = job
+        save_build_job(job_id)
+        save_build_jobs_index()
+    return {
+        "success": True,
+        "message": "手动构建任务已创建",
+        "data": {"job_id": job_id},
+    }
+
+
+@app.put("/ontology/build/{job_id}/complete")
+async def build_complete(job_id: str):
+    """标记构建任务完成（手动构建「完成构建」时调用，从进行中列表移除）。"""
+    job = build_jobs_db.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="构建任务不存在")
+    job.status = "completed"
+    job.step = 4
+    job.update_time = datetime.now()
+    async with build_lock:
+        save_build_job(job_id)
+        save_build_jobs_index()
+    # 手动构建完成：将对应本体从「构建中」置为「活跃」，使其出现在已完成本体列表
+    if job.build_type == "manual" and job.ontology_id:
+        ont = ontologies_db.get(job.ontology_id)
+        if ont and ont.status == "构建中":
+            ont.status = "活跃"
+            ont.update_time = datetime.now()
+            async with db_lock:
+                save_ontology(ont.id)
+    return {"success": True, "message": "构建任务已完成"}
 
 
 @app.get("/ontology/build/list")
@@ -4694,6 +4843,7 @@ async def build_list():
                 "description": j.description,
                 "step": j.step,
                 "status": j.status,
+                "build_type": j.build_type,
                 "source_filename": j.source_filename,
                 "granularity": j.granularity,
                 "meta_confirmed": j.meta_confirmed,
@@ -4744,7 +4894,7 @@ async def build_progress(job_id: str):
             "ontology_id": job.ontology_id,
             "template_id": job.template_id,
             "template_name": (job.template_snapshot or {}).get("name", ""),
-            # Step 1 概念提取分批状态
+            # Step 1 实体类型提取分批状态
             "step1_batches_total": job.step1_batches_total,
             "step1_batches_done": job.step1_batches_done,
             "step1_failed_batch": job.step1_failed_batch,
@@ -4761,7 +4911,6 @@ async def build_progress(job_id: str):
             "step3_cross_group_failed": job.step3_cross_group_failed,
             # Step 4 验证结果
             "step4_verification": job.step4_verification,
-            "step4_report": job.step4_report,
             # 主要实体候选（step2 完成后）
             "primary_entity_candidates": job.primary_entity_candidates,
             "primary_entity_selected": job.primary_entity_selected,
@@ -4869,8 +5018,7 @@ async def build_stream(job_id: str):
                 if job.step4_verification and not job.step4_confirmed:
                     yield _sse_format("step_done", {
                         "step": 4,
-                        "verification": job.step4_verification,
-                        "report": job.step4_report
+                        "verification": job.step4_verification
                     })
                     return
                 # 任务未开始或已确认等下一阶段：不发终态，继续订阅等新事件
@@ -4915,8 +5063,8 @@ def _build_stage_graph(job: "BuildJob", stage: int) -> Dict[str, Any]:
     """构建某阶段的图谱预览数据（只读，nodes + links）。
 
     各阶段图谱内容：
-    - stage=1: 概念节点（按 entity_type 着色），无边
-    - stage=2: 概念节点 + 实体节点 + instance_of 边（实体颜色继承概念）
+    - stage=1: 实体类型节点（按 entity_type 着色），无边
+    - stage=2: 实体类型节点 + 实体节点 + instance_of 边（实体颜色继承实体类型）
     - stage=3: 实体节点 + 本体内关系边
     - stage=4: 同 stage=3，存疑项节点/边标记 suspect=True（基于 step4_verification）
 
@@ -4937,22 +5085,22 @@ def _build_stage_graph(job: "BuildJob", stage: int) -> Dict[str, Any]:
                 suspect_names.add(_normalize_name(s.get("item_name", "")))
 
     if stage >= 1:
-        # 概念节点
+        # 实体类型节点
         for c in (job.step1_concepts or []):
             nodes.append({
                 "id": f"concept_{_normalize_name(c.get('name', ''))}",
                 "name": c.get("name", ""),
                 "node_type": "concept",
                 "entity_type": c.get("entity_type", ""),
-                "color": c.get("color") or _derive_concept_color(c.get("entity_type", ""), job.meta_entity_types),
+                "color": c.get("color") or _derive_type_color(c.get("entity_type", ""), job.meta_entity_types),
                 "description": c.get("description", ""),
             })
 
     if stage >= 2:
         # 实体节点 + instance_of 边
-        # 概念名 → 颜色（实体颜色继承概念）
+        # 实体类型名 → 颜色（实体颜色继承实体类型）
         concept_color_map = {
-            _normalize_name(c.get("name", "")): c.get("color") or _derive_concept_color(c.get("entity_type", ""), job.meta_entity_types)
+            _normalize_name(c.get("name", "")): c.get("color") or _derive_type_color(c.get("entity_type", ""), job.meta_entity_types)
             for c in (job.step1_concepts or [])
         }
         for e in (job.step2_entities or []):
@@ -4970,7 +5118,7 @@ def _build_stage_graph(job: "BuildJob", stage: int) -> Dict[str, Any]:
                 "suspect": ename_norm in suspect_names,
                 "properties_count": len(e.get("properties") or []),
             })
-            # instance_of 边（概念 → 实体）
+            # instance_of 边（实体类型 → 实体）
             if inst:
                 links.append({
                     "source": f"concept_{_normalize_name(inst)}",
@@ -4998,7 +5146,7 @@ def _build_stage_graph(job: "BuildJob", stage: int) -> Dict[str, Any]:
                 "suspect": is_suspect,
             })
 
-    # stage=1 时去掉实体节点和边（只保留概念节点）
+    # stage=1 时去掉实体节点和边（只保留实体类型节点）
     if stage == 1:
         nodes = [n for n in nodes if n.get("node_type") == "concept"]
         links = []
@@ -5015,7 +5163,7 @@ async def build_get_graph(job_id: str, stage: int = 1):
 
     Args:
         job_id: 构建任务 ID
-        stage: 阶段号 1=概念 / 2=实体属性 / 3=关系 / 4=验证
+        stage: 阶段号 1=实体类型 / 2=实体属性 / 3=关系 / 4=验证
     """
     job = _get_job_or_404(job_id)
     # stage 越界保护：限制在 1-4
@@ -5081,16 +5229,21 @@ async def build_confirm_meta(
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"stage_hints 解析失败，忽略: {e}")
 
-    # 模板配置（可选）：确认时允许修改/切换模板与模板使用模式
+    # 模板配置：确认时允许修改/切换元模型，未选择则清除模板约束（真实连接语义）
     if template_id:
         try:
             tpl = _get_template_or_404(template_id)
             job.template_id = tpl.id
             job.template_snapshot = tpl.dict()
-            if template_mode in ("skip_step1", "soft_constraint"):
-                job.template_mode = template_mode
+            # 载入元模型：默认强制约束（hard_constraint），兼容旧 soft_constraint / skip_step1
+            job.template_mode = template_mode if template_mode in ("skip_step1", "soft_constraint", "hard_constraint") else "hard_constraint"
         except HTTPException as e:
-            logger.warning(f"build_confirm_meta: 模板 {template_id} 不存在，忽略: {e.detail}")
+            logger.warning(f"build_confirm_meta: 元模型 {template_id} 不存在，忽略: {e.detail}")
+    else:
+        # 用户未选择元模型：清除模板约束，让 LLM 从零自由提取
+        job.template_id = None
+        job.template_snapshot = None
+        job.template_mode = "soft_constraint"
 
     async with build_lock:
         job.meta_entity_types = et_list
@@ -5119,7 +5272,7 @@ async def build_confirm_meta(
 
 @app.post("/ontology/build/{job_id}/step1")
 async def build_step1(job_id: str, request: Request):
-    """Step 1: LLM 从文档提取概念清单（类型层，后台异步执行）。
+    """Step 1: LLM 从文档提取实体类型清单（类型层，后台异步执行）。
 
     前置条件：元模型已确认（meta_confirmed=True）。
     stage_hint: 表单字段，用户在本阶段开始时补充的提示词（可选），会注入本次 LLM 提取并持久化。
@@ -5132,7 +5285,7 @@ async def build_step1(job_id: str, request: Request):
     if not job.meta_confirmed:
         raise HTTPException(status_code=400, detail="请先确认元模型（PUT /ontology/build/{job_id}/meta）")
     if job.step1_confirmed:
-        raise HTTPException(status_code=400, detail="概念清单已确认，如需重新提取请先撤销确认")
+        raise HTTPException(status_code=400, detail="实体类型清单已确认，如需重新提取请先撤销确认")
     if job.status == "completed":
         raise HTTPException(status_code=400, detail="任务已完成")
     if job.running_step != -1:
@@ -5154,14 +5307,14 @@ async def build_step1(job_id: str, request: Request):
         save_build_job(job_id)
     _set_job_progress(
         job_id, 1, 5,
-        "继续提取概念..." if is_resume else "正在准备提取概念..."
+        "继续提取实体类型..." if is_resume else "正在准备提取实体类型..."
     )
-    task = asyncio.create_task(_background_extract_concepts(job_id))
+    task = asyncio.create_task(_background_extract_entity_types(job_id))
     _background_tasks[job_id] = task
 
     return {
         "success": True,
-        "message": "概念提取继续运行，从失败批次续跑..." if is_resume else "概念提取已在后台开始，您可以离开页面，稍后回来查看结果",
+        "message": "实体类型提取继续运行，从失败批次续跑..." if is_resume else "实体类型提取已在后台开始，您可以离开页面，稍后回来查看结果",
         "data": {"job_id": job_id, "running_step": 1, "is_resume": is_resume}
     }
 
@@ -5235,7 +5388,7 @@ async def build_step2(job_id: str, request: Request):
     stage_hint = await _parse_form_field(request, "stage_hint")
     job = _get_job_or_404(job_id)
     if not job.step1_confirmed:
-        raise HTTPException(status_code=400, detail="请先确认概念清单（PUT /ontology/build/{job_id}/step1）")
+        raise HTTPException(status_code=400, detail="请先确认实体类型清单（PUT /ontology/build/{job_id}/step1）")
     if job.step2_confirmed:
         raise HTTPException(status_code=400, detail="实体清单已确认，如需重新提取请先撤销确认")
     if job.status == "completed":
@@ -5359,7 +5512,7 @@ async def build_step3(job_id: str, request: Request):
     if job.running_step != -1:
         raise HTTPException(status_code=400, detail="当前有步骤正在后台运行中，请等待完成")
 
-    # v3：验证步骤无分批续跑概念，已运行过则标记为重试验证
+    # v3：验证步骤无分批续跑实体类型，已运行过则标记为重试验证
     is_resume = bool(job.step3_verification or job.step4_verification)
 
     async with build_lock:
@@ -5516,6 +5669,10 @@ async def build_delete(job_id: str):
         if os.path.exists(job_file):
             os.remove(job_file)
         save_build_jobs_index()
+    # 删除持久化的源文件（阶段 0 文档解析前上传时落盘）
+    source_path = os.path.join(BUILD_JOBS_DIR, f'{job_id}_source')
+    if os.path.exists(source_path):
+        os.remove(source_path)
     return {"success": True, "message": "构建任务已删除"}
 
 
@@ -5593,10 +5750,8 @@ async def build_rework(job_id: str, step: int, request: Request):
             job.step2_failed_reason = None
         if step <= 3:
             job.step3_verification = None
-            job.step3_report = None
             job.step3_confirmed = False
             job.step4_verification = None  # 兼容旧字段
-            job.step4_report = None
             job.step4_confirmed = False
 
         job.step = step - 1
@@ -5605,10 +5760,10 @@ async def build_rework(job_id: str, step: int, request: Request):
         save_build_job(job_id)
 
     # 启动后台任务
-    step_names = {1: "实体类型提取", 2: "实体+关系提取", 3: "验证+报告"}
+    step_names = {1: "实体类型提取", 2: "实体+关系提取", 3: "验证"}
     if step == 1:
         _set_job_progress(job_id, 1, 5, f"正在重新{step_names[step]}...")
-        task = asyncio.create_task(_background_extract_concepts(job_id))
+        task = asyncio.create_task(_background_extract_entity_types(job_id))
     elif step == 2:
         _set_job_progress(job_id, 2, 5, f"正在重新{step_names[step]}...")
         task = asyncio.create_task(_background_extract_entities(job_id))

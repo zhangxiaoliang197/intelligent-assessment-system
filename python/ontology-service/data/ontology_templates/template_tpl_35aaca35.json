@@ -1,0 +1,81 @@
+{
+  "id": "tpl_35aaca35",
+  "name": "金融示例 元模型",
+  "description": "从本体「金融示例」抽取的 schema 模板",
+  "version": "1.0.0",
+  "entity_types": [
+    {
+      "name": "金融实体",
+      "description": "迁移自动生成：金融实体 类概念",
+      "color": "#5470c6",
+      "property_schema": [],
+      "parent_entity_type_name": null
+    },
+    {
+      "name": "信贷业务",
+      "description": "迁移自动生成：信贷业务 类概念",
+      "color": "#ee6666",
+      "property_schema": [],
+      "parent_entity_type_name": null
+    },
+    {
+      "name": "事件活动",
+      "description": "迁移自动生成：事件活动 类概念",
+      "color": "#3ba272",
+      "property_schema": [],
+      "parent_entity_type_name": null
+    },
+    {
+      "name": "财务指标",
+      "description": "迁移自动生成：财务指标 类概念",
+      "color": "#91cc75",
+      "property_schema": [],
+      "parent_entity_type_name": null
+    },
+    {
+      "name": "风险因素",
+      "description": "迁移自动生成：风险因素 类概念",
+      "color": "#fac858",
+      "property_schema": [],
+      "parent_entity_type_name": null
+    },
+    {
+      "name": "政策措施",
+      "description": "迁移自动生成：政策措施 类概念",
+      "color": "#73c0de",
+      "property_schema": [],
+      "parent_entity_type_name": null
+    }
+  ],
+  "relation_types": [
+    {
+      "name": "关联",
+      "description": ""
+    },
+    {
+      "name": "影响",
+      "description": ""
+    },
+    {
+      "name": "包含",
+      "description": ""
+    },
+    {
+      "name": "衡量",
+      "description": ""
+    },
+    {
+      "name": "应对",
+      "description": ""
+    },
+    {
+      "name": "导致",
+      "description": ""
+    }
+  ],
+  "entity_type_relations": [],
+  "source_ontology_id": "ont_61daa626",
+  "create_time": "2026-08-13 14:56:40.567706",
+  "update_time": "2026-08-13 14:56:40.567706",
+  "is_builtin": false
+}

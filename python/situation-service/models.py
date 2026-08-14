@@ -101,16 +101,9 @@ class MapLayerSpec(BaseModel):
     layerConfig: Dict[str, Any] = Field(default_factory=dict)
 
 
-class Explanation(BaseModel):
-    """图表说明，绑定 chartId。"""
-    chartId: str
-    text: str
-
-
 class Narrative(BaseModel):
-    """态势介绍 + 逐图说明（介绍性，非结论先行）。"""
+    """态势介绍 + 地图说明（逐图说明已随图表 explanation 字段生成）。"""
     intro: str = ""
-    explanations: List[Explanation] = Field(default_factory=list)
     mapExplanation: str = ""
 
 

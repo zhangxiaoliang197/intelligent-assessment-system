@@ -17,12 +17,43 @@ KNOWLEDGE_SERVICE_URL = os.getenv("KNOWLEDGE_SERVICE_URL", "http://localhost:102
 # indicator-service：指标数据
 INDICATOR_SERVICE_URL = os.getenv("INDICATOR_SERVICE_URL", "http://localhost:10254")
 
-# ── LLM 调用参数（与 ontology-service 对齐）──
+# ── LLM 调用参数 ──
+# 全局 max_tokens 兜底值；各阶段优先使用下方 LLM_STAGE_PROFILES 的独立配置。
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "24000"))
 
+# ── LLM 各阶段独立参数 ──
+# 态势图目标是「快」，默认仅 plan 保留推理（需理解问题与数据关系），
+# chart/map/narrative 关闭推理并收敛输出上限，显著缩短每次调用耗时。
+# 全部可通过环境变量 SITUATION_LLM_<阶段>_MAX_TOKENS / SITUATION_LLM_<阶段>_THINKING 覆盖。
+LLM_STAGE_PROFILES = {
+    "plan": {
+        "max_tokens": int(os.getenv("SITUATION_LLM_PLAN_MAX_TOKENS", "6000")),
+        "thinking": os.getenv("SITUATION_LLM_PLAN_THINKING", "enabled"),
+    },
+    "chart": {
+        "max_tokens": int(os.getenv("SITUATION_LLM_CHART_MAX_TOKENS", "8000")),
+        "thinking": os.getenv("SITUATION_LLM_CHART_THINKING", "disabled"),
+    },
+    "map": {
+        "max_tokens": int(os.getenv("SITUATION_LLM_MAP_MAX_TOKENS", "3000")),
+        "thinking": os.getenv("SITUATION_LLM_MAP_THINKING", "disabled"),
+    },
+    "narrative": {
+        "max_tokens": int(os.getenv("SITUATION_LLM_NARRATIVE_MAX_TOKENS", "2000")),
+        "thinking": os.getenv("SITUATION_LLM_NARRATIVE_THINKING", "disabled"),
+    },
+}
+
+
+def get_llm_params(stage: str):
+    """获取指定阶段的 LLM 调用参数 (max_tokens, thinking)。未配置阶段回退全局默认。"""
+    profile = LLM_STAGE_PROFILES.get(stage, {})
+    return (
+        profile.get("max_tokens", LLM_MAX_TOKENS),
+        profile.get("thinking", ""),
+    )
+
 # ── 态势生成模式 ──
-# 默认使用真实数据 + LLM；mock 仅用于显式的本地演示/测试。
-SITUATION_GENERATION_MODE = os.getenv("SITUATION_GENERATION_MODE", "real").strip().lower()
 # LLM 暂不可用时，仍可基于已经取得的真实数据生成基础图表，避免整次任务丢失。
 SITUATION_ALLOW_DATA_FALLBACK = os.getenv(
     "SITUATION_ALLOW_DATA_FALLBACK", "true"
@@ -69,14 +100,6 @@ DRAFT_TTL = int(os.getenv("DRAFT_TTL", "3600"))
 
 # ── 跨服务 HTTP 调用超时（秒）──
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "20"))
-
-# ── Phase 1 mock 流式模拟间隔（秒）；Phase 2 接入真实 Agent 后移除 ──
-MOCK_STREAM_INTERVAL = float(os.getenv("MOCK_STREAM_INTERVAL", "0.6"))
-
-# ── 生成模式：true=Phase1 mock（canned 数据，不调 LLM）；false=Phase2 真实 LLM Agent ──
-# Phase 2 默认启用；调试或无 LLM 环境时设 SITUATION_USE_MOCK=true 回退 mock
-# 注意：os.getenv 返回字符串，"false" 在 Python 中为 truthy，必须显式解析为 bool
-USE_MOCK = os.getenv("SITUATION_USE_MOCK", "false").strip().lower() in ("true", "1", "yes", "on")
 
 # ── 真实生成时单数据集查询行数上限（传给 admin-service /dataset/{id}/data）──
 DATA_QUERY_LIMIT = int(os.getenv("DATA_QUERY_LIMIT", "200"))

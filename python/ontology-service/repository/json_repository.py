@@ -63,7 +63,7 @@ class JsonRepository(OntologyRepository):
         m = self._m
         if ontology_id in m.ontologies_db:
             del m.ontologies_db[ontology_id]
-        m.concepts_db.pop(ontology_id, None)
+        m.entity_types_db.pop(ontology_id, None)
         m.entity_type_relations_db.pop(ontology_id, None)  # v3 新增
         m.entities_db.pop(ontology_id, None)
         m.relations_db.pop(ontology_id, None)
@@ -76,39 +76,31 @@ class JsonRepository(OntologyRepository):
         if os.path.exists(f + '.bak'):
             os.remove(f + '.bak')
 
-    def set_default_ontology(self, ontology_id: str) -> None:
-        m = self._m
-        for oid, ont in m.ontologies_db.items():
-            ont.is_default = (oid == ontology_id)
-        m.save_index()
-
-    def get_default_ontology(self) -> Optional[OntologyModel]:
-        for ont in self._m.ontologies_db.values():
-            if ont.is_default:
-                return ont
-        return None
+    def list_archived_ontologies(self) -> List[OntologyModel]:
+        """返回所有已归档（参与下游数据联动）的本体列表。"""
+        return [o for o in self._m.ontologies_db.values() if o.status == "归档"]
 
     def get_ontology_summary(self, ont: OntologyModel) -> Dict[str, Any]:
         return self._m._ontology_summary(ont)
 
     # ── Concept CRUD ──
     def list_concepts(self, ontology_id: str) -> List[ConceptType]:
-        return self._m.concepts_db.get(ontology_id, [])
+        return self._m.entity_types_db.get(ontology_id, [])
 
     def get_concept(self, ontology_id: str, concept_id: str) -> Optional[ConceptType]:
-        for c in self._m.concepts_db.get(ontology_id, []):
+        for c in self._m.entity_types_db.get(ontology_id, []):
             if c.id == concept_id:
                 return c
         return None
 
     def add_concept(self, ontology_id: str, concept: ConceptType) -> None:
         m = self._m
-        m.concepts_db.setdefault(ontology_id, []).append(concept)
+        m.entity_types_db.setdefault(ontology_id, []).append(concept)
         m.save_ontology(ontology_id)
 
     def update_concept(self, ontology_id: str, concept: ConceptType) -> None:
         m = self._m
-        lst = m.concepts_db.get(ontology_id, [])
+        lst = m.entity_types_db.get(ontology_id, [])
         for i, c in enumerate(lst):
             if c.id == concept.id:
                 lst[i] = concept
@@ -117,8 +109,8 @@ class JsonRepository(OntologyRepository):
 
     def delete_concept(self, ontology_id: str, concept_id: str) -> None:
         m = self._m
-        lst = m.concepts_db.get(ontology_id, [])
-        m.concepts_db[ontology_id] = [c for c in lst if c.id != concept_id]
+        lst = m.entity_types_db.get(ontology_id, [])
+        m.entity_types_db[ontology_id] = [c for c in lst if c.id != concept_id]
         m.save_ontology(ontology_id)
 
     # ── EntityTypeRelation CRUD（v3 新增：实体类型间关系）──
@@ -297,7 +289,7 @@ class JsonRepository(OntologyRepository):
             "total_ontologies": len(m.ontologies_db),
             "total_entities": sum(len(v) for v in m.entities_db.values()),
             "total_relations": sum(len(v) for v in m.relations_db.values()),
-            "total_concepts": sum(len(v) for v in m.concepts_db.values()),
+            "total_concepts": sum(len(v) for v in m.entity_types_db.values()),
             "total_entity_type_relations": sum(len(v) for v in m.entity_type_relations_db.values()),
             "build_tasks_count": sum(1 for j in m.build_jobs_db.values()
                                      if j.status in ("draft", "running")),
@@ -307,7 +299,7 @@ class JsonRepository(OntologyRepository):
         return len(self._m.entities_db.get(ontology_id, []))
 
     def count_concepts(self, ontology_id: str) -> int:
-        return len(self._m.concepts_db.get(ontology_id, []))
+        return len(self._m.entity_types_db.get(ontology_id, []))
 
     def count_relations(self, ontology_id: str) -> int:
         return len(self._m.relations_db.get(ontology_id, []))
@@ -320,7 +312,7 @@ class JsonRepository(OntologyRepository):
             return None
         return {
             "ontology": ont.dict(),
-            "concepts": [c.dict() for c in m.concepts_db.get(ontology_id, [])],
+            "concepts": [c.dict() for c in m.entity_types_db.get(ontology_id, [])],
             "entity_type_relations": [r.dict() for r in m.entity_type_relations_db.get(ontology_id, [])],
             "entities": [e.dict() for e in m.entities_db.get(ontology_id, [])],
             "relations": [r.dict() for r in m.relations_db.get(ontology_id, [])],

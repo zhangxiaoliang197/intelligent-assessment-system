@@ -1,6 +1,6 @@
 """本体模型数据模型（两层分离：实体类型层 / 实体实例层）。
 
-v3 重构：删除 ConceptType 概念层，将其层级 + property_schema 能力合并进 EntityType。
+v3 重构：删除 ConceptType 实体类型层，将其层级 + property_schema 能力合并进 EntityType。
 EntityType 形成树状层级（parent_entity_type_id），Entity 直接 instance_of → EntityType.id。
 新增 EntityTypeRelation 存储类型间关系（step1 提取），Relation 仅存实例间关系（step2 提取）。
 
@@ -14,7 +14,7 @@ import uuid as _uuid
 
 
 # 数据 schema 版本（与 migration.SCHEMA_VERSION 保持一致）
-# v1=旧（Dict 属性）, v2=三层（ConceptType 概念层）, v3=两层（EntityType 带层级，删除 ConceptType）
+# v1=旧（Dict 属性）, v2=三层（ConceptType 实体类型层）, v3=两层（EntityType 带层级，删除 ConceptType）
 SCHEMA_VERSION = 3
 
 
@@ -76,7 +76,7 @@ class Property(BaseModel):
 
 
 class EntityType(BaseModel):
-    """实体类型（类型层，合并原 EntityType 元模型 + ConceptType 概念层）。
+    """实体类型（类型层，合并原 EntityType 元模型 + ConceptType 实体类型层）。
 
     v3 重构：EntityType 自带层级（parent_entity_type_id）+ property_schema（属性骨架），
     形成树状层级：一级实体类型 → 二级实体类型 → ... → 最低层级实体类型。
@@ -202,7 +202,9 @@ class Relation(BaseModel):
     weight: float = 1.0
     source_snippet: str = ""             # 关系来源原文
     create_time: datetime
-    update_time: datetime = None  # 关系无 update_time（向后兼容）
+    # 关系无 update_time（向后兼容）；必须为 Optional，否则 pydantic v2 校验
+    # "update_time": null 会失败，导致 load_db 时关系整体被跳过
+    update_time: Optional[datetime] = None
 
 
 class OntologyModel(BaseModel):
@@ -217,8 +219,6 @@ class OntologyModel(BaseModel):
     create_time: datetime
     update_time: datetime
     status: str = "活跃"
-    # 默认本体标志，三服务自动取默认本体的依据；同一时刻仅一个为 True
-    is_default: bool = False
     # 数据 schema 版本：1=旧（Dict 属性）, 2=三层（ConceptType）, 3=两层（EntityType 带层级）
     schema_version: int = SCHEMA_VERSION
 
@@ -251,7 +251,7 @@ class TemplateModel(BaseModel):
     """本体模板：从已有本体抽取的 schema 层，可作为新本体构建的参考。
 
     用途：
-    1. 文档构建时注入 step1 prompt 作软约束（LLM 仍可增删实体类型）
+    1. 文档构建时载入元模型：hard_constraint 强制按元模型提取，soft_constraint 作软约束
     2. 手动构建向导启动时一键预填实体类型树 + 属性骨架 + 关系类型
     3. 用户选择模板时可跳过 step1 直接用模板的 EntityType 层级
     """
@@ -272,23 +272,27 @@ class BuildJob(BaseModel):
     """本体分步构建任务（四阶段状态机，v3）。
 
     支持断点续作：每步结果持久化到 data/build_jobs/job_{id}.json。
-    四阶段流程：
-      upload → step0 配置（粒度+提示词+模板）→ step1 实体类型提取（层级+属性+类型间关系）
-      → step2 实体提取（属性赋值+实例间关系）→ step3 验证+报告
+    四阶段流程（已更名为文档构建四阶段）：
+      upload（落盘源文件，不解析）→ step0 文档解析（解析文档 + 推荐元模型 + 配置）
+      → step1 类型提取（层级+属性+类型间关系）→ step2 实体提取（属性赋值+实例间关系）
+      → step3 分析验证
 
     v3 变更：
     - 删除 step0 元模型推荐（EntityType 层级由 step1 提取）
-    - step1 合并原 step1 概念提取：提取 EntityType 层级 + property_schema + EntityTypeRelation
+    - step1 合并原 step1 实体类型提取：提取 EntityType 层级 + property_schema + EntityTypeRelation
     - step2 合并原 step3 关系建模：实体提取 + 属性赋值 + 实例间 Relation
     - 原 step4 验证降为 step3
+    - 文档解析下放为阶段 0 后台任务，upload 只落盘源文件并快速返回
 
     返工功能：每步可通过 rework 接口重新调用 LLM 重建（用户输入新提示词）。
     """
     id: str                                    # job_xxxxxxxx
     name: str                                  # 本体名称
     description: str = ""
-    step: int = 0                              # 0=待开始,1=实体类型,2=实体+关系,3=验证报告,4=已完成
+    step: int = 0                              # 0=文档解析,1=类型提取,2=实体提取,3=分析验证,4=已完成
     status: str = "draft"                      # draft | completed | abandoned | legacy
+    # 任务类型：document=文档构建 | manual=手动构建（无文档源，作为进行中任务入口）
+    build_type: str = "document"               # document | manual
 
     # 文档源（持久化，支持断点续作）
     source_filename: str = ""
@@ -301,8 +305,8 @@ class BuildJob(BaseModel):
     # 参考模板：upload 时一次性快照，后续 step1-3 都从此读取
     template_id: Optional[str] = None                    # 关联 TemplateModel.id
     template_snapshot: Optional[Dict[str, Any]] = None   # upload 时一次性快照（TemplateModel.dict()）
-    # 模板使用模式：skip_step1=直接用模板跳过 step1；soft_constraint=模板作软约束让 LLM 补充
-    template_mode: str = "soft_constraint"      # skip_step1 | soft_constraint
+    # 元模型使用模式：hard_constraint=强制按元模型提取（载入元模型）；soft_constraint=元模型作软约束；skip_step1=直接用元模型跳过 step1
+    template_mode: str = "soft_constraint"      # hard_constraint | soft_constraint | skip_step1
 
     # Step 1 结果：实体类型清单（含层级 + property_schema）+ 类型间关系
     step1_entity_types: List[Dict[str, Any]] = []
@@ -343,8 +347,8 @@ class BuildJob(BaseModel):
     # ── 旧字段保留（向后兼容 v2 五阶段任务，新流程不使用）──
     meta_entity_types: List[Dict[str, Any]] = []          # v2 step0 元模型（v3 弃用）
     meta_relation_types: List[Dict[str, Any]] = []        # v2 step0 关系类型（v3 弃用）
-    meta_confirmed: bool = False                          # v2 step0 确认（v3 弃用）
-    step1_concepts: List[Dict[str, Any]] = []             # v2 step1 概念（v3 迁移到 step1_entity_types）
+    meta_confirmed: bool = False                          # 阶段0「文档解析/配置」已确认（复用旧字段名，避免迁移）
+    step1_concepts: List[Dict[str, Any]] = []             # v2 step1 实体类型（v3 迁移到 step1_entity_types）
     step3_relations: List[Dict[str, Any]] = []            # v2 step3 关系（v3 迁移到 step2_relations）
     step3_confirmed_legacy: bool = False                  # v2 step3 确认
     step4_verification: Optional[Dict[str, Any]] = None   # v2 step4 验证（v3 迁移到 step3_verification）
@@ -370,7 +374,7 @@ class BuildJob(BaseModel):
     ontology_id: Optional[str] = None
 
     # 后台任务进度跟踪
-    running_step: int = -1                     # -1=空闲, 1=实体类型提取, 2=实体+关系, 3=验证
+    running_step: int = -1                     # -1=空闲, 0=文档解析, 1=类型提取, 2=实体提取, 3=分析验证
     progress: int = 0                          # 0-100
     progress_message: str = ""
     progress_stages: List[Dict[str, Any]] = []  # 真实进度：[{name, status, started_at, finished_at}]

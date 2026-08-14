@@ -22,6 +22,23 @@ export const createBuildJob = (data: FormData) => {
   })
 }
 
+/** 阶段 0「文档解析」：解析上传的文档 + 推荐元模型（后台异步，SSE 订阅 parse_done/error） */
+export const parseBuildJob = (jobId: string) => {
+  return api.post(`/ontology/build/${jobId}/parse`)
+}
+
+/** 创建手动构建任务（无文档，纳入「进行中的构建任务」，支持退出后继续） */
+export const createManualBuildJob = (data: FormData) => {
+  return api.post('/ontology/build/manual', data, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+
+/** 标记构建任务完成（手动构建「完成构建」时调用） */
+export const completeBuildJob = (jobId: string) => {
+  return api.put(`/ontology/build/${jobId}/complete`)
+}
+
 /** 确认元模型（Step 0：元模型 + 粒度 + 阶段提示词） */
 export const confirmMeta = (jobId: string, data: FormData) => {
   return api.put(`/ontology/build/${jobId}/meta`, data, {
@@ -29,13 +46,13 @@ export const confirmMeta = (jobId: string, data: FormData) => {
   })
 }
 
-// ── Step 1：概念提取（类型层）──
-/** 启动概念提取（Step 1） */
+// ── Step 1：实体类型提取（类型层）──
+/** 启动实体类型提取（Step 1） */
 export const extractConcepts = (jobId: string) => {
   return api.post(`/ontology/build/${jobId}/step1`)
 }
 
-/** 确认概念清单（Step 1） */
+/** 确认实体类型清单（Step 1） */
 export const confirmConcepts = (jobId: string, concepts: any[]) => {
   const fd = new FormData()
   fd.append('concepts', JSON.stringify(concepts))
@@ -97,7 +114,9 @@ export const deleteBuildJob = (jobId: string) => {
 
 /** SSE 事件回调集合 */
 export interface BuildStreamHandlers {
-  /** Step1 每批概念完成 / Step2 每批实体完成（同事件名，按 data 字段区分） */
+  /** 阶段 0 文档解析完成（含 char_count / 推荐的元模型） */
+  onParseDone?: (d: any) => void
+  /** Step1 每批实体类型完成 / Step2 每批实体完成（同事件名，按 data 字段区分） */
   onBatchDone?: (d: any) => void
   /** Step3 每组关系完成 */
   onGroupDone?: (d: any) => void
@@ -122,6 +141,9 @@ export interface BuildStreamHandlers {
 export const streamBuildJob = (jobId: string, handlers: BuildStreamHandlers): (() => void) => {
   const controller = new AbortController()
   const token = localStorage.getItem('token')
+  // 是否已收到终态事件（step_done/error）：收到后正常关闭流不应再触发重连，
+  // 否则会无限重连并反复回放 step_done，导致「实体类型提取完成」等提示重复弹出（含在其他页面）。
+  let terminated = false
 
   ;(async () => {
     try {
@@ -157,21 +179,30 @@ export const streamBuildJob = (jobId: string, handlers: BuildStreamHandlers): ((
           if (!event) continue
           console.log('[SSE] 收到事件:', event.type, event.data?.replayed ? '(回放)' : '',
             event.type === 'group_done' ? `+${event.data.relations?.length || 0}关系` : '',
-            event.type === 'batch_done' ? `+${event.data.concepts?.length || 0}概念/+${event.data.entities?.length || 0}实体` : '')
+            event.type === 'batch_done' ? `+${event.data.concepts?.length || 0}实体类型/+${event.data.entities?.length || 0}实体` : '')
           switch (event.type) {
+            case 'parse_done': handlers.onParseDone?.(event.data); break
             case 'batch_done': handlers.onBatchDone?.(event.data); break
             case 'group_done': handlers.onGroupDone?.(event.data); break
             case 'cross_group_done': handlers.onCrossGroupDone?.(event.data); break
-            case 'step_done': handlers.onStepDone?.(event.data); break
-            case 'error': handlers.onError?.(event.data); break
+            case 'step_done':
+              terminated = true
+              handlers.onStepDone?.(event.data); break
+            case 'error':
+              terminated = true
+              handlers.onError?.(event.data); break
             case 'progress': handlers.onProgress?.(event.data); break
           }
         }
       }
-      // 连接正常关闭：若非终态（step_done/error）则视为异常断开，触发重连
+      // 连接正常关闭：若已收到终态（step_done/error）则不重连，避免无限重连反复回放提示
       handlers.onState?.('closed')
-      console.log('[SSE] 流正常结束，触发重连判断')
-      handlers.onError?.({ message: '连接已断开', reconnect: true })
+      if (terminated) {
+        console.log('[SSE] 已收到终态事件，正常结束，不触发重连')
+      } else {
+        console.log('[SSE] 流正常结束但未到终态，触发重连判断')
+        handlers.onError?.({ message: '连接已断开', reconnect: true })
+      }
     } catch (e: any) {
       // 用户主动 abort 不触发重连
       if (e?.name === 'AbortError') {
@@ -180,7 +211,12 @@ export const streamBuildJob = (jobId: string, handlers: BuildStreamHandlers): ((
         return
       }
       console.error('[SSE] fetch 异常:', e)
-      handlers.onError?.({ message: 'SSE 连接失败', reconnect: true })
+      // 已收到终态事件后，即使连接异常结束也不再重连（避免回放 step_done 重复弹提示）
+      if (!terminated) {
+        handlers.onError?.({ message: 'SSE 连接失败', reconnect: true })
+      } else {
+        handlers.onState?.('closed')
+      }
     }
   })()
 

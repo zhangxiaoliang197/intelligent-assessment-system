@@ -9,7 +9,7 @@
     <div class="portal-wrapper">
       <header class="portal-header">
         <div class="header-left">
-          <div class="logo-wrap">
+          <div class="logo-wrap" @click="goToPortal">
             <div class="logo-icon">
               <img src="/logo.jfif" alt="天智" class="logo-img" />
             </div>
@@ -287,6 +287,15 @@ const navigateToTool = (path: string) => {
   router.push(path)
 }
 
+const goToPortal = () => {
+  // 已在主页时点击 logo 回到顶部，否则跳转主页
+  if (router.currentRoute.value.path === '/') {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+    return
+  }
+  router.push('/')
+}
+
 const goToAdmin = () => {
   router.push('/admin')
 }
@@ -369,6 +378,7 @@ const goToAdmin = () => {
   display: flex;
   align-items: center;
   gap: 10px;
+  cursor: pointer;
 }
 
 .logo-icon {

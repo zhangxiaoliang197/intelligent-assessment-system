@@ -6,7 +6,7 @@
 |------------------------|--------------------------------------------------|
 | OntologyModel          | owl:Ontology（IRI=base/{id}#）                   |
 | EntityType（元模型）   | owl:Class 顶层（subClassOf owl:Thing）           |
-| ConceptType（概念）    | owl:Class（subClassOf EntityType）               |
+| ConceptType（实体类型）    | owl:Class（subClassOf EntityType）               |
 | Entity（实体）         | owl:NamedIndividual（rdf:type ConceptType）      |
 | Property（属性）       | owl:DatatypeProperty 断言（动态创建，支持中文）  |
 | Relation（关系）       | owl:ObjectProperty 断言                          |
@@ -164,12 +164,12 @@ class OwlBuilder:
 
         v3 改造：
         - EntityType 自带层级（parent_entity_type_id），OWL 中映射为 subClassOf
-        - concepts 参数兼容 v3（与 ont.entity_types 同源），v2 概念仍 subClassOf EntityType
+        - concepts 参数兼容 v3（与 ont.entity_types 同源），v2 实体类型仍 subClassOf EntityType
         - 新增 entity_type_relations → ObjectProperty（类型间关系，domain/range 限定）
 
         Args:
             ont: 本体元模型（含 entity_types / relation_types）
-            concepts: 概念列表（类型层）；v3 中与 ont.entity_types 同源
+            concepts: 实体类型列表（类型层）；v3 中与 ont.entity_types 同源
             entities: 实体列表（实例层）
             relations: 关系列表（实例间）
             entity_type_relations: 实体类型间关系列表（v3 新增，可选）
@@ -198,7 +198,7 @@ class OwlBuilder:
             #    按 et.id 建索引，供 Entity rdf:type 和 parent 层级引用
             #    v3 中 ont.entity_types 即完整类型层（含层级 + 属性骨架）
             et_classes: Dict[str, Any] = {}     # et.id -> owl:Class
-            et_by_name: Dict[str, Any] = {}     # et.name -> owl:Class（供 v2 概念 subClassOf 引用）
+            et_by_name: Dict[str, Any] = {}     # et.name -> owl:Class（供 v2 实体类型 subClassOf 引用）
             for et in ont.entity_types:
                 if not et.name:
                     continue
@@ -234,7 +234,7 @@ class OwlBuilder:
                         if parent_cls not in cls.is_a:
                             cls.is_a = tuple(cls.is_a) + (parent_cls,)
 
-            # 3. ConceptType（概念）→ owl:Class (subClassOf EntityType)
+            # 3. ConceptType（实体类型）→ owl:Class (subClassOf EntityType)
             #    v3 兼容：concepts 与 ont.entity_types 同源时跳过（已在 step 2 创建）
             #    v2 兼容：concepts 不在 entity_types 中时按原逻辑创建
             concept_classes: Dict[str, Any] = {}
@@ -244,7 +244,7 @@ class OwlBuilder:
                     # v3：已在 step 2 创建，直接引用
                     concept_classes[c.id] = et_classes[c.id]
                     continue
-                # v2：概念不在元模型中，创建新类 subClassOf EntityType
+                # v2：实体类型不在元模型中，创建新类 subClassOf EntityType
                 cname = _unique_local_name(c.name, used_names)
                 parents: List[Any] = []
                 if c.entity_type and c.entity_type in et_by_name:
@@ -293,7 +293,7 @@ class OwlBuilder:
             ent_individuals: Dict[str, Any] = {}
             for e in entities:
                 iname = _unique_local_name(e.name, used_names)
-                # rdf:type 指向 ConceptType class（无概念则 owl:Thing 兜底）
+                # rdf:type 指向 ConceptType class（无实体类型则 owl:Thing 兜底）
                 parent_cls = concept_classes.get(e.instance_of, owl.Thing)
                 ind = parent_cls(name=iname)
                 ind.label = [e.name]
@@ -376,7 +376,7 @@ class OwlBuilder:
 
         Args:
             ont: 本体元模型
-            concepts: 概念列表
+            concepts: 实体类型列表
             entities: 实体列表
             relations: 关系列表
             file_path: 指定输出路径；None 则用默认 {output_dir}/ontology_{id}.owl
