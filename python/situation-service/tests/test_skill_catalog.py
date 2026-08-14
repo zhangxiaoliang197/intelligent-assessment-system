@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import os
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
+from agent import orchestrator
+import skills.catalog as skill_catalog
 from skills import (
     SkillCatalogError,
     build_skill_context,
@@ -13,6 +18,21 @@ from skills import (
 
 
 class SituationSkillCatalogTests(unittest.TestCase):
+    def test_catalog_and_default_markdown_storage_are_checkout_relative(self):
+        """A fresh clone must not depend on a developer-specific absolute path."""
+
+        service_directory = Path(skill_catalog.__file__).resolve().parent.parent
+        self.assertEqual(
+            service_directory / "config" / "situation_skills.json",
+            skill_catalog._CATALOG_PATH,
+        )
+        self.assertTrue(skill_catalog._CATALOG_PATH.is_file())
+        with patch.dict(os.environ, {"SITUATION_SKILL_MD_OVERRIDE_DIR": ""}):
+            self.assertEqual(
+                service_directory / "data" / "situation-skill-markdown-overrides",
+                skill_catalog.get_markdown_override_directory(),
+            )
+
     def test_catalog_has_30_valid_skills_in_project_categories(self):
         summary = catalog_summary()
         self.assertGreaterEqual(summary["total"], 30)
