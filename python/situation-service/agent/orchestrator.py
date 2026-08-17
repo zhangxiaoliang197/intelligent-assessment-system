@@ -279,7 +279,7 @@ def _verify_map_coordinates(layer: dict, bundles: list) -> dict:
 def _safe_path(value: Any, minimum_points: int) -> Optional[dict]:
     if not isinstance(value, dict) or not isinstance(value.get("points"), list):
         return None
-    points = [point for item in value["points"][:500] if (point := _safe_point(item))]
+    points = [point for item in value["points"][:config.SITUATION_MAP_POINT_LIMIT] if (point := _safe_point(item))]
     if len(points) < minimum_points:
         return None
     path = {
@@ -299,20 +299,22 @@ def _safe_path(value: Any, minimum_points: int) -> Optional[dict]:
 def _sanitize_map_layer(value: Any, profile: dict, context: Optional[dict] = None) -> dict:
     if not isinstance(value, dict):
         value = {}
+    point_limit = config.SITUATION_MAP_POINT_LIMIT
+    path_limit = config.SITUATION_MAP_PATH_LIMIT
     points = [
-        point for item in value.get("points", [])[:300]
+        point for item in value.get("points", [])[:point_limit]
         if (point := _safe_point(item))
     ] if isinstance(value.get("points"), list) else []
     routes = [
-        route for item in value.get("routes", [])[:100]
+        route for item in value.get("routes", [])[:path_limit]
         if (route := _safe_path(item, 2))
     ] if isinstance(value.get("routes"), list) else []
     areas = [
-        area for item in value.get("areas", [])[:100]
+        area for item in value.get("areas", [])[:path_limit]
         if (area := _safe_path(item, 3))
     ] if isinstance(value.get("areas"), list) else []
     circles = []
-    for item in value.get("circles", [])[:100] if isinstance(value.get("circles"), list) else []:
+    for item in value.get("circles", [])[:path_limit] if isinstance(value.get("circles"), list) else []:
         if not isinstance(item, dict) or not isinstance(item.get("center"), dict):
             continue
         center = _safe_point(item["center"])
@@ -737,17 +739,20 @@ def _evidences_to_dataset_events(store: EvidenceStore) -> List[Dict[str, Any]]:
     events = []
     for index, ev in enumerate(store.list_evidences(), start=1):
         dataset_id = f"real_{index}_{_safe_id(ev.source)}"
+        total_rows = ev.meta.get("totalRows", len(ev.rows))
         events.append({
             "datasetId": dataset_id,
             "source": ev.source or ev.dataset_ref,
             "summary": ev.summary,
-            # rows 为行数组（供图表/地图渲染取数）；rowCount 为行数（供前端步骤展示）
+            # rows 为全量行数组（供图表/地图渲染取数）；rowCount 为实际返回行数；
+            # totalRows 为真实总数（供前端步骤面板展示「共 M 行」）。
             "rows": ev.rows,
             "rowCount": len(ev.rows),
+            "totalRows": total_rows,
             "realData": True,
             "physicalDatasetId": ev.dataset_ref,
             "schemaVersion": 1,
-            "truncated": ev.meta.get("truncated", False),
+            "truncated": ev.meta.get("truncated", False) or total_rows > len(ev.rows),
             "execution": {
                 "filters": ev.meta.get("filters") or {},
                 "aggregation": ev.meta.get("aggregation") or "",
@@ -846,6 +851,26 @@ async def _real_generate_v2_body(
             "message": f"Planner 降级为 Skill 模板: {plan.get('_planner_error', '')[:120]}",
             "fatal": False,
         }
+
+    # 非态势意图（Planner 已在 directAnswer 给出回答）：跳过编排流程，
+    # 直接把回答作为正文推给前端（复用 narrative 事件，前端无需改动）
+    if str(plan.get("intent") or "").lower() == "general":
+        yield "narrative", {
+            "intro": str(plan.get("directAnswer") or ""),
+            "explanations": [],
+            "mapExplanation": "",
+        }
+        yield "done", {
+            "reportId": report_id,
+            "status": "ready",
+            "partial": False,
+            "skillId": profile.get("skillId", ""),
+            "skillName": profile.get("skillName", ""),
+            "dataMode": "real",
+            "orchestration": "v2",
+            "stateMachine": sm.snapshot(),
+        }
+        return
 
     # ───── 阶段 2：RESEARCH ─────
     await sm.enter(Stage.RESEARCH)

@@ -1,7 +1,7 @@
 """本体分步构建的 Prompt 模板（五阶段）。
 
 集中管理五步 LLM 调用的 prompt，便于迭代调优：
-- Step 0 (meta): 根据文档推荐元模型（实体类型 + 关系类型）
+- Step 0 (meta): 根据文档推荐本体模型（实体类型 + 关系类型）
 - Step 1: 从文档提取实体类型清单（类型层，含属性骨架 property_schema）
 - Step 2: 从文档提取实体+属性（实例层，instance_of 指向 step1 实体类型）
 - Step 3: 在已确认实体间建立关系（分组 + 跨组补充）
@@ -10,7 +10,7 @@
 设计原则：
 - 每步输出严格 JSON，便于程序解析
 - 每个实体类型/实体/属性/关系必须带原文出处 source_snippet，防幻觉
-- 实体名、关系类型必须受元模型约束
+- 实体名、关系类型必须受本体模型约束
 - 三档粒度（coarse/medium/fine）通过数量区间软约束提取数量
 - 阶段提示词 stage_hints 注入到对应步骤 prompt 末尾
 - temperature=0.3，提升结构化输出稳定性
@@ -21,9 +21,9 @@ import json
 import config
 from typing import Optional
 
-SYSTEM_BASE = "你是本体工程专家，擅长从领域文档中构建结构化本体模型。请严格按照要求输出 JSON，不要包含任何解释文字或 markdown 标记。"
+SYSTEM_BASE = "你是本体工程专家，擅长从领域文档中构建结构化本体。请严格按照要求输出 JSON，不要包含任何解释文字或 markdown 标记。"
 
-# 默认调色板（元模型推荐时分配颜色）
+# 默认调色板（本体模型推荐时分配颜色）
 DEFAULT_COLORS = ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de", "#3ba272", "#fc8452", "#9a60b4"]
 
 
@@ -52,11 +52,11 @@ def _stage_hint_text(stage_hint: str) -> str:
 
 
 def _template_hint_text(template: Optional[dict], stage: str, template_mode: str = "soft_constraint") -> str:
-    """格式化元模型提示词，按阶段裁剪输出（v3）。
+    """格式化本体模型提示词，按阶段裁剪输出（v3）。
 
-    模板使用模式：
-    - hard_constraint：用户已「载入元模型」，LLM 必须严格按元模型 schema 提取，不得增删改
-    - soft_constraint（默认）：元模型作参考，LLM 可结合本文档特征增删改
+    本体模型使用模式：
+    - hard_constraint：用户已「载入本体模型」，LLM 必须严格按本体模型 schema 提取，不得增删改
+    - soft_constraint（默认）：本体模型作参考，LLM 可结合本文档特征增删改
 
     v3 变更：
     - 读取 template.entity_types（v2 读 template.concepts，已合并）
@@ -64,23 +64,23 @@ def _template_hint_text(template: Optional[dict], stage: str, template_mode: str
     - 新增 entity_type_relations 参考
 
     Args:
-        template: TemplateModel.dict() 快照，None 或无 id 时返回空串（向后兼容）
+        template: OntologyTemplateModel.dict() 快照，None 或无 id 时返回空串（向后兼容）
         stage: "meta" | "concepts" | "entities" | "relations" | "verification"
         template_mode: soft_constraint | hard_constraint | skip_step1
 
     Returns:
-        追加到 user_prompt 末尾的模板提示文本，无模板时返回空串
+        追加到 user_prompt 末尾的本体模型提示文本，无本体模型时返回空串
     """
     if not template or not template.get("id"):
         return ""
     hard = template_mode == "hard_constraint"
     name = template.get("name", "")
     if hard:
-        header = f"\n\n【已载入元模型（强制约束）】用户已载入元模型「{name}」，后续提取必须严格遵循该元模型，不得偏离。"
+        header = f"\n\n【已载入本体模型（强制约束）】用户已载入本体模型「{name}」，后续提取必须严格遵循该本体模型，不得偏离。"
     else:
-        header = f"\n\n【参考模板】用户已选择「{name}」作为参考模板，"
+        header = f"\n\n【参考本体模型】用户已选择「{name}」作为参考本体模型，"
 
-    # v3：优先读 entity_types，回退 concepts（兼容旧模板快照）
+    # v3：优先读 entity_types，回退 concepts（兼容旧本体模型快照）
     entity_types = template.get("entity_types", []) or []
     if not entity_types:
         entity_types = template.get("concepts", []) or []
@@ -97,7 +97,7 @@ def _template_hint_text(template: Optional[dict], stage: str, template_mode: str
             )
         return (
             header
-            + "该模板的实体类型和关系类型如下，请在参考的基础上结合本文档特征增删改：\n"
+            + "该本体模型的实体类型和关系类型如下，请在参考的基础上结合本文档特征增删改：\n"
             + f"- 实体类型：{et_names}\n"
             + f"- 关系类型：{rt_names}"
         )
@@ -105,7 +105,7 @@ def _template_hint_text(template: Optional[dict], stage: str, template_mode: str
     if stage == "concepts":
         # v3 step1：实体类型提取
         if not entity_types:
-            return header + "该模板未定义实体类型，请结合本文档自行提取。"
+            return header + "该本体模型未定义实体类型，请结合本文档自行提取。"
         # 实体类型超过 30 个时截断，避免 prompt 过长
         truncated = entity_types[:30]
         lines = []
@@ -133,22 +133,22 @@ def _template_hint_text(template: Optional[dict], stage: str, template_mode: str
             )
         rel_section = ""
         if rel_lines:
-            rel_section = "\n该元模型定义的实体类型间关系：\n" + "\n".join(rel_lines)
+            rel_section = "\n该本体模型定义的实体类型间关系：\n" + "\n".join(rel_lines)
         if hard:
             return (
                 header
-                + "你必须严格按照该元模型定义的实体类型层级、属性骨架与类型间关系进行提取：\n"
+                + "你必须严格按照该本体模型定义的实体类型层级、属性骨架与类型间关系进行提取：\n"
                 + "\n".join(lines)
                 + suffix
                 + rel_section
                 + "\n\n硬性约束：不得新增、删除、改名或调整任何实体类型的层级；"
-                + "每个实体类型的 property_schema 必须与元模型一致；"
-                + "实体类型间关系必须与元模型一致。若文档未涉及某个实体类型可省略该类型，"
-                + "但不得自行发明元模型之外的类型、属性或关系。"
+                + "每个实体类型的 property_schema 必须与本本体模型一致；"
+                + "实体类型间关系必须与本本体模型一致。若文档未涉及某个实体类型可省略该类型，"
+                + "但不得自行发明本体模型之外的类型、属性或关系。"
             )
         return (
             header
-            + "该模板已定义以下实体类型及其属性骨架，请参考（可增删改，保持类似粒度和命名风格）：\n"
+            + "该本体模型已定义以下实体类型及其属性骨架，请参考（可增删改，保持类似粒度和命名风格）：\n"
             + "\n".join(lines)
             + suffix
             + rel_section
@@ -158,14 +158,14 @@ def _template_hint_text(template: Optional[dict], stage: str, template_mode: str
         if hard:
             return (
                 header
-                + "实体必须 instance_of 该元模型定义的实体类型，"
-                + "且每个实体必须严格按对应实体类型在元模型中的 property_schema 填充属性，"
+                + "实体必须 instance_of 该本体模型定义的实体类型，"
+                + "且每个实体必须严格按对应实体类型在本体模型中的 property_schema 填充属性，"
                 + "不得自创属性名，也不得改变属性的分类（descriptive/metric）或单位。"
             )
         return (
             header
-            + "实体类型清单已基于模板生成，请按各实体类型的 property_schema 填充属性，"
-            + "属性名与分类尽量与模板属性骨架对齐。"
+            + "实体类型清单已基于本体模型生成，请按各实体类型的 property_schema 填充属性，"
+            + "属性名与分类尽量与本体模型属性骨架对齐。"
         )
 
     if stage == "relations":
@@ -173,34 +173,34 @@ def _template_hint_text(template: Optional[dict], stage: str, template_mode: str
         if hard:
             return (
                 header
-                + "关系类型必须严格在元模型定义范围内选择，不得新增或自创：" + rt_names
+                + "关系类型必须严格在本体模型定义范围内选择，不得新增或自创：" + rt_names
             )
         return (
             header
-            + "关系类型应在模板定义的范围内：" + rt_names
-            + "（若本文档确有其他重要关系可酌情增加，但优先使用模板关系类型）"
+            + "关系类型应在本体模型定义的范围内：" + rt_names
+            + "（若本文档确有其他重要关系可酌情增加，但优先使用本体模型关系类型）"
         )
 
     if stage == "verification":
         if hard:
             return (
                 header
-                + "请对照元模型 schema 检查实体类型覆盖度、属性骨架一致性与关系类型合规性，"
-                + "任何偏离元模型（新增/删除类型、属性骨架不一致、关系类型超出范围）的项都必须标记为存疑项。"
+                + "请对照本体模型 schema 检查实体类型覆盖度、属性骨架一致性与关系类型合规性，"
+                + "任何偏离本体模型（新增/删除类型、属性骨架不一致、关系类型超出范围）的项都必须标记为存疑项。"
             )
         return (
             header
-            + "请对照模板 schema 检查实体类型覆盖度与属性骨架一致性，"
-            + "标记与模板的差异项（新增/删除的实体类型、属性骨架偏差等）为存疑项。"
+            + "请对照本体模型 schema 检查实体类型覆盖度与属性骨架一致性，"
+            + "标记与本体模型的差异项（新增/删除的实体类型、属性骨架偏差等）为存疑项。"
         )
 
     return ""
 
 
 def build_meta_messages(doc_text: str, name: str, template: Optional[dict] = None, template_mode: str = "soft_constraint") -> list:
-    """Step 0: 根据文档推荐元模型（实体类型 + 关系类型）。
+    """Step 0: 根据文档推荐本体模型（实体类型 + 关系类型）。
 
-    在 upload 时调用，LLM 分析文档领域特征，推荐一套适合该文档的元模型标准。
+    在 upload 时调用，LLM 分析文档领域特征，推荐一套适合该文档的本体模型标准。
     这套标准确认后，后续 step1/step2 的 LLM 调用必须遵守，不能自行修改。
 
     Args:
@@ -214,12 +214,12 @@ def build_meta_messages(doc_text: str, name: str, template: Optional[dict] = Non
     """
     system_prompt = (
         SYSTEM_BASE
-        + "\n\n你的任务是分析文档内容，为本体「" + name + "」推荐一套合适的元模型。"
-        + "\n元模型定义了本体内允许的实体类型和关系类型，是后续构建实体类型和关系的基础约束。"
+        + "\n\n你的任务是分析文档内容，为本体「" + name + "」推荐一套合适的本体模型。"
+        + "\n本体模型定义了本体内允许的实体类型和关系类型，是后续构建实体类型和关系的基础约束。"
     )
 
     user_prompt = (
-        f"请分析以下文档，推荐一套适合该领域的元模型。\n\n"
+        f"请分析以下文档，推荐一套适合该领域的本体模型。\n\n"
         f"文档内容：\n---\n{doc_text}\n---\n\n"
         f"请返回 JSON，格式如下：\n"
         f'{{"entity_types": [{{"name": "类型名", "color": "#hex颜色", "description": "类型说明"}}], '
@@ -246,7 +246,7 @@ def build_step1_messages(
 ) -> list:
     """Step 1: 实体类型提取（v3 类型层，含层级 + 属性骨架 + 类型间关系）。
 
-    v3 重构：原 step1 实体类型提取 + step0 元模型推荐合并为此步。
+    v3 重构：原 step1 实体类型提取 + step0 本体模型推荐合并为此步。
     从文档提取「实体类型」（抽象类型定义，如「企业」「上市企业」「财务指标」），
     形成树状层级（parent_entity_type_name），携带 property_schema（属性骨架），
     并总结实体类型之间的关系（EntityTypeRelation，为图谱类型层展示做准备）。
@@ -259,7 +259,7 @@ def build_step1_messages(
         entity_types: v3 中仅为兼容保留（模板已加载到 template 参数），通常为空列表
         granularity: 粒度预设，控制实体类型数量区间
         stage_hint: 用户为该阶段注入的提示词
-        template: 元模型快照，注入 prompt 作约束
+        template: 本体模型快照，注入 prompt 作约束
         template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
@@ -352,7 +352,7 @@ def build_step1_batch_messages(
         total_batches: 总批数
         granularity: 粒度预设（作为整体参考，不限制单批）
         stage_hint: 用户为该阶段注入的提示词
-        template: 元模型快照，注入 prompt 作约束
+        template: 本体模型快照，注入 prompt 作约束
         template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
@@ -435,7 +435,7 @@ def build_step2_messages(
         entity_types: 兼容保留，v3 中通常为空列表
         granularity: 粒度预设，控制实体数量区间
         stage_hint: 用户为该阶段注入的提示词
-        template: 元模型快照，注入 prompt 作约束
+        template: 本体模型快照，注入 prompt 作约束
         template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
@@ -550,7 +550,7 @@ def build_step2_batch_messages(
         total_batches: 总批数
         granularity: 粒度预设（整体参考）
         stage_hint: 用户为该阶段注入的提示词
-        template: 元模型快照，注入 prompt 作约束
+        template: 本体模型快照，注入 prompt 作约束
         template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
@@ -642,14 +642,14 @@ def build_step3_messages(
 ) -> list:
     """Step 3: 关系建模（单组/整体版本）。
 
-    在已确认的实体间建立关系。实体名和关系类型必须受元模型约束。
+    在已确认的实体间建立关系。实体名和关系类型必须受本体模型约束。
     每条关系带 source_snippet 防幻觉。
 
     Args:
         entities: step2 已确认的实体清单（仅用 name + instance_of）
         relation_types: 已确认的关系类型 [{"name":"..."}]
         stage_hint: 用户为该阶段注入的提示词
-        template: 元模型快照，注入 prompt 作约束
+        template: 本体模型快照，注入 prompt 作约束
         template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
@@ -708,7 +708,7 @@ def build_step3_group_messages(
         group_idx: 当前组索引（0-based）
         total_groups: 总组数
         stage_hint: 用户为该阶段注入的提示词
-        template: 元模型快照，注入 prompt 作约束
+        template: 本体模型快照，注入 prompt 作约束
         template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
@@ -777,7 +777,7 @@ def build_step3_cross_group_messages(
         existing_relations: 已有组内关系
         relation_types: 已确认的关系类型
         stage_hint: 用户为该阶段注入的提示词
-        template: 元模型快照，注入 prompt 作约束
+        template: 本体模型快照，注入 prompt 作约束
         template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:
@@ -844,7 +844,7 @@ def build_step4_verification_messages(
         relations: step3 已确认的关系清单
         doc_text: 原文（已截断至 VERIFICATION_MAX_DOC_CHARS）
         stage_hint: 用户为该阶段注入的提示词
-        template: 元模型快照，注入 prompt 作约束
+        template: 本体模型快照，注入 prompt 作约束
         template_mode: 模板使用模式（soft_constraint | hard_constraint）
 
     Returns:

@@ -31,7 +31,7 @@
             <template #description>{{ stepDesc(0) }}</template>
           </el-step>
           <el-step
-            title="类型提取"
+            title="本体提取"
             :status="getStepStatus(1)"
             :class="{ 'step-clickable': stepClickable(1) }"
             @click="jumpToStep(1)"
@@ -156,6 +156,17 @@
               </div>
               <div v-else-if="job?.char_count" class="parse-done">
                 <p>已解析「{{ job.source_filename }}」，共 <strong>{{ job.char_count?.toLocaleString() }}</strong> 字。</p>
+                <p v-if="(job.estimated_step1_batches || 0) > 1 || (job.estimated_step2_batches || 0) > 1" class="batch-hint">
+                  文档较长，将分批并行处理：
+                  <template v-if="(job.estimated_step1_batches || 0) > 1">
+                    本体提取 <strong>{{ job.estimated_step1_batches }}</strong> 批
+                  </template>
+                  <template v-if="(job.estimated_step1_batches || 0) > 1 && (job.estimated_step2_batches || 0) > 1">、</template>
+                  <template v-if="(job.estimated_step2_batches || 0) > 1">
+                    实体提取 <strong>{{ job.estimated_step2_batches }}</strong> 批
+                  </template>
+                </p>
+                <p v-else class="batch-hint">文档长度适中，无需分批处理。</p>
               </div>
               <div v-else class="parse-pending">
                 <p>文档尚未解析。</p>
@@ -185,7 +196,7 @@
                 <div class="step-header">
                   <div class="step-header-title">
                     <h3>构建配置</h3>
-                    <el-tag type="info" size="small">粒度 / 元模型</el-tag>
+                    <el-tag type="info" size="small">粒度 / 本体模型</el-tag>
                   </div>
                 </div>
               </template>
@@ -199,12 +210,12 @@
                   </el-radio-group>
                 </div>
                 <div class="granularity-row template-row">
-                  <span class="granularity-label">载入元模型：</span>
+                  <span class="granularity-label">载入本体模型：</span>
                   <el-select
                     v-model="metaForm.templateId"
                     size="small"
                     clearable
-                    placeholder="不载入元模型（从零推荐）"
+                    placeholder="不载入本体模型（从零推荐）"
                     :disabled="job?.meta_confirmed"
                     style="width: 240px"
                     @change="onTemplateChange"
@@ -217,20 +228,20 @@
                     />
                   </el-select>
                   <span v-if="metaForm.templateId" class="template-hint">
-                    载入后强制大模型按该元模型提取实体类型 / 实体 / 关系
+                    载入后强制大模型按该本体模型提取实体类型 / 实体 / 关系
                   </span>
                 </div>
               </div>
             </el-card>
 
-            <!-- 初始类型约束：来自载入元模型或 AI 预生成，确认配置前可编辑调整 -->
+            <!-- 初始类型约束：来自载入本体模型或 AI 预生成，确认配置前可编辑调整 -->
             <el-card class="step-card">
               <template #header>
                 <div class="step-header">
                   <div class="step-header-title">
                     <h3>初始类型约束</h3>
                     <el-tag type="info" size="small">
-                      {{ metaForm.templateId ? '来自载入的元模型' : 'AI 预生成，提取前可调整' }}
+                      {{ metaForm.templateId ? '来自载入的本体模型' : 'AI 预生成，提取前可调整' }}
                     </el-tag>
                   </div>
                   <el-button size="small" link @click="constraintOpen = !constraintOpen">
@@ -309,7 +320,7 @@
                     :disabled="job?.meta_confirmed || isParsing || !job?.char_count"
                     @click="doConfirmMeta"
                   >
-                    确认并开始类型提取
+                    确认并开始本体提取
                   </el-button>
                 </div>
               </div>
@@ -322,7 +333,7 @@
               <template #header>
                 <div class="step-header">
                   <div class="step-header-title">
-                    <h3>实体类型提取</h3>
+                    <h3>本体提取</h3>
                     <el-tag type="info" size="small">
                       {{ isExtractingEntityTypes
                         ? 'AI 正在提取，可实时查看已生成部分'
@@ -353,12 +364,12 @@
                   <template #default>
                     <p>{{ job?.error_message || '部分批次提取失败' }}</p>
                     <p v-if="isEmptyResponseError">LLM 服务端偶发无响应，请点击"继续提取"重试，无需修改任何配置。</p>
-                    <p>点击"继续提取实体类型"从失败批次续跑，已成功批次不会重跑。</p>
+                    <p>点击"继续提取本体"从失败批次续跑，已成功批次不会重跑。</p>
                   </template>
                 </el-alert>
                 <div class="step-actions">
                   <el-button type="primary" :disabled="isRunning" @click="doExtractEntityTypes">
-                    继续提取实体类型
+                    继续提取本体
                   </el-button>
                 </div>
               </div>
@@ -374,7 +385,7 @@
                 />
                 <el-alert
                   v-else
-                  :title="`实体类型提取完成：${entityTypes.length} 个类型、${entityTypeRelations.length} 条类型间关系`"
+                  :title="`本体提取完成：${entityTypes.length} 个类型、${entityTypeRelations.length} 条类型间关系`"
                   type="success"
                   :closable="false"
                   show-icon
@@ -450,24 +461,37 @@
                   </el-button>
                 </div>
 
-                <div v-if="!job?.step1_confirmed" class="stage-input-area">
-                  <div class="stage-input-wrapper">
-                    <el-input
-                      v-model="stageFeedback[1]"
-                      type="textarea"
-                      :rows="2"
-                      :placeholder="stageFeedbackLabels[1] + '（填写后确认将重新生成）'"
-                    />
-                    <div class="stage-input-actions">
-                      <el-button
-                        type="primary"
-                        :loading="submitting"
-                        :disabled="!aiStep1Done || job?.step1_confirmed || !keptEntityTypes.length"
-                        @click="confirmStageWithFeedback(1, confirmEntityTypesAndStartNext)"
-                      >
-                        {{ aiStep1Done ? '确认并继续提取实体+关系' : 'AI 提取中...' }}
-                      </el-button>
+                <div v-if="!job?.step1_confirmed">
+                  <div class="stage-input-area">
+                    <div class="stage-input-wrapper">
+                      <el-input
+                        v-model="stageFeedback[1]"
+                        type="textarea"
+                        :rows="2"
+                        :placeholder="stageFeedbackLabels[1] + '（填写后点击发送将重新生成）'"
+                      />
+                      <div class="stage-input-actions">
+                        <el-button
+                          type="primary"
+                          :icon="Promotion"
+                          :loading="submitting"
+                          :disabled="!aiStep1Done || job?.step1_confirmed || !stageFeedback[1]?.trim()"
+                          @click="sendFeedback(1)"
+                        >
+                          发送
+                        </el-button>
+                      </div>
                     </div>
+                  </div>
+                  <div class="stage-confirm-area">
+                    <el-button
+                      type="success"
+                      :loading="submitting"
+                      :disabled="!aiStep1Done || job?.step1_confirmed || !keptEntityTypes.length"
+                      @click="confirmEntityTypesAndStartNext"
+                    >
+                      确认通过，进入下一阶段
+                    </el-button>
                   </div>
                 </div>
               </div>
@@ -801,24 +825,37 @@
                   </el-button>
                 </div>
 
-                <div v-if="!job?.step2_confirmed" class="stage-input-area">
-                  <div class="stage-input-wrapper">
-                    <el-input
-                      v-model="stageFeedback[2]"
-                      type="textarea"
-                      :rows="2"
-                      :placeholder="stageFeedbackLabels[2] + '（填写后确认将重新生成）'"
-                    />
-                    <div class="stage-input-actions">
-                      <el-button
-                        type="primary"
-                        :loading="submitting"
-                        :disabled="!aiStep2Done || job?.step2_confirmed || !keptEntities.length"
-                        @click="confirmStageWithFeedback(2, confirmEntitiesAndStartVerify)"
-                      >
-                        {{ aiStep2Done ? '确认并启动验证' : 'AI 提取中...' }}
-                      </el-button>
+                <div v-if="!job?.step2_confirmed">
+                  <div class="stage-input-area">
+                    <div class="stage-input-wrapper">
+                      <el-input
+                        v-model="stageFeedback[2]"
+                        type="textarea"
+                        :rows="2"
+                        :placeholder="stageFeedbackLabels[2] + '（填写后点击发送将重新生成）'"
+                      />
+                      <div class="stage-input-actions">
+                        <el-button
+                          type="primary"
+                          :icon="Promotion"
+                          :loading="submitting"
+                          :disabled="!aiStep2Done || job?.step2_confirmed || !stageFeedback[2]?.trim()"
+                          @click="sendFeedback(2)"
+                        >
+                          发送
+                        </el-button>
+                      </div>
                     </div>
+                  </div>
+                  <div class="stage-confirm-area">
+                    <el-button
+                      type="success"
+                      :loading="submitting"
+                      :disabled="!aiStep2Done || job?.step2_confirmed || !keptEntities.length"
+                      @click="confirmEntitiesAndStartVerify"
+                    >
+                      确认通过，进入下一阶段
+                    </el-button>
                   </div>
                 </div>
               </div>
@@ -891,24 +928,37 @@
                   </el-table>
                 </div>
 
-                <div v-if="job?.status !== 'completed' && !job?.step3_confirmed" class="stage-input-area">
-                  <div class="stage-input-wrapper">
-                    <el-input
-                      v-model="stageFeedback[3]"
-                      type="textarea"
-                      :rows="2"
-                      :placeholder="stageFeedbackLabels[3] + '（填写后确认将重新生成）'"
-                    />
-                    <div class="stage-input-actions">
-                      <el-button
-                        type="primary"
-                        :loading="submitting"
-                        :disabled="job?.step3_confirmed"
-                        @click="confirmStageWithFeedback(3, doConfirmVerification)"
-                      >
-                        {{ job?.step3_confirmed ? '本体已生成' : '确认并生成最终本体' }}
-                      </el-button>
+                <div v-if="job?.status !== 'completed' && !job?.step3_confirmed">
+                  <div class="stage-input-area">
+                    <div class="stage-input-wrapper">
+                      <el-input
+                        v-model="stageFeedback[3]"
+                        type="textarea"
+                        :rows="2"
+                        :placeholder="stageFeedbackLabels[3] + '（填写后点击发送将重新生成）'"
+                      />
+                      <div class="stage-input-actions">
+                        <el-button
+                          type="primary"
+                          :icon="Promotion"
+                          :loading="submitting"
+                          :disabled="job?.step3_confirmed || !stageFeedback[3]?.trim()"
+                          @click="sendFeedback(3)"
+                        >
+                          发送
+                        </el-button>
+                      </div>
                     </div>
+                  </div>
+                  <div class="stage-confirm-area">
+                    <el-button
+                      type="success"
+                      :loading="submitting"
+                      :disabled="job?.step3_confirmed"
+                      @click="doConfirmVerification"
+                    >
+                      确认并生成最终本体
+                    </el-button>
                   </div>
                 </div>
               </div>
@@ -1212,7 +1262,8 @@
         <template #footer>
           <el-button @click="reworkDialogVisible = false">取消</el-button>
           <el-button type="primary" :loading="reworkSubmitting" @click="doRework">
-            开始重新生成
+            <el-icon><Promotion /></el-icon>
+            发送
           </el-button>
         </template>
       </el-dialog>
@@ -1225,7 +1276,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft, CircleCheck, Loading, Refresh,
-  Search, Document, Plus, Edit, Delete, View, Connection
+  Search, Document, Plus, Edit, Delete, View, Connection, Promotion
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import Layout from '@/components/Layout.vue'
@@ -1255,7 +1306,7 @@ const entityTypes = ref<any[]>([])          // v3: step1_entity_types（含 revi
 const entityTypeRelations = ref<any[]>([])  // v3: step1_entity_type_relations
 const entities = ref<any[]>([])             // v3: step2_entities
 const relations = ref<any[]>([])            // v3: step2_relations
-const templates = ref<any[]>([])            // step0 可选元模型
+const templates = ref<any[]>([])            // step0 可选本体模型
 
 // 初始类型约束（step1 提取前可编辑，作为 LLM 提取的起点；同步到 job.meta_entity_types）
 const constraintEntityTypes = ref<any[]>([])
@@ -1264,7 +1315,7 @@ const newConstraintRelationType = ref('')
 const constraintOpen = ref(false)   // 约束编辑区默认折叠
 let constraintInitialized = false
 watch(job, (j) => {
-  // 仅当解析完成后 AI 推荐元模型（meta_*）就绪时才初始化初始类型约束，
+  // 仅当解析完成后 AI 推荐本体模型（meta_*）就绪时才初始化初始类型约束，
   // 避免「文档解析」阶段 job 首次加载 meta 为空时过早置位，导致解析后无法回填。
   if (!constraintInitialized && j && (j.meta_entity_types?.length || j.meta_relation_types?.length)) {
     constraintEntityTypes.value = JSON.parse(JSON.stringify(j.meta_entity_types || []))
@@ -1323,7 +1374,7 @@ const docMatchIndex = ref(0)
 const highlightRange = ref<{ start: number; end: number } | null>(null)
 const markEl = ref<HTMLElement | null>(null)
 
-// step0 配置表单（载入元模型即强制按元模型提取）
+// step0 配置表单（载入本体模型即强制按本体模型提取）
 const metaForm = ref({
   granularity: 'medium' as 'coarse' | 'medium' | 'fine',
   templateId: '' as string
@@ -1575,12 +1626,12 @@ function _calcElapsed(start?: string, end?: string): string {
 
 const batch1ProgressText = computed(() => {
   const j = job.value
-  if (!j) return 'AI 正在提取实体类型...'
+  if (!j) return 'AI 正在提取本体...'
   const done = entityTypes.value.length
   if (j.step1_batches_total > 1) {
-    return `AI 正在提取实体类型（第 ${j.step1_batches_done + 1}/${j.step1_batches_total} 批），已提取 ${done} 个`
+    return `AI 正在提取本体（第 ${j.step1_batches_done + 1}/${j.step1_batches_total} 批），已提取 ${done} 个`
   }
-  return `AI 正在提取实体类型，已提取 ${done} 个`
+  return `AI 正在提取本体，已提取 ${done} 个`
 })
 
 const batch2ProgressText = computed(() => {
@@ -1732,7 +1783,7 @@ const loadJob = async () => {
       review: (job.value.step2_confirmed ? 'approved' : 'pending') as ReviewStatus
     }))
 
-    // 已载入元模型且尚未确认配置：真实连接元模型，用其 schema 回填初始类型约束
+    // 已载入本体模型且尚未确认配置：真实连接本体模型，用其 schema 回填初始类型约束
     if (job.value.template_id && !job.value.meta_confirmed) {
       await loadMetaModelIntoConstraints(job.value.template_id, true)
     }
@@ -1744,13 +1795,13 @@ const loadJob = async () => {
 const loadTemplates = async () => {
   try {
     const res: any = await getMetaModelList()
-    templates.value = res.data || []
+    templates.value = res.items || res.data || []
   } catch {
-    // 元模型为可选配置，加载失败不阻断主流程
+    // 本体模型为可选配置，加载失败不阻断主流程
   }
 }
 
-// 真实连接元模型：拉取元模型详情，用其实体类型/关系类型回填初始约束
+// 真实连接本体模型：拉取本体模型详情，用其实体类型/关系类型回填初始约束
 const loadMetaModelIntoConstraints = async (tplId: string, silent = false) => {
   try {
     const res: any = await getMetaModel(tplId)
@@ -1761,16 +1812,16 @@ const loadMetaModelIntoConstraints = async (tplId: string, silent = false) => {
     }))
     constraintRelationTypes.value = (tpl.relation_types || []).map((r: any) => ({ name: r.name }))
     constraintInitialized = true
-    if (!silent) ElMessage.success(`已载入元模型「${tpl.name}」`)
+    if (!silent) ElMessage.success(`已载入本体模型「${tpl.name}」`)
   } catch (e: any) {
-    if (!silent) ElMessage.error(e.serverMessage || '载入元模型失败')
+    if (!silent) ElMessage.error(e.serverMessage || '载入本体模型失败')
   }
 }
 
-// 用户在构建配置中切换/清除元模型
+// 用户在构建配置中切换/清除本体模型
 const onTemplateChange = async (val: string) => {
   if (!val) {
-    // 清除元模型：回退到 AI 推荐的初始约束
+    // 清除本体模型：回退到 AI 推荐的初始约束
     constraintEntityTypes.value = JSON.parse(JSON.stringify(job.value?.meta_entity_types || []))
     constraintRelationTypes.value = JSON.parse(JSON.stringify(job.value?.meta_relation_types || []))
     constraintInitialized = true
@@ -1825,6 +1876,9 @@ const _applyProgress = (p: any) => {
   job.value.step2_batches_total = p.step2_batches_total
   job.value.step2_batches_done = p.step2_batches_done
   job.value.step2_failed_batch = p.step2_failed_batch
+  // 预估分批数（step0 解析后预计算，前端展示用）
+  job.value.estimated_step1_batches = p.estimated_step1_batches
+  job.value.estimated_step2_batches = p.estimated_step2_batches
   job.value.step3_verification = p.step3_verification
   job.value.progress_stages = p.progress_stages
 }
@@ -1846,7 +1900,12 @@ const startStream = () => {
     onParseDone: (d) => {
       // 文档解析完成：断开 SSE 并刷新任务，展示解析结果
       stopStream()
-      if (job.value) job.value.running_step = -1
+      if (job.value) {
+        job.value.running_step = -1
+        // 预估分批数（SSE 事件携带，loadJob 也会从详情接口拿到）
+        if (d.estimated_step1_batches) job.value.estimated_step1_batches = d.estimated_step1_batches
+        if (d.estimated_step2_batches) job.value.estimated_step2_batches = d.estimated_step2_batches
+      }
       ElMessage.success('文档解析完成')
       loadJob()
     },
@@ -1918,7 +1977,7 @@ const startStream = () => {
             review: 'pending' as ReviewStatus
           }))
         }
-        ElMessage.success(`实体类型提取完成，共 ${entityTypes.value.length} 个`)
+        ElMessage.success(`本体提取完成，共 ${entityTypes.value.length} 个`)
       } else if (d.step === 2) {
         aiStep2Done.value = true
         if (job.value) job.value.running_step = -1
@@ -2009,7 +2068,7 @@ const doConfirmMeta = async () => {
     fd.append('granularity', metaForm.value.granularity)
     if (metaForm.value.templateId) {
       fd.append('template_id', metaForm.value.templateId)
-      // 载入元模型：强制大模型按该元模型提取
+      // 载入本体模型：强制大模型按该本体模型提取
       fd.append('template_mode', 'hard_constraint')
     }
     // 同步初始类型约束（step0 提取前可调整，作为 step1 提取的起点）
@@ -2027,9 +2086,9 @@ const doConfirmMeta = async () => {
     }
     await confirmMetaApi(jobId, fd)
     await loadJob()
-    // 二合一：确认配置后立即开始实体类型提取，无需再单独点击「开始提取实体类型」
+    // 二合一：确认配置后立即开始本体提取，无需再单独点击「开始提取本体」
     await doExtractEntityTypes()
-    ElMessage.success('配置已确认，实体类型提取已开始')
+    ElMessage.success('配置已确认，本体提取已开始')
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '确认失败')
   } finally {
@@ -2039,7 +2098,7 @@ const doConfirmMeta = async () => {
 
 const doExtractEntityTypes = async () => {
   try {
-    // 若初始类型约束有修改，先同步到元模型再启动提取
+    // 若初始类型约束有修改，先同步到本体模型再启动提取
     if (constraintDirty.value) {
       const mfd = new FormData()
       mfd.append('granularity', job.value?.granularity || metaForm.value.granularity)
@@ -2063,7 +2122,7 @@ const doExtractEntityTypes = async () => {
       job.value.progress_message = '正在准备文档...'
     }
     aiStep1Done.value = false
-    ElMessage.info('实体类型提取已在后台开始，可实时查看提取结果')
+    ElMessage.info('本体提取已在后台开始，可实时查看提取结果')
     startStream()
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '启动提取失败')
@@ -2230,22 +2289,23 @@ const triggerRework = async (step: number, promptText: string) => {
   }
 }
 
-const confirmStageWithFeedback = async (step: 1 | 2 | 3, confirmFn: () => Promise<void>) => {
+// 发送修改意见给 AI 重新生成当前阶段结果（确认进入下一阶段已抽离为独立按钮）
+const sendFeedback = async (step: 1 | 2 | 3) => {
   const feedback = (stageFeedback.value[step] || '').trim()
-  if (feedback) {
-    submitting.value = true
-    try {
-      await triggerRework(step, feedback)
-      stageFeedback.value[step] = ''
-      ElMessage.success(`已携带您的修改意见重新执行阶段 ${step}，请审阅新结果`)
-    } catch (e: any) {
-      ElMessage.error(e.serverMessage || '重新生成失败')
-    } finally {
-      submitting.value = false
-    }
+  if (!feedback) {
+    ElMessage.warning('请输入修改意见')
     return
   }
-  await confirmFn()
+  submitting.value = true
+  try {
+    await triggerRework(step, feedback)
+    stageFeedback.value[step] = ''
+    ElMessage.success(`已携带您的修改意见重新执行阶段 ${step}，请审阅新结果`)
+  } catch (e: any) {
+    ElMessage.error(e.serverMessage || '重新生成失败')
+  } finally {
+    submitting.value = false
+  }
 }
 
 // ── 编辑器保存 ──
@@ -2800,6 +2860,11 @@ onUnmounted(() => {
 .parse-done strong {
   color: #303133;
 }
+.batch-hint {
+  margin-top: 0.25rem !important;
+  color: #909399 !important;
+  font-size: 0.85rem !important;
+}
 
 .step-card :deep(.el-card__body) {
   padding: 1.25rem;
@@ -2968,6 +3033,13 @@ onUnmounted(() => {
   border-radius: 10px;
   font-weight: 500;
   font-size: 14px;
+}
+
+/* 阶段确认按钮区（输入条下方独立按钮，确认通过进入下一阶段） */
+.stage-confirm-area {
+  margin-top: 0.75rem;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .resume-section,

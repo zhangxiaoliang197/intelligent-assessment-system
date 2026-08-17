@@ -13,8 +13,8 @@
     # 迁移并同时生成 OWL 快照（推荐首次切换时使用）
     python -m scripts.migrate_to_neo4j --all --generate-owl
 
-    # 同时迁移模板和构建任务索引（可选，默认仅迁本体）
-    python -m scripts.migrate_to_neo4j --all --include-templates --include-build-jobs
+    # 同时迁移本体模型和构建任务索引（可选，默认仅迁本体）
+    python -m scripts.migrate_to_neo4j --all --include-ontology-models --include-build-jobs
 
 设计要点：
 - 独立运行：直接读 JSON 文件 + 直接写 Neo4j，不依赖 FastAPI app 上下文
@@ -44,7 +44,7 @@ if str(_SERVICE_DIR) not in sys.path:
 
 from models import (
     OntologyModel, ConceptType, Entity, Relation,
-    TemplateModel, BuildJob,
+    OntologyTemplateModel, BuildJob,
 )
 from migration import migrate_ontology_dict, SCHEMA_VERSION
 from repository.neo4j_repository import Neo4jRepository
@@ -60,9 +60,9 @@ logger = logging.getLogger("migrate_to_neo4j")
 DATA_DIR = _SERVICE_DIR / "data"
 INDEX_FILE = DATA_DIR / "ontologies_index.json"
 USER_ONTOLOGIES_DIR = DATA_DIR / "user_ontologies"
-# 模板/构建任务索引均位于各自目录下 index.json（与 main.py TEMPLATES_INDEX/BUILD_JOBS_INDEX 对齐）
-TEMPLATES_DIR = DATA_DIR / "ontology_templates"
-TEMPLATES_INDEX_FILE = TEMPLATES_DIR / "index.json"
+# 本体模型/构建任务索引均位于各自目录下 index.json（与 main.py ONTOLOGY_MODELS_INDEX/BUILD_JOBS_INDEX 对齐）
+ONTOLOGY_MODELS_DIR = DATA_DIR / "ontology_template_models"
+ONTOLOGY_MODELS_INDEX_FILE = ONTOLOGY_MODELS_DIR / "index.json"
 BUILD_JOBS_DIR = DATA_DIR / "build_jobs"
 BUILD_JOBS_INDEX_FILE = BUILD_JOBS_DIR / "index.json"
 
@@ -230,9 +230,9 @@ def migrate_ontology_to_neo4j(repo: Neo4jRepository, index_item: Dict[str, Any],
     return result
 
 
-def migrate_templates(repo: Neo4jRepository) -> Dict[str, int]:
-    """迁移模板到 Neo4j。"""
-    index = _load_json(TEMPLATES_INDEX_FILE, [])
+def migrate_ontology_models(repo: Neo4jRepository) -> Dict[str, int]:
+    """迁移本体模型到 Neo4j。"""
+    index = _load_json(ONTOLOGY_MODELS_INDEX_FILE, [])
     if not isinstance(index, list):
         return {"total": 0, "ok": 0, "failed": 0}
 
@@ -244,20 +244,20 @@ def migrate_templates(repo: Neo4jRepository) -> Dict[str, int]:
         if not tpl_id:
             continue
         total += 1
-        tpl_path = TEMPLATES_DIR / f"template_{tpl_id}.json"
+        tpl_path = ONTOLOGY_MODELS_DIR / f"ontology_model_{tpl_id}.json"
         data = _load_json(tpl_path, None)
         if data is None:
-            logger.warning("模板文件不存在: %s", tpl_path)
+            logger.warning("本体模型文件不存在: %s", tpl_path)
             failed += 1
             continue
         try:
-            tpl = TemplateModel(**data)
+            tpl = OntologyTemplateModel(**data)
             repo.upsert_template(tpl)
             ok += 1
-            logger.info("模板 %s(%s) 迁移成功", tpl_id, tpl.name)
+            logger.info("本体模型 %s(%s) 迁移成功", tpl_id, tpl.name)
         except Exception as e:
             failed += 1
-            logger.error("模板 %s 迁移失败: %s", tpl_id, e)
+            logger.error("本体模型 %s 迁移失败: %s", tpl_id, e)
 
     return {"total": total, "ok": ok, "failed": failed}
 
@@ -314,8 +314,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="迁移指定本体（如 ont_61daa626）")
     p.add_argument("--generate-owl", action="store_true",
                    help="迁移后同步生成 OWL 快照到 data/ontologies/")
-    p.add_argument("--include-templates", action="store_true",
-                   help="同时迁移模板索引")
+    p.add_argument("--include-ontology-models", action="store_true",
+                   help="同时迁移本体模型索引")
     p.add_argument("--include-build-jobs", action="store_true",
                    help="同时迁移构建任务索引")
     p.add_argument("--reset", action="store_true",
@@ -404,7 +404,7 @@ def main() -> int:
 
     print(f"待迁移本体数: {len(items)}")
     print(f"生成 OWL 快照: {'是' if args.generate_owl else '否'}")
-    print(f"包含模板: {'是' if args.include_templates else '否'}")
+    print(f"包含本体模型: {'是' if args.include_ontology_models else '否'}")
     print(f"包含构建任务: {'是' if args.include_build_jobs else '否'}")
     print(f"清空旧数据: {'是' if args.reset else '否'}")
     print()
@@ -441,11 +441,11 @@ def main() -> int:
                 c = s.run(f"MATCH (n:{label}) RETURN count(*) AS c").single()["c"]
                 print(f"  {label:<14} {c:>6}")
 
-        # 可选：迁移模板
-        if args.include_templates:
+        # 可选：迁移本体模型
+        if args.include_ontology_models:
             print()
-            print("模板迁移:")
-            tpl_res = migrate_templates(repo)
+            print("本体模型迁移:")
+            tpl_res = migrate_ontology_models(repo)
             print(f"  总计: {tpl_res['total']}  成功: {tpl_res['ok']}  失败: {tpl_res['failed']}")
 
         # 可选：迁移构建任务

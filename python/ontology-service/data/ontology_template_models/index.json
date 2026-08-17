@@ -1,13 +1,13 @@
 [
   {
-    "id": "tpl_b326c96d",
-    "name": "家庭 元模型",
-    "description": "从本体「家庭」抽取的 schema 模板",
+    "id": "tpl_7a83fadb",
+    "name": "家庭 本体模型",
+    "description": "从本体「家庭」抽取的 schema 本体模型",
     "version": "1.0.0",
     "entity_types": [
       {
         "name": "Person",
-        "description": "家庭成员，包含身份信息与家庭角色。",
+        "description": "家庭成员，具有身份、年龄、角色等属性",
         "color": "#5470c6",
         "property_schema": [
           {
@@ -15,7 +15,7 @@
             "category": "descriptive",
             "data_type": "string",
             "unit": "",
-            "required": true,
+            "required": false,
             "description": "唯一标识"
           },
           {
@@ -23,7 +23,7 @@
             "category": "descriptive",
             "data_type": "string",
             "unit": "",
-            "required": true,
+            "required": false,
             "description": "姓名"
           },
           {
@@ -40,14 +40,14 @@
             "data_type": "string",
             "unit": "",
             "required": false,
-            "description": "在家庭中的角色，如父亲、儿子等"
+            "description": "家庭角色，如父亲、儿子等"
           }
         ],
-        "parent_entity_type_name": ""
+        "parent_entity_type_name": null
       },
       {
         "name": "Room",
-        "description": "家庭空间，描述房间位置与面积。",
+        "description": "家庭空间，具有位置、面积等属性",
         "color": "#91cc75",
         "property_schema": [
           {
@@ -55,7 +55,7 @@
             "category": "descriptive",
             "data_type": "string",
             "unit": "",
-            "required": true,
+            "required": false,
             "description": "唯一标识"
           },
           {
@@ -63,7 +63,7 @@
             "category": "descriptive",
             "data_type": "string",
             "unit": "",
-            "required": true,
+            "required": false,
             "description": "房间名称"
           },
           {
@@ -83,11 +83,11 @@
             "description": "房间面积"
           }
         ],
-        "parent_entity_type_name": ""
+        "parent_entity_type_name": null
       },
       {
         "name": "Device",
-        "description": "智能家居设备，具有品牌和开关状态。",
+        "description": "智能家居设备，具有品牌、运行状态等属性",
         "color": "#fac858",
         "property_schema": [
           {
@@ -95,7 +95,7 @@
             "category": "descriptive",
             "data_type": "string",
             "unit": "",
-            "required": true,
+            "required": false,
             "description": "唯一标识"
           },
           {
@@ -103,7 +103,7 @@
             "category": "descriptive",
             "data_type": "string",
             "unit": "",
-            "required": true,
+            "required": false,
             "description": "设备名称"
           },
           {
@@ -120,14 +120,14 @@
             "data_type": "enum",
             "unit": "",
             "required": false,
-            "description": "设备状态，枚举 on/off"
+            "description": "运行状态，on/off"
           }
         ],
-        "parent_entity_type_name": ""
+        "parent_entity_type_name": null
       },
       {
         "name": "Pet",
-        "description": "家庭宠物，包含物种与习性。",
+        "description": "家庭宠物，具有物种、习性等属性",
         "color": "#ee6666",
         "property_schema": [
           {
@@ -135,7 +135,7 @@
             "category": "descriptive",
             "data_type": "string",
             "unit": "",
-            "required": true,
+            "required": false,
             "description": "唯一标识"
           },
           {
@@ -143,7 +143,7 @@
             "category": "descriptive",
             "data_type": "string",
             "unit": "",
-            "required": true,
+            "required": false,
             "description": "宠物昵称"
           },
           {
@@ -152,7 +152,7 @@
             "data_type": "string",
             "unit": "",
             "required": false,
-            "description": "物种，如猫、狗"
+            "description": "物种"
           },
           {
             "name": "hobby",
@@ -160,35 +160,51 @@
             "data_type": "string",
             "unit": "",
             "required": false,
-            "description": "习性爱好"
+            "description": "习性偏好"
           }
         ],
-        "parent_entity_type_name": ""
+        "parent_entity_type_name": null
       }
     ],
     "relation_types": [
       {
-        "name": "位于",
+        "name": "cares_for",
         "description": ""
       },
       {
-        "name": "居住于",
+        "name": "controls",
         "description": ""
       },
       {
-        "name": "拥有",
+        "name": "located_in",
         "description": ""
       },
       {
-        "name": "操控",
+        "name": "owns",
         "description": ""
       },
       {
-        "name": "照看",
+        "name": "plays_with",
         "description": ""
       },
       {
-        "name": "玩耍",
+        "name": "resides_in",
+        "description": ""
+      },
+      {
+        "name": "关联",
+        "description": ""
+      },
+      {
+        "name": "包含",
+        "description": ""
+      },
+      {
+        "name": "影响",
+        "description": ""
+      },
+      {
+        "name": "衡量",
         "description": ""
       }
     ],
@@ -197,54 +213,54 @@
         "source_entity_type_name": "Person",
         "target_entity_type_name": "Room",
         "relation_type": "resides_in",
-        "description": "人居住于房间"
+        "description": "某人常住某个房间"
       },
       {
         "source_entity_type_name": "Person",
         "target_entity_type_name": "Device",
         "relation_type": "owns",
-        "description": "人拥有设备"
+        "description": "某人是设备的主人"
       },
       {
         "source_entity_type_name": "Person",
         "target_entity_type_name": "Pet",
         "relation_type": "owns",
-        "description": "人拥有宠物"
+        "description": "某人是宠物的主人"
       },
       {
         "source_entity_type_name": "Device",
         "target_entity_type_name": "Room",
         "relation_type": "located_in",
-        "description": "设备位于房间"
+        "description": "设备被安装或放置在某房间"
       },
       {
         "source_entity_type_name": "Person",
         "target_entity_type_name": "Device",
         "relation_type": "controls",
-        "description": "人操控设备"
+        "description": "某人有权限操作某设备"
       },
       {
         "source_entity_type_name": "Pet",
         "target_entity_type_name": "Person",
         "relation_type": "plays_with",
-        "description": "宠物与人互动玩耍"
+        "description": "宠物与某人互动玩耍"
       },
       {
         "source_entity_type_name": "Pet",
         "target_entity_type_name": "Device",
         "relation_type": "plays_with",
-        "description": "宠物与设备互动"
+        "description": "宠物与某设备互动玩耍"
       },
       {
         "source_entity_type_name": "Person",
         "target_entity_type_name": "Pet",
         "relation_type": "cares_for",
-        "description": "人照看宠物"
+        "description": "某人负责喂养或照看宠物"
       }
     ],
-    "source_ontology_id": "ont_12e4471a",
-    "create_time": "2026-08-13 11:18:35.425248",
-    "update_time": "2026-08-13 15:06:50.745447",
+    "source_ontology_id": "ont_87bf3b9c",
+    "create_time": "2026-08-17 10:51:06.442046",
+    "update_time": "2026-08-17 10:51:06.442046",
     "is_builtin": false
   }
 ]

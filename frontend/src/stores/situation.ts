@@ -58,6 +58,8 @@ export interface DatasetSummary {
   rows?: any[]
   /** 行数（步骤展示用；旧快照可能缺失，需用 rows.length 兜底） */
   rowCount?: number
+  /** 真实总行数（截断时 > rowCount，供步骤面板展示「共 M 行」） */
+  totalRows?: number
   physicalDatasetId?: string
   schemaVersion?: number
   truncated?: boolean
@@ -155,8 +157,35 @@ function rebuildChartOption(
       type: type === 'line' ? 'line' : 'bar',
       data: rows.map((r) => toNum(r[yf])),
     }))
+    // 类目过多时注入 dataZoom，避免几千分类不可读
+    if (categories.length > 50 && !opt.dataZoom) {
+      opt.dataZoom = [
+        { type: 'slider', xAxisIndex: 0, start: 0, end: Math.min(100, Math.round(50 / categories.length * 100)) || 10 },
+        { type: 'inside', xAxisIndex: 0 },
+      ]
+    }
   }
   return opt
+}
+
+// 与后端 map_builder._make_props 对齐：排除坐标/标识列，其余业务字段进 props 供地图悬停展示
+const MAP_PROP_EXCLUDE = new Set([
+  'name', 'aircraft_name', 'aircraft_id', 'seq', 'id',
+  'lng', 'lon', 'longitude', 'lat', 'latitude', 'raw', '_dataset',
+])
+const COORD_FIELD_PATTERN = /(lng|lon|longitude|经度|lat|latitude|纬度)$/i
+
+function buildPointProps(row: any): Record<string, any> | undefined {
+  if (!row || typeof row !== 'object') return undefined
+  const props: Record<string, any> = {}
+  for (const [key, value] of Object.entries(row)) {
+    const lower = key.toLowerCase()
+    if (MAP_PROP_EXCLUDE.has(lower)) continue
+    if (COORD_FIELD_PATTERN.test(key)) continue
+    if (value === null || value === undefined || value === '') continue
+    props[key] = value
+  }
+  return Object.keys(props).length ? props : undefined
 }
 
 function rebuildMapLayer(layer: MapLayer, ds: DatasetSummary | undefined): MapLayer {
@@ -186,27 +215,37 @@ function rebuildMapLayer(layer: MapLayer, ds: DatasetSummary | undefined): MapLa
         points: pts.map((p) => ({ lng: toNum(p[lngField]), lat: toNum(p[latField]) })),
       })
       // 每条路线生成起点/终点标记，routeName 关联路线名，供图层联动显隐
-      const mk = (row: any, suffix: string) => ({
-        name: `${name}${suffix}`,
-        lng: toNum(row[lngField]),
-        lat: toNum(row[latField]),
-        routeName: name,
-        raw: `${name}${suffix}: ${row[lngField]},${row[latField]}`,
-      })
+      const mk = (row: any, suffix: string) => {
+        const point: any = {
+          name: `${name}${suffix}`,
+          lng: toNum(row[lngField]),
+          lat: toNum(row[latField]),
+          routeName: name,
+          raw: `${name}${suffix}: ${row[lngField]},${row[latField]}`,
+        }
+        const props = buildPointProps(row)
+        if (props) point.props = props
+        return point
+      }
       if (pts.length) points.push(mk(pts[0], '-起点'))
       if (pts.length > 1) points.push(mk(pts[pts.length - 1], '-终点'))
     }
     clone.routes = routes
     clone.points = points
   } else {
-    // 标点数据：逐行生成 points
+    // 标点数据：逐行生成 points，附带业务字段供悬停展示
     const nf = nameField ?? ''
-    clone.points = rows.map((r) => ({
-      name: nf ? String(r[nf] ?? '') : '',
-      lng: toNum(r[lngField]),
-      lat: toNum(r[latField]),
-      raw: String(r[nf] ?? `${r[lngField]},${r[latField]}`),
-    }))
+    clone.points = rows.map((r) => {
+      const point: any = {
+        name: nf ? String(r[nf] ?? '') : '',
+        lng: toNum(r[lngField]),
+        lat: toNum(r[latField]),
+        raw: String(r[nf] ?? `${r[lngField]},${r[latField]}`),
+      }
+      const props = buildPointProps(r)
+      if (props) point.props = props
+      return point
+    })
   }
   return clone
 }
@@ -364,6 +403,7 @@ export const useSituationStore = defineStore('situation', () => {
     datasets.value = (snapshot.datasets || []).map((d: any) => ({
       ...d,
       rowCount: d.rowCount ?? (Array.isArray(d.rows) ? d.rows.length : (typeof d.rows === 'number' ? d.rows : 0)),
+      totalRows: d.totalRows ?? d.rowCount ?? (Array.isArray(d.rows) ? d.rows.length : 0),
     }))
     // 历史产物：用完整数据集 + fieldMapping 重建图表/地图，替代 LLM 内联样本
     const dsMap = new Map(datasets.value.map((d) => [d.datasetId, d]))
@@ -500,15 +540,17 @@ export const useSituationStore = defineStore('situation', () => {
         // rows 是行数组（非行数）；rowCount 才是行数。旧数据可能缺 rowCount，用 rows.length 兜底
         const rowsArr: any[] = Array.isArray(data.rows) ? data.rows : []
         const rowCount: number = data.rowCount ?? rowsArr.length
+        const totalRows: number = data.totalRows ?? rowCount
         const ds: DatasetSummary = {
           datasetId: data.datasetId,
           source: data.source,
           summary: data.summary,
           rows: rowsArr,
           rowCount,
+          totalRows,
           physicalDatasetId: data.physicalDatasetId || '',
           schemaVersion: data.schemaVersion,
-          truncated: Boolean(data.truncated),
+          truncated: Boolean(data.truncated) || totalRows > rowCount,
           evidenceHash: data.evidenceHash || '',
           execution: data.execution || {},
           columns: data.columns || [],
@@ -519,12 +561,15 @@ export const useSituationStore = defineStore('situation', () => {
         else datasets.value.push(ds)
         if (!activeDatasetId.value) activeDatasetId.value = ds.datasetId
         if (existingIndex < 0) {
-          // 步骤只展示一行摘要：数据集名（行数 × 字段数）；详细统计仍存于 ds.summary 供面板查看
+          // 步骤只展示一行摘要：数据集名（行数 × 字段数）；截断时显示真实总数
           const label = ds.source || ds.datasetId
           const fieldCount = ds.columns?.length || 0
-          const sizeText = fieldCount > 0
+          const sizeBase = fieldCount > 0
             ? `${rowCount} 行 × ${fieldCount} 字段`
             : `${rowCount} 行`
+          const sizeText = ds.truncated && totalRows > rowCount
+            ? `${sizeBase}（共 ${totalRows} 行，已截断）`
+            : sizeBase
           pushStep('dataset', `获取数据集 ${label}（${sizeText}）`, 'completed')
         }
         break

@@ -22,7 +22,7 @@ export const createBuildJob = (data: FormData) => {
   })
 }
 
-/** 阶段 0「文档解析」：解析上传的文档 + 推荐元模型（后台异步，SSE 订阅 parse_done/error） */
+/** 阶段 0「文档解析」：解析上传的文档 + 推荐本体模型（后台异步，SSE 订阅 parse_done/error） */
 export const parseBuildJob = (jobId: string) => {
   return api.post(`/ontology/build/${jobId}/parse`)
 }
@@ -39,7 +39,7 @@ export const completeBuildJob = (jobId: string) => {
   return api.put(`/ontology/build/${jobId}/complete`)
 }
 
-/** 确认元模型（Step 0：元模型 + 粒度 + 阶段提示词） */
+/** 确认本体模型（Step 0：本体模型 + 粒度 + 阶段提示词） */
 export const confirmMeta = (jobId: string, data: FormData) => {
   return api.put(`/ontology/build/${jobId}/meta`, data, {
     headers: { 'Content-Type': 'multipart/form-data' }
@@ -114,7 +114,7 @@ export const deleteBuildJob = (jobId: string) => {
 
 /** SSE 事件回调集合 */
 export interface BuildStreamHandlers {
-  /** 阶段 0 文档解析完成（含 char_count / 推荐的元模型） */
+  /** 阶段 0 文档解析完成（含 char_count / 推荐的本体模型） */
   onParseDone?: (d: any) => void
   /** Step1 每批实体类型完成 / Step2 每批实体完成（同事件名，按 data 字段区分） */
   onBatchDone?: (d: any) => void

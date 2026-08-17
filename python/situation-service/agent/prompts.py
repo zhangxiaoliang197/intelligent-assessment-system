@@ -149,7 +149,9 @@ def build_sql_messages(query: str, schema: dict, intent: str = "") -> list:
             "2. 表名与列名必须严格来自下方表结构，不得跨表混用字段；\n"
             "3. 根据问题与查询意图生成精确过滤（WHERE）、聚合（COUNT/SUM/AVG/MAX/MIN）与分组（GROUP BY），必要时 ORDER BY 排序；\n"
             "4. 聚合列与非聚合列必须满足 GROUP BY 规则；\n"
-            "5. 使用标准 SQL 语法（ANSI），避免厂商专用函数；不要添加 LIMIT，返回全部数据（行数由后端统一限制）；\n"
+            "5. 使用标准 SQL 语法（ANSI），避免厂商专用函数；不要添加 LIMIT，返回全部数据（行数由后端统一限制）；"
+            "明细类查询后端会返回全量行（默认上限数千行），供前端图表/地图展示全部明细；"
+            "聚合类查询必须带 GROUP BY 且结果集即为全部分组，确保聚合图表展示所有类目/时段，不得遗漏分组；\n"
             "6. 明细/轨迹/地图类问题（查询轨迹、点位、列表、目标/设备信息等）必须 SELECT 表结构里列出的**全部业务列**，不得只选经纬度或少数列，确保地图节点和图表能展示完整字段（名称、机型、高度、速度、航向、时间、状态等）；\n"
             "7. 仅当问题明确要求统计/汇总时才使用聚合函数与 GROUP BY，聚合场景只 SELECT 聚合列和分组列，不得混入未聚合的明细列。"},
         {"role": "user", "content": f"用户问题：{query}\n{intent_text}\n\n表结构：\n{_format_schema_for_sql(schema)}"},
@@ -199,7 +201,7 @@ def build_chart_messages(query: str, data_context: dict, plan: dict) -> list:
             "返回 JSON 数组（仅 JSON）：\n"
             '[{"chartId": "c_1", "type": "line", "title": "标题", "option": {ECharts完整option(内联样本数据)}, "datasetRef": "数据集ID", "fieldMapping": {"xField": "分类字段名", "yFields": ["数值字段1", "数值字段2"]}, "explanation": "一句话说明"}]\n'
             "规则：chartId 用 c_1/c_2...；option 必须是合法 ECharts 配置（含 series/xAxis/yAxis 等）；\n"
-            "**图表数量 2-4 个；允许相同 type 重复**（如两个 line 图各展示不同维度）；\n"
+            "**图表数量 2-4 个；尽量避免 type 重复**（除非两个 line 图各展示不同维度且必要）；\n"
             "**图表类型-数据适配规则（必须遵守，违反会被校验拦截）**：\n"
             "- pie：分类数 ≤ 8（超过应合并为「其他」或改用 bar）；分片数值不得为负；\n"
             "- radar：维度数 ∈ [3, 12]；\n"
@@ -209,7 +211,8 @@ def build_chart_messages(query: str, data_context: dict, plan: dict) -> list:
             "数据只能来自上方聚合证据，不得编造；series 中每个数值必须逐字等于证据中出现的 sum/avg/count 值，"
             "禁止估算、取整或跨字段换算；datasetRef 必须使用所列数据集 ID；若无合适数据可降级为说明性图表；"
             "若图表基于数据集明细行直接可视化（bar/line/scatter/pie），必须在 fieldMapping 给出 xField（分类/X轴字段）与 yFields（数值/Y轴字段列表），供前端用全量数据重建；"
-            "若图表是聚合汇总结果（option 已内联全部聚合值），fieldMapping 可省略。"},
+            "前端会用数据集全量行 + fieldMapping 重新生成 series.data，LLM 内联的样本数值仅作校验参考，因此 fieldMapping 必须准确指向真实列名；\n"
+            "若图表是聚合汇总结果（option 已内联全部聚合值且涵盖所有分组），fieldMapping 可省略，但必须确保内联了全部分类的聚合值，不得遗漏分组。"},
         {"role": "user", "content": f"用户问题：{query}\n\n图表规划：\n{plans_text}\n\n真实数据：\n{data_text}"},
     ]
 
@@ -247,7 +250,8 @@ def build_single_chart_messages(
             "  · bar：分类数 ≤ 30；\n"
             "  · scatter：点数 ≥ 5；\n"
             "- 数据只能来自下方证据，不得编造；series 中每个数值必须逐字等于证据中的 sum/avg/count；\n"
-            "- fieldMapping 必填 xField（分类字段）和 yFields（数值字段列表）。"},
+            "- fieldMapping 必填 xField（分类字段）和 yFields（数值字段列表）；前端会用数据集全量行 + fieldMapping 重建 series.data，"
+            "LLM 内联的样本数值仅作校验参考，fieldMapping 必须准确指向真实列名。"},
         {"role": "user", "content": (
             f"用户问题：{query}\n\n"
             f"图表规格：\n- {chart_type}: {title}（{intent}）\n\n"
@@ -292,7 +296,7 @@ def build_map_messages(query: str, data_context: dict) -> list:
             '{\n'
             '  "layerId": "main",\n'
             '  "datasetRef": "数据集ID",\n'
-            '  "points": [{"name": "名称", "lng": 116.4, "lat": 39.9, "raw": "描述"}],\n'
+            '  "points": [{"name": "名称", "lng": 116.4, "lat": 39.9, "raw": "描述", "props": {"业务字段名": "值"}}],\n'
             '  "routes": [],\n'
             '  "areas": [],\n'
             '  "circles": [{"name": "名称", "center": {"lng": 113.27, "lat": 23.13}, "radiusKm": 120}],\n'
@@ -303,7 +307,9 @@ def build_map_messages(query: str, data_context: dict) -> list:
             "坐标必须来自证据中的 samples 地理字段，不得编造境外坐标；聚合证据默认不含 samples 时必须返回空图层；"
             "若数据无地理信息且问题不涉及空间分布，返回空 points/routes/areas/circles 数组（layerId 仍保留）；"
             "若数据含经纬度字段，必须在 fieldMapping 给出 lngField/latField（供前端用全量数据渲染轨迹/标点）；"
-            "若轨迹数据含轨迹ID与排序字段，给出 routeIdField/orderField。"},
+            "若轨迹数据含轨迹ID与排序字段，给出 routeIdField/orderField。"
+            "若某个点对应的证据样本中存在除经纬度/名称外的业务字段（如速度、高度、状态、编号等），"
+            "必须将其填入该点的 props 供前端悬停展示；props 值只能来自证据样本，不得编造。"},
         {"role": "user", "content": f"用户问题：{query}\n\n真实数据：\n{data_text}"},
     ]
 

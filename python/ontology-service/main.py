@@ -1,7 +1,7 @@
-"""本体模型服务（ontology-service）。
+"""本体服务（ontology-service）。
 
-负责本体模型的构建与管理，建立实体类型之间的语义关系，提供知识图谱可视化数据。
-A 阶段实现：多本体隔离、元模型类型约束、JSON 属性、持久化加固、路径查询、示例数据。
+负责本体的构建与管理，建立实体类型之间的语义关系，提供知识图谱可视化数据。
+A 阶段实现：多本体隔离、本体模型类型约束、JSON 属性、持久化加固、路径查询、示例数据。
 
 数据持久化策略：
 - 每个本体独立一个 JSON 文件 data/ontology_{id}.json（含本体元信息 + 实体 + 关系）
@@ -41,9 +41,11 @@ from models import (
     PropertyHistoryEntry, PropertyVerification, Property,
     ConceptType, Entity, Relation, OntologyModel,
     EntityTypeRelation, TemplateEntityTypeSchema, TemplateEntityTypeRelation,
-    TemplateConceptSchema, TemplateModel, BuildJob,
+    TemplateConceptSchema, OntologyTemplateModel, BuildJob,
     get_inherited_property_schema,
 )
+# 向后兼容别名：旧代码引用 TemplateModel 时仍可工作
+TemplateModel = OntologyTemplateModel
 
 # ---------- Repository 抽象层（Phase 1：薄包装现有 JSON 存储）----------
 from repository import get_repository
@@ -65,7 +67,7 @@ except Exception as _owl_import_err:  # owlready2 未安装或损坏时降级
     export_ontology_to_owl = None  # type: ignore
 
 app = FastAPI(
-    title="本体模型服务",
+    title="本体服务",
     description="本体构建与知识图谱展示",
     version="2.0.0"
 )
@@ -78,9 +80,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------- 默认元模型 ----------
+# ---------- 默认本体模型 ----------
 # 创建本体时若未指定类型，使用以下默认类型集
-# 元模型定义粗粒度类型分类（实体类型/实体/属性/事件），实体类型在此基础上做细粒度类型定义
+# 本体模型定义粗粒度类型分类（实体类型/实体/属性/事件），实体类型在此基础上做细粒度类型定义
 DEFAULT_ENTITY_TYPES = [
     {"name": "实体类型", "color": "#5470c6"},
     {"name": "实体", "color": "#91cc75"},
@@ -139,7 +141,7 @@ def _entity_type_from_dict(d: dict, ontology_id: str = "",
 # ---------- 数据模型已抽离至 models.py ----------
 # EntityType / RelationType / PropertySchema / PropertyHistoryEntry /
 # PropertyVerification / Property / ConceptType / Entity / Relation /
-# OntologyModel / TemplateConceptSchema / TemplateModel / BuildJob
+# OntologyModel / TemplateConceptSchema / OntologyTemplateModel / BuildJob
 # 均在顶部通过 `from models import ...` 导入
 
 
@@ -492,14 +494,14 @@ def _derive_type_color(entity_type: str, meta_entity_types: list, used_colors: O
     """根据实体类型的 entity_type 推导颜色。
 
     颜色来源优先级：
-    1. 元模型中该类型已配置的颜色（手动构建/模板场景保持用户选择）
+    1. 本体模型中该类型已配置的颜色（手动构建/本体模型场景保持用户选择）
     2. 调色板轮转兜底：从 DEFAULT_COLORS 中选取一个本批未用过的颜色，
        保证不同实体类型自动区分颜色；全部用过则从头循环
 
     Args:
-        entity_type: 实体类型归属的元模型类型名
-        meta_entity_types: 已确认的元模型实体类型 [{"name","color"}]
-        used_colors: 本批已分配的颜色集合（None 表示无状态，仅走元模型匹配）
+        entity_type: 实体类型归属的本体模型类型名
+        meta_entity_types: 已确认的本体模型实体类型 [{"name","color"}]
+        used_colors: 本批已分配的颜色集合（None 表示无状态，仅走本体模型匹配）
 
     Returns:
         颜色 hex 值
@@ -521,12 +523,12 @@ def _enrich_types_with_color(concepts: list, meta_entity_types: list) -> list:
 
     颜色优先级：
     1. LLM 已输出 color（旧格式实体类型）则保留
-    2. 元模型按 entity_type 精确匹配
+    2. 本体模型按 entity_type 精确匹配
     3. 调色板轮转分配（保证不同实体类型颜色不同，避免全部默认蓝色）
 
     Args:
         concepts: 合并去重后的实体类型列表
-        meta_entity_types: 已确认的元模型实体类型
+        meta_entity_types: 已确认的本体模型实体类型
 
     Returns:
         填充 color 后的实体类型列表（原地修改并返回）
@@ -541,10 +543,10 @@ def _enrich_types_with_color(concepts: list, meta_entity_types: list) -> list:
 
 # ---------- 阶段进度跟踪（真实进度条）----------
 # progress_stages 记录每个阶段的开始/结束时间，前端按时间线展示真实进度
-# v3 四阶段（已更名为）：0=文档解析, 1=类型提取, 2=实体提取, 3=分析验证, 4=保留兼容旧任务
+# v3 四阶段（已更名为）：0=文档解析, 1=本体提取, 2=实体提取, 3=分析验证, 4=保留兼容旧任务
 _STAGE_NAMES = {
     0: "文档解析",
-    1: "类型提取",
+    1: "本体提取",
     2: "实体提取",
     3: "分析验证",
     4: "分析验证",  # 兼容旧 v2 任务（旧 step4 = 验证）
@@ -627,9 +629,9 @@ def _deduplicate_relations(relations: list) -> list:
 
 
 async def _background_extract_entity_types(job_id: str) -> None:
-    """后台任务：Step 1 实体类型提取（v3 类型层，LLM调用，支持长文档分批 + 断点续作）。
+    """后台任务：Step 1 本体提取（v3 类型层，LLM调用，支持长文档分批 + 断点续作）。
 
-    v3 重构：从文档提取实体类型（含层级 parent_entity_type_name + property_schema）
+    v3 重构：从文档提取本体（含层级 parent_entity_type_name + property_schema）
     + 类型间关系（EntityTypeRelation），注入粒度预设和阶段提示词。
     """
     job = build_jobs_db.get(job_id)
@@ -645,7 +647,7 @@ async def _background_extract_entity_types(job_id: str) -> None:
         # 已有完整 step1_entity_types 且无失败 → 直接结束（防重复跑）
         # 兼容旧任务：step1_entity_types 为空时回退检查 step1_concepts
         if not is_resume and (job.step1_entity_types or job.step1_concepts) and job.step1_failed_batch < 0:
-            _set_job_progress(job_id, -1, 100, "实体类型提取已完成")
+            _set_job_progress(job_id, -1, 100, "本体提取已完成")
             _mark_stage_finished(job_id, 1)
             return
 
@@ -694,7 +696,7 @@ async def _background_extract_entity_types(job_id: str) -> None:
             if idx >= len(job.step1_batch_results) or not job.step1_batch_results[idx]
         ]
         logger.info(
-            f"[{job_id}] Step1 实体类型提取：共 {total} 批，"
+            f"[{job_id}] Step1 本体提取：共 {total} 批，"
             f"{'续跑 ' + str(len(pending_indices)) + ' 批待处理' if is_resume else '首次全部 ' + str(len(pending_indices)) + ' 批'}"
             f"，并发 {config.LLM_CONCURRENCY}"
         )
@@ -705,14 +707,14 @@ async def _background_extract_entity_types(job_id: str) -> None:
             sem = asyncio.Semaphore(config.LLM_CONCURRENCY)
 
             async def _run_type_batch(idx: int):
-                """单批实体类型提取（并行任务单元）：调 LLM → 解析 v3 响应 → 持久化 → 推送 SSE。"""
+                """单批本体提取（并行任务单元）：调 LLM → 解析 v3 响应 → 持久化 → 推送 SSE。"""
                 async with sem:
                     batch_text = batches[idx] if idx < len(batches) else ""
                     messages = build_prompts.build_step1_batch_messages(
                         batch_text, job.name, job.meta_entity_types,
                         batch_idx=idx, total_batches=total,
                         granularity=job.granularity, stage_hint=stage_hint_1,
-                        template=job.template_snapshot, template_mode=job.template_mode
+                        template=job.ontology_model_snapshot, template_mode=job.ontology_model_mode
                     )
                     step1_max_tokens, step1_thinking = config.get_llm_params("step1")
                     raw_resp = await _llm_json_async(messages, temperature=0.3, max_tokens=step1_max_tokens, thinking_type=step1_thinking)
@@ -744,7 +746,7 @@ async def _background_extract_entity_types(job_id: str) -> None:
                     _set_job_progress(
                         job_id, 1,
                         10 + int(85 * done / max(total, 1)),
-                        f"已提取 {done}/{total} 批..." if total > 1 else "正在调用AI提取实体类型..."
+                        f"已提取 {done}/{total} 批..." if total > 1 else "正在调用AI提取本体..."
                     )
                     _emit_event(job_id, "batch_done", {
                         "batch_idx": idx,
@@ -758,8 +760,8 @@ async def _background_extract_entity_types(job_id: str) -> None:
 
             _set_job_progress(
                 job_id, 1, 10,
-                f"正在并行提取实体类型（{len(pending_indices)} 批，并发 {config.LLM_CONCURRENCY}）..."
-                if total > 1 else "正在调用AI提取实体类型..."
+                f"正在并行提取本体（{len(pending_indices)} 批，并发 {config.LLM_CONCURRENCY}）..."
+                if total > 1 else "正在调用AI提取本体..."
             )
             # 并行执行，return_exceptions=True 保证单批失败不影响其他批
             results = await asyncio.gather(
@@ -779,8 +781,8 @@ async def _background_extract_entity_types(job_id: str) -> None:
                     job.running_step = -1
                     job.progress = 0
                     job.step1_failed_batch = failed_idx
-                    job.step1_failed_reason = str(failed_exc)[:200]
-                    job.error_message = f"第 {failed_idx + 1}/{total} 批失败: {str(failed_exc)[:150]}"
+                    job.step1_failed_reason = str(failed_exc)[:500]
+                    job.error_message = f"第 {failed_idx + 1}/{total} 批失败: {str(failed_exc)[:500]}"
                     job.progress_message = (
                         f"第 {failed_idx + 1}/{total} 批失败，可点击继续提取续跑"
                         f"（其余 {succeeded} 批已成功）" if succeeded else f"第 {failed_idx + 1}/{total} 批失败，可点击继续提取续跑"
@@ -796,7 +798,7 @@ async def _background_extract_entity_types(job_id: str) -> None:
         all_et_relations = [etr for batch in job.step1_batch_relations_results for etr in batch]
         merged_types = _merge_entity_types(all_entity_types)
         merged_et_relations = _merge_entity_type_relations(all_et_relations)
-        # color 由后端按 entity_type 从元模型推导（LLM 不输出 color，避免不一致）
+        # color 由后端按 entity_type 从本体模型推导（LLM 不输出 color，避免不一致）
         _enrich_types_with_color(merged_types, job.meta_entity_types)
         async with build_lock:
             job.step1_entity_types = merged_types
@@ -806,7 +808,7 @@ async def _background_extract_entity_types(job_id: str) -> None:
             job.running_step = -1
             job.progress = 100
             job.progress_message = (
-                f"实体类型提取完成，共 {len(merged_types)} 个类型，"
+                f"本体提取完成，共 {len(merged_types)} 个类型，"
                 f"{len(merged_et_relations)} 条类型间关系"
                 + (f"（{total} 批合并）" if total > 1 else "")
             )
@@ -816,7 +818,7 @@ async def _background_extract_entity_types(job_id: str) -> None:
             save_build_jobs_index()
         _mark_stage_finished(job_id, 1)
         logger.info(
-            f"[{job_id}] 后台实体类型提取完成: {len(merged_types)} 个类型，"
+            f"[{job_id}] 后台本体提取完成: {len(merged_types)} 个类型，"
             f"{len(merged_et_relations)} 条类型间关系（{total} 批合并）"
         )
         # 推送 Step1 完成事件，前端据此启用"确认实体类型清单"按钮
@@ -828,7 +830,7 @@ async def _background_extract_entity_types(job_id: str) -> None:
             "total": len(merged_types)
         })
     except Exception as e:
-        logger.error(f"[{job_id}] 后台实体类型提取失败: {e}")
+        logger.error(f"[{job_id}] 后台本体提取失败: {e}")
         _mark_stage_finished(job_id, 1, success=False)
         async with build_lock:
             # 并行模式下失败批次不明确，标记第一个未完成批次
@@ -840,9 +842,9 @@ async def _background_extract_entity_types(job_id: str) -> None:
             job.running_step = -1
             job.progress = 0
             job.step1_failed_batch = failed_idx
-            job.step1_failed_reason = str(e)[:200]
-            job.error_message = f"实体类型提取异常: {str(e)[:150]}"
-            job.progress_message = f"实体类型提取异常，可点击继续提取续跑"
+            job.step1_failed_reason = str(e)[:500]
+            job.error_message = f"本体提取异常: {str(e)[:500]}"
+            job.progress_message = f"本体提取异常，可点击继续提取续跑"
             job.update_time = datetime.now()
             save_build_job(job_id)
         _emit_event(job_id, "error", {"step": 1, "message": job.error_message})
@@ -935,7 +937,7 @@ async def _background_extract_entities(job_id: str) -> None:
                         batch_text, job.name, concepts, job.meta_entity_types,
                         batch_idx=idx, total_batches=total,
                         granularity=job.granularity, stage_hint=stage_hint_2,
-                        template=job.template_snapshot, template_mode=job.template_mode
+                        template=job.ontology_model_snapshot, template_mode=job.ontology_model_mode
                     )
                     step2_max_tokens, step2_thinking = config.get_llm_params("step2")
                     raw_resp = await _llm_json_async(messages, temperature=0.3, max_tokens=step2_max_tokens, thinking_type=step2_thinking)
@@ -998,8 +1000,8 @@ async def _background_extract_entities(job_id: str) -> None:
                     job.running_step = -1
                     job.progress = 0
                     job.step2_failed_batch = failed_idx
-                    job.step2_failed_reason = str(failed_exc)[:200]
-                    job.error_message = f"第 {failed_idx + 1}/{total} 批失败: {str(failed_exc)[:150]}"
+                    job.step2_failed_reason = str(failed_exc)[:500]
+                    job.error_message = f"第 {failed_idx + 1}/{total} 批失败: {str(failed_exc)[:500]}"
                     job.progress_message = (
                         f"第 {failed_idx + 1}/{total} 批失败，可点击继续提取续跑"
                         f"（其余 {succeeded} 批已成功）" if succeeded else f"第 {failed_idx + 1}/{total} 批失败，可点击继续提取续跑"
@@ -1059,8 +1061,8 @@ async def _background_extract_entities(job_id: str) -> None:
             job.running_step = -1
             job.progress = 0
             job.step2_failed_batch = failed_idx
-            job.step2_failed_reason = str(e)[:200]
-            job.error_message = f"实体+关系提取异常: {str(e)[:150]}"
+            job.step2_failed_reason = str(e)[:500]
+            job.error_message = f"实体+关系提取异常: {str(e)[:500]}"
             job.progress_message = f"实体+关系提取异常，可点击继续提取续跑"
             job.update_time = datetime.now()
             save_build_job(job_id)
@@ -1172,7 +1174,7 @@ async def _background_build_relations(job_id: str) -> None:
                 messages = build_prompts.build_step3_group_messages(
                     group_entities, job.meta_relation_types,
                     group_idx=idx, total_groups=total, stage_hint=stage_hint_3,
-                    template=job.template_snapshot, template_mode=job.template_mode
+                    template=job.ontology_model_snapshot, template_mode=job.ontology_model_mode
                 )
                 step3_group_max_tokens, step3_group_thinking = config.get_llm_params("step3_group")
                 result = await _llm_json_async(messages, temperature=0.3, max_tokens=step3_group_max_tokens, thinking_type=step3_group_thinking)
@@ -1211,7 +1213,7 @@ async def _background_build_relations(job_id: str) -> None:
             cross_messages = build_prompts.build_step3_cross_group_messages(
                 entities_for_prompt, all_relations,
                 job.meta_relation_types, stage_hint=stage_hint_3,
-                template=job.template_snapshot, template_mode=job.template_mode
+                template=job.ontology_model_snapshot, template_mode=job.ontology_model_mode
             )
             try:
                 step3_cross_max_tokens, step3_cross_thinking = config.get_llm_params("step3_cross")
@@ -1283,13 +1285,13 @@ async def _background_build_relations(job_id: str) -> None:
             if job.step3_groups_done < job.step3_groups_total:
                 failed_idx = job.step3_groups_done
                 job.step3_failed_group = failed_idx
-                job.step3_failed_reason = str(e)[:200]
-                job.error_message = f"第 {failed_idx + 1}/{job.step3_groups_total} 组失败: {str(e)[:150]}"
+                job.step3_failed_reason = str(e)[:500]
+                job.error_message = f"第 {failed_idx + 1}/{job.step3_groups_total} 组失败: {str(e)[:500]}"
                 job.progress_message = f"第 {failed_idx + 1}/{job.step3_groups_total} 组失败，可点击继续从该组续跑"
             else:
                 job.step3_cross_group_failed = True
-                job.step3_cross_group_reason = str(e)[:200]
-                job.error_message = f"跨组关系补充失败: {str(e)[:150]}"
+                job.step3_cross_group_reason = str(e)[:500]
+                job.error_message = f"跨组关系补充失败: {str(e)[:500]}"
                 job.progress_message = "跨组关系补充失败，可点击继续重新补充跨组关系"
             job.update_time = datetime.now()
             save_build_job(job_id)
@@ -1328,7 +1330,7 @@ async def _background_verify_and_report(job_id: str) -> None:
         _set_job_progress(job_id, 3, 40, "正在调用AI做自检验证...")
         messages = build_prompts.build_step4_verification_messages(
             concepts, entities, relations, doc_text, stage_hint=stage_hint,
-            template=job.template_snapshot, template_mode=job.template_mode
+            template=job.ontology_model_snapshot, template_mode=job.ontology_model_mode
         )
         step4_max_tokens, step4_thinking = config.get_llm_params("step4")
         result = await _llm_json_async(messages, temperature=0.3, max_tokens=step4_max_tokens, thinking_type=step4_thinking)
@@ -1372,7 +1374,7 @@ async def _background_verify_and_report(job_id: str) -> None:
         async with build_lock:
             job.running_step = -1
             job.progress = 0
-            job.error_message = str(e)[:200]
+            job.error_message = str(e)[:500]
             job.progress_message = f"验证失败: {str(e)[:150]}"
             job.update_time = datetime.now()
             save_build_job(job_id)
@@ -1430,7 +1432,7 @@ def _generate_formal_ontology(job_id: str) -> str:
                 except Exception:
                     pass
         # v3：EntityType 不再有 entity_type 字段（自身 name 即类型名）
-        # 颜色优先取 LLM 输出，否则按 entity_type 名（兼容旧数据）从元模型推导
+        # 颜色优先取 LLM 输出，否则按 entity_type 名（兼容旧数据）从本体模型推导
         et_name_for_color = cd.get("entity_type", "") or cd.get("name", "")
         color = cd.get("color") or _derive_type_color(et_name_for_color, job.meta_entity_types)
         new_entity_types.append(EntityType(
@@ -1475,7 +1477,7 @@ def _generate_formal_ontology(job_id: str) -> str:
             create_time=now, update_time=now,
         ))
 
-    # ── 推导 relation_types（去重的类型名集合，供元模型展示）──
+    # ── 推导 relation_types（去重的类型名集合，供本体展示）──
     rt_names = set()
     for etr in new_et_relations:
         if etr.relation_type:
@@ -1493,7 +1495,7 @@ def _generate_formal_ontology(job_id: str) -> str:
 
     ont = OntologyModel(
         id=new_oid, name=job.name, description=job.description, version="1.0.0",
-        entity_types=new_entity_types,       # v3：entity_types 即类型层（不再是元模型粗分类）
+        entity_types=new_entity_types,       # v3：entity_types 即类型层（不再是本体模型粗分类）
         relation_types=relation_types,
         create_time=now, update_time=now, status="活跃",
         schema_version=SCHEMA_VERSION,
@@ -1790,69 +1792,69 @@ def save_index() -> None:
         atomic_write_json(INDEX_FILE, data)
 
 
-# ---------- 本体模板持久化 ----------
-# 模板：从已有本体抽取的 schema 层（元模型 + 实体类型类 + 属性骨架），不含实例
+# ---------- 本体模型持久化 ----------
+# 本体模型：从已有本体抽取的 schema 层（本体模型 + 实体类型类 + 属性骨架），不含实例
 # 复刻 ontologies_db 的双层存储模式（独立文件 + 索引 + .bak 备份 + 文件锁）
-TEMPLATES_DIR = os.path.join(DATA_DIR, 'ontology_templates')
-TEMPLATES_INDEX = os.path.join(TEMPLATES_DIR, 'index.json')
-os.makedirs(TEMPLATES_DIR, exist_ok=True)
+ONTOLOGY_MODELS_DIR = os.path.join(DATA_DIR, 'ontology_template_models')
+ONTOLOGY_MODELS_INDEX = os.path.join(ONTOLOGY_MODELS_DIR, 'index.json')
+os.makedirs(ONTOLOGY_MODELS_DIR, exist_ok=True)
 
-# 内存字典：template_id -> TemplateModel
-templates_db: Dict[str, TemplateModel] = {}
-# 协程锁：保护 templates_db 并发写
-templates_lock = __import__('asyncio').Lock()
-
-
-def _template_file(template_id: str) -> str:
-    """模板数据文件路径。template_id 已含 tpl_ 前缀。"""
-    return os.path.join(TEMPLATES_DIR, f'template_{template_id}.json')
+# 内存字典：ontology_model_id -> OntologyTemplateModel
+ontology_models_db: Dict[str, OntologyTemplateModel] = {}
+# 协程锁：保护 ontology_models_db 并发写
+ontology_models_lock = __import__('asyncio').Lock()
 
 
-def save_template(template_id: str) -> None:
-    """持久化单个模板。"""
-    tpl = templates_db.get(template_id)
+def _ontology_model_file(ontology_model_id: str) -> str:
+    """本体模型数据文件路径。ontology_model_id 已含 tpl_ 前缀。"""
+    return os.path.join(ONTOLOGY_MODELS_DIR, f'ontology_model_{ontology_model_id}.json')
+
+
+def save_ontology_model(ontology_model_id: str) -> None:
+    """持久化单个本体模型。"""
+    tpl = ontology_models_db.get(ontology_model_id)
     if not tpl:
         return
-    with FileLock(_lock_path(f'template_{template_id}')):
-        atomic_write_json(_template_file(template_id), tpl.dict())
+    with FileLock(_lock_path(f'ontology_model_{ontology_model_id}')):
+        atomic_write_json(_ontology_model_file(ontology_model_id), tpl.dict())
 
 
-def save_templates_index() -> None:
-    """持久化模板列表索引。"""
-    data = [t.dict() for t in templates_db.values()]
-    with FileLock(_lock_path('templates_index')):
-        atomic_write_json(TEMPLATES_INDEX, data)
+def save_ontology_models_index() -> None:
+    """持久化本体模型列表索引。"""
+    data = [t.dict() for t in ontology_models_db.values()]
+    with FileLock(_lock_path('ontology_models_index')):
+        atomic_write_json(ONTOLOGY_MODELS_INDEX, data)
 
 
-def load_templates() -> None:
-    """启动时加载所有模板到内存（v3 兼容：旧 concepts 字段迁移到 entity_types）。"""
-    global templates_db
-    templates_db = {}
-    index = load_json_with_backup(TEMPLATES_INDEX, [])
+def load_ontology_models() -> None:
+    """启动时加载所有本体模型到内存（v3 兼容：旧 concepts 字段迁移到 entity_types）。"""
+    global ontology_models_db
+    ontology_models_db = {}
+    index = load_json_with_backup(ONTOLOGY_MODELS_INDEX, [])
     if not isinstance(index, list):
         index = []
     for item in index:
-        # v3 运行时迁移：旧模板有 concepts 字段而无 entity_types，迁移到 entity_types
+        # v3 运行时迁移：旧本体模型有 concepts 字段而无 entity_types，迁移到 entity_types
         if "concepts" in item and not item.get("entity_types"):
             item["entity_types"] = item.pop("concepts")
         try:
-            tpl = TemplateModel(**item)
-            templates_db[tpl.id] = tpl
+            tpl = OntologyTemplateModel(**item)
+            ontology_models_db[tpl.id] = tpl
         except Exception as e:
-            logger.warning(f"模板解析失败，跳过: {e}")
-    logger.info(f"加载完成: {len(templates_db)} 个本体模板")
+            logger.warning(f"本体模型解析失败，跳过: {e}")
+    logger.info(f"加载完成: {len(ontology_models_db)} 个本体模型")
 
 
-def _get_template_or_404(template_id: str) -> TemplateModel:
-    """获取模板，不存在则抛 404。"""
-    tpl = templates_db.get(template_id)
+def _get_ontology_model_or_404(ontology_model_id: str) -> OntologyTemplateModel:
+    """获取本体模型，不存在则抛 404。"""
+    tpl = ontology_models_db.get(ontology_model_id)
     if not tpl:
-        raise HTTPException(status_code=404, detail="本体模板不存在")
+        raise HTTPException(status_code=404, detail="本体模型不存在")
     return tpl
 
 
-def _template_summary(tpl: TemplateModel) -> Dict[str, Any]:
-    """返回模板摘要（v3：含实体类型数和类型间关系数，不含完整 property_schema 以减小体积）。"""
+def _ontology_model_summary(tpl: OntologyTemplateModel) -> Dict[str, Any]:
+    """返回本体模型摘要（v3：含实体类型数和类型间关系数，不含完整 property_schema 以减小体积）。"""
     return {
         "id": tpl.id,
         "name": tpl.name,
@@ -1870,8 +1872,8 @@ def _template_summary(tpl: TemplateModel) -> Dict[str, Any]:
     }
 
 
-def _extract_template_from_ontology(ontology_id: str, name: str, description: str) -> TemplateModel:
-    """从已有本体抽取 schema 层生成模板（丢弃实例）。
+def _extract_ontology_model_from_ontology(ontology_id: str, name: str, description: str) -> OntologyTemplateModel:
+    """从已有本体抽取 schema 层生成本体模型（丢弃实例）。
 
     v3：
     - entity_types：从 entity_types_db（EntityType 列表）抽取为 TemplateEntityTypeSchema
@@ -1910,17 +1912,17 @@ def _extract_template_from_ontology(ontology_id: str, name: str, description: st
             relation_type=etr.relation_type,
             description=etr.description,
         ))
-    return TemplateModel(
+    return OntologyTemplateModel(
         id=f"tpl_{uuid.uuid4().hex[:8]}",
-        name=name or f"{ont.name} 的模板",
-        description=description or f"从本体「{ont.name}」抽取的 schema 模板",
+        name=name or f"{ont.name} 的本体模型",
+        description=description or f"从本体「{ont.name}」抽取的 schema 本体模型",
         version="1.0.0",
         entity_types=tpl_entity_types,
         relation_types=list(ont.relation_types),
         entity_type_relations=tpl_et_relations,
-        # 兼容旧代码读取 template.concepts：TemplateModel 已无 concepts 字段，
+        # 兼容旧代码读取 template.concepts：OntologyTemplateModel 已无 concepts 字段，
         # 但旧代码（如 build_prompts._template_hint_text）仍读 template.get("concepts")。
-        # _template_summary 会处理这个兼容。
+        # _ontology_model_summary 会处理这个兼容。
         source_ontology_id=ontology_id,
         create_time=now,
         update_time=now,
@@ -2223,7 +2225,7 @@ def _get_ontology_or_404(ontology_id: str) -> OntologyModel:
     """获取本体，不存在则抛 404。"""
     ont = ontologies_db.get(ontology_id)
     if not ont:
-        raise HTTPException(status_code=404, detail="本体模型不存在")
+        raise HTTPException(status_code=404, detail="本体不存在")
     return ont
 
 
@@ -2295,9 +2297,9 @@ def _validate_instance_of(ontology_id: str, instance_of: str) -> None:
 
 
 def _validate_entity_type(ontology_id: str, entity_type: str) -> None:
-    """校验实体类型在本体元模型定义内（向后兼容，保留给旧 API 使用）。
+    """校验实体类型在本体的本体模型定义内（向后兼容，保留给旧 API 使用）。
 
-    新 API 应使用 instance_of 指向 ConceptType，此函数仅用于元模型类型校验。
+    新 API 应使用 instance_of 指向 ConceptType，此函数仅用于本体模型类型校验。
     """
     ont = ontologies_db.get(ontology_id)
     if not ont:
@@ -2311,7 +2313,7 @@ def _validate_entity_type(ontology_id: str, entity_type: str) -> None:
 
 
 def _validate_relation_type(ontology_id: str, relation_type: str) -> None:
-    """校验关系类型在本体元模型定义内。"""
+    """校验关系类型在本体的本体模型定义内。"""
     ont = ontologies_db.get(ontology_id)
     if not ont:
         return
@@ -2326,7 +2328,7 @@ def _validate_relation_type(ontology_id: str, relation_type: str) -> None:
 # 启动时加载数据
 load_db()
 load_build_jobs()
-load_templates()
+load_ontology_models()
 
 
 @app.on_event("startup")
@@ -2337,7 +2339,7 @@ async def _retry_pending_build_jobs():
     - step3 已确认 + step4 未完成 → 重试 step4（验证+报告）
     - step2 已确认 + step3 未完成 → 重试 step3（关系建模）
     - step1 已确认 + step2 未完成 → 重试 step2（实体提取）
-    - meta 已确认 + step1 未完成 → 重试 step1（实体类型提取）
+    - meta 已确认 + step1 未完成 → 重试 step1（本体提取）
     """
     if not _pending_retries:
         return
@@ -2370,7 +2372,7 @@ async def _retry_pending_build_jobs():
             task = asyncio.create_task(_background_extract_entities(job_id))
             _background_tasks[job_id] = task
         elif job.meta_confirmed and not job.step1_confirmed:
-            logger.info(f"[{job_id}] 自动重试 step1（实体类型提取）")
+            logger.info(f"[{job_id}] 自动重试 step1（本体提取）")
             _set_job_progress(job_id, 1, 5, "服务重启后自动重试...")
             task = asyncio.create_task(_background_extract_entity_types(job_id))
             _background_tasks[job_id] = task
@@ -2632,7 +2634,7 @@ def _build_ontology_context(ontology_id: str, question: str = "", top_k: int = 2
 @app.get("/")
 async def root():
     return {
-        "service": "本体模型服务",
+        "service": "本体服务",
         "version": "2.0.0",
         "status": "running"
     }
@@ -2651,7 +2653,7 @@ async def create_ontology(
     relation_types: str = Form(""),
     status: str = Form("活跃")
 ):
-    """创建本体模型。
+    """创建本体。
 
     Args:
         name: 本体名称
@@ -2668,7 +2670,7 @@ async def create_ontology(
         rt_list = DEFAULT_RELATION_TYPES
 
     now = datetime.now()
-    # v3：entity_types 参数即类型层（EntityType 列表），不再有独立元模型层
+    # v3：entity_types 参数即类型层（EntityType 列表），不再有独立本体模型层
     # 前端传 [{name, color, description, property_schema, parent_entity_type_name, ...}]
     new_entity_types = []
     for t in et_list:
@@ -2720,14 +2722,14 @@ async def create_ontology(
 
     return {
         "success": True,
-        "message": "本体模型创建成功",
+        "message": "本体创建成功",
         "data": _ontology_summary(ontology)
     }
 
 
 @app.get("/ontology/list")
 async def list_ontologies():
-    """列出所有本体模型。"""
+    """列出所有本体。"""
     items = [_ontology_summary(o) for o in ontologies_db.values()]
     return {
         "success": True,
@@ -2763,7 +2765,7 @@ async def get_stats():
             "total_relations": total_relations,
             "total_concepts": total_concepts,
             "total_ontologies": len(ontologies_db),
-            "total_meta_models": len(templates_db),
+            "total_ontology_models": len(ontology_models_db),
             "entity_types": dict(entity_types),
             "relation_types": dict(relation_types),
             "avg_relations_per_entity": total_relations / total_entities if total_entities else 0
@@ -2771,17 +2773,17 @@ async def get_stats():
     }
 
 
-# ---------- 元模型（本体模板）CRUD ----------
-# 路由顺序：所有 /ontology/meta-model/* 静态路由必须声明在 /ontology/{ontology_id} 之前，
-# 否则 "meta-model" 会被捕获为 ontology_id 路径参数。
-# 子顺序：/ontology/meta-model/list 必须在 /ontology/meta-model/{meta_model_id} 之前，
-# 否则 "list" 会被捕获为 meta_model_id。
+# ---------- 本体模型 CRUD ----------
+# 路由顺序：所有 /ontology/ontology-model/* 静态路由必须声明在 /ontology/{ontology_id} 之前，
+# 否则 "ontology-model" 会被捕获为 ontology_id 路径参数。
+# 子顺序：/ontology/ontology-model/list 必须在 /ontology/ontology-model/{ontology_model_id} 之前，
+# 否则 "list" 会被捕获为 ontology_model_id。
 
 
-@app.get("/ontology/meta-model/list")
-async def list_templates():
-    """列出所有元模型（summary）。"""
-    items = [_template_summary(t) for t in templates_db.values()]
+@app.get("/ontology/ontology-model/list")
+async def list_ontology_models():
+    """列出所有本体模型（summary）。"""
+    items = [_ontology_model_summary(t) for t in ontology_models_db.values()]
     items.sort(key=lambda x: x["update_time"], reverse=True)
     return {
         "success": True,
@@ -2790,8 +2792,8 @@ async def list_templates():
     }
 
 
-@app.post("/ontology/meta-model")
-async def create_template(
+@app.post("/ontology/ontology-model")
+async def create_ontology_model(
     name: str = Form(...),
     description: str = Form(""),
     entity_types: str = Form(""),
@@ -2799,10 +2801,10 @@ async def create_template(
     concepts: str = Form(""),
     entity_type_relations: str = Form("")
 ):
-    """手动向导独立创建元模型（v3）。
+    """手动向导独立创建本体模型（v3）。
 
     Args:
-        name: 元模型名称
+        name: 本体模型名称
         description: 描述
         entity_types: v3 实体类型 schema JSON，如 [{"name":"企业","color":"#xxx",
                       "property_schema":[...], "parent_entity_type_name":"..."}]
@@ -2846,7 +2848,7 @@ async def create_template(
             description=etr.get("description", ""),
         ))
 
-    template = TemplateModel(
+    template = OntologyTemplateModel(
         id=f"tpl_{uuid.uuid4().hex[:8]}",
         name=name,
         description=description,
@@ -2860,47 +2862,47 @@ async def create_template(
         is_builtin=False,
     )
 
-    async with templates_lock:
-        templates_db[template.id] = template
-        save_template(template.id)
-        save_templates_index()
+    async with ontology_models_lock:
+        ontology_models_db[template.id] = template
+        save_ontology_model(template.id)
+        save_ontology_models_index()
 
     return {
         "success": True,
-        "message": "模板创建成功",
-        "data": _template_summary(template),
+        "message": "本体模型创建成功",
+        "data": _ontology_model_summary(template),
     }
 
 
-@app.post("/ontology/meta-model/save-from-ontology/{ontology_id}")
-async def save_template_from_ontology(
+@app.post("/ontology/ontology-model/save-from-ontology/{ontology_id}")
+async def save_ontology_model_from_ontology(
     ontology_id: str,
     name: str = Form(""),
     description: str = Form("")
 ):
-    """从已有本体另存为元模型（抽取 schema 层，丢弃实例）。"""
-    template = _extract_template_from_ontology(ontology_id, name, description)
-    async with templates_lock:
-        templates_db[template.id] = template
-        save_template(template.id)
-        save_templates_index()
+    """从已有本体另存为本体模型（抽取 schema 层，丢弃实例）。"""
+    template = _extract_ontology_model_from_ontology(ontology_id, name, description)
+    async with ontology_models_lock:
+        ontology_models_db[template.id] = template
+        save_ontology_model(template.id)
+        save_ontology_models_index()
     return {
         "success": True,
-        "message": "模板创建成功",
-        "data": _template_summary(template),
+        "message": "本体模型创建成功",
+        "data": _ontology_model_summary(template),
     }
 
 
-@app.get("/ontology/meta-model/{meta_model_id}")
-async def get_template(meta_model_id: str):
-    """元模型详情（含完整 concepts 与 property_schema）。"""
-    tpl = _get_template_or_404(meta_model_id)
+@app.get("/ontology/ontology-model/{ontology_model_id}")
+async def get_ontology_model(ontology_model_id: str):
+    """本体模型详情（含完整 concepts 与 property_schema）。"""
+    tpl = _get_ontology_model_or_404(ontology_model_id)
     return {"success": True, "data": tpl.dict()}
 
 
-@app.put("/ontology/meta-model/{meta_model_id}")
-async def update_template(
-    meta_model_id: str,
+@app.put("/ontology/ontology-model/{ontology_model_id}")
+async def update_ontology_model(
+    ontology_model_id: str,
     name: str = Form(""),
     description: str = Form(""),
     entity_types: str = Form(""),
@@ -2908,8 +2910,8 @@ async def update_template(
     concepts: str = Form(""),
     entity_type_relations: str = Form("")
 ):
-    """更新元模型字段（传空字符串的字段保持原值，v3）。"""
-    tpl = _get_template_or_404(meta_model_id)
+    """更新本体模型字段（传空字符串的字段保持原值，v3）。"""
+    tpl = _get_ontology_model_or_404(ontology_model_id)
     if name:
         tpl.name = name
     if description:
@@ -2949,34 +2951,34 @@ async def update_template(
             ))
     tpl.update_time = datetime.now()
 
-    async with templates_lock:
-        templates_db[tpl.id] = tpl
-        save_template(tpl.id)
-        save_templates_index()
+    async with ontology_models_lock:
+        ontology_models_db[tpl.id] = tpl
+        save_ontology_model(tpl.id)
+        save_ontology_models_index()
 
     return {
         "success": True,
-        "message": "模板更新成功",
-        "data": _template_summary(tpl),
+        "message": "本体模型更新成功",
+        "data": _ontology_model_summary(tpl),
     }
 
 
-@app.delete("/ontology/meta-model/{meta_model_id}")
-async def delete_template(meta_model_id: str):
-    """删除元模型（不影响已基于该元模型创建的本体/任务）。"""
-    _get_template_or_404(meta_model_id)
-    async with templates_lock:
-        templates_db.pop(meta_model_id, None)
-        save_templates_index()
+@app.delete("/ontology/ontology-model/{ontology_model_id}")
+async def delete_ontology_model(ontology_model_id: str):
+    """删除本体模型（不影响已基于该本体模型创建的本体/任务）。"""
+    _get_ontology_model_or_404(ontology_model_id)
+    async with ontology_models_lock:
+        ontology_models_db.pop(ontology_model_id, None)
+        save_ontology_models_index()
         # 删除独立文件（含 .bak）
         for suffix in ('', '.bak'):
-            p = _template_file(meta_model_id) + suffix
+            p = _ontology_model_file(ontology_model_id) + suffix
             if os.path.exists(p):
                 try:
                     os.remove(p)
                 except Exception as e:
-                    logger.warning(f"删除模板文件失败 {p}: {e}")
-    return {"success": True, "message": "模板已删除"}
+                    logger.warning(f"删除本体模型文件失败 {p}: {e}")
+    return {"success": True, "message": "本体模型已删除"}
 
 
 @app.get("/ontology/{ontology_id}")
@@ -2997,7 +2999,7 @@ async def update_ontology(
     entity_types: str = Form(""),
     relation_types: str = Form("")
 ):
-    """更新本体元信息与元模型类型定义。"""
+    """更新本体元信息与本体模型类型定义。"""
     async with db_lock:
         ont = _get_ontology_or_404(ontology_id)
         ont.name = name
@@ -3012,7 +3014,7 @@ async def update_ontology(
         save_ontology(ontology_id)
         save_index()
 
-    return {"success": True, "message": "本体模型更新成功"}
+    return {"success": True, "message": "本体更新成功"}
 
 
 @app.delete("/ontology/{ontology_id}")
@@ -3020,7 +3022,7 @@ async def delete_ontology(ontology_id: str):
     """删除本体及其下属的所有实体类型/实体/关系（仅删该本体，不影响其他本体）。"""
     async with db_lock:
         if ontology_id not in ontologies_db:
-            raise HTTPException(status_code=404, detail="本体模型不存在")
+            raise HTTPException(status_code=404, detail="本体不存在")
         ontologies_db.pop(ontology_id)
         entity_types_db.pop(ontology_id, None)
         entity_type_relations_db.pop(ontology_id, None)   # v3：清理类型间关系
@@ -3035,12 +3037,12 @@ async def delete_ontology(ontology_id: str):
                     os.remove(path + '.bak')
                 os.rename(path, path + '.bak')
 
-    return {"success": True, "message": "本体模型删除成功"}
+    return {"success": True, "message": "本体删除成功"}
 
 
 @app.get("/ontology/{ontology_id}/meta")
 async def get_ontology_meta(ontology_id: str):
-    """获取本体的元模型（实体类型/关系类型/类型间关系），供前端表单下拉使用。
+    """获取本体的类型定义（实体类型/关系类型/类型间关系），供前端表单下拉使用。
 
     v3：返回 entity_type_relations 供手动构建页展示类型层关系。
     """
@@ -3268,7 +3270,7 @@ async def list_entity_types(
     ontology_id: str,
     entity_type: Optional[str] = None
 ):
-    """列出某本体的所有实体类型（类型定义），支持按元模型 entity_type 筛选。"""
+    """列出某本体的所有实体类型（类型定义），支持按本体 entity_type 筛选。"""
     _get_ontology_or_404(ontology_id)
     types = entity_types_db.get(ontology_id, [])
     if entity_type:
@@ -3280,7 +3282,7 @@ async def list_entity_types(
 async def add_entity_type(
     ontology_id: str,
     name: str = Form(...),
-    entity_type: str = Form(""),                   # v2 兼容（元模型类型名），v3 中 EntityType 自身即类型
+    entity_type: str = Form(""),                   # v2 兼容（本体类型名），v3 中 EntityType 自身即类型
     description: str = Form(""),
     color: str = Form(""),
     property_schema: str = Form("[]"),             # JSON 数组
@@ -4287,7 +4289,7 @@ async def import_ontology(file: UploadFile = File(...)):
 
 @app.get("/ontology/export/{ontology_id}")
 async def export_ontology(ontology_id: str):
-    """导出本体为 JSON（含元模型 + 实体类型 + 实体 + 关系）。"""
+    """导出本体为 JSON（含本体元信息 + 实体类型 + 实体 + 关系）。"""
     ont = _get_ontology_or_404(ontology_id)
     data = {
         "name": ont.name,
@@ -4421,12 +4423,13 @@ async def build_upload(
     2. 创建 BuildJob（step=0，source_text 为空，携带 granularity + stage_hints）
     3. 持久化任务，返回 job_id
 
-    文档解析 + 元模型推荐由「文档解析」阶段（POST /ontology/build/{job_id}/parse）
+    文档解析 + 本体模型推荐由「文档解析」阶段（POST /ontology/build/{job_id}/parse）
     在后台异步执行，上传接口只负责落盘与建任务，确保前端点「开始构建」后立即跳转。
 
     Args:
         granularity: 粒度预设 coarse|medium|fine，控制后续提取数量
         stage_hints: JSON 字符串，形如 {"1":"重点关注财务指标","2":"..."}，注入各阶段 prompt
+        template_id: 兼容旧前端字段，等同 ontology_model_id（本体模型ID）
     """
     # 1. 读取原始文件内容
     content = await file.read()
@@ -4463,17 +4466,19 @@ async def build_upload(
         update_time=now,
     )
 
-    # 2.5 载入元模型：upload 时一次性快照（防元模型后续被改/删影响进行中任务）
-    if template_id:
+    # 2.5 载入本体模型：upload 时一次性快照（防本体模型后续被改/删影响进行中任务）
+    # 兼容旧前端字段 template_id（等同 ontology_model_id）
+    ontology_model_id = template_id
+    if ontology_model_id:
         try:
-            tpl = _get_template_or_404(template_id)
-            job.template_id = tpl.id
-            job.template_snapshot = tpl.dict()
-            # 选择了元模型即视为强制约束（后续可在构建配置阶段调整/清除）
-            job.template_mode = "hard_constraint"
+            tpl = _get_ontology_model_or_404(ontology_model_id)
+            job.ontology_model_id = tpl.id
+            job.ontology_model_snapshot = tpl.dict()
+            # 选择了本体模型即视为强制约束（后续可在构建配置阶段调整/清除）
+            job.ontology_model_mode = "hard_constraint"
         except HTTPException as e:
-            # 元模型不存在不阻塞上传，仅告警
-            logger.warning(f"build_upload: 元模型 {template_id} 不存在，忽略: {e.detail}")
+            # 本体模型不存在不阻塞上传，仅告警
+            logger.warning(f"build_upload: 本体模型 {ontology_model_id} 不存在，忽略: {e.detail}")
 
     # 3. 持久化源文件（供「文档解析」阶段读取）+ 持久化任务
     source_path = os.path.join(BUILD_JOBS_DIR, f'{job_id}_source')
@@ -4492,19 +4497,21 @@ async def build_upload(
             "job_id": job_id,
             "granularity": job.granularity,
             "stage_hints": job.stage_hints,
-            "template_id": job.template_id,
-            "template_name": (job.template_snapshot or {}).get("name", ""),
+            "template_id": job.ontology_model_id,        # 兼容旧前端字段名
+            "ontology_model_id": job.ontology_model_id,
+            "template_name": (job.ontology_model_snapshot or {}).get("name", ""),     # 兼容旧前端字段名
+            "ontology_model_name": (job.ontology_model_snapshot or {}).get("name", ""),
         }
     }
 
 
 async def _background_parse_document(job_id: str) -> None:
-    """后台任务：阶段 0「文档解析」——解析文档 + 推荐元模型。
+    """后台任务：阶段 0「文档解析」——解析文档 + 推荐本体模型。
 
     上传时只落盘了源文件与任务骨架，此任务在此真正解析文档：
     1. 读取持久化源文件 → extract_text → truncate_for_llm
     2. 写入 source_text / char_count
-    3. 调用 LLM 推荐元模型（失败用默认元模型兜底）
+    3. 调用 LLM 推荐本体模型（失败用默认本体模型兜底）
     4. 标记阶段 0 完成，广播 parse_done 事件
     """
     job = build_jobs_db.get(job_id)
@@ -4521,15 +4528,15 @@ async def _background_parse_document(job_id: str) -> None:
         doc_text = extract_text(source_path, job.source_filename)
 
         if not doc_text or len(doc_text.strip()) < 20:
-            raise ValueError("文档内容为空或过短，无法提取实体类型")
+            raise ValueError("文档内容为空或过短，无法提取本体")
 
         # 2. 截断供 LLM 使用（source_text 保留完整原文）
         doc_text_truncated = truncate_for_llm(doc_text)
 
-        # 3. LLM 推荐元模型（失败用默认兜底，不阻塞解析完成）
+        # 3. LLM 推荐本体模型（失败用默认兜底，不阻塞解析完成）
         meta_source = "llm"
         try:
-            messages = build_prompts.build_meta_messages(doc_text_truncated, job.name, template=job.template_snapshot, template_mode=job.template_mode)
+            messages = build_prompts.build_meta_messages(doc_text_truncated, job.name, template=job.ontology_model_snapshot, template_mode=job.ontology_model_mode)
             meta_max_tokens, meta_thinking = config.get_llm_params("meta")
             meta = await _llm_json_async(messages, temperature=0.3, max_tokens=meta_max_tokens, thinking_type=meta_thinking)
             job.meta_entity_types = meta.get("entity_types", [])
@@ -4540,16 +4547,30 @@ async def _background_parse_document(job_id: str) -> None:
             if not job.meta_relation_types:
                 job.meta_relation_types = [{"name": t["name"]} for t in DEFAULT_RELATION_TYPES]
         except Exception as e:
-            logger.warning(f"LLM 推荐元模型失败，使用默认元模型: {e}")
+            logger.warning(f"LLM 推荐本体模型失败，使用默认本体模型: {e}")
             job.meta_entity_types = [{"name": t["name"], "color": t.get("color", "#5470c6")}
                                      for t in DEFAULT_ENTITY_TYPES]
             job.meta_relation_types = [{"name": t["name"]} for t in DEFAULT_RELATION_TYPES]
             meta_source = "default（LLM 调用失败）"
 
-        # 4. 落库解析结果
+        # 4. 落库解析结果 + 预估分批数
+        # 预计算 step1/step2 分批数（与实际分批逻辑一致，用于前端在解析阶段即展示"将分 N 批"）
+        if len(doc_text) <= config.STEP1_BATCH_THRESHOLD_CHARS:
+            est_step1_batches = 1
+        else:
+            est_step1_batches = len(split_into_batches(
+                doc_text, max_chars=config.STEP1_BATCH_MAX_CHARS, overlap=config.STEP1_BATCH_OVERLAP))
+        if len(doc_text) <= config.STEP2_BATCH_THRESHOLD_CHARS:
+            est_step2_batches = 1
+        else:
+            est_step2_batches = len(split_into_batches(
+                doc_text, max_chars=config.STEP2_BATCH_MAX_CHARS, overlap=config.STEP2_BATCH_OVERLAP))
+
         async with build_lock:
             job.source_text = doc_text
             job.char_count = len(doc_text)
+            job.estimated_step1_batches = est_step1_batches
+            job.estimated_step2_batches = est_step2_batches
             job.error_message = ""  # 解析成功，清除历史错误（如服务重启中断标记）
             job.update_time = datetime.now()
             save_build_job(job_id)
@@ -4563,6 +4584,8 @@ async def _background_parse_document(job_id: str) -> None:
             "meta_source": meta_source,
             "meta_entity_types": job.meta_entity_types,
             "meta_relation_types": job.meta_relation_types,
+            "estimated_step1_batches": est_step1_batches,
+            "estimated_step2_batches": est_step2_batches,
         })
     except Exception as e:
         logger.exception(f"[{job_id}] 文档解析失败: {e}")
@@ -4579,7 +4602,7 @@ async def _background_parse_document(job_id: str) -> None:
 
 @app.post("/ontology/build/{job_id}/parse")
 async def build_parse(job_id: str):
-    """阶段 0「文档解析」：解析上传的文档 + 推荐元模型（后台异步执行）。
+    """阶段 0「文档解析」：解析上传的文档 + 推荐本体模型（后台异步执行）。
 
     立即返回，前端通过 SSE 订阅 parse_done/error 事件。
     """
@@ -4693,8 +4716,10 @@ async def build_list():
                 "error_message": j.error_message,
                 "char_count": j.char_count,
                 "ontology_id": j.ontology_id,
-                "template_id": j.template_id,
-                "template_name": (j.template_snapshot or {}).get("name", ""),
+                "template_id": j.ontology_model_id,           # 兼容旧前端字段名
+                "ontology_model_id": j.ontology_model_id,
+                "template_name": (j.ontology_model_snapshot or {}).get("name", ""),  # 兼容旧前端字段名
+                "ontology_model_name": (j.ontology_model_snapshot or {}).get("name", ""),
                 "create_time": j.create_time.isoformat(),
                 "update_time": j.update_time.isoformat(),
             }
@@ -4728,9 +4753,11 @@ async def build_progress(job_id: str):
             "step3_confirmed": job.step3_confirmed,
             "step4_confirmed": job.step4_confirmed,
             "ontology_id": job.ontology_id,
-            "template_id": job.template_id,
-            "template_name": (job.template_snapshot or {}).get("name", ""),
-            # Step 1 实体类型提取分批状态
+            "template_id": job.ontology_model_id,           # 兼容旧前端字段名
+            "ontology_model_id": job.ontology_model_id,
+            "template_name": (job.ontology_model_snapshot or {}).get("name", ""),  # 兼容旧前端字段名
+            "ontology_model_name": (job.ontology_model_snapshot or {}).get("name", ""),
+            # Step 1 本体提取分批状态
             "step1_batches_total": job.step1_batches_total,
             "step1_batches_done": job.step1_batches_done,
             "step1_failed_batch": job.step1_failed_batch,
@@ -4738,6 +4765,9 @@ async def build_progress(job_id: str):
             "step2_batches_total": job.step2_batches_total,
             "step2_batches_done": job.step2_batches_done,
             "step2_failed_batch": job.step2_failed_batch,
+            # 预估分批数（step0 解析后预计算，step1/2 实际运行前供前端展示）
+            "estimated_step1_batches": job.estimated_step1_batches,
+            "estimated_step2_batches": job.estimated_step2_batches,
             # Step 3 关系建模分组状态
             "step3_groups_total": job.step3_groups_total,
             "step3_groups_done": job.step3_groups_done,
@@ -4890,8 +4920,9 @@ async def build_get(job_id: str):
     """查询构建任务详情（断点续作用）。"""
     job = _get_job_or_404(job_id)
     data = job.dict()
-    # 顶层补充 template_name 便于前端展示（template_snapshot 已含完整模板）
-    data["template_name"] = (job.template_snapshot or {}).get("name", "")
+    # 顶层补充 template_name / ontology_model_name 便于前端展示（ontology_model_snapshot 已含完整本体模型）
+    data["template_name"] = (job.ontology_model_snapshot or {}).get("name", "")  # 兼容旧前端字段名
+    data["ontology_model_name"] = (job.ontology_model_snapshot or {}).get("name", "")
     return {"success": True, "data": data}
 
 
@@ -5031,16 +5062,17 @@ async def build_confirm_meta(
     template_id: str = Form(""),
     template_mode: str = Form("")
 ):
-    """用户确认或编辑元模型 + 粒度 + 阶段提示词 + 模板。
+    """用户确认或编辑本体模型 + 粒度 + 阶段提示词 + 本体模型。
 
-    确认后元模型、粒度、阶段提示词固定，后续 step1/step2/step3 的 LLM 调用遵守此约束。
-    entity_types / relation_types 未传时沿用 upload 阶段已生成的元模型（兼容前端不重新编辑元模型的场景）。
+    确认后本体模型、粒度、阶段提示词固定，后续 step1/step2/step3 的 LLM 调用遵守此约束。
+    entity_types / relation_types 未传时沿用 upload 阶段已生成的本体模型（兼容前端不重新编辑本体模型的场景）。
+    template_id / template_mode 兼容旧前端字段，等同 ontology_model_id / ontology_model_mode。
     """
     job = _get_job_or_404(job_id)
     if job.status == "completed":
         raise HTTPException(status_code=400, detail="任务已完成，不可修改")
 
-    # 元模型可缺省：未传或为空时沿用 upload 阶段 LLM 推荐的元模型
+    # 本体模型可缺省：未传或为空时沿用 upload 阶段 LLM 推荐的本体模型
     et_list = _parse_json_arg(entity_types, None)
     rt_list = _parse_json_arg(relation_types, None)
     if not isinstance(et_list, list) or not et_list:
@@ -5065,21 +5097,24 @@ async def build_confirm_meta(
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"stage_hints 解析失败，忽略: {e}")
 
-    # 模板配置：确认时允许修改/切换元模型，未选择则清除模板约束（真实连接语义）
-    if template_id:
+    # 本体模型配置：确认时允许修改/切换本体模型，未选择则清除本体模型约束（真实连接语义）
+    # 兼容旧前端字段 template_id / template_mode（等同 ontology_model_id / ontology_model_mode）
+    ontology_model_id = template_id
+    ontology_model_mode = template_mode
+    if ontology_model_id:
         try:
-            tpl = _get_template_or_404(template_id)
-            job.template_id = tpl.id
-            job.template_snapshot = tpl.dict()
-            # 载入元模型：默认强制约束（hard_constraint），兼容旧 soft_constraint / skip_step1
-            job.template_mode = template_mode if template_mode in ("skip_step1", "soft_constraint", "hard_constraint") else "hard_constraint"
+            tpl = _get_ontology_model_or_404(ontology_model_id)
+            job.ontology_model_id = tpl.id
+            job.ontology_model_snapshot = tpl.dict()
+            # 载入本体模型：默认强制约束（hard_constraint），兼容旧 soft_constraint / skip_step1
+            job.ontology_model_mode = ontology_model_mode if ontology_model_mode in ("skip_step1", "soft_constraint", "hard_constraint") else "hard_constraint"
         except HTTPException as e:
-            logger.warning(f"build_confirm_meta: 元模型 {template_id} 不存在，忽略: {e.detail}")
+            logger.warning(f"build_confirm_meta: 本体模型 {ontology_model_id} 不存在，忽略: {e.detail}")
     else:
-        # 用户未选择元模型：清除模板约束，让 LLM 从零自由提取
-        job.template_id = None
-        job.template_snapshot = None
-        job.template_mode = "soft_constraint"
+        # 用户未选择本体模型：清除本体模型约束，让 LLM 从零自由提取
+        job.ontology_model_id = None
+        job.ontology_model_snapshot = None
+        job.ontology_model_mode = "soft_constraint"
 
     async with build_lock:
         job.meta_entity_types = et_list
@@ -5087,7 +5122,7 @@ async def build_confirm_meta(
         job.granularity = granularity
         job.stage_hints = hints_dict
         job.meta_confirmed = True
-        job.step = max(job.step, 1)  # 确认元模型后进入 step 1
+        job.step = max(job.step, 1)  # 确认本体模型后进入 step 1
         job.error_message = None
         job.update_time = datetime.now()
         save_build_job(job_id)
@@ -5095,7 +5130,7 @@ async def build_confirm_meta(
 
     return {
         "success": True,
-        "message": "配置已确认，可执行实体类型提取",
+        "message": "配置已确认，可执行本体提取",
         "data": {
             "job_id": job_id,
             "meta_entity_types": job.meta_entity_types,
@@ -5108,9 +5143,9 @@ async def build_confirm_meta(
 
 @app.post("/ontology/build/{job_id}/step1")
 async def build_step1(job_id: str, request: Request):
-    """Step 1: LLM 从文档提取实体类型清单（类型层，后台异步执行）。
+    """Step 1: LLM 从文档提取本体清单（类型层，后台异步执行）。
 
-    前置条件：元模型已确认（meta_confirmed=True）。
+    前置条件：本体模型已确认（meta_confirmed=True）。
     stage_hint: 表单字段，用户在本阶段开始时补充的提示词（可选），会注入本次 LLM 提取并持久化。
     立即返回，LLM 调用在后台进行，前端通过 GET /progress 或 GET /build/{job_id} 轮询结果。
     用户可在后台执行期间离开页面，稍后回来查看。
@@ -5119,7 +5154,7 @@ async def build_step1(job_id: str, request: Request):
     stage_hint = await _parse_form_field(request, "stage_hint")
     job = _get_job_or_404(job_id)
     if not job.meta_confirmed:
-        raise HTTPException(status_code=400, detail="请先确认元模型（PUT /ontology/build/{job_id}/meta）")
+        raise HTTPException(status_code=400, detail="请先确认本体模型（PUT /ontology/build/{job_id}/meta）")
     if job.step1_confirmed:
         raise HTTPException(status_code=400, detail="实体类型清单已确认，如需重新提取请先撤销确认")
     if job.status == "completed":
@@ -5143,14 +5178,14 @@ async def build_step1(job_id: str, request: Request):
         save_build_job(job_id)
     _set_job_progress(
         job_id, 1, 5,
-        "继续提取实体类型..." if is_resume else "正在准备提取实体类型..."
+        "继续提取本体..." if is_resume else "正在准备提取本体..."
     )
     task = asyncio.create_task(_background_extract_entity_types(job_id))
     _background_tasks[job_id] = task
 
     return {
         "success": True,
-        "message": "实体类型提取继续运行，从失败批次续跑..." if is_resume else "实体类型提取已在后台开始，您可以离开页面，稍后回来查看结果",
+        "message": "本体提取继续运行，从失败批次续跑..." if is_resume else "本体提取已在后台开始，您可以离开页面，稍后回来查看结果",
         "data": {"job_id": job_id, "running_step": 1, "is_resume": is_resume}
     }
 
@@ -5521,7 +5556,7 @@ async def build_rework(job_id: str, step: int, request: Request):
 
     Args:
         job_id: 构建任务ID
-        step: 返工步骤（1=实体类型提取, 2=实体+关系提取, 3=验证+报告）
+        step: 返工步骤（1=本体提取, 2=实体+关系提取, 3=验证+报告）
         request: 表单字段 stage_hint/prompt（可选，空则沿用原提示词；二者互为别名）
     """
     # 容错解析表单字段：空 FormData 请求体也能正常处理，避免 FastAPI 400
@@ -5541,7 +5576,7 @@ async def build_rework(job_id: str, step: int, request: Request):
 
     # 前置条件检查：返工某步需要前序步骤已确认
     if step == 2 and not job.step1_confirmed:
-        raise HTTPException(status_code=400, detail="请先完成步骤1（实体类型提取并确认）")
+        raise HTTPException(status_code=400, detail="请先完成步骤1（本体提取并确认）")
     if step == 3 and not job.step2_confirmed:
         raise HTTPException(status_code=400, detail="请先完成步骤2（实体+关系提取并确认）")
 
@@ -5596,7 +5631,7 @@ async def build_rework(job_id: str, step: int, request: Request):
         save_build_job(job_id)
 
     # 启动后台任务
-    step_names = {1: "实体类型提取", 2: "实体+关系提取", 3: "验证"}
+    step_names = {1: "本体提取", 2: "实体+关系提取", 3: "验证"}
     if step == 1:
         _set_job_progress(job_id, 1, 5, f"正在重新{step_names[step]}...")
         task = asyncio.create_task(_background_extract_entity_types(job_id))

@@ -928,7 +928,7 @@ class Neo4jRepository(OntologyRepository):
         for e in entities_data:
             concept = concept_map.get(e["instance_of"])
             concept_name = concept["name"] if concept else ""
-            # type 用实体类型的 entity_type（元模型类型名），兼容前端颜色匹配
+            # type 用实体类型的 entity_type（本体模型类型名），兼容前端颜色匹配
             type_name = (concept["entity_type"] if concept else "未分类") or "未分类"
             nodes.append({
                 "id": e["id"],

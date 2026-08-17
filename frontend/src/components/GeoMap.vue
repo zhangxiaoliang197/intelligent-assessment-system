@@ -60,7 +60,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(p, i) in points" :key="i">
+          <tr v-for="(p, i) in displayPoints" :key="i">
             <td>
               <span class="point-dot" :style="{ background: getColorByName(p.routeName || p.name) }"></span>
               {{ p.name }}
@@ -72,6 +72,9 @@
           </tr>
         </tbody>
       </table>
+      <div v-if="tableExpanded && tableTruncated" class="geo-table-truncated">
+        仅展示前 {{ displayPoints.length }} 行，共 {{ points.length }} 行（地图已显示全部坐标点）
+      </div>
     </div>
   </div>
 </template>
@@ -172,6 +175,11 @@ const extraColumns = computed(() => {
   }
   return result
 })
+
+/** 表格展示上限：超过 200 行只渲染前 200 行，避免数千行 DOM 卡死浏览器 */
+const TABLE_DISPLAY_LIMIT = 200
+const displayPoints = computed(() => props.points.slice(0, TABLE_DISPLAY_LIMIT))
+const tableTruncated = computed(() => props.points.length > TABLE_DISPLAY_LIMIT)
 
 // ── 地图图层配置接口 ──
 interface MapLayerConfig {
@@ -642,16 +650,21 @@ function updateLayerOpacity() {
   })
 }
 
+// 大量标点时跳过 DOM 标签和螺旋线的阈值（circleMarker 走 canvas 仍可承受数千点）
+const LABEL_SKIP_THRESHOLD = 500
+
 function addMarkers(fit = true) {
   if (!map) return
   clearMarkers()
+
+  const visiblePoints = props.points.filter((p) => !hiddenGroups.value.has(pointGroupKey(p)))
+  const skipLabels = visiblePoints.length > LABEL_SKIP_THRESHOLD
 
   // ── 按坐标分组，相同坐标的点做螺旋偏移避免重叠 ──
   const coordKey = (lat: number, lng: number) => `${lat.toFixed(6)},${lng.toFixed(6)}`
   const groups = new Map<string, { lat: number; lng: number; points: typeof props.points }>()
 
-  props.points.forEach((p) => {
-    if (hiddenGroups.value.has(pointGroupKey(p))) return
+  visiblePoints.forEach((p) => {
     const [lat, lng] = transformCoord(p.lng, p.lat)
     const key = coordKey(lat, lng)
     if (!groups.has(key)) {
@@ -660,9 +673,10 @@ function addMarkers(fit = true) {
     groups.get(key)!.points.push(p)
   })
 
+  // 大量标点时跳过螺旋偏移线（减少图层），但仍保留坐标分组用于弹窗计数
   if (spiderLineLayer) { map!.removeLayer(spiderLineLayer) }
-  const currentSpiderLineLayer = L.featureGroup().addTo(map!)
-  spiderLineLayer = currentSpiderLineLayer
+  const currentSpiderLineLayer = skipLabels ? null : L.featureGroup().addTo(map!)
+  if (currentSpiderLineLayer) spiderLineLayer = currentSpiderLineLayer
 
   groups.forEach(({ lat, lng, points: group }) => {
     const n = group.length
@@ -672,7 +686,7 @@ function addMarkers(fit = true) {
       let offsetLat = lat
       let offsetLng = lng
 
-      if (n > 1) {
+      if (n > 1 && !skipLabels) {
         // 螺旋偏移：角度均匀分布，半径逐圈递增
         const angle = (2 * Math.PI * i) / n + Math.PI / 6
         const r = baseRadius * (1 + i * 0.4)
@@ -685,7 +699,7 @@ function addMarkers(fit = true) {
           weight: 1.5,
           opacity: 0.5,
           dashArray: '4 3',
-        }).addTo(currentSpiderLineLayer)
+        }).addTo(currentSpiderLineLayer!)
       }
 
       // 同路线使用同一颜色（基于 routeName），不同路线颜色不同
@@ -719,15 +733,18 @@ function addMarkers(fit = true) {
       circle.on('click', () => { emit('marker-click', { point: p, layerId: (p as any)._layerId }) })
       circleMarkers.push(circle)
 
-      const marker = L.marker([offsetLat, offsetLng], {
-        icon: L.divIcon({
-          className: 'geo-marker-label',
-          html: `<span style="color:${color}">${escapeHtml(p.name)}</span>`,
-          iconSize: [80, 20],
-          iconAnchor: [-10, -25],
-        }),
-      }).addTo(map!)
-      markers.push(marker)
+      // DOM 标签 marker 在大量标点时跳过（每个 divIcon 创建 DOM 元素，数千个会卡死浏览器）
+      if (!skipLabels) {
+        const marker = L.marker([offsetLat, offsetLng], {
+          icon: L.divIcon({
+            className: 'geo-marker-label',
+            html: `<span style="color:${color}">${escapeHtml(p.name)}</span>`,
+            iconSize: [80, 20],
+            iconAnchor: [-10, -25],
+          }),
+        }).addTo(map!)
+        markers.push(marker)
+      }
     })
   })
 
@@ -1189,6 +1206,14 @@ onUnmounted(() => {
 
 .geo-point-table tbody tr:hover { background: #f8f9fb; }
 .geo-point-table tbody tr:last-child td { border-bottom: none; }
+
+.geo-table-truncated {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text-muted, #999);
+  background: #fafbfc;
+  border-top: 1px solid #f0f0f0;
+}
 
 .point-dot {
   display: inline-block;

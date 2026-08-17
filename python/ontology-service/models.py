@@ -1,4 +1,4 @@
-"""本体模型数据模型（两层分离：实体类型层 / 实体实例层）。
+"""本体的数据模型（两层分离：实体类型层 / 实体实例层）。
 
 v3 重构：删除 ConceptType 实体类型层，将其层级 + property_schema 能力合并进 EntityType。
 EntityType 形成树状层级（parent_entity_type_id），Entity 直接 instance_of → EntityType.id。
@@ -19,7 +19,7 @@ SCHEMA_VERSION = 3
 
 
 class RelationType(BaseModel):
-    """元模型关系类型。"""
+    """本体模型关系类型。"""
     name: str
     description: str = ""
 
@@ -76,7 +76,7 @@ class Property(BaseModel):
 
 
 class EntityType(BaseModel):
-    """实体类型（类型层，合并原 EntityType 元模型 + ConceptType 实体类型层）。
+    """实体类型（类型层，合并原 EntityType 本体模型 + ConceptType 实体类型层）。
 
     v3 重构：EntityType 自带层级（parent_entity_type_id）+ property_schema（属性骨架），
     形成树状层级：一级实体类型 → 二级实体类型 → ... → 最低层级实体类型。
@@ -94,7 +94,7 @@ class EntityType(BaseModel):
     def _fill_v2_defaults(cls, data: Any) -> Any:
         """v2→v3 兼容：自动填充缺失的必填字段（id/create_time/update_time）。
 
-        v2 元模型 entity_types 仅含 {name, color}，v3 EntityType 合并了 ConceptType
+        v2 本体模型 entity_types 仅含 {name, color}，v3 EntityType 合并了 ConceptType
         后要求 id/create_time/update_time。此 validator 确保旧数据可被加载，
         避免每个加载点（索引/数据文件/导入）都需预处理。
         """
@@ -208,7 +208,7 @@ class Relation(BaseModel):
 
 
 class OntologyModel(BaseModel):
-    """本体模型（一个独立的本体空间，隔离实体类型/实体/关系）。"""
+    """本体（一个独立的本体空间，隔离实体类型/实体/关系）。"""
     id: str
     name: str
     description: str = ""
@@ -224,36 +224,36 @@ class OntologyModel(BaseModel):
 
 
 class TemplateEntityTypeSchema(BaseModel):
-    """模板内的实体类型 schema（剥离运行时字段，仅保留类型层定义）。
+    """本体模型内的实体类型 schema（剥离运行时字段，仅保留类型层定义）。
 
     与 EntityType 的区别：不含 id/ontology_id/source_snippet/create_time/update_time，
-    避免实例溯源信息污染模板。保留 color 便于应用时新类型继承颜色保持视觉一致。
+    避免实例溯源信息污染本体模型。保留 color 便于应用时新类型继承颜色保持视觉一致。
 
-    支持层级：parent_entity_type_name 指向父类型名（模板内按名引用，实例化时解析为 ID）。
+    支持层级：parent_entity_type_name 指向父类型名（本体模型内按名引用，实例化时解析为 ID）。
     """
     name: str
     description: str = ""
     color: Optional[str] = None
     property_schema: List[PropertySchema] = Field(default_factory=list)
-    # 父类型名（模板内按名引用，实例化时解析为 parent_entity_type_id）
+    # 父类型名（本体模型内按名引用，实例化时解析为 parent_entity_type_id）
     parent_entity_type_name: Optional[str] = None
 
 
 class TemplateEntityTypeRelation(BaseModel):
-    """模板内的实体类型间关系 schema（剥离运行时字段）。"""
+    """本体模型内的实体类型间关系 schema（剥离运行时字段）。"""
     source_entity_type_name: str
     target_entity_type_name: str
     relation_type: str
     description: str = ""
 
 
-class TemplateModel(BaseModel):
-    """本体模板：从已有本体抽取的 schema 层，可作为新本体构建的参考。
+class OntologyTemplateModel(BaseModel):
+    """本体模型：从已有本体抽取的 schema 层，可作为新本体构建的参考。
 
     用途：
-    1. 文档构建时载入元模型：hard_constraint 强制按元模型提取，soft_constraint 作软约束
+    1. 文档构建时载入本体模型：hard_constraint 强制按本体模型提取，soft_constraint 作软约束
     2. 手动构建向导启动时一键预填实体类型树 + 属性骨架 + 关系类型
-    3. 用户选择模板时可跳过 step1 直接用模板的 EntityType 层级
+    3. 用户选择本体模型时可跳过 step1 直接用本体模型的 EntityType 层级
     """
     id: str                                    # tpl_xxxxxxxx
     name: str
@@ -268,17 +268,21 @@ class TemplateModel(BaseModel):
     is_builtin: bool = False
 
 
+# 向后兼容别名：旧代码仍引用 TemplateModel，重定向到 OntologyTemplateModel
+TemplateModel = OntologyTemplateModel
+
+
 class BuildJob(BaseModel):
     """本体分步构建任务（四阶段状态机，v3）。
 
     支持断点续作：每步结果持久化到 data/build_jobs/job_{id}.json。
     四阶段流程（已更名为文档构建四阶段）：
-      upload（落盘源文件，不解析）→ step0 文档解析（解析文档 + 推荐元模型 + 配置）
+      upload（落盘源文件，不解析）→ step0 文档解析（解析文档 + 推荐本体模型 + 配置）
       → step1 类型提取（层级+属性+类型间关系）→ step2 实体提取（属性赋值+实例间关系）
       → step3 分析验证
 
     v3 变更：
-    - 删除 step0 元模型推荐（EntityType 层级由 step1 提取）
+    - 删除 step0 本体模型推荐（EntityType 层级由 step1 提取）
     - step1 合并原 step1 实体类型提取：提取 EntityType 层级 + property_schema + EntityTypeRelation
     - step2 合并原 step3 关系建模：实体提取 + 属性赋值 + 实例间 Relation
     - 原 step4 验证降为 step3
@@ -299,14 +303,19 @@ class BuildJob(BaseModel):
     source_text: str = ""                      # 解析后的纯文本
     char_count: int = 0                        # 文档字符数（前端展示用）
 
-    # Step 0 结果：配置（粒度 + 阶段提示词 + 模板）
+    # 预估分批数（step0 解析后预计算，用于前端展示"将分 N 批并行处理"）
+    # step1/step2 实际运行时以 step1_batches_total / step2_batches_total 为准
+    estimated_step1_batches: int = 0
+    estimated_step2_batches: int = 0
+
+    # Step 0 结果：配置（粒度 + 阶段提示词 + 本体模型）
     granularity: str = "medium"                # coarse | medium | fine（三档粒度预设）
     stage_hints: Dict[int, str] = {}           # {1: "重点关注财务指标", 2: "...", 3: "..."}
-    # 参考模板：upload 时一次性快照，后续 step1-3 都从此读取
-    template_id: Optional[str] = None                    # 关联 TemplateModel.id
-    template_snapshot: Optional[Dict[str, Any]] = None   # upload 时一次性快照（TemplateModel.dict()）
-    # 元模型使用模式：hard_constraint=强制按元模型提取（载入元模型）；soft_constraint=元模型作软约束；skip_step1=直接用元模型跳过 step1
-    template_mode: str = "soft_constraint"      # hard_constraint | soft_constraint | skip_step1
+    # 参考本体模型：upload 时一次性快照，后续 step1-3 都从此读取
+    ontology_model_id: Optional[str] = None                    # 关联 OntologyTemplateModel.id
+    ontology_model_snapshot: Optional[Dict[str, Any]] = None   # upload 时一次性快照（OntologyTemplateModel.dict()）
+    # 本体模型使用模式：hard_constraint=强制按本体模型提取（载入本体模型）；soft_constraint=本体模型作软约束；skip_step1=直接用本体模型跳过 step1
+    ontology_model_mode: str = "soft_constraint"      # hard_constraint | soft_constraint | skip_step1
 
     # Step 1 结果：实体类型清单（含层级 + property_schema）+ 类型间关系
     step1_entity_types: List[Dict[str, Any]] = []
@@ -345,7 +354,7 @@ class BuildJob(BaseModel):
     rework_history: List[Dict[str, Any]] = []
 
     # ── 旧字段保留（向后兼容 v2 五阶段任务，新流程不使用）──
-    meta_entity_types: List[Dict[str, Any]] = []          # v2 step0 元模型（v3 弃用）
+    meta_entity_types: List[Dict[str, Any]] = []          # v2 step0 本体模型（v3 弃用）
     meta_relation_types: List[Dict[str, Any]] = []        # v2 step0 关系类型（v3 弃用）
     meta_confirmed: bool = False                          # 阶段0「文档解析/配置」已确认（复用旧字段名，避免迁移）
     step1_concepts: List[Dict[str, Any]] = []             # v2 step1 实体类型（v3 迁移到 step1_entity_types）

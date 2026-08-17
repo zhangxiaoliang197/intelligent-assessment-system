@@ -142,13 +142,6 @@ def _extract_rows(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
 
-def _truncate_rows(rows: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
-    """按 SITUATION_LLM_EVIDENCE_ROWS 上限截断行（保护 LLM 上下文）。"""
-    if limit <= 0 or not rows:
-        return rows[:0] if limit == 0 else rows
-    return rows[:limit]
-
-
 def _sanitize_rows(rows: List[Dict[str, Any]], sensitive_columns: Tuple[str, ...]) -> List[Dict[str, Any]]:
     """脱敏：剔除配置中的敏感列（姓名/身份证/手机号等）。
 
@@ -327,13 +320,14 @@ async def execute_sub_question(
     columns = _extract_columns(payload)
     rows = _extract_rows(payload)
 
-    # 截断 + 脱敏
-    rows = _truncate_rows(rows, config.SITUATION_LLM_EVIDENCE_ROWS)
+    # 存储全量行（≤ SITUATION_DATA_ROW_LIMIT），供前端图表/地图全量重建；
+    # LLM 只在 prompts._format_data 内部按 SITUATION_LLM_EVIDENCE_ROWS 采样，不会 token 爆炸。
     rows = _sanitize_rows(rows, sensitive_columns)
     # 重新计算 columns（脱敏后可能变化）
     if rows:
         columns = list(dict.fromkeys(str(k) for row in rows for k in row.keys()))
 
+    # 摘要基于全量行计算（min/max/sum/top3 更准确），仍只输出聚合统计，不外发原始行。
     summary = _build_summary(rows, columns, question)
     total_rows = payload.get("total") or payload.get("rowCount") or len(rows)
 

@@ -4,7 +4,7 @@
       <!-- 页面头部 -->
       <div class="page-header">
         <div class="header-left">
-          <h2>本体模型</h2>
+          <h2>本体</h2>
           <el-tag type="primary" size="small" effect="dark" class="engine-badge">ECharts 知识图谱</el-tag>
         </div>
         <div class="header-actions">
@@ -15,14 +15,14 @@
 
       <!-- 统计卡片 -->
       <div class="stats-cards">
-        <el-card class="stat-card">
+        <el-card class="stat-card stat-card-clickable" shadow="hover" @click="openOntologyModelManage">
           <div class="stat-content">
             <div class="stat-icon cyan">
               <el-icon :size="36"><Files /></el-icon>
             </div>
             <div class="stat-info">
               <h3>{{ stats.total_meta_models }}</h3>
-              <p>元模型数</p>
+              <p>本体模型</p>
             </div>
           </div>
         </el-card>
@@ -50,45 +50,10 @@
         </el-card>
       </div>
 
-      <!-- 元模型管理 -->
-      <div class="content-section">
-        <div class="section-header">
-          <h3>元模型</h3>
-          <el-button type="primary" size="small" :icon="Plus" @click="openCreateMetaModel">新建元模型</el-button>
-        </div>
-        <div v-loading="templateLoading">
-          <el-empty
-            v-if="!templates.length && !templateLoading"
-            description="暂无元模型，可从任意本体「另存为元模型」"
-            :image-size="100"
-          />
-          <div v-else class="template-list">
-            <div v-for="tpl in templates" :key="tpl.id" class="template-card">
-              <div class="tpl-header">
-                <h4>{{ tpl.name }}</h4>
-                <el-tag size="small" type="info">{{ tpl.entity_types_count || tpl.concepts_count }} 实体类型</el-tag>
-              </div>
-              <p class="tpl-desc">{{ tpl.description || '暂无描述' }}</p>
-              <div class="tpl-meta">
-                <span>实体类型 {{ tpl.entity_types_count }}</span>
-                <span>关系类型 {{ tpl.relation_types_count }}</span>
-                <span>更新: {{ formatTime(tpl.update_time) }}</span>
-              </div>
-              <div class="tpl-actions">
-                <el-button size="small" @click="viewTemplate(tpl.id)">查看 Schema</el-button>
-                <el-button size="small" @click="editMetaModel(tpl)">编辑</el-button>
-                <el-button size="small" type="primary" @click="createFromTemplate(tpl.id)">基于元模型新建本体</el-button>
-                <el-button size="small" type="danger" link @click="deleteTemplateItem(tpl)">删除</el-button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- 已构建的本体 -->
       <div class="content-section">
         <div class="section-header">
-          <h3>本体模型</h3>
+          <h3>本体</h3>
         </div>
         <div class="toolbar">
           <el-input
@@ -134,7 +99,7 @@
                   <el-dropdown-menu>
                     <el-dropdown-item command="edit">编辑</el-dropdown-item>
                     <el-dropdown-item command="export">导出</el-dropdown-item>
-                    <el-dropdown-item command="template">另存为元模型</el-dropdown-item>
+                    <el-dropdown-item command="template">另存为本体模型</el-dropdown-item>
                     <el-dropdown-item command="archive" v-if="ont.status !== '归档'">归档</el-dropdown-item>
                     <el-dropdown-item command="restore" v-else>恢复</el-dropdown-item>
                     <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
@@ -143,7 +108,7 @@
               </el-dropdown>
             </div>
           </div>
-          <el-empty v-if="!filteredOntologies.length && !loading" description="暂无本体模型" :image-size="120">
+          <el-empty v-if="!filteredOntologies.length && !loading" description="暂无本体" :image-size="120">
             <el-button type="primary" @click="showCreateMethodDialog = true">创建第一个本体</el-button>
           </el-empty>
         </div>
@@ -215,7 +180,7 @@
               <el-icon :size="28"><Upload /></el-icon>
             </div>
             <h4>导入 JSON</h4>
-            <p>导入已有本体导出文件，创建新的本体模型</p>
+            <p>导入已有本体导出文件，创建新的本体</p>
           </div>
           <div class="method-card" @click="handleCreateMethod('manual')">
             <div class="method-icon blue">
@@ -228,7 +193,7 @@
       </el-dialog>
 
       <!-- 新建/编辑本体对话框 -->
-      <el-dialog v-model="showCreateDialog" :title="editingOntology ? '编辑本体模型' : '新建本体模型'" width="700px">
+      <el-dialog v-model="showCreateDialog" :title="editingOntology ? '编辑本体' : '新建本体'" width="700px">
         <el-form :model="ontologyForm" label-width="120px">
           <el-form-item label="本体名称" required>
             <el-input v-model="ontologyForm.name" placeholder="请输入本体名称" />
@@ -242,7 +207,7 @@
             />
           </el-form-item>
           
-          <el-divider>元模型定义</el-divider>
+          <el-divider>本体定义</el-divider>
           
           <el-form-item label="实体类型">
             <div class="type-editor">
@@ -292,7 +257,7 @@
           style="margin-bottom: 1rem"
         >
           <template #default>
-            <p>导入 JSON 文件将创建新的本体模型，不会覆盖现有本体。系统会自动映射实体 ID，确保关系不断链。</p>
+            <p>导入 JSON 文件将创建新的本体，不会覆盖现有本体。系统会自动映射实体 ID，确保关系不断链。</p>
           </template>
         </el-alert>
         
@@ -332,14 +297,14 @@
       <!-- 文档构建对话框 -->
       <el-dialog v-model="showBuildDialog" title="文档构建" width="600px">
         <el-alert
-          title="从文档自动构建本体模型"
+          title="从文档自动构建本体"
           type="info"
           :closable="false"
           show-icon
           style="margin-bottom: 1rem"
         >
           <template #default>
-            <p>上传文档后，AI 将自动分析文档内容，提取实体类型和关系，生成本体模型。整个过程分为 4 个步骤，您可以在每步进行编辑和确认。</p>
+            <p>上传文档后，AI 将自动分析文档内容，提取实体类型和关系，生成本体。整个过程分为 4 个步骤，您可以在每步进行编辑和确认。</p>
           </template>
         </el-alert>
         
@@ -384,7 +349,7 @@
       <!-- 手动构建对话框：填写命名/描述 -->
       <el-dialog v-model="showManualDialog" title="手动构建本体" width="560px">
         <el-alert
-          title="从零手动构建本体模型"
+          title="从零手动构建本体"
           type="info"
           :closable="false"
           show-icon
@@ -415,8 +380,42 @@
         </template>
       </el-dialog>
 
-      <!-- 元模型 Schema 查看对话框 -->
-      <el-dialog v-model="showTemplateDetailDialog" :title="`元模型 Schema：${templateDetail?.name || ''}`" width="720px" top="5vh">
+      <!-- 本体模型管理弹窗 -->
+      <el-dialog v-model="showOntologyModelManageDialog" title="本体模型管理" width="900px" top="5vh">
+        <div class="dialog-section-header">
+          <el-button type="primary" size="small" :icon="Plus" @click="openCreateMetaModel">新建本体模型</el-button>
+        </div>
+        <div v-loading="templateLoading">
+          <el-empty
+            v-if="!templates.length && !templateLoading"
+            description="暂无本体模型，可从任意本体「另存为本体模型」"
+            :image-size="100"
+          />
+          <div v-else class="template-list">
+            <div v-for="tpl in templates" :key="tpl.id" class="template-card">
+              <div class="tpl-header">
+                <h4>{{ tpl.name }}</h4>
+                <el-tag size="small" type="info">{{ tpl.entity_types_count || tpl.concepts_count }} 实体类型</el-tag>
+              </div>
+              <p class="tpl-desc">{{ tpl.description || '暂无描述' }}</p>
+              <div class="tpl-meta">
+                <span>实体类型 {{ tpl.entity_types_count }}</span>
+                <span>关系类型 {{ tpl.relation_types_count }}</span>
+                <span>更新: {{ formatTime(tpl.update_time) }}</span>
+              </div>
+              <div class="tpl-actions">
+                <el-button size="small" @click="viewTemplate(tpl.id)">查看 Schema</el-button>
+                <el-button size="small" @click="editMetaModel(tpl)">编辑</el-button>
+                <el-button size="small" type="primary" @click="createFromTemplate(tpl.id)">基于本体模型新建本体</el-button>
+                <el-button size="small" type="danger" link @click="deleteTemplateItem(tpl)">删除</el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </el-dialog>
+
+      <!-- 本体模型 Schema 查看对话框 -->
+      <el-dialog v-model="showTemplateDetailDialog" :title="`本体模型 Schema：${templateDetail?.name || ''}`" width="720px" top="5vh">
         <div v-if="templateDetail" class="template-detail">
           <el-descriptions :column="2" border style="margin-bottom: 1rem">
             <el-descriptions-item label="实体类型">
@@ -537,10 +536,11 @@ const manualForm = ref({
   description: ''
 })
 
-// ── 元模型状态 ──
+// ── 本体模型状态 ──
 const templates = ref<any[]>([])
 const templateLoading = ref(false)
 const showTemplateDetailDialog = ref(false)
+const showOntologyModelManageDialog = ref(false)
 const templateDetail = ref<any>(null)
 
 // ── 计算属性 ──
@@ -565,7 +565,7 @@ const loadStats = async () => {
     const statsData = (statsRes as any).data
     const allTasks = ((buildRes as any).data || []) as any[]
     stats.value = {
-      total_meta_models: statsData.total_meta_models || 0,
+      total_meta_models: statsData.total_ontology_models || 0,
       total_ontologies: statsData.total_ontologies || 0,
       total_entities: statsData.total_entities || 0,
       total_relations: statsData.total_relations || 0,
@@ -667,48 +667,53 @@ const startManualBuild = async () => {
   }
 }
 
-// ── 元模型操作 ──
+// ── 本体模型操作 ──
+const openOntologyModelManage = () => {
+  showOntologyModelManageDialog.value = true
+  loadTemplates()
+}
+
 const loadTemplates = async () => {
   templateLoading.value = true
   try {
     const res: any = await getMetaModelList()
     templates.value = res.items || res.data || []
   } catch (e: any) {
-    ElMessage.error(e.serverMessage || '加载元模型列表失败')
+    ElMessage.error(e.serverMessage || '加载本体模型列表失败')
   } finally {
     templateLoading.value = false
   }
 }
 
-// 新建元模型：跳转到元模型编辑页
+// 新建本体模型：跳转到本体模型编辑页
 const openCreateMetaModel = () => {
-  router.push('/ontology/meta-model/new')
+  router.push('/ontology/ontology-model/new')
 }
 
-// 编辑元模型：跳转到元模型编辑页
+// 编辑本体模型：跳转到本体模型编辑页
 const editMetaModel = (tpl: any) => {
-  router.push(`/ontology/meta-model/${tpl.id}/edit`)
+  router.push(`/ontology/ontology-model/${tpl.id}/edit`)
 }
 
-// 另存为元模型：从已有本体抽取 schema 层
+// 另存为本体模型：从已有本体抽取 schema 层
 const saveAsTemplate = async (ont: any) => {
   let name = ''
   try {
     const result = await ElMessageBox.prompt(
-      `将本体「${ont.name}」的 schema 层（元模型+实体类型+属性骨架）抽取为元模型，实例数据不会进入元模型。`,
-      '另存为元模型',
+      `将本体「${ont.name}」的 schema 层（本体模型+实体类型+属性骨架）抽取为本体模型，实例数据不会进入本体模型。`,
+      '另存为本体模型',
       {
         confirmButtonText: '保存',
         cancelButtonText: '取消',
-        inputPlaceholder: '请输入元模型名称',
-        inputValue: `${ont.name} 元模型`
+        inputPlaceholder: '请输入本体模型名称',
+        inputValue: `${ont.name} 本体模型`
       }
     )
     name = result.value
   } catch { return }
 
   if (!name?.trim()) {
-    ElMessage.warning('请输入元模型名称')
+    ElMessage.warning('请输入本体模型名称')
     return
   }
 
@@ -718,28 +723,28 @@ const saveAsTemplate = async (ont: any) => {
     fd.append('name', name.trim())
     fd.append('description', ont.description || '')
     await saveMetaModelFromOntology(ont.id, fd)
-    ElMessage.success('元模型创建成功')
+    ElMessage.success('本体模型创建成功')
     await Promise.all([loadTemplates(), loadStats()])
   } catch (e: any) {
-    ElMessage.error(e.serverMessage || '元模型创建失败')
+    ElMessage.error(e.serverMessage || '本体模型创建失败')
   } finally {
     submitting.value = false
   }
 }
 
-// 基于元模型新建本体：创建空本体后跳转向导页，带上 template 查询参数触发预填
+// 基于本体模型新建本体：创建空本体后跳转向导页，带上 template 查询参数触发预填
 const createFromTemplate = async (templateId: string) => {
   submitting.value = true
   try {
     const fd = new FormData()
     const tpl = templates.value.find(t => t.id === templateId)
-    fd.append('name', `${tpl?.name || '元模型本体'} - 副本`)
-    fd.append('description', `基于元模型「${tpl?.name || ''}」创建`)
+    fd.append('name', `${tpl?.name || '本体'} - 副本`)
+    fd.append('description', `基于本体模型「${tpl?.name || ''}」创建`)
     fd.append('entity_types', JSON.stringify([]))
     fd.append('relation_types', JSON.stringify([]))
     const res: any = await createOntology(fd)
     const newId = res.data?.id || res.id
-    ElMessage.success('已创建空本体，正在载入元模型骨架...')
+    ElMessage.success('已创建空本体，正在载入本体模型骨架...')
     router.push(`/ontology/manual/${newId}?template=${templateId}`)
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '创建本体失败')
@@ -748,22 +753,22 @@ const createFromTemplate = async (templateId: string) => {
   }
 }
 
-// 查看元模型 schema 详情
+// 查看本体模型 schema 详情
 const viewTemplate = async (templateId: string) => {
   try {
     const res: any = await getMetaModel(templateId)
     templateDetail.value = res.data
     showTemplateDetailDialog.value = true
   } catch (e: any) {
-    ElMessage.error(e.serverMessage || '加载元模型详情失败')
+    ElMessage.error(e.serverMessage || '加载本体模型详情失败')
   }
 }
 
-// 删除元模型
+// 删除本体模型
 const deleteTemplateItem = async (tpl: any) => {
   try {
     await ElMessageBox.confirm(
-      `确定删除元模型「${tpl.name}」吗？已基于该元模型创建的本体/任务不受影响。`,
+      `确定删除本体模型「${tpl.name}」吗？已基于该本体模型创建的本体/任务不受影响。`,
       '提示',
       { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
     )
@@ -771,7 +776,7 @@ const deleteTemplateItem = async (tpl: any) => {
 
   try {
     await deleteMetaModelApi(tpl.id)
-    ElMessage.success('元模型已删除')
+    ElMessage.success('本体模型已删除')
     await Promise.all([loadTemplates(), loadStats()])
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '删除失败')
@@ -998,7 +1003,7 @@ const formatTime = (time: string) => {
 // ── 生命周期 ──
 onMounted(() => {
   loadData()
-  // 预加载元模型列表，供元模型管理与「基于元模型新建本体」使用
+  // 预加载本体模型列表，供本体模型管理与「基于本体模型新建本体」使用
   loadTemplates()
 })
 </script>
@@ -1048,6 +1053,22 @@ onMounted(() => {
 
 .stat-card {
   border-radius: 12px;
+}
+
+.stat-card-clickable {
+  cursor: pointer;
+  transition: transform var(--transition-normal), box-shadow var(--transition-normal);
+}
+
+.stat-card-clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.dialog-section-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 1rem;
 }
 
 .stat-content {
@@ -1347,7 +1368,7 @@ onMounted(() => {
   color: var(--text-tertiary);
 }
 
-/* ── 元模型 ── */
+/* ── 本体模型 ── */
 .template-list {
   display: grid;
   /* 固定列宽 320px，与本体卡片网格一致；放不下自动换行 */

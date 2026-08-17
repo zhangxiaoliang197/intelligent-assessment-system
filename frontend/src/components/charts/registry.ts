@@ -61,12 +61,13 @@ function defaultBuild(spec: { option: any; title?: string; index?: number }): an
   if (opt.title) delete opt.title
   if (!opt.tooltip) opt.tooltip = { trigger: 'item' }
   // 按图表序号轮转色板起始位置，让不同图表拥有不同主色，避免整页清一色
-  if (!opt.color) {
-    const offset = Math.max(0, Number(spec.index) || 0) % DEFAULT_PALETTE.length
-    opt.color = [
-      ...DEFAULT_PALETTE.slice(offset),
-      ...DEFAULT_PALETTE.slice(0, offset),
-    ]
+  const seriesList = Array.isArray(opt.series) ? opt.series : opt.series ? [opt.series] : []
+  for (const s of seriesList) {
+    if (s && typeof s === 'object') {
+      if (s.itemStyle && typeof s.itemStyle.color === 'string') delete s.itemStyle.color
+      if (s.lineStyle && typeof s.lineStyle.color === 'string') delete s.lineStyle.color
+      if (s.areaStyle && typeof s.areaStyle.color === 'string') delete s.areaStyle.color
+    }
   }
   return opt
 }

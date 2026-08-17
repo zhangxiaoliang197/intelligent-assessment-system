@@ -67,6 +67,66 @@ def load_llm_config() -> dict:
     }
 
 
+def _friendly_llm_error(msg: str, http_code: int) -> str:
+    """将大模型网关返回的常见错误转为中文友好提示。
+
+    网关错误多为英文原始文本，直接透传给前端不友好。
+    此处识别高频错误（上下文超限、速率限制、额度不足、模型不可用等），
+    转换为面向用户的中文说明并附解决建议；无法识别的错误原样返回。
+
+    Args:
+        msg: LLM 网关返回的错误消息
+        http_code: HTTP 状态码
+
+    Returns:
+        友好化的中文错误消息（未识别时返回原文）
+    """
+    if not msg:
+        return msg
+    lower = msg.lower()
+
+    # 上下文长度超限：输入内容（文档/实体清单/原文）+ 输出超过模型上下文窗口
+    if http_code in (400, 413, 422) and any(
+        k in lower for k in (
+            "maximum context length",
+            "context_length_exceeded",
+            "context length exceeded",
+            "context window",
+            "too many tokens",
+            "input is too long",
+            "prompt is too long",
+            "exceeds the maximum",
+            "reduce the length of the messages",
+            "the model context length",
+            "maximum input token",
+        )
+    ):
+        return (
+            "输入内容超出大模型上下文窗口，导致本次调用失败。"
+            "请按以下任一方式处理后重试："
+            "① 在「基础管理 → 大模型配置」中换用上下文窗口更大的模型；"
+            "② 调小分批大小（本体服务环境变量 STEP1_BATCH_MAX_CHARS / STEP2_BATCH_MAX_CHARS "
+            "/ VERIFICATION_MAX_DOC_CHARS，每批字符数越小输入 token 越少）。"
+        )
+
+    # 速率限制 / 并发超限
+    if http_code == 429 or "rate limit" in lower or "too many requests" in lower:
+        return (
+            "大模型调用过于频繁，触发接口速率限制，请稍后重试，"
+            "或降低并发数（本体服务环境变量 LLM_CONCURRENCY）。"
+        )
+
+    # 额度不足 / 欠费
+    if http_code in (402, 403) or ("insufficient" in lower and "quota" in lower) or "balance" in lower:
+        return "大模型账号余额不足或额度已用尽，请在模型服务商控制台充值后重试。"
+
+    # 模型不存在或不可用
+    if "model not found" in lower or "model does not exist" in lower or "invalid model" in lower:
+        return "当前配置的大模型不存在或不可用，请检查「基础管理 → 大模型配置」中的模型名称。"
+
+    return msg
+
+
 def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000,
              thinking_type: str = "") -> str:
     """同步调用 LLM，返回纯文本响应。
@@ -156,6 +216,8 @@ def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000,
             msg = err.get("error", {}).get("message", err_body)
         except Exception:
             msg = err_body
+        # 常见错误（上下文超限/限流/欠费/模型不可用）转为中文友好提示
+        msg = _friendly_llm_error(msg, e.code)
         raise RuntimeError(f"大模型调用失败 (HTTP {e.code}): {msg[:500]}")
     except Exception as e:
         # 本函数内主动抛出的 RuntimeError（如 reasoning 耗尽 max_tokens）原样向上抛，

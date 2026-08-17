@@ -29,19 +29,19 @@ EMIT_RESEARCH_PLAN_TOOL = {
     "function": {
         "name": "emit_research_plan",
         "description": (
-            "提交本次态势图的研究计划。必须包含至少 1 个子问题、至少 2 个图表规格。"
+            "提交本次态势图的研究计划。先做意图识别（intent）：仅当属于态势分析需求时才"
+            "规划子问题与图表；非态势需求时 subQuestions/chartSpecs/mapSpecs 留空数组并给出 directAnswer。"
             "子问题用于驱动并行数据采集；图表/地图规格用于驱动并行产图；"
             "narrativeOutline 用于指导最后的文本撰写（介绍 + 逐图说明）。"
         ),
         "parameters": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["subQuestions", "chartSpecs"],
+            "required": ["intent", "subQuestions", "chartSpecs"],
             "properties": {
                 "subQuestions": {
                     "type": "array",
-                    "description": "研究子问题列表，每个子问题对应一次并行数据采集",
-                    "minItems": 1,
+                    "description": "研究子问题列表，每个子问题对应一次并行数据采集（intent=situation 时至少 1 个；intent=general 时为空数组）",
                     "maxItems": 6,
                     "items": {
                         "type": "object",
@@ -74,10 +74,10 @@ EMIT_RESEARCH_PLAN_TOOL = {
                 "chartSpecs": {
                     "type": "array",
                     "description": (
-                        "图表规格列表。数量 2-4 个。允许相同 type 重复（如两个 line 各展示不同维度），"
-                        "但选型必须匹配数据特征：pie 分类数 ≤ 8、radar 维度 3-12、line 至少 2 个 X 轴点。"
+                        "图表规格列表。intent=situation 时数量 2-4 个；intent=general 时为空数组。"
+                        "尽量避免 type 重复（除非两个 line 各展示不同维度且必要），"
+                        "选型必须匹配数据特征：pie 分类数 ≤ 8、radar 维度 3-12、line 至少 2 个 X 轴点。"
                     ),
-                    "minItems": 2,
                     "maxItems": 4,
                     "items": {
                         "type": "object",
@@ -129,6 +129,15 @@ EMIT_RESEARCH_PLAN_TOOL = {
                             },
                         },
                     },
+                },
+                "intent": {
+                    "type": "string",
+                    "enum": ["situation", "general"],
+                    "description": "意图识别：situation=态势分析需求（需查询数据集、生成图表/地图/做数据分析）；general=非态势需求（闲聊、通用问答、计算、知识咨询等）",
+                },
+                "directAnswer": {
+                    "type": "string",
+                    "description": "intent=general 时的直接回答（中文，无需图表）；intent=situation 时省略",
                 },
                 "narrativeOutline": {
                     "type": "object",
@@ -207,8 +216,11 @@ def _build_planner_system_prompt(profile: Dict[str, Any], meta_text: str) -> str
         "调用 emit_research_plan 工具提交研究计划。\n\n"
         + skill_hint +
         "硬约束：\n"
-        "1. subQuestions 至少 1 个，每个 datasetId 必须来自下方可用数据集；\n"
-        f"2. chartSpecs 数量 2-4 个，type 只能取 {allowed_types}；\n"
+        "0. 意图识别（最先判断）：若用户问题属于态势分析需求（需查询数据集、生成图表/地图/做数据分析），"
+        "intent=\"situation\"，按下方约束正常规划；若属于闲聊、通用问答、计算、知识咨询等非态势需求，"
+        "intent=\"general\"，subQuestions/chartSpecs/mapSpecs 全部留空数组，并把你的回答写入 directAnswer（中文，无需图表）。\n"
+        "1. subQuestions 至少 1 个（intent=situation 时），每个 datasetId 必须来自下方可用数据集；\n"
+        f"2. chartSpecs 数量 2-4 个（intent=situation 时），type 只能取 {allowed_types}；\n"
         "3. 允许相同 type 重复（如两个 line 图各展示不同维度），"
         "但选型必须匹配数据特征：\n"
         "   - pie：分类数 ≤ 8（超过应改用 bar 或合并为「其他」）；分片值不得为负；\n"
@@ -236,6 +248,16 @@ def _validate_plan(plan: Dict[str, Any], profile: Dict[str, Any], meta: Dict[str
     if not isinstance(plan, dict):
         return "emit_research_plan 参数不是对象"
 
+    # 意图识别分支：非态势需求（general）时放行空计划，仅要求直接回答非空
+    intent = str(plan.get("intent") or "").lower().strip()
+    if intent not in ("situation", "general"):
+        return "intent 必须是 situation 或 general"
+    if intent == "general":
+        if not str(plan.get("directAnswer") or "").strip():
+            return "intent=general 时 directAnswer 不能为空"
+        return None
+
+    # ── 以下为 situation 分支校验 ──
     sub_questions = plan.get("subQuestions")
     if not isinstance(sub_questions, list) or len(sub_questions) < 1:
         return "subQuestions 至少需要 1 个"

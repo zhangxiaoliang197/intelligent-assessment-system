@@ -2,7 +2,7 @@
 
 将 schema_version=2 的本体数据迁移到 schema_version=3：
 - concepts 数组（ConceptType）→ entity_types 数组（EntityType，带层级+属性骨架）
-- 丢弃旧 ontology.entity_types（元模型粗分类 name+color），用迁移后的 EntityType 替代
+- 丢弃旧 ontology.entity_types（本体模型粗分类 name+color），用迁移后的 EntityType 替代
 - 颜色补偿：从旧 entity_types 的 name→color 映射，给无颜色的 EntityType 补色
 - entities/relations 不变（Entity.instance_of 指向的 id 保留）
 - 新增 entity_type_relations 空数组（无法从现有数据推导，留待 step1 返工补提）
@@ -48,7 +48,7 @@ def migrate_concept_to_entity_type(concept: dict, color_map: dict) -> dict:
     Returns:
         EntityType dict（v3 格式）
     """
-    # 颜色补偿：concept 自带 color 优先；否则从 entity_type name 查旧元模型颜色
+    # 颜色补偿：concept 自带 color 优先；否则从 entity_type name 查旧本体模型颜色
     color = concept.get("color")
     if not color:
         et_name = concept.get("entity_type", "")
@@ -94,7 +94,7 @@ def migrate_ontology_file(filepath: Path) -> bool:
     if not DRY_RUN:
         backup_file(filepath)
 
-    # 旧 entity_types（元模型粗分类 name+color）→ 颜色映射
+    # 旧 entity_types（本体模型粗分类 name+color）→ 颜色映射
     old_entity_types = ontology.get("entity_types", []) or []
     color_map = {et.get("name", ""): et.get("color") for et in old_entity_types if et.get("name")}
 

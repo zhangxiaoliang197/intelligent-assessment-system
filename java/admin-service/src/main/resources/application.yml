@@ -82,3 +82,9 @@ admin:
   api-token: ${ADMIN_API_TOKEN:}
   # Emergency diagnostic capability only; disabled by default even for administrators.
   allow-ad-hoc-sql: ${ADMIN_ALLOW_AD_HOC_SQL:false}
+
+# ─── 查询结果行数上限 ───
+# 单次 SQL 执行/整表拉取的最大返回行数（含截断保护），clamp 到 [1, 50000]。
+# 与态势服务全量取数对齐，避免超大结果集打爆内存/网络。
+assessment:
+  max-result-rows: ${ADMIN_MAX_RESULT_ROWS:10000}

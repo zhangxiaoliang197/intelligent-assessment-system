@@ -15,7 +15,7 @@
           </div>
           <div class="nav-item" @click="goTo('/ontology')">
             <el-icon><Box /></el-icon>
-            <span>本体模型</span>
+            <span>本体</span>
           </div>
         </div>
         <div class="sidebar-section">

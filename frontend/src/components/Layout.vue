@@ -51,7 +51,7 @@ const pageTitle = computed(() => {
     'IndicatorAnalysis': '指标分析',
     'SolutionEvaluation': '评估分析',
     'KnowledgeBase': '知识库',
-    'OntologyModel': '本体模型',
+    'OntologyModel': '本体',
         'OntologyDetail': '本体详情',
         'OntologyBuild': '文档构建',
         'SituationMap': '态势图',

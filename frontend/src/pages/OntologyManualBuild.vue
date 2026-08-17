@@ -7,7 +7,7 @@
           <el-button @click="goBack" :icon="ArrowLeft">返回</el-button>
           <h2>手动构建本体</h2>
           <el-tag v-if="ontology" type="primary" size="small">{{ ontology.name }}</el-tag>
-          <el-tag v-if="templateMode" type="warning" size="small">基于元模型：{{ templateName }}</el-tag>
+          <el-tag v-if="templateMode" type="warning" size="small">基于本体模型：{{ templateName }}</el-tag>
           <el-tag v-else type="info" size="small">空白构建</el-tag>
         </div>
         <div class="header-actions">
@@ -24,17 +24,17 @@
 
       <!-- Phase A：实体类型定义 -->
       <div v-if="currentStep === 0" class="phase-panel" v-loading="loading">
-        <!-- 元模型载入入口（仅空白模式显示） -->
+        <!-- 本体模型载入入口（仅空白模式显示） -->
         <el-card v-if="!templateMode" class="section-card">
           <template #header>
             <div class="panel-header">
-              <span>从元模型载入（可选）</span>
+              <span>从本体模型载入（可选）</span>
             </div>
           </template>
           <div class="template-loader">
             <el-select
               v-model="selectedTemplateId"
-              placeholder="选择元模型一键预填实体类型 + 属性骨架"
+              placeholder="选择本体模型一键预填实体类型 + 属性骨架"
               clearable
               style="width: 360px"
             >
@@ -46,7 +46,7 @@
               />
             </el-select>
             <el-button type="primary" :disabled="!selectedTemplateId" :loading="prefilling" @click="applyTemplate">
-              载入元模型
+              载入本体模型
             </el-button>
           </div>
         </el-card>
@@ -169,7 +169,7 @@
         <div class="step-nav">
           <div class="step-nav-left">
             <el-button @click="goBack">取消</el-button>
-            <el-button :icon="Files" :loading="submitting" @click="saveAsTemplate">另存为元模型</el-button>
+            <el-button :icon="Files" :loading="submitting" @click="saveAsTemplate">另存为本体模型</el-button>
           </div>
           <el-button type="primary" @click="goPhaseB">
             下一步：填实例
@@ -524,7 +524,7 @@ const entityTypeRelations = ref<any[]>([])   // v3：类型间关系
 const entities = ref<any[]>([])
 const relations = ref<any[]>([])
 
-// 元模型表单（v3：仅保留 name/description/relationTypes，entityTypes 改由 EntityType CRUD 管理）
+// 本体模型表单（v3：仅保留 name/description/relationTypes，entityTypes 改由 EntityType CRUD 管理）
 const metaForm = ref({
   name: '',
   description: '',
@@ -838,9 +838,9 @@ const applyTemplateById = async (tplId: string) => {
     }
     await loadEntityTypeRelations()
 
-    ElMessage.success(`元模型「${tpl.name}」已载入：${created} 个实体类型`)
+    ElMessage.success(`本体模型「${tpl.name}」已载入：${created} 个实体类型`)
   } catch (e: any) {
-    ElMessage.error(e.serverMessage || '元模型载入失败')
+    ElMessage.error(e.serverMessage || '本体模型载入失败')
   } finally {
     prefilling.value = false
   }
@@ -1231,19 +1231,19 @@ const saveAsTemplate = async () => {
   let name = ''
   try {
     const result = await ElMessageBox.prompt(
-      '将当前本体的 schema 层（实体类型 + 属性骨架 + 类型间关系）抽取为元模型，实例数据不会进入元模型。',
-      '另存为元模型',
+      '将当前本体的 schema 层（实体类型 + 属性骨架 + 类型间关系）抽取为本体模型，实例数据不会进入本体模型。',
+      '另存为本体模型',
       {
         confirmButtonText: '保存',
         cancelButtonText: '取消',
-        inputPlaceholder: '请输入元模型名称',
-        inputValue: `${ontology.value?.name || ''} 元模型`
+        inputPlaceholder: '请输入本体模型名称',
+        inputValue: `${ontology.value?.name || ''} 本体模型`
       }
     )
     name = result.value
   } catch { return }
   if (!name?.trim()) {
-    ElMessage.warning('请输入元模型名称')
+    ElMessage.warning('请输入本体模型名称')
     return
   }
   submitting.value = true
@@ -1252,9 +1252,9 @@ const saveAsTemplate = async () => {
     fd.append('name', name.trim())
     fd.append('description', ontology.value?.description || '')
     await saveMetaModelFromOntology(ontologyId, fd)
-    ElMessage.success('元模型已保存，可在文档构建或新建本体时复用')
+    ElMessage.success('本体模型已保存，可在文档构建或新建本体时复用')
   } catch (e: any) {
-    ElMessage.error(e.serverMessage || '保存元模型失败')
+    ElMessage.error(e.serverMessage || '保存本体模型失败')
   } finally {
     submitting.value = false
   }

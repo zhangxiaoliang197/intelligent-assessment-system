@@ -5,7 +5,7 @@
 | Pydantic 模型          | OWL 2 映射                                       |
 |------------------------|--------------------------------------------------|
 | OntologyModel          | owl:Ontology（IRI=base/{id}#）                   |
-| EntityType（元模型）   | owl:Class 顶层（subClassOf owl:Thing）           |
+| EntityType（本体模型）   | owl:Class 顶层（subClassOf owl:Thing）           |
 | ConceptType（实体类型）    | owl:Class（subClassOf EntityType）               |
 | Entity（实体）         | owl:NamedIndividual（rdf:type ConceptType）      |
 | Property（属性）       | owl:DatatypeProperty 断言（动态创建，支持中文）  |
@@ -168,7 +168,7 @@ class OwlBuilder:
         - 新增 entity_type_relations → ObjectProperty（类型间关系，domain/range 限定）
 
         Args:
-            ont: 本体元模型（含 entity_types / relation_types）
+            ont: 本体模型（含 entity_types / relation_types）
             concepts: 实体类型列表（类型层）；v3 中与 ont.entity_types 同源
             entities: 实体列表（实例层）
             relations: 关系列表（实例间）
@@ -244,7 +244,7 @@ class OwlBuilder:
                     # v3：已在 step 2 创建，直接引用
                     concept_classes[c.id] = et_classes[c.id]
                     continue
-                # v2：实体类型不在元模型中，创建新类 subClassOf EntityType
+                # v2：实体类型不在本体模型中，创建新类 subClassOf EntityType
                 cname = _unique_local_name(c.name, used_names)
                 parents: List[Any] = []
                 if c.entity_type and c.entity_type in et_by_name:
@@ -375,7 +375,7 @@ class OwlBuilder:
         """一步到位：构建 + 保存。
 
         Args:
-            ont: 本体元模型
+            ont: 本体模型
             concepts: 实体类型列表
             entities: 实体列表
             relations: 关系列表

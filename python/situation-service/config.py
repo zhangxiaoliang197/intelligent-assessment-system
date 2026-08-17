@@ -33,8 +33,10 @@ LLM_ALLOWED_HOSTS = tuple(
 SITUATION_ALLOW_DATA_FALLBACK = os.getenv(
     "SITUATION_ALLOW_DATA_FALLBACK", "true"
 ).strip().lower() in {"1", "true", "yes", "on"}
-# 单个物理数据集送入编排器的最大行数；admin-service 本身还有 1000 行硬上限。
-SITUATION_DATA_ROW_LIMIT = max(1, min(int(os.getenv("SITUATION_DATA_ROW_LIMIT", "200")), 1000))
+# 单个物理数据集送入编排器的最大行数（前端展示用的全量行数上限）。
+# admin-service 默认上限 10000（ADMIN_MAX_RESULT_ROWS），此处默认 5000 与之对齐，
+# 保证前端图表/地图能拿到全量明细，LLM 仍只取采样行（见 SITUATION_LLM_EVIDENCE_ROWS）。
+SITUATION_DATA_ROW_LIMIT = max(1, min(int(os.getenv("SITUATION_DATA_ROW_LIMIT", "5000")), 10000))
 # 完成后的 SSE 事件保留时间，支持浏览器断线重连和结果回放。
 SITUATION_STREAM_REPLAY_TTL = max(30, int(os.getenv("SITUATION_STREAM_REPLAY_TTL", "300")))
 
@@ -88,6 +90,12 @@ SITUATION_SENSITIVE_COLUMNS = tuple(
     ).split(",")
     if item.strip()
 )
+
+# ── 地图图层渲染上限（全量展示下的前端性能保护）──
+# 标点/路线/区域/圆 的渲染上限，超出会在 _sanitize_map_layer 中截断并置 truncated。
+# 默认值与全量取数对齐：标点 5000、路线/区域/圆 1000，前端超大数量时再聚合/降级。
+SITUATION_MAP_POINT_LIMIT = max(1, int(os.getenv("SITUATION_MAP_POINT_LIMIT", "5000")))
+SITUATION_MAP_PATH_LIMIT = max(1, int(os.getenv("SITUATION_MAP_PATH_LIMIT", "1000")))
 
 # ── 草稿态 TTL（秒），跨功能跳转传参用 ──
 DRAFT_TTL = int(os.getenv("DRAFT_TTL", "3600"))

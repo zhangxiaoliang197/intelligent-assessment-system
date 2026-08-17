@@ -73,7 +73,7 @@ LLM_STAGE_PROFILES = {
         "thinking": os.getenv("ONTOLOGY_LLM_META_THINKING", "disabled"),
     },
     "step1": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP1_MAX_TOKENS", "16000")),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP1_MAX_TOKENS", "24000")),
         "thinking": os.getenv("ONTOLOGY_LLM_STEP1_THINKING", "enabled"),
     },
     "step2": {

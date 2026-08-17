@@ -242,7 +242,7 @@
       </div>
 
       <!-- 编辑本体对话框 -->
-      <el-dialog v-model="showEditDialog" title="编辑本体模型" width="700px">
+      <el-dialog v-model="showEditDialog" title="编辑本体" width="700px">
         <el-form :model="editForm" label-width="120px">
           <el-form-item label="本体名称" required>
             <el-input v-model="editForm.name" placeholder="请输入本体名称" />
@@ -250,7 +250,7 @@
           <el-form-item label="描述">
             <el-input v-model="editForm.description" type="textarea" :rows="3" placeholder="请输入本体描述" />
           </el-form-item>
-          <el-divider>元模型定义</el-divider>
+          <el-divider>本体定义</el-divider>
           <el-form-item label="实体类型">
             <div class="type-editor">
               <div v-for="(t, idx) in editForm.entityTypes" :key="idx" class="type-row">

@@ -4,7 +4,7 @@
 
 节点标签：
   :Ontology    - 本体元信息（id, name, description, version, status, schema_version）
-  :EntityType  - 元模型实体类型（id, ontology_id, name, color）
+  :EntityType  - 本体模型实体类型（id, ontology_id, name, color）
   :Concept     - 实体类型/类型层（id, ontology_id, name, entity_type, description, color, property_schema_json）
   :Entity      - 实体/实例层（id, ontology_id, name, instance_of, is_primary, properties_json）
   :Relation    - 关系（id, ontology_id, relation_type, weight, properties_json）

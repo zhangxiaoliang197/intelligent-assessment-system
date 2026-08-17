@@ -7,6 +7,7 @@ import com.assessment.admin.repository.DatabaseConfigRepository;
 import com.assessment.admin.repository.DatasetRepository;
 import com.assessment.admin.repository.DriverRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
@@ -30,6 +31,21 @@ public class SqlExecutionService {
 
     @Autowired
     private DriverRepository driverRepo;
+
+    /**
+     * 单次查询返回的最大行数（含截断保护），通过 ADMIN_MAX_RESULT_ROWS 环境变量覆盖。
+     * 默认 10000，clamp 到 [1, 50000]，避免超大结果集打爆内存/网络。
+     */
+    @Value("${assessment.max-result-rows:10000}")
+    private int maxResultRows;
+
+    /** 解析后生效的行数上限，clamp 到 [1, 50000]，防止配置错误导致 OOM。 */
+    private int effectiveMaxRows() {
+        int v = maxResultRows;
+        if (v < 1) v = 1;
+        if (v > 50000) v = 50000;
+        return v;
+    }
 
     /**
      * 在指定数据集关联的数据库上执行 SQL 查询
@@ -71,7 +87,8 @@ public class SqlExecutionService {
             }
             // 设置查询超时 60 秒
             stmt.setQueryTimeout(60);
-            stmt.setMaxRows(1001);
+            int maxRows = effectiveMaxRows();
+            stmt.setMaxRows(maxRows + 1);
 
             long start = System.currentTimeMillis();
             ResultSet rs = stmt.executeQuery(sql);
@@ -87,12 +104,12 @@ public class SqlExecutionService {
                 columns.add(meta.getColumnLabel(i));
             }
 
-            // 数据行（限制最多 1000 行）
+            // 数据行（限制最多 maxRows 行）
             List<Map<String, Object>> rows = new ArrayList<>();
             int rowCount = 0;
             boolean truncated = false;
             while (rs.next()) {
-                if (rowCount >= 1000) {
+                if (rowCount >= maxRows) {
                     truncated = true;
                     break;
                 }
@@ -153,11 +170,11 @@ public class SqlExecutionService {
             return errorMap("移除敏感字段后没有可读取字段");
         }
         String projection = String.join(", ", allowed);
-        // 随机采样：ORDER BY RAND() 返回随机行序，再由下方 subList 截取前 N 行，
-        // 避免每次都命中物理表最旧的固定行，让态势图/预览都能看到多样样本。
-        String sql = "SELECT " + projection + " FROM " + tableName + " ORDER BY RAND()";
+        // 全量展示语义下不再随机采样：ORDER BY RAND() 在大表上排序开销大且无稳定语义，
+        // 改为普通 SELECT，行数由 maxResultRows 上限与 requestedLimit 共同控制。
+        String sql = "SELECT " + projection + " FROM " + tableName;
         Map<String, Object> result = executeSql(datasetId, sql);
-        int limit = Math.max(1, Math.min(requestedLimit, 1000));
+        int limit = Math.max(1, Math.min(requestedLimit, effectiveMaxRows()));
         Object rowsValue = result.get("rows");
         if (Boolean.TRUE.equals(result.get("success")) && rowsValue instanceof List<?> rows && rows.size() > limit) {
             Map<String, Object> limited = new HashMap<>(result);
@@ -218,7 +235,8 @@ public class SqlExecutionService {
                 // 兼容不支持 readOnly hint 的 JDBC 驱动。
             }
             stmt.setQueryTimeout(60);
-            stmt.setMaxRows(1001);
+            int maxRows = effectiveMaxRows();
+            stmt.setMaxRows(maxRows + 1);
             long start = System.currentTimeMillis();
             ResultSet rs = stmt.executeQuery(sql);
             long elapsed = System.currentTimeMillis() - start;
@@ -234,7 +252,7 @@ public class SqlExecutionService {
             int rowCount = 0;
             boolean truncated = false;
             while (rs.next()) {
-                if (rowCount >= 1000) {
+                if (rowCount >= maxRows) {
                     truncated = true;
                     break;
                 }

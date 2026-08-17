@@ -14,7 +14,7 @@
             <el-icon><Collection /></el-icon><span>知识库</span>
           </div>
           <div class="nav-item" @click="go('/ontology')">
-            <el-icon><Box /></el-icon><span>本体模型</span>
+            <el-icon><Box /></el-icon><span>本体</span>
           </div>
           <div class="nav-item" @click="go('/situation/list')">
             <el-icon><List /></el-icon><span>历史管理</span>

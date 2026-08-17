@@ -5,11 +5,11 @@
       <div class="build-header">
         <div class="header-left">
           <el-button @click="goBack" :icon="ArrowLeft">返回</el-button>
-          <h2>{{ isEdit ? '编辑元模型' : '新建元模型' }}</h2>
+          <h2>{{ isEdit ? '编辑本体模型' : '新建本体模型' }}</h2>
           <el-tag v-if="isEdit" type="primary" size="small">{{ form.name }}</el-tag>
         </div>
         <div class="header-actions">
-          <el-button type="primary" :loading="submitting" :icon="Check" @click="save">保存元模型</el-button>
+          <el-button type="primary" :loading="submitting" :icon="Check" @click="save">保存本体模型</el-button>
         </div>
       </div>
 
@@ -19,11 +19,11 @@
           <div class="panel-header"><span>基本信息</span></div>
         </template>
         <el-form :model="form" label-width="100px">
-          <el-form-item label="元模型名称" required>
-            <el-input v-model="form.name" placeholder="请输入元模型名称" />
+          <el-form-item label="本体模型名称" required>
+            <el-input v-model="form.name" placeholder="请输入本体模型名称" />
           </el-form-item>
           <el-form-item label="描述">
-            <el-input v-model="form.description" type="textarea" :rows="2" placeholder="请输入元模型描述" />
+            <el-input v-model="form.description" type="textarea" :rows="2" placeholder="请输入本体模型描述" />
           </el-form-item>
         </el-form>
       </el-card>
@@ -247,7 +247,7 @@ const router = useRouter()
 const metaModelId = route.params.id as string | undefined
 const isEdit = computed(() => !!metaModelId)
 
-// ── 元模型表单（字段与后端 TemplateModel 对齐） ──
+// ── 本体模型表单（字段与后端 OntologyTemplateModel 对齐） ──
 const form = reactive({
   name: '',
   description: '',
@@ -484,7 +484,7 @@ const removeEntityTypeRelation = (idx: number) => {
 // ── 保存 ──
 const save = async () => {
   if (!form.name?.trim()) {
-    ElMessage.warning('请输入元模型名称')
+    ElMessage.warning('请输入本体模型名称')
     return
   }
   if (!form.entityTypes.length) {
@@ -501,10 +501,10 @@ const save = async () => {
     fd.append('entity_type_relations', JSON.stringify(form.entityTypeRelations))
     if (isEdit.value) {
       await updateMetaModel(metaModelId!, fd)
-      ElMessage.success('元模型已更新')
+      ElMessage.success('本体模型已更新')
     } else {
       await createMetaModel(fd)
-      ElMessage.success('元模型已创建')
+      ElMessage.success('本体模型已创建')
     }
     router.push('/ontology')
   } catch (e: any) {
@@ -541,7 +541,7 @@ const loadMetaModel = async () => {
       description: r.description || ''
     }))
   } catch (e: any) {
-    ElMessage.error(e.serverMessage || '加载元模型失败')
+    ElMessage.error(e.serverMessage || '加载本体模型失败')
   }
 }
 

@@ -35,7 +35,7 @@ const systems = [
   },
   {
     id: 2,
-    name: '本体模型',
+    name: '本体',
     icon: Box,
     color: '#10b981',
     path: '/ontology'

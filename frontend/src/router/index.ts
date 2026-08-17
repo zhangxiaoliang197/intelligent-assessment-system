@@ -47,18 +47,18 @@ const routes: Array<RouteRecordRaw> = [
     component: OntologyModel
   },
   {
-    // 新建元模型
-    path: '/ontology/meta-model/new',
+    // 新建本体模型
+    path: '/ontology/ontology-model/new',
     name: 'OntologyMetaModelCreate',
     component: OntologyMetaModelEdit,
-    meta: { title: '新建元模型' }
+    meta: { title: '新建本体模型' }
   },
   {
-    // 编辑元模型
-    path: '/ontology/meta-model/:id/edit',
+    // 编辑本体模型
+    path: '/ontology/ontology-model/:id/edit',
     name: 'OntologyMetaModelEdit',
     component: OntologyMetaModelEdit,
-    meta: { title: '编辑元模型' }
+    meta: { title: '编辑本体模型' }
   },
   {
     path: '/ontology/:id',
@@ -67,7 +67,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: { title: '本体详情' }
   },
   {
-    // 手动构建向导：?template={tplId} 触发模板预填骨架
+    // 手动构建向导：?template={tplId} 触发本体模型预填骨架
     path: '/ontology/manual/:id',
     name: 'OntologyManualBuild',
     component: OntologyManualBuild,
