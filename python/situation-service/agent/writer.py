@@ -194,8 +194,12 @@ async def write_map(
     query: str,
     store: EvidenceStore,
     profile: Dict[str, Any],
+    field_labels: Optional[Dict[str, Dict[str, str]]] = None,
 ) -> Tuple[Optional[Dict[str, Any]], str]:
     """map Writer（v1.1 冻结）：复用现有 map_builder + LLM 地图备选链路。
+
+    field_labels: 可选 {datasetId: {英文字段名: 中文标签}}，来自数据集元数据
+                  （businessMeaning/comment），供 map_builder 生成 propLabels。
 
     不修改 map_builder.py / build_map_messages / _verify_map_coordinates，
     仅把调用从 orchestrator._run_llm_orchestration 内联拆出为独立 task。
@@ -205,8 +209,11 @@ async def write_map(
     """
     # 1) 优先用 map_builder 自动标注（确定性）
     for evidence in store.list_evidences():
+        labels = {}
+        if field_labels:
+            labels = field_labels.get(evidence.dataset_ref) or field_labels.get(evidence.source) or {}
         try:
-            annotations = map_builder.build_map_annotations(evidence.rows)
+            annotations = map_builder.build_map_annotations(evidence.rows, field_labels=labels)
         except Exception as exc:
             logger.warning("map_builder 处理证据 %s 失败: %s", evidence.id, exc)
             continue

@@ -202,6 +202,74 @@ def _extract_rows(result):
     return result.get("rows", result.get("data", result.get("results", [])))
 
 
+# 地图意图关键词：用户提问中明确要求地图展示时触发明细坐标查询
+_MAP_INTENT_KEYWORDS = (
+    "地图", "在地图上", "轨迹图", "地图显示", "显示地图",
+    "画地图", "绘制地图", "标注", "路线图", "航线图", "地图展示",
+)
+
+
+def _has_map_intent(question):
+    """检测用户提问是否明确要求地图展示。"""
+    q = question or ""
+    return any(k in q for k in _MAP_INTENT_KEYWORDS)
+
+
+def _query_map_detail_rows(database_id, schemas, quote_style="none"):
+    """地图意图：从 schemas 中找出含经纬度列的表，执行明细查询返回坐标行。
+
+    指标聚合 SQL 只返回 1 行统计结果、不含经纬度，无法用于地图渲染；
+    此处额外查询坐标明细，供前端绘制轨迹/标点。
+    """
+    coord_tables = []
+    for schema in (schemas or []):
+        tname = (schema.get("tableName") or schema.get("table_name") or "").strip()
+        if not tname:
+            continue
+        cols = [str(c.get("columnName") or c.get("name") or "").lower()
+                for c in (schema.get("columns") or [])]
+        has_lng = any(("lng" in c or "lon" in c or "longitude" in c or "经度" in c)
+                      for c in cols)
+        has_lat = any(("lat" in c or "latitude" in c or "纬度" in c) for c in cols)
+        if has_lng and has_lat:
+            coord_tables.append(tname)
+    if not coord_tables:
+        return []
+
+    rows = []
+    for tname in coord_tables:
+        if quote_style == "backtick":
+            quoted = f"`{tname}`"
+        elif quote_style == "double":
+            quoted = f'"{tname}"'
+        else:
+            quoted = tname
+        sql = f"SELECT * FROM {quoted} LIMIT 5000"
+        try:
+            result = execute_sql_on_database(database_id, sql)
+        except Exception as exc:
+            logger.warning(f"[map-detail] 明细查询失败 {tname}: {exc}")
+            continue
+        if result and result.get("success"):
+            rows.extend(_extract_rows(result) or [])
+    return rows
+
+
+def _build_map_annotations(question, database_id, schemas, quote_style="none"):
+    """地图意图：查询坐标明细并生成 map_annotations 文本；无意图/无坐标返回空串。"""
+    if not _has_map_intent(question):
+        return ""
+    rows = _query_map_detail_rows(database_id, schemas, quote_style)
+    if not rows:
+        return ""
+    from .react_workflow import _auto_build_map_annotations
+    try:
+        return _auto_build_map_annotations(rows)
+    except Exception as exc:
+        logger.warning(f"[map-detail] 生成地图标注失败: {exc}")
+        return ""
+
+
 # =========================================================================
 # 步骤编号常量
 # =========================================================================
@@ -1147,7 +1215,9 @@ async def _compiled_query_flow(question, database_id, merged,
            "rawResults": raw_results[:20],
            "totalRows": len(raw_results),
            "query_type": "data_query", "database_used": database_id,
-           "preflight": preflight, "queryPlan": plan_result}
+           "preflight": preflight, "queryPlan": plan_result,
+           "map_annotations": _build_map_annotations(
+               question, database_id, schemas, quote_style)}
 
 
 async def _extract_query_params(question, spec_indicators, llm_call_fn):
@@ -1368,4 +1438,6 @@ async def run_indicator_query(question, database_id, database_name,
         "totalRows": len(raw_results) if raw_results else 0,
         "query_type": "data_query",
         "database_used": database_id,
+        "map_annotations": _build_map_annotations(
+            question, database_id, schemas, quote_style),
     }

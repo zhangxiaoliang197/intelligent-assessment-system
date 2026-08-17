@@ -52,6 +52,15 @@ const NAME_PATTERNS = /^(?:.*_)?(?:名称|地点|位置|区域|地区|城市|地
 export function extractGeoFromResults(result: any): GeoPoint[] {
   if (!result) return []
 
+  // 兼容直接传入行数组（[{lng, lat, ...}, ...]）——从首行推导列名
+  if (Array.isArray(result)) {
+    if (result.length && result[0] && typeof result[0] === 'object' && !Array.isArray(result[0])) {
+      result = { columns: Object.keys(result[0]), rawResults: result }
+    } else {
+      return []
+    }
+  }
+
   // ── 收集所有列名+数据行的组合 ──
   const dataSlices: Array<{ columns: string[]; rows: any[] }> = []
 

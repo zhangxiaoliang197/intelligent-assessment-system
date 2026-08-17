@@ -9,6 +9,7 @@ export interface GeoPoint {
   lat: number  // 纬度
   raw: string  // 原始匹配文本
   props?: Record<string, any>  // 动态附加属性，如速度、高度、雷达类型等
+  propLabels?: Record<string, string>  // 字段名 -> 中文标签（来自数据集元数据，优先于 cnLabel）
   routeName?: string  // 所属路线名称，用于同路线同色显示
 }
 

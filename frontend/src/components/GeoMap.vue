@@ -190,6 +190,8 @@ interface MapLayerConfig {
   minZoom: number
   maxZoom: number
   tms?: boolean
+  subdomains?: string[]
+  attribution?: string
 }
 
 // ── 默认硬编码配置（GeoWebCache 6层叠加，作为 API 失败时的兜底） ──
@@ -253,6 +255,12 @@ function buildLayers(type: string, baseUrl: string): MapLayerConfig[] {
       { id: 'china_osm_railways_3857', name: '铁路地铁', urlTemplate: `${url}/service/tms/1.0.0/china:china_osm_railways_3857@EPSG:900913@png/{z}/{x}/{y}.png`, opacity: 0.1, minZoom: 3, maxZoom: 18, tms: true },
     ]
   }
+  if (type === 'amap') {
+    return [
+      { id: 'amap_vector', name: '高德矢量底图', urlTemplate: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', opacity: 1, minZoom: 3, maxZoom: 18, tms: false, subdomains: ['1', '2', '3', '4'], attribution: '高德地图' },
+      { id: 'amap_labels', name: '高德路网注记', urlTemplate: 'https://webst0{s}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}', opacity: 1, minZoom: 3, maxZoom: 18, tms: false, subdomains: ['1', '2', '3', '4'], attribution: '高德地图' },
+    ]
+  }
   // 自定义: 地址作为单层瓦片源
   return [{ id: 'custom', name: '自定义图层', urlTemplate: normalizeBaseUrl(baseUrl), opacity: 0.9, minZoom: 3, maxZoom: 18, tms: true }]
 }
@@ -304,16 +312,20 @@ function toWgs84GeoJSON(gj: any): any {
 }
 
 function buildTileLayers(layerConfigs: MapLayerConfig[]) {
-  tileLayers = layerConfigs.map(cfg => ({
-    config: cfg,
-    layer: L.tileLayer(cfg.urlTemplate, {
+  tileLayers = layerConfigs.map(cfg => {
+    const opts: L.TileLayerOptions = {
       tms: cfg.tms ?? false,
       maxZoom: cfg.maxZoom,
       minZoom: cfg.minZoom,
       opacity: cfg.opacity,
-      attribution: 'GeoWebCache',
-    }),
-  }))
+      attribution: cfg.attribution ?? 'GeoWebCache',
+    }
+    if (cfg.subdomains) opts.subdomains = cfg.subdomains
+    return {
+      config: cfg,
+      layer: L.tileLayer(cfg.urlTemplate, opts),
+    }
+  })
 }
 
 function addTileLayers() {
@@ -722,7 +734,8 @@ function addMarkers(fit = true) {
       if (p.props) {
         for (const [key, val] of Object.entries(p.props)) {
           if (val !== null && val !== undefined && val !== '') {
-            tooltip += `<br/>${escapeHtml(cnLabel(key))}: ${escapeHtml(val)}`
+            const label = p.propLabels?.[key] || cnLabel(key)
+            tooltip += `<br/>${escapeHtml(label)}: ${escapeHtml(val)}`
           }
         }
       }
@@ -926,7 +939,8 @@ function addCircles() {
         if (val === null || val === undefined || val === '') continue
         const kl = key.toLowerCase()
         if (kl === 'radius_km' || kl === 'radius') continue
-        popupHtml += `<br/>${escapeHtml(cnLabel(key))}: ${escapeHtml(val)}`
+        const label = c.propLabels?.[key] || cnLabel(key)
+        popupHtml += `<br/>${escapeHtml(label)}: ${escapeHtml(val)}`
       }
     }
     popupHtml += `<br/><small style="color:#999">${c.center.lng.toFixed(4)}, ${c.center.lat.toFixed(4)}</small>`

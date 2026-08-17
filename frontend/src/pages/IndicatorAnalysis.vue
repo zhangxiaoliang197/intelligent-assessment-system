@@ -598,7 +598,7 @@ import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
 import GeoMap from '@/components/GeoMap.vue'
-import { processMapData } from '@/composables/useMapPrompt'
+import { processMapData, extractGeoFromResults, detectMapIntent } from '@/composables/useMapPrompt'
 import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
 import api from '@/services/api'
 import { renderMarkdown } from '@/utils/markdown'
@@ -1139,7 +1139,31 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
             nextTick(() => scrollToBottom())
           } else if (data.type === 'result') {
             const resultContent = fullText || data.final_answer || ''
-            const mapData = processMapData(resultContent, userQuestion)
+            // 后端指标管线会单独返回 map_annotations（明细坐标查询生成），优先解析
+            const mapAnnotationsRaw = data.map_annotations || ''
+            let mapData = processMapData(mapAnnotationsRaw || resultContent, userQuestion)
+
+            // 兜底：AI 文本未解析出地图标注，但查询结果里含经纬度数据时，
+            // 直接从 rawResults 提取坐标，确保用户明确要求地图时一定显示地图。
+            const hasMapData =
+              mapData.geoPoints.length > 0 || mapData.routes.length > 0 ||
+              mapData.areas.length > 0 || mapData.circles.length > 0
+            if (!hasMapData && Array.isArray(data.rawResults) && data.rawResults.length > 0) {
+              const rawGeoPoints = extractGeoFromResults(data.rawResults)
+              if (rawGeoPoints.length > 0) {
+                const userWantsMap = detectMapIntent(userQuestion)
+                mapData = {
+                  geoPoints: rawGeoPoints,
+                  routes: [],
+                  areas: [],
+                  circles: [],
+                  showMap: userWantsMap,
+                  showMapPrompt: !userWantsMap,
+                  hasAnnotations: false,
+                }
+              }
+            }
+
             messages.value[currentMsgIndex] = {
               ...messages.value[currentMsgIndex],
               content: stripMapAnnotationBlock(resultContent),

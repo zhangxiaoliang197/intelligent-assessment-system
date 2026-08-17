@@ -121,6 +121,23 @@ def _safe_scalar(value: Any, limit: int = 80) -> Any:
     return str(value)[:limit]
 
 
+def _safe_props(value: Any) -> Optional[dict]:
+    """清洗点位/圆形区域的动态业务属性（props），供前端弹窗完整展示。
+
+    只保留可安全展示的标量字段，并对键与值做长度/控制字符约束，
+    避免地图标注透传任意结构或 HTML。
+    """
+    if not isinstance(value, dict):
+        return None
+    props = {}
+    for key, item in value.items():
+        safe_key = _safe_text(key, 80)
+        if not safe_key:
+            continue
+        props[safe_key] = _safe_scalar(item, 160)
+    return props or None
+
+
 def _grouped_aggregates(rows: list, categorical_cols: list, numeric_cols: list, top_n: int = 10) -> list:
     """按分类列分组、对数值列做 sum/avg/count 聚合（每组 top-N 组），供 LLM 证据与验证器共用。"""
     grouped = []
@@ -236,6 +253,12 @@ def _safe_point(value: Any) -> Optional[dict]:
         point["featureId"] = _safe_id(value.get("featureId"))
     if value.get("datasetRef"):
         point["datasetRef"] = _safe_text(value.get("datasetRef"), 80)
+    props = _safe_props(value.get("props"))
+    if props:
+        point["props"] = props
+    prop_labels = _safe_props(value.get("propLabels"))
+    if prop_labels:
+        point["propLabels"] = prop_labels
     return point
 
 
@@ -332,6 +355,12 @@ def _sanitize_map_layer(value: Any, profile: dict, context: Optional[dict] = Non
                 circle["featureId"] = _safe_id(item.get("featureId"))
             if item.get("datasetRef"):
                 circle["datasetRef"] = _safe_text(item.get("datasetRef"), 80)
+            props = _safe_props(item.get("props"))
+            if props:
+                circle["props"] = props
+            prop_labels = _safe_props(item.get("propLabels"))
+            if prop_labels:
+                circle["propLabels"] = prop_labels
             circles.append(circle)
     layer_config = value.get("layerConfig", {}) if isinstance(value.get("layerConfig"), dict) else {}
     color = str(layer_config.get("color") or "#e74c3c")
@@ -685,6 +714,36 @@ async def _fetch_meta(profile: Dict[str, Any], context: Dict[str, Any]) -> Dict[
     return meta if isinstance(meta, dict) else {"success": False}
 
 
+def _build_field_labels(meta: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    """从数据集元数据提取 {datasetId: {英文字段名: 中文标签}}。
+
+    meta 为 query_datasets_meta 的返回（{success, data:{schemas:[...]}}）；
+    字段中文名优先取 businessMeaning，其次 comment；为空或与英文名相同则跳过，
+    供 map_builder 生成 propLabels，前端据此直接显示中文字段名。
+    """
+    result: Dict[str, Dict[str, str]] = {}
+    if not isinstance(meta, dict) or not meta.get("success"):
+        return result
+    schemas = (meta.get("data", {}) or {}).get("schemas") or []
+    for schema in schemas:
+        if not isinstance(schema, dict):
+            continue
+        ds_id = str(schema.get("datasetId") or "").strip()
+        if not ds_id:
+            continue
+        labels: Dict[str, str] = {}
+        for field in schema.get("fields") or []:
+            if not isinstance(field, dict):
+                continue
+            name = str(field.get("name") or field.get("fieldName") or "").strip()
+            label = str(field.get("businessMeaning") or field.get("comment") or "").strip()
+            if name and label and label != name:
+                labels[name] = label
+        if labels:
+            result[ds_id] = labels
+    return result
+
+
 def _build_profile_for_v2(
     skill_context: Optional[Dict[str, Any]],
     context: Optional[Dict[str, Any]],
@@ -939,7 +998,8 @@ async def _real_generate_v2_body(
             effective_query, chart_specs, store, profile,
         )
         # 只在有 mapSpecs 或 evidences 含地理列时调 map
-        map_task = writer.write_map(effective_query, store, profile)
+        field_labels = _build_field_labels(meta)
+        map_task = writer.write_map(effective_query, store, profile, field_labels)
 
         charts_result, map_result = await asyncio.gather(chart_task, map_task, return_exceptions=True)
 

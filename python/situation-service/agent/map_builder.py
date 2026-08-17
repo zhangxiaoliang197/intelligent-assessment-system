@@ -67,6 +67,22 @@ def _make_props(row, columns):
     return props if props else None
 
 
+def _prop_labels(props, field_labels):
+    """根据数据集字段中文名生成 props 的中文标签映射（供前端弹窗直接显示中文）。
+
+    field_labels 为 {英文字段名: 中文标签}；未提供或字段无中文名时返回 None，
+    由前端回退到自身的中文映射表（FIELD_CN_MAP）。
+    """
+    if not props or not field_labels:
+        return None
+    labels = {}
+    for key in props:
+        label = field_labels.get(key)
+        if label and str(label).strip() and str(label).strip() != key:
+            labels[key] = str(label).strip()
+    return labels or None
+
+
 # 路线命名候选字段（按优先级排序）：名称 → 编号/航班号 → 型号/类型 → 标识
 _ROUTE_NAME_KEYS = (
     "name", "title", "label", "名称", "标题",
@@ -165,8 +181,11 @@ def discover_coordinate_columns(columns):
     return pairs
 
 
-def build_map_annotations(rows):
+def build_map_annotations(rows, field_labels=None):
     """扫描数据行，自动构建地图标注 dict。
+
+    field_labels: 可选 {英文字段名: 中文标签}，来自数据集元数据（businessMeaning/comment）。
+                 提供后每个 point/circle 会附带 propLabels，前端据此直接显示中文字段名。
 
     返回 {"points": [...], "routes": [...], "areas": [...], "circles": [...]}；
     无地理列时返回空 dict。
@@ -199,6 +218,7 @@ def build_map_annotations(rows):
         for index, row in enumerate(rows):
             name = str(row.get("name", ""))
             props = _make_props(row, columns)
+            labels = _prop_labels(props, field_labels)
             color = _color_for(index)
             circle = {
                 "name": name,
@@ -208,6 +228,8 @@ def build_map_annotations(rows):
             }
             if props:
                 circle["props"] = props
+            if labels:
+                circle["propLabels"] = labels
             result["circles"].append(circle)
 
             point = {
@@ -219,6 +241,8 @@ def build_map_annotations(rows):
             }
             if props:
                 point["props"] = props
+            if labels:
+                point["propLabels"] = labels
             result["points"].append(point)
         return result
 
@@ -265,6 +289,9 @@ def build_map_annotations(rows):
                 props = _make_props(pt["row"], columns)
                 if props:
                     point["props"] = props
+                labels = _prop_labels(props, field_labels)
+                if labels:
+                    point["propLabels"] = labels
                 result["points"].append(point)
         return result
 
@@ -292,6 +319,7 @@ def build_map_annotations(rows):
             name = _pick_route_name(row, columns, index)
             color = _color_for(len(result["routes"]))
             props = _make_props(row, columns)
+            labels = _prop_labels(props, field_labels)
 
             # 生成路线（origin -> dest）
             result["routes"].append({
@@ -313,6 +341,8 @@ def build_map_annotations(rows):
             }
             if props:
                 origin_point["props"] = props
+            if labels:
+                origin_point["propLabels"] = labels
             result["points"].append(origin_point)
 
             # 终点标记
@@ -325,6 +355,8 @@ def build_map_annotations(rows):
             }
             if props:
                 dest_point["props"] = props
+            if labels:
+                dest_point["propLabels"] = labels
             result["points"].append(dest_point)
 
         # 如果有额外的非 origin/dest 坐标对（如 geolocation_lng/lat），也生成标点
@@ -348,6 +380,9 @@ def build_map_annotations(rows):
                 extra_props = _make_props(row, columns)
                 if extra_props:
                     extra_point["props"] = extra_props
+                extra_labels = _prop_labels(extra_props, field_labels)
+                if extra_labels:
+                    extra_point["propLabels"] = extra_labels
                 result["points"].append(extra_point)
         return result
 
@@ -364,6 +399,9 @@ def build_map_annotations(rows):
         props = _make_props(row, columns)
         if props:
             point["props"] = props
+        labels = _prop_labels(props, field_labels)
+        if labels:
+            point["propLabels"] = labels
         result["points"].append(point)
 
     return result

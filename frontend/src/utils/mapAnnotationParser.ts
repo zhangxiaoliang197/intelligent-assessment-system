@@ -28,6 +28,9 @@ export const FIELD_CN_MAP: Record<string, string> = {
   'seq': '序号',
   'aircraft_id': '飞机编号', 'aircraft_name': '名称',
   'aircraft_type': '机型',
+  'mission_type': '任务类型', 'coverage_radius_km': '覆盖范围(km)',
+  'distance_km': '累计飞行距离(km)', 'payload_kg': '载重(kg)',
+  'flight_duration_min': '飞行时长(min)', 'fuel_burn_rate': '油耗率(%/h)',
   // 通用
   'name': '名称', 'id': '编号',
 }
@@ -77,6 +80,7 @@ export interface CircleArea {
   center: { lng: number; lat: number }
   radiusKm: number
   props?: Record<string, any>  // 附加业务属性
+  propLabels?: Record<string, string>  // 字段名 -> 中文标签（来自数据集元数据）
 }
 
 export interface MapAnnotationResult {

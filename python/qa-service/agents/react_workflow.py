@@ -106,6 +106,7 @@ class ReactWorkflowState(TypedDict, total=False):
     data_final_answer: str  # Data Worker 的最终回答
     generated_sql: str      # 最终生成的 SQL
     raw_results: list       # SQL 执行结果
+    map_detail_rows: list   # 地图意图时额外查询的坐标明细（用于地图渲染）
     chart_config: dict      # 图表配置
 
     # ── 综合产出 ──
@@ -129,6 +130,7 @@ def _empty_state() -> dict:
         "data_final_answer": "",
         "generated_sql": "",
         "raw_results": [],
+        "map_detail_rows": [],
         "chart_config": {},
         "final_answer": "",
         "result": {},
@@ -1240,6 +1242,28 @@ async def data_worker_node(state: ReactWorkflowState, config: RunnableConfig) ->
         raw_results = []
         execution_error = "SQL 生成失败"
 
+    # ── 地图意图：聚合 SQL 只返回统计值、不含经纬度，额外查询坐标明细 ──
+    map_detail_rows = []
+    if _has_map_intent(question):
+        for s_ in table_schemas:
+            tname = (s_.get("tableName") or s_.get("table_name") or "").strip()
+            if not tname:
+                continue
+            cols = [str(c.get("columnName") or c.get("name") or "").lower()
+                    for c in (s_.get("columns") or [])]
+            has_lng = any(("lng" in c or "lon" in c or "longitude" in c) for c in cols)
+            has_lat = any(("lat" in c or "latitude" in c) for c in cols)
+            if has_lng and has_lat:
+                try:
+                    r = execute_sql_on_database(db_id, f"SELECT * FROM {tname} LIMIT 5000")
+                    if r.get("success"):
+                        map_detail_rows.extend(
+                            r.get("rows", r.get("data", r.get("results", []))) or [])
+                except Exception as exc:
+                    logger.warning(f"[map-detail] 明细查询失败 {tname}: {exc}")
+        if map_detail_rows:
+            logger.info(f"[map-detail] 地图意图命中，额外查询坐标明细 {len(map_detail_rows)} 行")
+
     # Step 3: 委托 analyst 智能体生成分析建议
     es.raw_results = raw_results
     es.execution_error = execution_error
@@ -1267,6 +1291,7 @@ async def data_worker_node(state: ReactWorkflowState, config: RunnableConfig) ->
         "raw_results": raw_results,
         "final_answer": final_answer,
         "database_type": database_type,
+        "map_detail_rows": map_detail_rows,
     }
 
 
@@ -1372,7 +1397,9 @@ async def synthesizer_node(state: ReactWorkflowState, config: RunnableConfig) ->
                 break
 
     # 自动生成地图标注（单独存储，不拼入显示文本）
-    map_annotations = _auto_build_map_annotations(raw_results)
+    # 优先用地图明细坐标（用户明确要求地图时由 data_worker 额外查询），否则用聚合结果
+    map_detail_rows = state.get("map_detail_rows", [])
+    map_annotations = _auto_build_map_annotations(map_detail_rows or raw_results)
 
     result = {
         "type": "data_query" if route == "data_query" else "general",
@@ -1397,6 +1424,19 @@ async def synthesizer_node(state: ReactWorkflowState, config: RunnableConfig) ->
               detail="分析流程完成")
 
     return {**state, "steps": steps, "result": result, "final_answer": final_answer}
+
+
+# 地图意图关键词：用户提问中明确要求地图展示时，额外查询坐标明细
+_MAP_INTENT_KEYWORDS = (
+    "地图", "在地图上", "轨迹图", "地图显示", "显示地图",
+    "画地图", "绘制地图", "标注", "路线图", "航线图", "地图展示",
+)
+
+
+def _has_map_intent(question):
+    """检测用户提问是否明确要求地图展示。"""
+    q = question or ""
+    return any(k in q for k in _MAP_INTENT_KEYWORDS)
 
 
 def _auto_build_map_annotations(raw_results):
