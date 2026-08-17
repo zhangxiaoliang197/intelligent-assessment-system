@@ -227,6 +227,10 @@ def _evidence_all_numbers(store: EvidenceStore) -> List[float]:
     """
     values: List[float] = []
 
+    # 允许 0：分组对比图（如城市 × 多指标）在部分维度缺失时，LLM/前端会以 0 补位表示「无值」，
+    # 这是合法语义，不应被判「无法由证据复算」。
+    values.append(0.0)
+
     def _add(v: Any) -> None:
         number = _as_number(v)
         if number is not None:
@@ -284,8 +288,47 @@ def _evidence_all_numbers(store: EvidenceStore) -> List[float]:
     return values
 
 
+def _find_pie_other(option: dict) -> List[Tuple[float, float]]:
+    """提取 pie 图各 series 的「其他」分片值及其余分片值之和。
+
+    Returns:
+        [(other_value, rest_sum), ...] —— rest_sum 为同一 series 内非「其他」分片数值之和，
+        用于复算「其他 = 总 sum − 其余分片之和」这类合法合并值。
+    """
+    others: List[Tuple[float, float]] = []
+    for series in option.get("series", []) or []:
+        if not isinstance(series, dict):
+            continue
+        if str(series.get("type", "")).lower() != "pie":
+            continue
+        data = series.get("data")
+        if not isinstance(data, list):
+            continue
+        rest = 0.0
+        other_values: List[float] = []
+        for item in data:
+            if isinstance(item, dict):
+                name = str(item.get("name") or "")
+                value = _as_number(item.get("value"))
+            else:
+                name = ""
+                value = _as_number(item)
+            if value is None:
+                continue
+            if name and any(kw in name for kw in ("其他", "其它", "other", "Other")):
+                other_values.append(value)
+            else:
+                rest += value
+        for ov in other_values:
+            others.append((ov, rest))
+    return others
+
+
 def check_chart_value_evidence(chart: Dict[str, Any], evidence_numbers: List[float]) -> Optional[str]:
     """检查 chart 中所有数值是否能在 evidence 集合中找到（容差 1% / 0.5）。
+
+    例外：
+    - pie 图的「其他」分片允许由「总 sum − 同 series 其余分片之和」复算。
 
     Returns: 失败原因字符串（None 表示通过）
     """
@@ -302,14 +345,24 @@ def check_chart_value_evidence(chart: Dict[str, Any], evidence_numbers: List[flo
     if not evidence_numbers:
         return "证据集合为空，无法验证数值"
 
+    pie_others = _find_pie_other(option) if str(chart.get("type") or "").lower() == "pie" else []
+
+    def _matches(value: float, candidate: float) -> bool:
+        return math.isclose(value, candidate, rel_tol=0.01, abs_tol=0.5)
+
     mismatches: List[str] = []
     for value in output_values:
-        if not any(
-            math.isclose(value, candidate, rel_tol=0.01, abs_tol=0.5)
-            for candidate in evidence_numbers
+        if any(_matches(value, candidate) for candidate in evidence_numbers):
+            continue
+        # pie「其他」分片：value = 总 sum − 同 series 其余分片之和
+        if any(
+            math.isclose(value, other_value, rel_tol=1e-9, abs_tol=1e-9)
+            and any(_matches(value + rest, candidate) for candidate in evidence_numbers)
+            for other_value, rest in pie_others
         ):
-            closest = min(evidence_numbers, key=lambda x: abs(x - value), default=None)
-            mismatches.append(f"{value}→最近证据{closest}")
+            continue
+        closest = min(evidence_numbers, key=lambda x: abs(x - value), default=None)
+        mismatches.append(f"{value}→最近证据{closest}")
 
     if mismatches:
         return f"数值无法由证据复算（前 3 个：{';'.join(mismatches[:3])}）"
@@ -319,6 +372,69 @@ def check_chart_value_evidence(chart: Dict[str, Any], evidence_numbers: List[flo
 # ──────────────────────────────────────────────────────────────────
 # 总体校验
 # ──────────────────────────────────────────────────────────────────
+
+def _has_field_mapping(chart: Dict[str, Any]) -> bool:
+    """判断 chart 是否走「明细可视化」路径（依赖 fieldMapping 供前端全量重建）。"""
+    fm = chart.get("fieldMapping")
+    return (
+        isinstance(fm, dict)
+        and bool(fm.get("xField"))
+        and bool(fm.get("yFields"))
+    )
+
+
+def _resolve_chart_columns(chart: Dict[str, Any], store: EvidenceStore) -> List[str]:
+    """获取 chart 对应证据的真实列名（优先 provenance，回退 datasetRef 匹配）。"""
+    provenance = chart.get("provenance")
+    if isinstance(provenance, dict):
+        columns = provenance.get("columns")
+        if isinstance(columns, list) and columns:
+            return [str(c) for c in columns]
+    ref = str(chart.get("datasetRef") or "")
+    if ref:
+        for ev in store.list_evidences():
+            if ref in (ev.id, ev.dataset_ref, ev.source):
+                return list(ev.columns or [])
+    return []
+
+
+def check_chart_field_mapping(chart: Dict[str, Any], store: EvidenceStore) -> Optional[str]:
+    """校验 fieldMapping 字段名是否命中证据真实列名。
+
+    - 无 fieldMapping（聚合汇总路径）时跳过（返回 None）；
+    - xField / yFields / groupField 必须存在于证据 columns 中；
+    - 拿不到列信息时跳过（避免误杀旧数据）。
+
+    Returns: 失败原因字符串（None 表示通过或跳过）
+    """
+    if not isinstance(chart, dict):
+        return None
+    fm = chart.get("fieldMapping")
+    if not isinstance(fm, dict) or not fm:
+        return None
+
+    x_field = str(fm.get("xField") or "").strip()
+    y_fields = fm.get("yFields")
+    if not isinstance(y_fields, list):
+        y_fields = [y_fields] if y_fields else []
+    group_field = str(fm.get("groupField") or "").strip()
+
+    if not x_field or not y_fields:
+        return "fieldMapping 缺少 xField 或 yFields"
+
+    columns = _resolve_chart_columns(chart, store)
+    if not columns:
+        return None
+
+    if x_field not in columns:
+        return f"fieldMapping.xField={x_field!r} 不在数据集列 {columns} 中"
+    for yf in y_fields:
+        if str(yf) not in columns:
+            return f"fieldMapping.yFields={yf!r} 不在数据集列 {columns} 中"
+    if group_field and group_field not in columns:
+        return f"fieldMapping.groupField={group_field!r} 不在数据集列 {columns} 中"
+    return None
+
 
 def verify_charts(
     charts: List[Dict[str, Any]],
@@ -330,7 +446,7 @@ def verify_charts(
     Returns:
         {
           "passed": bool,
-          "failures": [{"chartId": ..., "stage": "type_fit|value_evidence", "reason": ...}],
+          "failures": [{"chartId": ..., "stage": "type_fit|field_mapping|value_evidence", "reason": ...}],
           "summary": "...",
         }
     """
@@ -352,12 +468,20 @@ def verify_charts(
         reason = check_chart_type_data_fit(chart)
         if reason:
             failures.append({"chartId": chart_id, "stage": "type_fit", "reason": reason})
-            continue  # 类型适配失败，跳过数值校验
+            continue  # 类型适配失败，跳过后续校验
 
-        # 2) 数值证据校验
-        reason = check_chart_value_evidence(chart, evidence_numbers)
-        if reason:
-            failures.append({"chartId": chart_id, "stage": "value_evidence", "reason": reason})
+        # 2) fieldMapping 校验：明细可视化路径下，字段名必须命中证据真实列
+        if _has_field_mapping(chart):
+            reason = check_chart_field_mapping(chart, store)
+            if reason:
+                failures.append({"chartId": chart_id, "stage": "field_mapping", "reason": reason})
+                continue
+
+        # 3) 数值证据校验：仅聚合汇总路径（无 fieldMapping）下，内联值即最终展示值，需逐字复算
+        if not _has_field_mapping(chart):
+            reason = check_chart_value_evidence(chart, evidence_numbers)
+            if reason:
+                failures.append({"chartId": chart_id, "stage": "value_evidence", "reason": reason})
 
     passed = not failures
     return {
@@ -451,6 +575,7 @@ def verify_all(
 
 __all__ = [
     "check_chart_type_data_fit",
+    "check_chart_field_mapping",
     "check_chart_value_evidence",
     "verify_charts",
     "verify_narrative",

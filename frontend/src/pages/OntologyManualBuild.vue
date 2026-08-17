@@ -790,9 +790,9 @@ const applyTemplateById = async (tplId: string) => {
     // 2. 逐个创建实体类型（含属性骨架）
     let created = 0
     const nameToId: Record<string, string> = {}
-    const entityTypes = tpl.entity_types || []
+    const tplEntityTypes = tpl.entity_types || []
     // 第一遍：创建所有类型（暂不挂父层级）
-    for (const et of entityTypes) {
+    for (const et of tplEntityTypes) {
       const cfd = new FormData()
       cfd.append('name', et.name)
       cfd.append('description', et.description || '')
@@ -806,7 +806,7 @@ const applyTemplateById = async (tplId: string) => {
     await loadEntityTypes()
 
     // 3. 第二遍：对标注 parent_entity_type_name（父类型名）的，补挂 parent_entity_type_id
-    for (const et of entityTypes) {
+    for (const et of tplEntityTypes) {
       if (!et.parent_entity_type_name) continue
       const typeId = nameToId[et.name]
       const parentId = nameToId[et.parent_entity_type_name]

@@ -128,9 +128,17 @@ async def write_single_chart(
         "type": actual_type,
         "title": str(raw.get("title") or title),
         "option": option,
-        "datasetRef": str(raw.get("datasetRef") or evidence.dataset_ref or ""),
+        # 统一用 evidence.id 作为关联 key，与 dataset 事件的 datasetId 对齐，
+        # 供前端全量重建时 chart.datasetRef 精确命中 dataset.datasetId。
+        "datasetRef": evidence.id,
         "fieldMapping": raw.get("fieldMapping") or {},
         "explanation": str(raw.get("explanation") or intent or ""),
+        # 携带证据定位信息，供 verifier 校验 fieldMapping 列名是否存在、前端关联真实数据
+        "provenance": {
+            "evidenceId": evidence.id,
+            "datasetId": evidence.dataset_ref,
+            "columns": evidence.columns,
+        },
     }
 
     # 写回 chart metadata 到 EvidenceStore（供 narrative 反向引用）
@@ -214,7 +222,7 @@ async def write_map(
 
         map_layer = {
             "layerId": f"layer_{evidence.id}",
-            "datasetRef": evidence.dataset_ref,
+            "datasetRef": evidence.id,
             "points": points,
             "routes": routes,
             "areas": areas,
@@ -228,7 +236,7 @@ async def write_map(
                 "visible": True,
             },
         }
-        return map_layer, evidence.dataset_ref
+        return map_layer, evidence.id
 
     # 2) map_builder 未生成 → 走 LLM 地图备选（保留现有 prompt）
     # data_context 格式与 build_map_messages 期望一致：{datasetId: {success/columns/rows/total}}

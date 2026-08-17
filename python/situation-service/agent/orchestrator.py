@@ -738,7 +738,9 @@ def _evidences_to_dataset_events(store: EvidenceStore) -> List[Dict[str, Any]]:
     """把 EvidenceStore 转换为 SSE dataset 事件列表（兼容原 dataset 事件结构）。"""
     events = []
     for index, ev in enumerate(store.list_evidences(), start=1):
-        dataset_id = f"real_{index}_{_safe_id(ev.source)}"
+        # 统一用 evidence.id（子问题 id）作为 datasetId，与 chart.datasetRef 对齐，
+        # 使前端全量重建时 chart.datasetRef 能精确命中 dataset.datasetId。
+        dataset_id = ev.id or f"real_{index}_{_safe_id(ev.source)}"
         total_rows = ev.meta.get("totalRows", len(ev.rows))
         events.append({
             "datasetId": dataset_id,
@@ -989,7 +991,7 @@ async def _real_generate_v2_body(
         not verify_result["passed"]
         and reflection_round < config.SITUATION_REFLECTION_MAX_ROUNDS
         and any(
-            f["stage"] in ("type_fit", "value_evidence")
+            f["stage"] in ("type_fit", "value_evidence", "field_mapping")
             for f in verify_result.get("chart_result", {}).get("failures", [])
         )
     ):

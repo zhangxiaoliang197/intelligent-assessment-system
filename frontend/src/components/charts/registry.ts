@@ -48,19 +48,13 @@ export function listCharts(): ChartDefinition[] {
   return Array.from(REGISTRY.values())
 }
 
-// ── 统一配色：打破 ECharts 默认主题下所有图表都呈现同一种蓝的观感 ──
-const DEFAULT_PALETTE = [
-  '#5470c6', '#91cc75', '#fac858', '#ee6666', '#73c0de',
-  '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#6e7074',
-]
-
-// ── 默认后处理：统一配色（标题由卡片头部展示，图表内部不渲染，避免与图例重叠）──
+// ── 默认后处理（标题由卡片头部展示，图表内部不渲染，避免与图例重叠）──
 function defaultBuild(spec: { option: any; title?: string; index?: number }): any {
   const opt = spec.option || {}
   // 标题统一由卡片头部展示；移除 LLM 可能内联的 title，防止内部标题与图例重叠
   if (opt.title) delete opt.title
   if (!opt.tooltip) opt.tooltip = { trigger: 'item' }
-  // 按图表序号轮转色板起始位置，让不同图表拥有不同主色，避免整页清一色
+  // 移除 LLM 内联在系列上的单一颜色，交由 ECharts 默认调色板自动配色，避免整页清一色
   const seriesList = Array.isArray(opt.series) ? opt.series : opt.series ? [opt.series] : []
   for (const s of seriesList) {
     if (s && typeof s === 'object') {

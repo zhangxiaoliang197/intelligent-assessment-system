@@ -250,8 +250,12 @@ def build_single_chart_messages(
             "  · bar：分类数 ≤ 30；\n"
             "  · scatter：点数 ≥ 5；\n"
             "- 数据只能来自下方证据，不得编造；series 中每个数值必须逐字等于证据中的 sum/avg/count；\n"
-            "- fieldMapping 必填 xField（分类字段）和 yFields（数值字段列表）；前端会用数据集全量行 + fieldMapping 重建 series.data，"
-            "LLM 内联的样本数值仅作校验参考，fieldMapping 必须准确指向真实列名。"},
+            "- fieldMapping 必填 xField（分类/X轴字段）和 yFields（数值/Y轴字段列表），字段名必须逐字来自证据 columns 中的真实列名；"
+            "前端会用数据集全量行 + fieldMapping 重建 series.data，LLM 内联的样本数值仅作校验参考；\n"
+            "- 若数据是「分类 + 分组字段 + 数值」的 long 格式（如 city × metric × value），必须额外给出 groupField（分组字段名，如 metric），"
+            "yFields 填数值列（如 value）；严禁把分组字段的取值（如 delivery_order_count）当作 yFields；\n"
+            "- 分组对比图某维度缺失时，该位置可填 0 表示「无值」；pie 分类数 > 8 合并为「其他」时，"
+            "「其他」的值 = 该数值列总 sum − 其余分片之和。"},
         {"role": "user", "content": (
             f"用户问题：{query}\n\n"
             f"图表规格：\n- {chart_type}: {title}（{intent}）\n\n"

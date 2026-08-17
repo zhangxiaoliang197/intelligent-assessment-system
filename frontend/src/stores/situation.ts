@@ -21,7 +21,7 @@ export interface ChartSpec {
   option: any
   explanation?: string
   datasetRef?: string
-  fieldMapping?: { xField?: string; yFields?: string[] }
+  fieldMapping?: { xField?: string; yFields?: string[]; groupField?: string }
   provenance?: Record<string, any>
   verification?: Record<string, any>
 }
@@ -116,7 +116,7 @@ function toNum(v: any): number {
 }
 
 function rebuildChartOption(
-  chart: { type: string; option: any; fieldMapping?: { xField?: string; yFields?: string[] } },
+  chart: { type: string; option: any; fieldMapping?: { xField?: string; yFields?: string[]; groupField?: string } },
   ds: DatasetSummary,
 ): any {
   const fm = chart.fieldMapping
@@ -124,16 +124,54 @@ function rebuildChartOption(
   const rows = ds.data
   const xField = fm.xField
   const yFields = fm.yFields || []
+  const groupField = fm.groupField
   const opt = JSON.parse(JSON.stringify(chart.option || {}))
   const type = chart.type
+
+  // long 格式透视：{分类, 分组字段, 数值} → 每个分组一个 series
+  if (groupField && yFields.length) {
+    const yf = yFields[0]
+    let categories = Array.from(new Set(rows.map((r) => String(r[xField] ?? ''))))
+    const groups = Array.from(new Set(rows.map((r) => String(r[groupField] ?? ''))))
+    const valueMap = new Map<string, number>()
+    rows.forEach((r) => {
+      const key = `${String(r[xField] ?? '')}\u0000${String(r[groupField] ?? '')}`
+      valueMap.set(key, (valueMap.get(key) || 0) + toNum(r[yf]))
+    })
+    // 分类数 > 30 时按各分类合计降序取 top-29，其余合并为「其他」
+    const MAX_CAT = 30
+    if (categories.length > MAX_CAT) {
+      const catTotal = (c: string) => groups.reduce((s, g) => s + (valueMap.get(`${c}\u0000${g}`) || 0), 0)
+      categories.sort((a, b) => catTotal(b) - catTotal(a))
+      const topCats = categories.slice(0, MAX_CAT - 1)
+      const restCats = categories.slice(MAX_CAT - 1)
+      categories = [...topCats, '其他']
+      groups.forEach((g) => {
+        valueMap.set(`其他\u0000${g}`, restCats.reduce((s, c) => s + (valueMap.get(`${c}\u0000${g}`) || 0), 0))
+      })
+    }
+    opt.xAxis = { type: 'category', data: categories }
+    opt.series = groups.map((g) => ({
+      name: g,
+      type: type === 'line' ? 'line' : 'bar',
+      data: categories.map((c) => valueMap.get(`${c}\u0000${g}`) ?? 0),
+    }))
+    return opt
+  }
 
   if (type === 'pie') {
     const yf = yFields[0]
     if (yf) {
-      opt.series = [{
-        type: 'pie',
-        data: rows.map((r) => ({ name: String(r[xField] ?? ''), value: toNum(r[yf]) })),
-      }]
+      let items = rows.map((r) => ({ name: String(r[xField] ?? ''), value: toNum(r[yf]) }))
+      // 分类数 > 8 时合并为 top7 + 其他（与后端校验「其他 = 总 sum − 其余分片之和」对齐）
+      if (items.length > 8) {
+        items.sort((a, b) => b.value - a.value)
+        const top = items.slice(0, 7)
+        const restSum = items.slice(7).reduce((s, it) => s + it.value, 0)
+        top.push({ name: '其他', value: restSum })
+        items = top
+      }
+      opt.series = [{ type: 'pie', data: items }]
     }
     return opt
   }
@@ -149,21 +187,34 @@ function rebuildChartOption(
   }
   // bar / line / 其它分类轴图表
   if (yFields.length) {
-    const categories = rows.map((r) => String(r[xField] ?? ''))
+    // 先按 xField 聚合（去重 + 求和），避免明细行产生重复分类
+    const agg = new Map<string, Record<string, number>>()
+    rows.forEach((r) => {
+      const cat = String(r[xField] ?? '')
+      const entry = agg.get(cat) || {}
+      yFields.forEach((yf: string) => { entry[yf] = (entry[yf] || 0) + toNum(r[yf]) })
+      agg.set(cat, entry)
+    })
+    let categories = Array.from(agg.keys())
+    // 分类数 > 30 时按首个 yField 降序取 top-29，其余合并为「其他」（与后端 bar≤30 规则对齐）
+    const MAX_CAT = 30
+    if (categories.length > MAX_CAT) {
+      const primaryYf = yFields[0]
+      categories.sort((a, b) => (agg.get(b)?.[primaryYf] ?? 0) - (agg.get(a)?.[primaryYf] ?? 0))
+      const topCats = categories.slice(0, MAX_CAT - 1)
+      const restCats = categories.slice(MAX_CAT - 1)
+      const other: Record<string, number> = {}
+      restCats.forEach((c) => yFields.forEach((yf: string) => { other[yf] = (other[yf] || 0) + (agg.get(c)?.[yf] ?? 0) }))
+      agg.set('其他', other)
+      categories = [...topCats, '其他']
+    }
     if (opt.xAxis && typeof opt.xAxis === 'object') opt.xAxis.data = categories
     else opt.xAxis = { type: 'category', data: categories }
     opt.series = yFields.map((yf: string) => ({
       name: yf,
       type: type === 'line' ? 'line' : 'bar',
-      data: rows.map((r) => toNum(r[yf])),
+      data: categories.map((c) => agg.get(c)?.[yf] ?? 0),
     }))
-    // 类目过多时注入 dataZoom，避免几千分类不可读
-    if (categories.length > 50 && !opt.dataZoom) {
-      opt.dataZoom = [
-        { type: 'slider', xAxisIndex: 0, start: 0, end: Math.min(100, Math.round(50 / categories.length * 100)) || 10 },
-        { type: 'inside', xAxisIndex: 0 },
-      ]
-    }
   }
   return opt
 }
