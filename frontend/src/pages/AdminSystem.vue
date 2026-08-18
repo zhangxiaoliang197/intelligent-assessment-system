@@ -298,8 +298,8 @@
             <el-slider v-model="llmForm.temperature" :min="0" :max="1" :step="0.1" show-stops :marks="tempMarks" />
           </el-form-item>
           <el-form-item label="Max Tokens">
-            <!-- max_tokens 为单次输出上限，受模型/部署 max_model_len 限制（本项目 vLLM 上限 393216） -->
-            <el-input-number v-model="llmForm.maxTokens" :min="100" :max="393216" :step="100" />
+            <!-- max_tokens 为单次输出上限，实际取值以所用模型 max_output_tokens 为准（如 deepseek-reasoner 等 reasoning 模型，24000-32000 已足够容纳 reasoning 思考链 + content；超过模型上限会被网关拒绝 HTTP 400） -->
+            <el-input-number v-model="llmForm.maxTokens" :min="100" :max="32000" :step="100" />
           </el-form-item>
           <el-form-item label="Top-P">
             <el-slider v-model="llmForm.topP" :min="0" :max="1" :step="0.05" show-stops :marks="topPMarks" />

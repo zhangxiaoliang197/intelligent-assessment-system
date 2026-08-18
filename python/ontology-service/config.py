@@ -61,36 +61,43 @@ VERIFICATION_MAX_DOC_CHARS = int(os.getenv("VERIFICATION_MAX_DOC_CHARS", "20000"
 # reasoning 模型（如 deepseek-v4-flash / deepseek-reasoner）会优先消耗 token 做思考链
 # （reasoning_content），再输出正式 content。max_tokens 需同时容纳 reasoning + content，
 # 否则 reasoning 耗尽上限后 content 会被截断为空（finish_reason=length）。
-# max_tokens 为单次输出上限，受模型/部署 max_model_len 限制（本项目 vLLM 上限 393216=384K），
-# 并非 1M 上下文能力（上下文是输入+输出总量）。默认值取 393216，可通过环境变量 LLM_MAX_TOKENS 覆盖。
-# 各阶段优先使用下方 LLM_STAGE_PROFILES 的独立配置。
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "393216"))
+# max_tokens 为单次输出上限，受模型/部署 max_model_len 限制（本项目 vLLM 上限 393216=384K
+# 为输入+输出总量上限，并非单次输出能力）。本服务各阶段单批输入已通过 STEP1/2_BATCH_MAX_CHARS
+# 控制在 ~5000 字符（约 7K-9K token），输出为结构化 JSON，单次实际需要 8K-24K token 已足够。
+# 全局兜底默认值取 32000，覆盖多数 reasoning 模型 reasoning(6K-15K)+content(3K-8K) 输出；
+# 传超过模型 max_output_tokens 的值会被网关拒绝（HTTP 400 Invalid max_tokens）。
+# 各阶段优先使用下方 LLM_STAGE_PROFILES 的独立配置，按实际输出规模精细分档。
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "32000"))
 
-# ── LLM 各阶段独立参数 ──
+# ── LLM 各阶段独立参数（按实际单次输出规模精细分档）──
 
 LLM_STAGE_PROFILES = {
     "meta": {
         "max_tokens": int(os.getenv("ONTOLOGY_LLM_META_MAX_TOKENS", "4000")),
         "thinking": os.getenv("ONTOLOGY_LLM_META_THINKING", "disabled"),
     },
+    # step1 实体类型提取：单批输入 ~5000 字符，输出实体类型+属性骨架+类型间关系 JSON
     "step1": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP1_MAX_TOKENS", "393216")),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP1_MAX_TOKENS", "24000")),
         "thinking": os.getenv("ONTOLOGY_LLM_STEP1_THINKING", "enabled"),
     },
+    # step2 实体+关系提取：单批输入 ~5000 字符，输出实体+关系 JSON，输出量最大
     "step2": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP2_MAX_TOKENS", "393216")),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP2_MAX_TOKENS", "32000")),
         "thinking": os.getenv("ONTOLOGY_LLM_STEP2_THINKING", "enabled"),
     },
+    # step3 跨组关系补充：输入实体名列表（每批 ≤60），输出关系 JSON
     "step3_group": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP3_GROUP_MAX_TOKENS", "393216")),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP3_GROUP_MAX_TOKENS", "32000")),
         "thinking": os.getenv("ONTOLOGY_LLM_STEP3_GROUP_THINKING", "enabled"),
     },
     "step3_cross": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP3_CROSS_MAX_TOKENS", "393216")),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP3_CROSS_MAX_TOKENS", "32000")),
         "thinking": os.getenv("ONTOLOGY_LLM_STEP3_CROSS_THINKING", "enabled"),
     },
+    # step4 验证报告：输入原文 ≤20000 字符，输出报告文本
     "step4": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP4_MAX_TOKENS", "393216")),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP4_MAX_TOKENS", "16000")),
         "thinking": os.getenv("ONTOLOGY_LLM_STEP4_THINKING", "disabled"),
     },
 }

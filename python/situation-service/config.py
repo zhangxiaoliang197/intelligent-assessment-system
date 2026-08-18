@@ -18,8 +18,10 @@ _SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 ADMIN_SERVICE_URL = os.getenv("ADMIN_SERVICE_URL", "http://localhost:10258")
 
 # ── LLM 调用参数（与 ontology-service 对齐）──
-# max_tokens 为单次输出上限，受模型/部署 max_model_len 限制（本项目 vLLM 上限 393216=384K）
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "393216"))
+# max_tokens 为单次输出上限，受模型/部署 max_model_len 限制（本项目 vLLM 上限 393216=384K 为
+# 输入+输出总量上限，并非单次输出能力）。态势服务各阶段实际输出 8K-24K token 已足够；
+# 全局兜底默认值取 24000，传超过模型 max_output_tokens 的值会被网关拒绝（HTTP 400）。
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "24000"))
 LLM_ALLOWED_HOSTS = tuple(
     host.strip().lower()
     for host in os.getenv(
