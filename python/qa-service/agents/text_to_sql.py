@@ -77,6 +77,9 @@ TEXT_TO_SQL_SYSTEM_PROMPT = f"""# 角色: {SQL_AGENT['role']}
 ## 过滤条件
 {{filters}}
 
+## 图表要求
+{{chart_context}}
+
 ## 历史错误（仅重试时提供，用于修正上一次失败的SQL）
 {{previous_error}}
 
@@ -228,6 +231,20 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
     retry_budget = max(0, int(max_retries))
     dialect_retry_granted = False
 
+    # 图表需求上下文：当用户要求图表时，引导 SQL 返回多行（分组或明细），
+    # 避免生成把所有指标聚合成单行的汇总 SQL 导致 chart_agent 降级为表格。
+    need_chart = bool(state.entities.get("need_chart", False))
+    if need_chart:
+        chart_context = (
+            "用户明确要求以图表形式展示结果，因此 SQL 必须返回多行数据以支撑图表渲染：\n"
+            "1. 优先按用户问题中的分组维度（如“各飞机”→ aircraft_name/aircraft_id、“各机型”→ aircraft_type）"
+            " GROUP BY 分组；若是“随时间变化/趋势”，则直接返回明细行（含时间列与数值列），不要聚合。\n"
+            "2. SELECT 第一列放分类/时间维度（作为图表 X 轴），其余列为数值（作为图表 Y 轴）。\n"
+            "3. 只计算用户问题实际问到的指标（如“飞行高度”→ altitude），不要附带无关指标，更不要把全部指标汇总成单独一行。"
+        )
+    else:
+        chart_context = "用户未要求图表，按常规查询生成 SQL 即可。"
+
     while attempts <= retry_budget:
         # 构建步骤标签：首次无标签，重试时标注次数
         attempt_label = "" if attempts == 0 else f" (第{attempts+1}次)"
@@ -266,6 +283,7 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
             question=state.question,
             analysis_plan=state.analysis_plan,
             filters=state.entities.get("filters", "无"),
+            chart_context=chart_context,
             previous_error=error_context,
         )
 
@@ -287,8 +305,10 @@ async def run_text_to_sql(state: EvaluationState, llm_call_fn, max_retries: int 
             if correction_error:
                 logger.info(f"[Attempt {attempts+1}] 上次错误: {correction_error[:200]}")
 
-            response = await llm_call_fn(system_prompt,
-                                        f"请根据以上 {table_count} 张表的结构，生成能查询以下指标数据的SQL：\n{indicator_context[:800]}")
+            response = await llm_call_fn(
+                system_prompt,
+                f"请根据以上表结构和分析计划，生成能够回答用户问题的 SQL。用户问题：{state.question}",
+            )
 
             # 记录 LLM 响应摘要
             logger.info(f"[Attempt {attempts+1}] LLM响应(前1000字):\n{response[:1000]}")
