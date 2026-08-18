@@ -6,14 +6,17 @@
         <div class="header-left">
           <el-button @click="goBack" :icon="ArrowLeft">返回</el-button>
           <h2>{{ ontology?.name || '本体详情' }}</h2>
+          <el-tag v-if="isBuildPreview" type="info" size="small">构建预览（只读）</el-tag>
           <el-tag v-if="ontology?.status === '归档'" type="warning" size="small">已归档</el-tag>
         </div>
         <div class="header-actions">
           <el-button @click="refreshData" :icon="Refresh">刷新</el-button>
-          <el-button @click="showEditDialog = true" :icon="Edit">编辑</el-button>
-          <el-button v-if="ontology?.status !== '归档'" @click="archiveOntology" :icon="FolderChecked">归档</el-button>
-          <el-button v-else @click="restoreOntology" :icon="FolderChecked">恢复</el-button>
-          <el-button @click="exportOntology" :icon="Download">导出</el-button>
+          <template v-if="!isBuildPreview">
+            <el-button @click="showEditDialog = true" :icon="Edit">编辑</el-button>
+            <el-button v-if="ontology?.status !== '归档'" @click="archiveOntology" :icon="FolderChecked">归档</el-button>
+            <el-button v-else @click="restoreOntology" :icon="FolderChecked">恢复</el-button>
+            <el-button @click="exportOntology" :icon="Download">导出</el-button>
+          </template>
         </div>
       </div>
 
@@ -28,7 +31,7 @@
                   <span>实体列表</span>
                   <span class="count-badge">{{ filteredEntities.length }}</span>
                 </div>
-                <el-button size="small" type="primary" :icon="Plus" @click="showAddEntityDialog = true">添加</el-button>
+                <el-button v-if="!isBuildPreview" size="small" type="primary" :icon="Plus" @click="showAddEntityDialog = true">添加</el-button>
               </div>
             </template>
             <div class="list-toolbar">
@@ -80,7 +83,7 @@
                   <span>关系列表</span>
                   <span class="count-badge">{{ filteredRelations.length }}</span>
                 </div>
-                <el-button size="small" type="primary" :icon="Plus" @click="showAddRelationDialog = true">添加</el-button>
+                <el-button v-if="!isBuildPreview" size="small" type="primary" :icon="Plus" @click="showAddRelationDialog = true">添加</el-button>
               </div>
             </template>
             <div class="list-toolbar">
@@ -123,7 +126,7 @@
                     :style="{ color: getEntityTypeColor(entityTypeMap[relation.target_id]) }"
                     :title="relation.target_name"
                   >{{ relation.target_name }}</span>
-                  <el-button size="small" link type="danger" class="relation-delete" @click="deleteRelation(relation)">
+                  <el-button v-if="!isBuildPreview" size="small" link type="danger" class="relation-delete" @click="deleteRelation(relation)">
                     <el-icon><Delete /></el-icon>
                   </el-button>
                 </div>
@@ -155,16 +158,19 @@
                     <el-option label="力导向" value="force" />
                     <el-option label="环形" value="circular" />
                   </el-select>
+                  <el-button size="small" type="primary" @click="expandAllTypes">
+                    <el-icon><Expand /></el-icon> 一键展开
+                  </el-button>
                   <el-button
                     size="small"
                     type="warning"
                     :disabled="!expandedTypeIds.size"
                     @click="resetExpand"
                   >
-                    <el-icon><Fold /></el-icon> 收起全部实例（{{ expandedTypeIds.size }}）
+                    <el-icon><Fold /></el-icon> 收起全部（{{ expandedTypeIds.size }}）
                   </el-button>
                 </div>
-                <div class="graph-hint">左键实体类型→分解为其实例（类型消失）；右键实例→收起为所属类型；刷新恢复全部类型</div>
+                <div class="graph-hint">左键父类型→分解为子类型，左键叶子类型→分解为实体；右键任意节点→收起上一层</div>
               </div>
             </template>
             <div class="graph-wrapper">
@@ -185,7 +191,7 @@
             <template #header>
               <div class="panel-header">
                 <span>实体详情</span>
-                <el-button v-if="selectedEntity" size="small" @click="showEditEntityDialog = true">编辑</el-button>
+                <el-button v-if="selectedEntity && !isBuildPreview" size="small" @click="showEditEntityDialog = true">编辑</el-button>
               </div>
             </template>
             <div v-if="selectedEntity" class="entity-detail">
@@ -208,7 +214,7 @@
                   <el-empty v-else description="无属性" :image-size="40" />
                 </el-descriptions-item>
               </el-descriptions>
-              <div class="detail-actions">
+              <div class="detail-actions" v-if="!isBuildPreview">
                 <el-button size="small" type="danger" @click="deleteEntity(selectedEntity)">删除</el-button>
               </div>
             </div>
@@ -401,7 +407,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft, Refresh, Download, Edit, FolderChecked, ZoomIn, ZoomOut, RefreshRight, Delete,
-  Plus, Search, Connection, Fold
+  Plus, Search, Connection, Fold, Expand
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
@@ -420,10 +426,17 @@ import {
   updateEntity
 } from '@/services/ontology'
 import service from '@/services/api'
+import { getBuildJob } from '@/services/ontologyBuild'
+import { buildRawGraphDataFromState } from '@/utils/ontologyGraph'
 
 const route = useRoute()
 const router = useRouter()
 const ontologyId = route.params.id as string
+
+// 构建预览模式：从 AI 构建任务加载当前图谱快照（只读）
+// 入口：/ontology/preview?jobId=xxx（OntologyBuild 图谱工具栏「图谱详情页」）
+const buildJobId = computed(() => (route.query.jobId as string) || '')
+const isBuildPreview = computed(() => !!buildJobId.value)
 
 // ── 响应式状态 ──
 const loading = ref(false)
@@ -592,15 +605,76 @@ const loadGraph = async () => {
 }
 
 const refreshData = async () => {
+  if (isBuildPreview.value) {
+    await loadBuildPreview()
+    ElMessage.success('数据已刷新')
+    return
+  }
   await Promise.all([loadOntology(), loadConcepts(), loadEntities(), loadRelations(), loadGraph()])
   ElMessage.success('数据已刷新')
 }
 
-// ── 图谱渲染（类型与实例两态互斥：分解语义）──
+/**
+ * 构建预览模式：从 AI 构建任务拉取当前图谱快照并渲染（只读展示，不落库）。
+ * 字段映射与 OntologyBuild.loadJob 保持一致，图谱数据复用公共转换逻辑。
+ */
+const loadBuildPreview = async () => {
+  loading.value = true
+  try {
+    const res: any = await getBuildJob(buildJobId.value)
+    const job = res.data
+    if (!job) return
+    const state = {
+      entity_types: job.step1_entity_types || job.step1_concepts || [],
+      entity_type_relations: job.step1_entity_type_relations || [],
+      entities: job.step2_entities || [],
+      relations: job.step3_relations || job.step2_relations || [],
+    }
+    // 关系类型集合（统计信息展示用）
+    const relationTypes: any[] = [...new Set(state.relations.map((r: any) => r.relation_type).filter(Boolean))]
+      .map((name: any) => ({ name }))
+    ontology.value = {
+      name: `${job.name || '构建任务'}（构建预览）`,
+      entity_types: state.entity_types,
+      relation_types: relationTypes,
+    }
+    // 实体列表：id 与图谱节点 ent_{idx} 保持一致，供左侧列表与右侧详情联动
+    const entNameToIdx: Record<string, number> = {}
+    state.entities.forEach((e: any, idx: number) => { entNameToIdx[e.name] = idx })
+    entities.value = state.entities.map((e: any, idx: number) => ({
+      id: `ent_${idx}`,
+      name: e.name,
+      type: e.instance_of || '',
+      instance_of: e.instance_of || '',
+      properties: e.properties,
+    }))
+    // 关系列表：按实体名映射为 ent_{idx}（预览快照无后端关系 id）
+    relations.value = state.relations
+      .filter((r: any) => entNameToIdx[r.source] != null && entNameToIdx[r.target] != null)
+      .map((r: any, idx: number) => ({
+        id: `rel_${idx}`,
+        source_id: `ent_${entNameToIdx[r.source]}`,
+        source_name: r.source,
+        target_id: `ent_${entNameToIdx[r.target]}`,
+        target_name: r.target,
+        relation_type: r.relation_type || '关联',
+      }))
+    // 图谱原始数据：复用构建页转换逻辑，保证节点/边结构一致
+    rawGraphData.value = buildRawGraphDataFromState(state)
+    expandedTypeIds.value = new Set()
+    renderGraph()
+  } catch (e: any) {
+    ElMessage.error(e.serverMessage || '加载构建图谱失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+// ── 图谱渲染（父→子→实体 逐层下钻，父子/类型实例两两互斥，与构建页逻辑一致）──
 // 统一「可见代表节点」模型：每条逻辑边连接两端各自的可见代表
 // - 实体-实体关系边：所属类型未分解 → 代表为类型节点；已分解 → 代表为实例本身
-// - 类型级边（SUB_CONCEPT_OF / EntityTypeRelation）：两端类型节点均未分解（可见）时才渲染
-// - instance_of 边（类型→实例）：不渲染，实例出现后靠位置/同色表达归属
+// - 类型级边（EntityTypeRelation）：两端类型节点均可见时才渲染
+// - SUB_CONCEPT_OF 层级边 / instance_of 归属边：不渲染，靠分解下钻/位置同色表达
 const renderGraph = () => {
   if (!graphRef.value) return
   if (!chartInstance) {
@@ -627,11 +701,36 @@ const renderGraph = () => {
   const entityById: Record<string, any> = {}
   for (const e of entityNodes) entityById[e.id] = e
 
-  // 父类型集合（SUB_CONCEPT_OF 边的 source 是父类型），用于节点大小区分
-  const parentConceptIds = new Set<string>()
-  for (const l of raw.links) {
-    if (l.relation === 'SUB_CONCEPT_OF') parentConceptIds.add(l.source)
+  // ── 层级索引：优先节点自带 parentId 字段（构建预览），其次 SUB_CONCEPT_OF 边（后端图谱）──
+  const childIdsByParent: Record<string, string[]> = {}
+  const parentIdByChildId: Record<string, string> = {}
+  /** 环检测：沿父链上溯若回到 child 自身则拒绝建立该父子关系，避免 walkType 死循环 */
+  const wouldCycle = (childId: string, parentId: string): boolean => {
+    let cur: string | undefined = parentId
+    const seen = new Set<string>()
+    while (cur && !seen.has(cur)) {
+      if (cur === childId) return true
+      seen.add(cur)
+      cur = parentIdByChildId[cur]
+    }
+    return false
   }
+  for (const n of typeNodes) {
+    if (n.parentId && typeNodeById[n.parentId] && !wouldCycle(n.id, n.parentId)) {
+      parentIdByChildId[n.id] = n.parentId
+      ;(childIdsByParent[n.parentId] ||= []).push(n.id)
+    }
+  }
+  for (const l of raw.links) {
+    if (l.relation !== 'SUB_CONCEPT_OF') continue
+    if (!typeNodeById[l.source] || !typeNodeById[l.target]) continue
+    if (parentIdByChildId[l.target] || l.target === l.source) continue
+    if (wouldCycle(l.target, l.source)) continue
+    parentIdByChildId[l.target] = l.source
+    ;(childIdsByParent[l.source] ||= []).push(l.target)
+  }
+  // 顶层类型 id 列表（无父类）
+  const topLevelTypeIds = typeNodes.filter((n: any) => !parentIdByChildId[n.id]).map((n: any) => n.id)
 
   // 类别（颜色）映射，与列表/图例一致
   const catIndex: Record<string, number> = {}
@@ -652,43 +751,78 @@ const renderGraph = () => {
     if (e.concept_id) instanceCount[e.concept_id] = (instanceCount[e.concept_id] || 0) + 1
   }
 
-  // ── 节点：类型节点与其实例两态互斥（分解语义）──
-  // 已分解的类型：类型节点消失，仅显示其实例；未分解：仅显示类型节点
+  // 类型节点当前是否作为节点可见（父链上均已展开、且自身未展开）
+  const isTypeVisible = (typeId: string): boolean => {
+    if (!typeNodeById[typeId]) return false
+    if (isExpanded(typeId)) return false
+    const pid = parentIdByChildId[typeId]
+    if (!pid) return true
+    return isExpanded(pid)
+  }
+
+  // 实体的可见代表：实体显示则返回实体 id，否则返回最近可见的类型祖先节点 id
+  const visibleRepOfEntity = (e: any): string | null => {
+    const typeId = e.concept_id
+    if (!typeId) return e.id
+    // 叶子类型已展开 → 实体显示；若该类型有子类型（实体挂在中间类型）则实体被折叠
+    if (isExpanded(typeId)) {
+      return (childIdsByParent[typeId]?.length) ? null : e.id
+    }
+    // 未展开 → 递归向上找可见类型祖先
+    let cur: string | undefined = typeId
+    while (cur && typeNodeById[cur]) {
+      if (isTypeVisible(cur)) return cur
+      cur = parentIdByChildId[cur]
+    }
+    return cur || null
+  }
+
+  // ── 节点：从顶层类型递归下钻，父/子/实例互斥 ──
   const displayNodes: any[] = []
-  for (const n of typeNodes) {
-    if (isExpanded(n.id)) {
-      // 分解态：类型节点消失，其实例原位出现
+  const walkType = (typeId: string) => {
+    const tn = typeNodeById[typeId]
+    if (!tn) return
+    if (!isExpanded(typeId)) {
+      // 收起态：显示类型节点
+      displayNodes.push({
+        name: tn.name,
+        id: tn.id,
+        category: catIndex[tn.type] ?? fallbackCatIndex,
+        symbolSize: 50,
+        draggable: true,
+        nodeType: 'entityType',
+        conceptId: tn.id,
+        parentId: parentIdByChildId[typeId] || '',
+        childCount: (childIdsByParent[typeId] || []).length,
+        parentName: parentIdByChildId[typeId] ? (typeNodeById[parentIdByChildId[typeId]]?.name || '') : '',
+        itemStyle: { borderColor: '#333', borderWidth: 2 },
+        label: { fontWeight: 'bold' },
+      })
+      return
+    }
+    const children = childIdsByParent[typeId] || []
+    if (children.length) {
+      // 有子类型 → 分解为子类型
+      children.forEach(walkType)
+    } else {
+      // 叶子类型 → 分解为实体
       for (const e of entityNodes) {
-        if (e.concept_id === n.id) {
+        if (e.concept_id === typeId) {
           displayNodes.push({
             name: e.name,
             id: e.id,
             category: catIndex[e.type] ?? fallbackCatIndex,
             symbolSize: 32,
             draggable: true,
-            // 自定义字段供事件处理识别
             nodeType: 'entity',
             conceptId: e.concept_id,
-            // 实例节点白细边，与类型节点粗黑边区分
-            itemStyle: { borderColor: '#fff', borderWidth: 1.5 }
+            itemStyle: { borderColor: '#fff', borderWidth: 1.5 },
           })
         }
       }
-    } else {
-      // 收起态：仅显示类型节点（父类型 > 子类型，加粗边框）
-      displayNodes.push({
-        name: n.name,
-        id: n.id,
-        category: catIndex[n.type] ?? fallbackCatIndex,
-        symbolSize: parentConceptIds.has(n.id) ? 65 : 55,
-        draggable: true,
-        nodeType: 'entityType',
-        conceptId: n.id,
-        itemStyle: { borderColor: '#333', borderWidth: 2 },
-        label: { fontWeight: 'bold' }
-      })
     }
   }
+  topLevelTypeIds.forEach(walkType)
 
   // 可见节点集合：边两端代表节点必须在可见集合内才渲染
   const visibleNodeIds = new Set(displayNodes.map(n => n.id))
@@ -696,8 +830,8 @@ const renderGraph = () => {
   // ── 边：连接两端各自的可见代表，去重去自环 ──
   const displayLinks: any[] = []
   const seenEdges = new Set<string>()
-  const pushEdge = (srcId: string, tgtId: string, relation: string, dashed = false) => {
-    if (srcId === tgtId) return // 去自环（同类型收起后内部边消失）
+  const pushEdge = (srcId: string | null, tgtId: string | null, relation: string) => {
+    if (!srcId || !tgtId || srcId === tgtId) return // 去自环（同类型收起后内部边消失）
     if (!visibleNodeIds.has(srcId) || !visibleNodeIds.has(tgtId)) return
     const edgeKey = `${srcId}-${tgtId}-${relation}`
     if (seenEdges.has(edgeKey)) return // 去重
@@ -710,15 +844,15 @@ const renderGraph = () => {
       // 额外保留名称用于 tooltip 展示，不影响边匹配
       sourceName: idToName[srcId] || srcId,
       targetName: idToName[tgtId] || tgtId,
-      // 归属边（instance_of）细虚线弱化，与业务关系边区分
-      lineStyle: dashed ? { type: 'dashed', width: 1, opacity: 0.45 } : { type: 'solid' }
+      lineStyle: { type: 'solid' }
     })
   }
 
   for (const l of raw.links) {
     const relation = l.relation
-    // 类型级边（SUB_CONCEPT_OF / EntityTypeRelation）：类型节点常驻，始终渲染
+    // 类型级边：两端类型节点均可见时才渲染（SUB_CONCEPT_OF 层级边除外，层级靠下钻表达）
     if (typeNodeById[l.source] && typeNodeById[l.target]) {
+      if (relation === 'SUB_CONCEPT_OF') continue
       pushEdge(l.source, l.target, relation)
       continue
     }
@@ -728,9 +862,7 @@ const renderGraph = () => {
     const srcEntity = entityById[l.source]
     const tgtEntity = entityById[l.target]
     if (srcEntity && tgtEntity) {
-      const srcRep = isExpanded(srcEntity.concept_id) ? srcEntity.id : (srcEntity.concept_id || srcEntity.id)
-      const tgtRep = isExpanded(tgtEntity.concept_id) ? tgtEntity.id : (tgtEntity.concept_id || tgtEntity.id)
-      pushEdge(srcRep, tgtRep, relation)
+      pushEdge(visibleRepOfEntity(srcEntity), visibleRepOfEntity(tgtEntity), relation)
     }
   }
 
@@ -748,16 +880,21 @@ const renderGraph = () => {
         const d = p.data
         if (d.nodeType === 'entityType') {
           const cnt = instanceCount[d.conceptId] || 0
-          const state = expandedTypeIds.value.has(d.conceptId) ? '左键收起实例' : '左键分解为实例'
-          return `${d.name}（实体类型）<br/>${cnt} 个实例 · ${state}`
+          const parentName = d.parentName ? `父类型：${d.parentName}<br/>` : ''
+          const state = d.childCount
+            ? (expandedTypeIds.value.has(d.conceptId) ? '左键收起子类型' : `左键分解为子类型（${d.childCount} 个）`)
+            : (expandedTypeIds.value.has(d.conceptId) ? '左键收起实例' : `左键分解为实例（${cnt} 个）`)
+          const head = d.childCount ? `${d.name}（${d.childCount} 个子类型）` : `${d.name}（${cnt} 个实例）`
+          return `${head}<br/>${parentName}<small>${state}</small>`
         }
-        return `${d.name}<br/>右键收起所属类型`
+        return `${d.name}<br/>左键查看详情 · 右键收起所属类型`
       }
     },
     series: [{
       type: 'graph',
       layout: layoutType.value,
       roam: true,
+      draggable: true,
       label: { show: true, position: 'bottom', fontSize: 12 },
       edgeSymbol: ['circle', 'arrow'],
       edgeSymbolSize: [4, 10],
@@ -765,6 +902,7 @@ const renderGraph = () => {
       links: displayLinks,
       categories: categories,
       lineStyle: { opacity: 0.6, width: 2, curveness: 0 },
+      emphasis: { focus: 'adjacency' },
       force: layoutType.value === 'force' ? { repulsion: 200, edgeLength: 150 } : undefined,
       circular: layoutType.value === 'circular' ? { rotateLabel: true } : undefined
     }]
@@ -773,17 +911,21 @@ const renderGraph = () => {
   chartInstance.setOption(option, true)
 }
 
-// ── 图谱实例分解交互 ──
-/** 右键实例 → 收回其所属类型（实例消失，恢复为类型节点） */
+// ── 图谱交互：分解 / 收起（与构建页一致）──
+
+/** 右键实例 → 收回其所属类型；右键子类型 → 收起其父类型（逐层向上收回） */
 const handleGraphContextMenu = (params: any) => {
   if (params.dataType !== 'node' || !params.data) return
   const node = params.data
   if (node.nodeType === 'entity' && node.conceptId) {
     collapseType(node.conceptId)
+  } else if (node.nodeType === 'entityType') {
+    // 子类型：收起父类型；顶层类型：收起自身子树
+    collapseType(node.parentId || node.conceptId)
   }
 }
 
-/** 左键类型 → 分解为实例（实例态）/ 收回（类型态）切换；左键实例 → 选中展示详情 */
+/** 左键类型 → 分解（父→子 / 叶子→实例）或收起；左键实例 → 选中展示详情 */
 const handleGraphClick = (params: any) => {
   if (params.dataType !== 'node' || !params.data) return
   const node = params.data
@@ -799,14 +941,22 @@ const handleGraphClick = (params: any) => {
   }
 }
 
-/** 分解类型：类型节点消失，其实例原位出现；无实例的类型不可分解 */
+/** 分解类型：有子类型则分解为子类型，否则（叶子）分解为实例 */
 const expandType = (typeId: string) => {
-  const hasInstances = rawGraphData.value.nodes.some(
-    (n: any) => n.node_type === 'entity' && n.concept_id === typeId
+  // 子类型判断：构建预览节点自带 parentId 字段；普通模式靠 SUB_CONCEPT_OF 边
+  const hasChildren = rawGraphData.value.nodes.some(
+    (n: any) => n.node_type === 'concept' && n.parentId === typeId
+  ) || rawGraphData.value.links.some(
+    (l: any) => l.relation === 'SUB_CONCEPT_OF' && l.source === typeId && l.target !== typeId
   )
-  if (!hasInstances) {
-    ElMessage.info('该类型暂无实体实例，无法分解')
-    return
+  if (!hasChildren) {
+    const hasInstances = rawGraphData.value.nodes.some(
+      (n: any) => n.node_type === 'entity' && n.concept_id === typeId
+    )
+    if (!hasInstances) {
+      ElMessage.info('该类型暂无实体实例，无法分解')
+      return
+    }
   }
   const newSet = new Set(expandedTypeIds.value)
   newSet.add(typeId)
@@ -814,17 +964,42 @@ const expandType = (typeId: string) => {
   renderGraph()
 }
 
-/** 收回类型：实例消失，恢复为类型节点 */
+/** 收回类型：删除其及所有后代的展开状态（级联清理，避免幽灵节点） */
 const collapseType = (typeId: string) => {
   const newSet = new Set(expandedTypeIds.value)
-  newSet.delete(typeId)
+  const removeSubtree = (id: string) => {
+    newSet.delete(id)
+    // 后代来源同 expandType：字段层级 + SUB_CONCEPT_OF 边
+    const childIds = rawGraphData.value.nodes
+      .filter((n: any) => n.node_type === 'concept' && n.parentId === id)
+      .map((n: any) => n.id)
+    for (const l of rawGraphData.value.links) {
+      if (l.relation === 'SUB_CONCEPT_OF' && l.source === id && l.target !== id) childIds.push(l.target)
+    }
+    for (const cid of childIds) removeSubtree(cid)
+  }
+  removeSubtree(typeId)
   expandedTypeIds.value = newSet
   renderGraph()
 }
 
-/** 收起全部实例：回到全类型态（等价刷新后的初始视图） */
+/** 收起全部：回到仅显示顶层父类类型的初始视图 */
 const resetExpand = () => {
   expandedTypeIds.value = new Set()
+  renderGraph()
+}
+
+/** 一键展开：全部实体类型进入分解态，仅显示实体及实体间关系（普通详情/构建预览通用） */
+const expandAllTypes = () => {
+  const newSet = new Set(expandedTypeIds.value)
+  for (const n of rawGraphData.value.nodes) {
+    if (n.node_type === 'concept') newSet.add(n.id)
+  }
+  if (!newSet.size) {
+    ElMessage.info('暂无实体类型可展开')
+    return
+  }
+  expandedTypeIds.value = newSet
   renderGraph()
 }
 
@@ -1104,6 +1279,11 @@ const exportOntology = async () => {
 }
 
 const goBack = () => {
+  // 构建预览模式返回 AI 构建任务页面
+  if (isBuildPreview.value) {
+    router.push(`/ontology-build/${buildJobId.value}`)
+    return
+  }
   router.push('/ontology')
 }
 
@@ -1124,6 +1304,13 @@ watch(showEditDialog, (val) => {
 })
 
 onMounted(async () => {
+  if (isBuildPreview.value) {
+    // 构建预览模式：仅加载快照并渲染图谱，不走本体 CRUD 接口
+    await nextTick()
+    await loadBuildPreview()
+    window.addEventListener('resize', handleResize)
+    return
+  }
   await Promise.all([loadOntology(), loadConcepts(), loadEntities(), loadRelations()])
   await nextTick()
   await loadGraph()

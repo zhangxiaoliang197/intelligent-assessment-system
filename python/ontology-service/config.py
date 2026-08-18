@@ -61,9 +61,10 @@ VERIFICATION_MAX_DOC_CHARS = int(os.getenv("VERIFICATION_MAX_DOC_CHARS", "20000"
 # reasoning 模型（如 deepseek-v4-flash / deepseek-reasoner）会优先消耗 token 做思考链
 # （reasoning_content），再输出正式 content。max_tokens 需同时容纳 reasoning + content，
 # 否则 reasoning 耗尽上限后 content 会被截断为空（finish_reason=length）。
-# 复杂文学/叙事文档的 reasoning 可达 6K-15K token，24000 仍可能不够，提到 32000。
-# 可通过环境变量 LLM_MAX_TOKENS 覆盖。各阶段优先使用下方 LLM_STAGE_PROFILES 的独立配置。
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "32000"))
+# max_tokens 为单次输出上限，受模型/部署 max_model_len 限制（本项目 vLLM 上限 393216=384K），
+# 并非 1M 上下文能力（上下文是输入+输出总量）。默认值取 393216，可通过环境变量 LLM_MAX_TOKENS 覆盖。
+# 各阶段优先使用下方 LLM_STAGE_PROFILES 的独立配置。
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "393216"))
 
 # ── LLM 各阶段独立参数 ──
 
@@ -73,23 +74,23 @@ LLM_STAGE_PROFILES = {
         "thinking": os.getenv("ONTOLOGY_LLM_META_THINKING", "disabled"),
     },
     "step1": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP1_MAX_TOKENS", "24000")),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP1_MAX_TOKENS", "393216")),
         "thinking": os.getenv("ONTOLOGY_LLM_STEP1_THINKING", "enabled"),
     },
     "step2": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP2_MAX_TOKENS", "32000")),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP2_MAX_TOKENS", "393216")),
         "thinking": os.getenv("ONTOLOGY_LLM_STEP2_THINKING", "enabled"),
     },
     "step3_group": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP3_GROUP_MAX_TOKENS", "32000")),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP3_GROUP_MAX_TOKENS", "393216")),
         "thinking": os.getenv("ONTOLOGY_LLM_STEP3_GROUP_THINKING", "enabled"),
     },
     "step3_cross": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP3_CROSS_MAX_TOKENS", "32000")),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP3_CROSS_MAX_TOKENS", "393216")),
         "thinking": os.getenv("ONTOLOGY_LLM_STEP3_CROSS_THINKING", "enabled"),
     },
     "step4": {
-        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP4_MAX_TOKENS", "16000")),
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_STEP4_MAX_TOKENS", "393216")),
         "thinking": os.getenv("ONTOLOGY_LLM_STEP4_THINKING", "disabled"),
     },
 }
@@ -102,6 +103,57 @@ def get_llm_params(stage: str):
         profile.get("max_tokens", LLM_MAX_TOKENS),
         profile.get("thinking", ""),
     )
+
+
+# ── AI 构建聊天意图的 LLM 参数分档 ──
+# 按用户输入意图动态选择 max_tokens 与 thinking，简单输入用小参数提速、复杂提取用大参数深度推理。
+# extract_type/extract_entity/verify 直接复用 LLM_STAGE_PROFILES 的 step1/step2/step4 参数，
+# 避免重复定义提取/验证类参数；chat/plan/edit 为对话场景的轻量档位。
+LLM_CHAT_PROFILES = {
+    "chat": {
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_CHAT_MAX_TOKENS", "1024")),
+        "thinking": os.getenv("ONTOLOGY_LLM_CHAT_THINKING", "disabled"),
+    },
+    "plan": {
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_CHAT_PLAN_MAX_TOKENS", "2048")),
+        "thinking": os.getenv("ONTOLOGY_LLM_CHAT_PLAN_THINKING", "disabled"),
+    },
+    "edit": {
+        "max_tokens": int(os.getenv("ONTOLOGY_LLM_CHAT_EDIT_MAX_TOKENS", "1024")),
+        "thinking": os.getenv("ONTOLOGY_LLM_CHAT_EDIT_THINKING", "disabled"),
+    },
+}
+
+# 聊天意图 → 构建阶段参数映射（extract/verify 复用阶段 profile）
+CHAT_INTENT_STAGE_MAP = {
+    "extract_type": "step1",
+    "extract_entity": "step2",
+    "verify": "step4",
+}
+
+
+def get_chat_llm_params(intent: str):
+    """获取指定聊天意图的 LLM 调用参数 (max_tokens, thinking)。
+
+    - chat/plan/edit 取 LLM_CHAT_PROFILES 轻量档；
+    - extract_type/extract_entity/verify 复用对应阶段 profile（step1/step2/step4）；
+    - 未识别意图回退 chat 档。
+    """
+    if intent in CHAT_INTENT_STAGE_MAP:
+        return get_llm_params(CHAT_INTENT_STAGE_MAP[intent])
+    profile = LLM_CHAT_PROFILES.get(intent, LLM_CHAT_PROFILES.get("chat", {}))
+    return (
+        profile.get("max_tokens", LLM_MAX_TOKENS),
+        profile.get("thinking", ""),
+    )
+
+
+# ── AI 构建聊天历史滚动摘要阈值 ──
+# 聊天历史超过 CHAT_HISTORY_SUMMARY_THRESHOLD 轮时，对较早历史生成摘要保留（不直接截断），
+# 保留最近 CHAT_HISTORY_KEEP_RECENT 轮原文，防止上下文超窗且不丢失早期关键信息。
+CHAT_HISTORY_SUMMARY_THRESHOLD = int(os.getenv("ONTOLOGY_CHAT_SUMMARY_THRESHOLD", "20"))
+CHAT_HISTORY_KEEP_RECENT = int(os.getenv("ONTOLOGY_CHAT_KEEP_RECENT", "5"))
+
 
 # ── 粒度预设（step0 用户选择，注入 step1/step2 prompt 控制提取数量）──
 # coarse（粗）：仅核心实体类型，适合快速概览

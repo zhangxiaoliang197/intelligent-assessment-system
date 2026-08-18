@@ -338,8 +338,22 @@ class BuildJob(BaseModel):
     step1_batch_results: List[List[Dict[str, Any]]] = []
     # v3 新增：每批次的实体类型间关系（与 step1_batch_results 同长度，同索引对齐）
     step1_batch_relations_results: List[List[Dict[str, Any]]] = []
+    # v3 新增：跨批类型间关系补充（多批合并后由 LLM 补齐跨批遗漏关系，对标 step3 跨组补充）
+    step1_cross_batch_done: bool = False
+    step1_cross_batch_relations: List[Dict[str, Any]] = []
     step1_failed_batch: int = -1
     step1_failed_reason: Optional[str] = None
+
+    # ── 文档解析后的自动摘要与构建规划（阶段 0 收尾自动生成，推送聊天供用户参考）──
+    # LLM 生成的文档总结摘要（展示给用户，帮助决策）
+    step0_summary: str = ""
+    # LLM 给出的下一步构建建议（预计层级规模、从哪开始）
+    step0_suggestion: str = ""
+    # 构建规划：LLM 参与决策的分批方案，step1 提取时优先使用
+    # 格式: [{"titles": ["第二章 物理域对象模型"], "target_chars": 9000}]，标题匹配由后端解析为文本区间
+    step1_plan: List[Dict[str, Any]] = []
+    # LLM 生成的层级提示（解析阶段识别的顶层父类建议，注入 step1 prompt）
+    step1_hierarchy_hint: str = ""
 
     # Step 2 分批状态（长文档分批提取实体，支持断点续作）
     step2_batches_total: int = 0
@@ -352,6 +366,13 @@ class BuildJob(BaseModel):
 
     # 返工记录：每次返工追加一条（step + 提示词 + 时间）
     rework_history: List[Dict[str, Any]] = []
+
+    # AI 构建聊天历史（每轮对话追加一条；kind: text | summary | tool_result）
+    # 结构：{"id","role":"user|assistant|tool","kind","content","payload","created_at"}
+    chat_history: List[Dict[str, Any]] = []
+
+    # 较早聊天历史的滚动摘要（增量更新，独立于 chat_history 原文，防止上下文超窗）
+    history_summary: str = ""
 
     # ── 旧字段保留（向后兼容 v2 五阶段任务，新流程不使用）──
     meta_entity_types: List[Dict[str, Any]] = []          # v2 step0 本体模型（v3 弃用）

@@ -21,7 +21,11 @@ import json
 import config
 from typing import Optional
 
-SYSTEM_BASE = "你是本体工程专家，擅长从领域文档中构建结构化本体。请严格按照要求输出 JSON，不要包含任何解释文字或 markdown 标记。"
+SYSTEM_BASE = (
+    "你是本体工程专家，擅长从领域文档中构建结构化本体。请严格按照要求输出 JSON，不要包含任何解释文字或 markdown 标记。\n"
+    "所有实体类型名、实体名、属性名、关系类型必须使用中文命名"
+    "（专有名词如英文缩写/型号/代码可保留原文，但主体表述用中文，如「爱国者-3防空系统」而非「PAC-3 System」）。"
+)
 
 # 默认调色板（本体模型推荐时分配颜色）
 DEFAULT_COLORS = ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de", "#3ba272", "#fc8452", "#9a60b4"]
@@ -299,19 +303,21 @@ def build_step1_messages(
         f"要求：\n"
         f"1. 提取文档中的核心实体类型（抽象类别，如「企业」「人物」「财务指标」），不要提取具体实例\n"
         f"2. 每个实体类型必须从原文摘录 source_snippet（原文原话），用于核实防编造\n"
-        f"3. name 简洁规范，2-8 个字，避免重复\n"
+        f"3. name 必须使用中文命名（专有名词缩写/型号可保留原文），简洁规范，2-8 个字，避免重复\n"
         f"4. description 用一句话解释该类型的含义\n"
         f"5. property_schema 列出该类实体应具备的关键属性骨架：\n"
         f"   - 指标型（category=metric）属性如「资产负债率」「营收」，需带 unit\n"
         f"   - 描述型（category=descriptive）属性如「主营业务」「成立日期」\n"
         f"   - 通常每个类型 2-5 个属性\n"
-        f"6. 【实体类型层级】根据文档内容构建树状层级：\n"
+        f"6. 【实体类型层级】根据文档内容自动构建树状层级（父类→子类→实体三级结构）：\n"
+        f"   - 若文档按领域/篇章/分类组织（如「XX域」「第X章」「分类体系」），"
+        f"将领域或篇章主题提取为顶层父类型，其下的对象类别作为子类型挂到对应父类型下\n"
         f"   - 若文档明确区分某类型的子类型（如「企业」分为「上市企业」「非上市企业」），"
         f"为子类型创建独立实体类型，parent_entity_type_name 指向父类型名\n"
-        f"   - 子类型可补充父类型没有的独有属性（继承父类型属性由系统自动处理）\n"
-        f"   - 层级深度通常 1-3 层，避免过度细化\n"
-        f"   - 文档未明确区分子类型时，不要强行创建层级（parent_entity_type_name 留空）\n"
-        f"   - parent_entity_type_name 必须指向同一批次内已定义的另一个类型名，不可自创\n"
+        f"   - 层级深度通常 1-3 层，避免过度细化；同父的兄弟子类型保持并列\n"
+        f"   - 文档完全无层级线索时才保持平铺（parent_entity_type_name 留空）\n"
+        f"   - parent_entity_type_name 优先指向本批内已定义的类型；"
+        f"若父类型是文档中的领域/篇章主题（本批文本中出现过该主题名），即使其定义不在本批也可引用\n"
         f"7. 【实体类型间关系】总结类型之间的语义关联：\n"
         f"   - 如「企业」关联「财务指标」「企业」包含「子公司」「人物」任职于「企业」\n"
         f"   - relation_type 用简洁中文（如包含/关联/影响/衡量/属于）\n"
@@ -397,16 +403,148 @@ def build_step1_batch_messages(
         f"要求：\n"
         f"1. 提取本批文档中的核心实体类型（抽象类别），不要提取具体实例\n"
         f"2. 每个实体类型必须从本批原文摘录 source_snippet，用于核实防编造\n"
-        f"3. name 简洁规范，2-8 个字，避免与本批内其他类型重复\n"
+        f"3. name 必须使用中文命名（专有名词缩写/型号可保留原文），简洁规范，2-8 个字，避免与本批内其他类型重复\n"
         f"4. description 用一句话解释该类型的含义\n"
         f"5. property_schema 列出该类实体的关键属性骨架（指标型带 unit，描述型无单位）\n"
-        f"6. 【类型层级】若本批文档明确区分某类型的子类型（如「企业」分为「上市企业」），"
-        f"为子类型创建独立实体类型并 parent_entity_type_name 指向父类型名；无明确区分时不要强行创建层级\n"
+        f"6. 【类型层级】自动识别文档的层级结构，构建 父类(领域/篇章)→子类(对象类型)→实体 三级结构：\n"
+        f"   - 文档按领域/篇章组织时（如「XX域」「第X章」），篇章主题为顶层父类型，"
+        f"本批内的对象类别挂到对应父类型下（父类型名须在本批文本中出现过）\n"
+        f"   - 本批明确区分子类型时创建独立实体类型并指向父类型名；无层级线索时保持平铺\n"
         f"7. 【类型间关系】总结本批内类型之间的语义关联（如包含/关联/影响/衡量）\n"
         f"8. 按本批内容自然提取，数量不限（跨批去重由系统自动完成）\n"
         f"9. 只返回 JSON，不要任何解释"
         + _template_hint_text(template, "concepts", template_mode)
         + _stage_hint_text(stage_hint)
+    )
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+
+def build_doc_summary_plan_messages(
+    doc_preview: str, outline: list, total_chars: int,
+    meta_entity_types: list, name: str, suggested_batch_chars: int
+) -> list:
+    """文档解析后的自动摘要 + 构建规划（阶段 0 收尾调用）。
+
+    LLM 读取文档预览 + 章节大纲，输出：
+    1. doc_summary：给用户看的文档总结摘要
+    2. suggestion：下一步构建建议（预计父类/子类/实体规模、从哪开始）
+    3. batches：分批方案（每批覆盖的章节标题组 + 每批目标字符数），由 LLM 按语义自主决定
+    4. hierarchy_hint：层级提示（顶层父类建议），注入 step1 提取
+
+    Args:
+        doc_preview: 文档预览文本（截断后的开头部分）
+        outline: 章节大纲 [{"title", "start", "end", "chars"}]
+        total_chars: 文档总字符数
+        meta_entity_types: 元模型推荐的实体类型
+        name: 本体名称
+        suggested_batch_chars: 每批字符数参考值（系统默认）
+
+    Returns:
+        OpenAI 格式的 messages 列表
+    """
+    outline_str = "\n".join(
+        f"- {h['title']}（约 {h.get('chars', 0)} 字）" for h in outline
+    ) or "（未识别到章节结构）"
+    meta_str = ", ".join(t.get("name", "") for t in meta_entity_types[:30]) or "（暂无）"
+
+    system_prompt = (
+        SYSTEM_BASE
+        + "\n\n你的任务是阅读文档结构并生成「文档摘要 + 本体构建规划」，帮助用户理解文档并决策下一步。"
+        + "\n构建流程由用户主导，你输出的建议用于引导用户，不会自动执行。"
+    )
+
+    user_prompt = (
+        f"本体名称：{name}\n文档总长度：约 {total_chars} 字\n\n"
+        f"【章节大纲】\n{outline_str}\n\n"
+        f"【元模型推荐类型】{meta_str}\n\n"
+        f"【文档开头预览】\n---\n{doc_preview}\n---\n\n"
+        f"请返回 JSON，格式如下：\n"
+        f'{{"doc_summary": "文档总结（200-400字：文档主题、组织结构、核心对象类别、'
+        f'层级线索，如按领域/篇章组织则明确指出顶层分类）",\n'
+        f' "suggestion": "下一步构建建议（150-300字：建议先做什么、预计父类/子类/实体规模、'
+        f'用户可直接回复『开始提取』等简短指令）",\n'
+        f' "batches": [{{"titles": ["章节标题（须从上方大纲中选择，连续章节"]], '
+        f'"target_chars": {suggested_batch_chars}}}],\n'
+        f' "hierarchy_hint": "层级提示（如：文档按8个领域篇章组织，建议提取8个顶层父类，'
+        f'各章对象类别挂为子类）"}}\n\n'
+        f"分批要求：\n"
+        f"1. 按语义相关性分批，同一领域/篇章的章节必须进同一批，不得拆散\n"
+        f"2. 每批 target_chars 建议在 {int(suggested_batch_chars * 0.6)}-{suggested_batch_chars} 字之间，"
+        f"总字数 {total_chars} 字的文档通常分为 {max(1, total_chars // suggested_batch_chars)} 批左右，"
+        f"你可根据章节结构自主调整批数\n"
+        f"3. 大纲中所有章节都要被覆盖，批与批不重叠\n"
+        f"4. 只返回 JSON，不要任何解释"
+    )
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+
+def build_step1_cross_batch_messages(
+    entity_types: list, existing_relations: list, name: str
+) -> list:
+    """Step 1 跨批类型间关系补提（v3 新增，对标 step3 的 build_step3_cross_group_messages）。
+
+    长文档分批提取时，类型间关系只在「本批内」提取，跨批类型之间的语义关联会整体丢失。
+    本函数在合并全量实体类型后额外发起一次 LLM 调用，输入全量类型清单 + 已有批内关系，
+    LLM 输出补充的跨批类型间关系。
+
+    Args:
+        entity_types: 合并去重后的全部实体类型（仅取 name + parent_entity_type_name + description）
+        existing_relations: 已有批内类型间关系（合并去重后）
+        name: 本体名称
+
+    Returns:
+        OpenAI 格式的 messages 列表
+    """
+    types_compact = [
+        {
+            "name": t.get("name", ""),
+            "parent_entity_type_name": t.get("parent_entity_type_name")
+                or t.get("parent_concept_name") or "",
+            "description": t.get("description", ""),
+        }
+        for t in entity_types
+    ]
+    types_str = json.dumps(types_compact, ensure_ascii=False, indent=2)
+
+    existing_signature = [
+        {
+            "source_entity_type_name": r.get("source_entity_type_name", ""),
+            "target_entity_type_name": r.get("target_entity_type_name", ""),
+            "relation_type": r.get("relation_type", ""),
+        }
+        for r in existing_relations
+    ]
+    existing_str = json.dumps(existing_signature, ensure_ascii=False, indent=2)
+
+    system_prompt = (
+        SYSTEM_BASE
+        + "\n\n你的任务是为已提取的实体类型补充跨批遗漏的类型间关系。"
+        + "分批提取时，关系只在同一批内建立，跨批类型之间的关系会丢失，需要你补齐。"
+    )
+
+    user_prompt = (
+        f"以下是本体「{name}」合并去重后的全部实体类型清单：\n{types_str}\n\n"
+        f"已有的类型间关系（不要重复这些）：\n{existing_str}\n\n"
+        f"请补充跨批遗漏的类型间关系，返回 JSON：\n"
+        f'{{"entity_type_relations": [{{'
+        f'"source_entity_type_name": "源类型名", '
+        f'"target_entity_type_name": "目标类型名", '
+        f'"relation_type": "关系类型（如包含/关联/影响/衡量/属于）", '
+        f'"description": "关系说明"}}]}}\n\n'
+        f"要求：\n"
+        f"1. source_entity_type_name 和 target_entity_type_name 必须是上述实体类型清单中已定义的类型名\n"
+        f"2. relation_type 用简洁中文，优先复用已有关系中出现过的类型\n"
+        f"3. 只补充不同批次之间可能存在的类型语义关联（层级包含、概念关联、影响等），不要重复已有关系\n"
+        f"4. 类型之间只要存在语义关联就应建立关系，不要遗漏；确无关联则返回空数组\n"
+        f"5. 只返回 JSON，不要任何解释"
     )
 
     return [
@@ -507,7 +645,7 @@ def build_step2_messages(
         f"   - 属性值必须从原文摘录或基于原文推导，带 source_snippet\n"
         f"   - 指标型属性（category=metric）必须有 value 和 unit\n"
         f"   - 文档未提及的属性可省略，不要编造\n"
-        f"5. name 简洁规范，2-15 个字，避免重复\n"
+        f"5. name 必须使用中文命名（专有名词缩写/型号可保留原文），简洁规范，2-15 个字，避免重复\n"
         f"6. source_snippet 必须是原文原话，用于核实\n"
         f"7. 【实体间关系】提取实体实例之间的语义关系：\n"
         f"   - source 和 target 必须是上述 entities 数组中已定义的实体名\n"
@@ -621,7 +759,7 @@ def build_step2_batch_messages(
         f"1. 提取本批文档中的具体实例，不要提取抽象类型\n"
         f"2. instance_of 必须是实体类型清单中已定义的类型名，优先归属到最具体的子类型\n"
         f"3. 每个实体按其类型的 property_schema 填充 properties（值带 source_snippet，未提及可省略）\n"
-        f"4. name 简洁规范，避免与本批内其他实体重复\n"
+        f"4. name 必须使用中文命名（专有名词缩写/型号可保留原文），简洁规范，避免与本批内其他实体重复\n"
         f"5. source_snippet 必须是本批原文原话\n"
         f"6. 【实体间关系】提取本批内实体间的关系（source/target 必须是本批 entities 中已定义的实体名）\n"
         f"7. 按本批内容自然提取，数量不限（跨批去重由系统自动完成）\n"
@@ -890,16 +1028,16 @@ def build_step4_verification_messages(
         f"已确认的关系清单：\n{json.dumps(relations_compact, ensure_ascii=False)}\n\n"
         f"原文（用于核实溯源）：\n---\n{doc_text}\n---\n\n"
         f"请返回 JSON，格式如下：\n"
-        f'{{"verified_count": 整数, "suspect_count": 整数, '
-        f'"suspects": [{{"item_type": "entity|property|relation|concept", '
+        f'{{"suspects": [{{"item_type": "entity|property|relation|concept", '
         f'"item_name": "项名称", "reason": "存疑原因"}}]}}\n\n'
+        f"（verified_count / suspect_count 字段可省略，系统会根据你列出的 suspects 自动计算）\n\n"
         f"验证要求：\n"
         f"1. 检查每个实体的 source_snippet 是否真实出现在原文（字符串匹配）\n"
         f"2. 检查每个属性值是否可溯源（source_snippet 是否支撑该值）\n"
         f"3. 检查每条关系是否有原文依据\n"
         f"4. 检查实体类型的 property_schema 是否覆盖文档中该类实体的关键属性\n"
         f"5. 存疑项给出具体原因（如「source_snippet 在原文中未找到」「属性值75%与原文72%不符」）\n"
-        f"6. verified_count 为通过验证的项数，suspect_count 为存疑项数\n"
+        f"6. 请完整列出所有存疑项（suspects），不要遗漏；没有存疑项时 suspects 返回空数组 []\n"
         f"7. 只返回 JSON，不要任何解释"
         + _template_hint_text(template, "verification", template_mode)
         + _stage_hint_text(stage_hint)

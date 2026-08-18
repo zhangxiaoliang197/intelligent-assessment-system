@@ -1252,7 +1252,7 @@ const saveAsTemplate = async () => {
     fd.append('name', name.trim())
     fd.append('description', ontology.value?.description || '')
     await saveMetaModelFromOntology(ontologyId, fd)
-    ElMessage.success('本体模型已保存，可在文档构建或新建本体时复用')
+    ElMessage.success('本体模型已保存，可在AI构建或新建本体时复用')
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '保存本体模型失败')
   } finally {

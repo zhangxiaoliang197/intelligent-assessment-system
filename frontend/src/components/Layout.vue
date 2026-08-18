@@ -53,7 +53,7 @@ const pageTitle = computed(() => {
     'KnowledgeBase': '知识库',
     'OntologyModel': '本体',
         'OntologyDetail': '本体详情',
-        'OntologyBuild': '文档构建',
+        'OntologyBuild': 'AI 构建',
         'SituationMap': '态势图',
         'SituationView': '态势图查看',
         'AdminSystem': '基础管理系统'

@@ -91,6 +91,9 @@
               <el-button type="primary" size="small" @click="viewOntology(ont.id)">
                 查看图谱
               </el-button>
+              <el-button type="primary" size="small" plain @click="aiEditOntology(ont.id)">
+                AI 编辑
+              </el-button>
               <el-dropdown trigger="click" @command="(cmd: string) => handleCardAction(cmd, ont)">
                 <el-button size="small">
                   更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
@@ -127,8 +130,8 @@
                 <el-tag v-if="task.build_type === 'manual'" type="primary" size="small" effect="plain">
                   手动构建
                 </el-tag>
-                <el-tag v-else-if="task.build_type === 'document'" type="primary" size="small" effect="plain">
-                  文档构建
+                <el-tag v-else-if="task.build_type === 'document' || task.build_type === 'ai_build'" type="primary" size="small" effect="plain">
+                  AI 构建
                 </el-tag>
                 <el-tag :type="getTaskStatusType(task.status)" size="small">
                   {{ task.status }}
@@ -172,8 +175,8 @@
             <div class="method-icon orange">
               <el-icon :size="28"><Document /></el-icon>
             </div>
-            <h4>文档构建</h4>
-            <p>上传文档，AI 自动分析提取实体类型与关系，生成候选本体</p>
+            <h4>AI 构建</h4>
+            <p>上传文档，通过对话与 AI 交互完成本体构建，支持实时编辑与图谱预览</p>
           </div>
           <div class="method-card" @click="handleCreateMethod('import')">
             <div class="method-icon green">
@@ -294,17 +297,17 @@
         </template>
       </el-dialog>
 
-      <!-- 文档构建对话框 -->
-      <el-dialog v-model="showBuildDialog" title="文档构建" width="600px">
+      <!-- AI 构建对话框 -->
+      <el-dialog v-model="showBuildDialog" title="AI 构建" width="560px">
         <el-alert
-          title="从文档自动构建本体"
+          title="与 AI 对话完成本体构建"
           type="info"
           :closable="false"
           show-icon
           style="margin-bottom: 1rem"
         >
           <template #default>
-            <p>上传文档后，AI 将自动分析文档内容，提取实体类型和关系，生成本体。整个过程分为 4 个步骤，您可以在每步进行编辑和确认。</p>
+            <p>在聊天窗口与 AI 交互完成本体构建。无需预先上传文档，可在对话中随时上传文件或直接描述需求。</p>
           </template>
         </el-alert>
         
@@ -320,27 +323,11 @@
               placeholder="请输入本体描述" 
             />
           </el-form-item>
-          <el-form-item label="选择文档" required>
-            <el-upload
-              ref="buildUploadRef"
-              :auto-upload="false"
-              :limit="1"
-              accept=".pdf,.doc,.docx,.txt,.md"
-              :on-change="handleBuildFileChange"
-              drag
-            >
-              <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-              <div class="el-upload__text">拖拽文档到此处，或 <em>点击选择</em></div>
-              <template #tip>
-                <div class="el-upload__tip">支持 PDF / Word / TXT / Markdown 格式</div>
-              </template>
-            </el-upload>
-          </el-form-item>
         </el-form>
         
         <template #footer>
           <el-button @click="showBuildDialog = false">取消</el-button>
-          <el-button type="primary" :loading="creatingBuild" :disabled="!buildForm.file" @click="startBuild">
+          <el-button type="primary" :loading="creatingBuild" :disabled="!buildForm.name.trim()" @click="startBuild">
             开始构建
           </el-button>
         </template>
@@ -469,7 +456,7 @@ import {
   importOntology,
   exportOntology as exportOntologyApi
 } from '@/services/ontology'
-import { getBuildJobList, createBuildJob, createManualBuildJob, deleteBuildJob } from '@/services/ontologyBuild'
+import { getBuildJobList, createBuildJobSimple, createManualBuildJob, deleteBuildJob, buildFromOntology } from '@/services/ontologyBuild'
 import {
   getMetaModelList,
   getMetaModel,
@@ -527,7 +514,6 @@ const buildForm = ref({
   description: '',
   file: null as File | null
 })
-const buildUploadRef = ref()
 
 // 手动构建对话框（命名 + 描述）
 const showManualDialog = ref(false)
@@ -601,6 +587,20 @@ const refreshData = () => {
 // ── 本体操作 ──
 const viewOntology = (id: string) => {
   router.push(`/ontology/${id}`)
+}
+
+const aiEditOntology = async (id: string) => {
+  try {
+    const res = await buildFromOntology(id)
+    const jobId = res.data?.job_id
+    if (jobId) {
+      router.push(`/ontology-build/${jobId}`)
+    } else {
+      ElMessage.error('AI 编辑任务创建失败')
+    }
+  } catch (e: any) {
+    ElMessage.error(e.serverMessage || 'AI 编辑任务创建失败')
+  }
 }
 
 // 卡片下拉菜单统一处理
@@ -915,25 +915,16 @@ const submitImport = async () => {
 }
 
 // ── 构建任务操作 ──
-const handleBuildFileChange = (file: any) => {
-  buildForm.value.file = file.raw
-}
-
 const startBuild = async () => {
-  if (!buildForm.value.name || !buildForm.value.file) {
-    ElMessage.warning('请填写本体名称并选择文档')
+  if (!buildForm.value.name.trim()) {
+    ElMessage.warning('请填写本体名称')
     return
   }
 
   creatingBuild.value = true
   try {
-    const fd = new FormData()
-    fd.append('file', buildForm.value.file)
-    fd.append('name', buildForm.value.name)
-    fd.append('description', buildForm.value.description)
-
-    const res: any = await createBuildJob(fd)
-    ElMessage.success('构建任务创建成功')
+    const res: any = await createBuildJobSimple(buildForm.value.name, buildForm.value.description)
+    ElMessage.success('AI 构建任务已创建')
     showBuildDialog.value = false
     buildForm.value = { name: '', description: '', file: null }
     await loadData()
@@ -948,7 +939,7 @@ const startBuild = async () => {
 }
 
 const continueBuild = (task: any) => {
-  // 手动构建任务：进入手动构建向导页继续；文档构建任务：进入构建页
+  // 手动构建任务：进入手动构建向导页继续；AI 构建任务：进入构建页
   if (task.build_type === 'manual') {
     router.push(`/ontology/manual/${task.ontology_id}`)
     return

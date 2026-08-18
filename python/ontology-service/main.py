@@ -29,11 +29,15 @@ from filelock import FileLock
 
 # ---------- 分步构建模块 ----------
 from doc_parser import extract_text, truncate_for_llm
-from llm_client import call_llm_json
+from llm_client import call_llm, call_llm_json
 import build_prompts
 import config
-from text_batcher import split_into_batches
+from text_batcher import split_into_batches, extract_headings, split_by_headings
 from migration import migrate_ontology_dict, backup_data_dir
+
+# ---------- AI 构建聊天 Agent ----------
+from agent import orchestrator as agent_orchestrator
+from agent import prompts as agent_prompts
 
 # ---------- 数据模型（从 models.py 导入，Phase 1 抽离）----------
 from models import (
@@ -518,26 +522,120 @@ def _derive_type_color(entity_type: str, meta_entity_types: list, used_colors: O
     return build_prompts.DEFAULT_COLORS[len(used_colors) % len(build_prompts.DEFAULT_COLORS)]
 
 
-def _enrich_types_with_color(concepts: list, meta_entity_types: list) -> list:
-    """为合并后的实体类型列表填充 color 字段。
+def _adjust_hex_color(hex_color: str, ratio: float) -> str:
+    """按比例调整 hex 颜色明度，返回 #rrggbb。
 
-    颜色优先级：
-    1. LLM 已输出 color（旧格式实体类型）则保留
-    2. 本体模型按 entity_type 精确匹配
-    3. 调色板轮转分配（保证不同实体类型颜色不同，避免全部默认蓝色）
+    ratio>0 向白色靠近（变浅），ratio<0 向黑色靠近（变深）。
+    用于子类型继承父类型色系时派生深浅不同的颜色，使父子「同色系、不同颜色」。
 
     Args:
-        concepts: 合并去重后的实体类型列表
+        hex_color: 形如 #rrggbb 的颜色（也兼容不带 # 的 6 位 hex）
+        ratio: 明度调整比例，0 表示不变，取值范围建议 [-1, 1]
+
+    Returns:
+        调整后的 #rrggbb 颜色；非法输入回退默认蓝 #5470c6
+    """
+    hex_color = (hex_color or "").strip().lstrip("#")
+    if len(hex_color) != 6:
+        return "#5470c6"
+    try:
+        r = int(hex_color[0:2], 16)
+        g = int(hex_color[2:4], 16)
+        b = int(hex_color[4:6], 16)
+    except ValueError:
+        return "#5470c6"
+
+    def _clamp(v: int) -> int:
+        return max(0, min(255, v))
+
+    if ratio >= 0:
+        r = _clamp(int(r + (255 - r) * ratio))
+        g = _clamp(int(g + (255 - g) * ratio))
+        b = _clamp(int(b + (255 - b) * ratio))
+    else:
+        f = -ratio
+        r = _clamp(int(r * (1 - f)))
+        g = _clamp(int(g * (1 - f)))
+        b = _clamp(int(b * (1 - f)))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _enrich_types_with_color(concepts: list, meta_entity_types: list) -> list:
+    """为合并后的实体类型列表填充 color 字段（v3 支持父子同色系）。
+
+    颜色分配（两遍）：
+    1. 顶层类型（无父类型，或父类型不在本批清单中）分配主色：优先本体模型匹配，
+       否则调色板轮转兜底；
+    2. 子类型继承父类型颜色，按层级深度 + 兄弟序号做明度梯度（同色系、深浅有别）。
+
+    已带 color 的类型（LLM 旧格式）保留原色，但其子类型仍继承该色。
+
+    Args:
+        concepts: 合并去重后的实体类型列表（含 parent_entity_type_name）
         meta_entity_types: 已确认的本体模型实体类型
 
     Returns:
         填充 color 后的实体类型列表（原地修改并返回）
     """
-    used_colors = set()
+    by_name = {}
     for c in concepts:
+        n = _normalize_name(c.get("name", ""))
+        if n:
+            by_name[n] = c
+
+    # 识别顶层 + 建立父名 → 子类型列表映射
+    roots = []
+    children_map = {}
+    for c in concepts:
+        cn = _normalize_name(c.get("name", ""))
+        pname = _normalize_name(c.get("parent_entity_type_name")
+                                or c.get("parent_concept_name") or "")
+        if pname and pname in by_name and pname != cn:
+            children_map.setdefault(pname, []).append(c)
+        else:
+            roots.append(c)
+
+    # 顶层分配主色：按序号循环调色板，第 2+ 轮叠加明度偏移
+    # （修复：旧实现用 len(used_colors) % 8 取模，set 饱和在 8 后永远取 0 号蓝色，
+    #   导致 45 个顶层类型只有前 8 个有区分色、其余全蓝）
+    used_colors = set()
+    palette_size = len(build_prompts.DEFAULT_COLORS)
+    for i, c in enumerate(roots):
         if not c.get("color"):
-            c["color"] = _derive_type_color(c.get("entity_type", ""), meta_entity_types, used_colors)
+            # 优先本体模型已配置的颜色
+            base = ""
+            for t in meta_entity_types or []:
+                if t.get("name") == c.get("entity_type", ""):
+                    base = t.get("color") or ""
+                    break
+            if not base:
+                base = build_prompts.DEFAULT_COLORS[i % palette_size]
+                cycle = i // palette_size
+                if cycle > 0:
+                    # 每轮叠加明度偏移：第1轮 -0.16（加深），第2轮 +0.24（变浅），第3轮 -0.32...
+                    # 保证跨轮颜色互异，轮内保持同色系渐变
+                    offset = -0.16 * ((cycle + 1) // 2) if cycle % 2 == 1 else 0.24 * (cycle // 2)
+                    base = _adjust_hex_color(base, offset)
+            c["color"] = base
         used_colors.add(c["color"])
+
+    # 迭代式为子类型派生同色系颜色（visited 防环）
+    stack = [(c, 0) for c in roots]
+    visited = {_normalize_name(c.get("name", "")) for c in roots}
+    while stack:
+        parent, depth = stack.pop()
+        parent_color = parent.get("color") or "#5470c6"
+        parent_name = _normalize_name(parent.get("name", ""))
+        for i, child in enumerate(children_map.get(parent_name, [])):
+            cname = _normalize_name(child.get("name", ""))
+            if cname in visited:
+                continue
+            visited.add(cname)
+            if not child.get("color"):
+                # depth 主偏移 + 兄弟序号微调，确保同父的兄弟子类型颜色也略有区分
+                ratio = min(0.18 + 0.12 * depth + 0.05 * i, 0.45)
+                child["color"] = _adjust_hex_color(parent_color, ratio)
+            stack.append((child, depth + 1))
     return concepts
 
 
@@ -628,6 +726,116 @@ def _deduplicate_relations(relations: list) -> list:
     return result
 
 
+def _pack_heading_segments(text: str, headings: list, max_chars: int) -> list:
+    """把一组章节标题按字符数连续打包成批，返回 [{"text", "titles"}]。
+
+    用于「规划未覆盖的剩余章节」：相邻章节累积，超限切批，避免一章一批的碎片化。
+    首段自动并入第一个标题前的文档开头内容（前言/目录）。
+    """
+    if not headings:
+        return []
+    segments = []
+    if headings[0]["start"] > 0:
+        segments.append((0, headings[0]["start"], ""))
+    for h in headings:
+        segments.append((h["start"], h["end"], h["title"]))
+    batches = []
+    buf, buf_titles, buf_len = "", [], 0
+    for start, end, title in segments:
+        seg = text[start:end]
+        if buf_len and buf_len + len(seg) > max_chars:
+            # 当前批已累积到下限（3000 字）则切批；否则并入（避免过碎）
+            if buf_len >= 3000:
+                batches.append({"text": buf, "titles": list(buf_titles)})
+                buf, buf_titles, buf_len = "", [], 0
+            else:
+                buf += seg
+                if title:
+                    buf_titles.append(title)
+                buf_len = len(buf)
+                continue
+        buf += seg
+        if title:
+            buf_titles.append(title)
+        buf_len = len(buf)
+    if buf.strip():
+        batches.append({"text": buf, "titles": list(buf_titles)})
+    return batches
+
+
+def _split_oversize_batch(text: str, titles: list, max_chars: int) -> list:
+    """超长批次内句级切分（保留原标题标注），返回 [{"text", "titles"}]。"""
+    if len(text) <= max_chars * 1.3:
+        return [{"text": text, "titles": titles}]
+    subs = split_into_batches(text, max_chars=max_chars, overlap=config.STEP1_BATCH_OVERLAP)
+    return [{"text": s, "titles": list(titles)} for s in subs]
+
+
+def _build_step1_batches(job) -> tuple:
+    """构建 step1 分批：章节感知 + LLM 构建规划辅助，保证「规划显示批数 = 实际批数」。
+
+    规则：
+    1. 提取文档章节标题（extract_headings）
+    2. 若 LLM 规划覆盖 ≥50% 的章节 → 规划批优先（同域内容同批），
+       未覆盖章节按大小打包为剩余批（不再一章一批）；规划批文本区间重叠时裁剪避免重复
+    3. 规划无效/覆盖不足 → 纯章节打包（split_by_headings），超长章内切分
+    4. 无章节结构 → 字符切分
+
+    Returns:
+        (batches, batch_titles)：批次文本列表 + 每批章节标题（进度条显示用）
+    """
+    headings = extract_headings(job.source_text)
+    if headings:
+        title2h = {h["title"]: h for h in headings}
+        covered = set()
+        plan_groups = []  # 每个元素: 章节 dict 列表（按位置升序）
+        if job.step1_plan:
+            for b in job.step1_plan:
+                hs = sorted(
+                    (title2h[t] for t in (b.get("titles") or [])
+                     if t in title2h and t not in covered),
+                    key=lambda h: h["start"],
+                )
+                if not hs:
+                    continue
+                covered.update(h["title"] for h in hs)
+                plan_groups.append(hs)
+        if len(covered) >= max(1, len(headings) // 2):
+            # 规划覆盖过半：采用规划分组 + 未覆盖章节打包
+            rest = [h for h in headings if h["title"] not in covered]
+            rest_batches = _pack_heading_segments(job.source_text, rest, config.STEP1_BATCH_MAX_CHARS)
+            # 规划批按位置裁剪重叠区间（如目录行同时被多个规划批引用时，后一批跳过重复部分）
+            plan_groups.sort(key=lambda g: g[0]["start"])
+            final = []
+            prev_end = 0
+            for g in plan_groups:
+                start = max(g[0]["start"], prev_end)
+                end = g[-1]["end"]
+                if end <= start:
+                    continue
+                text = job.source_text[start:end]
+                final.extend(_split_oversize_batch(text, [h["title"] for h in g], config.STEP1_BATCH_MAX_CHARS))
+                prev_end = max(prev_end, end)
+            final.extend(rest_batches)
+            if final:
+                return [f["text"] for f in final], [f["titles"] for f in final]
+        # 规划不足/无效 → 纯章节打包
+        packed = split_by_headings(
+            job.source_text, headings, max_chars=config.STEP1_BATCH_MAX_CHARS
+        )
+        if packed:
+            return [g["text"] for g in packed], [g["titles"] for g in packed]
+    # 回退：无章节结构 → 字符切分
+    if len(job.source_text) <= config.STEP1_BATCH_THRESHOLD_CHARS:
+        return [job.source_text], [[]]
+    batches = split_into_batches(
+        job.source_text,
+        max_chars=config.STEP1_BATCH_MAX_CHARS,
+        overlap=config.STEP1_BATCH_OVERLAP,
+    )
+    return batches, [[] for _ in batches]
+
+
 async def _background_extract_entity_types(job_id: str) -> None:
     """后台任务：Step 1 本体提取（v3 类型层，LLM调用，支持长文档分批 + 断点续作）。
 
@@ -649,20 +857,22 @@ async def _background_extract_entity_types(job_id: str) -> None:
         if not is_resume and (job.step1_entity_types or job.step1_concepts) and job.step1_failed_batch < 0:
             _set_job_progress(job_id, -1, 100, "本体提取已完成")
             _mark_stage_finished(job_id, 1)
+            # 补推 step_done：秒完成场景下前端收不到任何事件会导致
+            # 顶部下拉不更新、确认流程不点亮、用户误以为任务卡住
+            existing_types = job.step1_entity_types or job.step1_concepts
+            _emit_event(job_id, "step_done", {
+                "step": 1,
+                "entity_types": existing_types,
+                "entity_type_relations": job.step1_entity_type_relations or [],
+                "concepts": existing_types,  # 兼容旧前端
+                "total": len(existing_types)
+            })
             return
 
         # ---- 2. 重建 batches（无论首次还是续跑都重新切分，纯函数结果稳定）----
-        if len(job.source_text) <= config.STEP1_BATCH_THRESHOLD_CHARS:
-            # 短文档：单批，保持兼容
-            batches = [job.source_text]
-            total = 1
-        else:
-            batches = split_into_batches(
-                job.source_text,
-                max_chars=config.STEP1_BATCH_MAX_CHARS,
-                overlap=config.STEP1_BATCH_OVERLAP,
-            )
-            total = len(batches)
+        # 优先使用 LLM 构建规划的章节方案（同一领域父子类型同批），回退字符切分
+        batches, batch_titles = _build_step1_batches(job)
+        total = len(batches)
 
         # 首次运行：记录总批数
         if job.step1_batches_total == 0:
@@ -703,6 +913,11 @@ async def _background_extract_entity_types(job_id: str) -> None:
 
         # ---- 3. 并行跑所有待处理批次 ----
         stage_hint_1 = job.stage_hints.get(1, "") if job.stage_hints else ""
+        # 注入解析阶段识别的层级提示（顶层父类建议），强化三级层级提取
+        if job.step1_hierarchy_hint:
+            stage_hint_1 = (
+                (stage_hint_1 + "\n") if stage_hint_1 else ""
+            ) + f"【层级提示】{job.step1_hierarchy_hint}"
         if pending_indices:
             sem = asyncio.Semaphore(config.LLM_CONCURRENCY)
 
@@ -739,14 +954,21 @@ async def _background_extract_entity_types(job_id: str) -> None:
                         job.update_time = datetime.now()
                         save_build_job(job_id)
                     done = job.step1_batches_done
+                    # 进度条展示本批章节标题（有规划时），让用户知道 AI 正在处理哪部分
+                    titles_now = (
+                        batch_titles[idx] if idx < len(batch_titles) and batch_titles[idx] else []
+                    )
+                    titles_desc = f"（{'/'.join(titles_now[:2])}）" if titles_now else ""
                     logger.info(
-                        f"[{job_id}] Step1 第 {idx + 1}/{total} 批完成: "
+                        f"[{job_id}] Step1 第 {idx + 1}/{total} 批完成{titles_desc}: "
                         f"{len(batch_entity_types)} 个类型, {len(batch_et_relations)} 条类型间关系（{done}/{total}）"
                     )
                     _set_job_progress(
                         job_id, 1,
                         10 + int(85 * done / max(total, 1)),
-                        f"已提取 {done}/{total} 批..." if total > 1 else "正在调用AI提取本体..."
+                        # 前端任务标签已显示「X/Y 批」批次进度，message 只补充剩余数与当前章节
+                        f"剩余 {total - done} 批处理中{titles_desc}..."
+                        if total > 1 and done < total else "本批提取完成，正在汇总..."
                     )
                     _emit_event(job_id, "batch_done", {
                         "batch_idx": idx,
@@ -789,6 +1011,7 @@ async def _background_extract_entity_types(job_id: str) -> None:
                     )
                     job.update_time = datetime.now()
                     save_build_job(job_id)
+                await _finalize_task_chat(job_id, 1, False, job.error_message or "实体类型提取失败")
                 _emit_event(job_id, "error", {"step": 1, "message": job.error_message})
                 return  # 不进入合并，等待用户续跑
 
@@ -797,7 +1020,52 @@ async def _background_extract_entity_types(job_id: str) -> None:
         all_entity_types = [et for batch in job.step1_batch_results for et in batch]
         all_et_relations = [etr for batch in job.step1_batch_relations_results for etr in batch]
         merged_types = _merge_entity_types(all_entity_types)
-        merged_et_relations = _merge_entity_type_relations(all_et_relations)
+        batch_only_relations = _merge_entity_type_relations(all_et_relations)
+        merged_et_relations = batch_only_relations
+
+        # ---- 4.1 多批时补充跨批类型间关系（对标 step3 跨组关系补充）----
+        # 长文档分批提取时，类型间关系只在本批内提取，跨批类型间的关系会整体丢失；
+        # 这里在合并全量类型后额外调用一次 LLM 补齐跨批关系，避免 45 类型只有 21 关系的偏少现象。
+        if total > 1 and not job.step1_cross_batch_done:
+            _set_job_progress(job_id, 1, 98, "正在补充跨批类型间关系...")
+            try:
+                cross_messages = build_prompts.build_step1_cross_batch_messages(
+                    merged_types, merged_et_relations, job.name
+                )
+                step1_cross_max_tokens, step1_cross_thinking = config.get_llm_params("step1")
+                cross_result = await _llm_json_async(
+                    cross_messages, temperature=0.3,
+                    max_tokens=step1_cross_max_tokens, thinking_type=step1_cross_thinking
+                )
+                cross_relations = []
+                if isinstance(cross_result, dict):
+                    _cr = cross_result.get("entity_type_relations") or cross_result.get("relations") or []
+                    if isinstance(_cr, list):
+                        cross_relations = _cr
+                async with build_lock:
+                    job.step1_cross_batch_relations = cross_relations
+                    job.step1_cross_batch_done = True
+                    job.update_time = datetime.now()
+                    save_build_job(job_id)
+                logger.info(f"[{job_id}] Step1 跨批类型间关系补充: {len(cross_relations)} 条")
+            except Exception as _e:
+                logger.warning(f"[{job_id}] Step1 跨批类型间关系补充失败，降级为仅批内关系: {_e}")
+                async with build_lock:
+                    job.step1_cross_batch_done = True
+                    job.step1_cross_batch_relations = []
+                    job.update_time = datetime.now()
+                    save_build_job(job_id)
+        elif total <= 1:
+            async with build_lock:
+                job.step1_cross_batch_done = True
+                job.step1_cross_batch_relations = []
+                save_build_job(job_id)
+
+        merged_et_relations = _merge_entity_type_relations(
+            all_et_relations + job.step1_cross_batch_relations
+        )
+        cross_count = len(merged_et_relations) - len(batch_only_relations)
+
         # color 由后端按 entity_type 从本体模型推导（LLM 不输出 color，避免不一致）
         _enrich_types_with_color(merged_types, job.meta_entity_types)
         async with build_lock:
@@ -810,7 +1078,7 @@ async def _background_extract_entity_types(job_id: str) -> None:
             job.progress_message = (
                 f"本体提取完成，共 {len(merged_types)} 个类型，"
                 f"{len(merged_et_relations)} 条类型间关系"
-                + (f"（{total} 批合并）" if total > 1 else "")
+                + (f"（{total} 批合并，含 {cross_count} 条跨批关系）" if total > 1 else "")
             )
             job.error_message = None
             job.update_time = datetime.now()
@@ -821,6 +1089,9 @@ async def _background_extract_entity_types(job_id: str) -> None:
             f"[{job_id}] 后台本体提取完成: {len(merged_types)} 个类型，"
             f"{len(merged_et_relations)} 条类型间关系（{total} 批合并）"
         )
+        # 联动聊天：翻任务标签为完成 + 推送「当前状态+下一步建议」回复
+        # （必须在 step_done 之前：SSE 连接在终态事件后关闭，之后的 chat_message 会丢）
+        await _finalize_task_chat(job_id, 1, True, job.progress_message)
         # 推送 Step1 完成事件，前端据此启用"确认实体类型清单"按钮
         _emit_event(job_id, "step_done", {
             "step": 1,
@@ -847,6 +1118,7 @@ async def _background_extract_entity_types(job_id: str) -> None:
             job.progress_message = f"本体提取异常，可点击继续提取续跑"
             job.update_time = datetime.now()
             save_build_job(job_id)
+        await _finalize_task_chat(job_id, 1, False, job.error_message or "实体类型提取异常")
         _emit_event(job_id, "error", {"step": 1, "message": job.error_message})
     finally:
         _background_tasks.pop(job_id, None)
@@ -968,7 +1240,9 @@ async def _background_extract_entities(job_id: str) -> None:
                     _set_job_progress(
                         job_id, 2,
                         10 + int(85 * done / max(total, 1)),
-                        f"已提取 {done}/{total} 批..." if total > 1 else "正在调用AI提取实体+关系..."
+                        # 前端任务标签已显示「X/Y 批」批次进度，message 只补充剩余数
+                        f"剩余 {total - done} 批处理中（并发 {config.LLM_CONCURRENCY}）..."
+                        if total > 1 and done < total else "本批提取完成，正在汇总..."
                     )
                     _emit_event(job_id, "batch_done", {
                         "batch_idx": idx,
@@ -1008,6 +1282,7 @@ async def _background_extract_entities(job_id: str) -> None:
                     )
                     job.update_time = datetime.now()
                     save_build_job(job_id)
+                await _finalize_task_chat(job_id, 2, False, job.error_message or "实体提取失败")
                 _emit_event(job_id, "error", {"step": 2, "message": job.error_message})
                 return  # 不进入合并
 
@@ -1041,6 +1316,9 @@ async def _background_extract_entities(job_id: str) -> None:
             f"[{job_id}] 后台实体+关系提取完成: {len(merged_entities)} 个实体，"
             f"{len(merged_relations)} 条关系（{total} 批合并）"
         )
+        # 联动聊天：翻任务标签为完成 + 推送「当前状态+下一步建议」回复
+        # （必须在 step_done 之前：SSE 连接在终态事件后关闭，之后的 chat_message 会丢）
+        await _finalize_task_chat(job_id, 2, True, job.progress_message)
         _emit_event(job_id, "step_done", {
             "step": 2,
             "entities": merged_entities,
@@ -1066,6 +1344,7 @@ async def _background_extract_entities(job_id: str) -> None:
             job.progress_message = f"实体+关系提取异常，可点击继续提取续跑"
             job.update_time = datetime.now()
             save_build_job(job_id)
+        await _finalize_task_chat(job_id, 2, False, job.error_message or "实体提取异常")
         _emit_event(job_id, "error", {"step": 2, "message": job.error_message})
     finally:
         _background_tasks.pop(job_id, None)
@@ -1168,7 +1447,8 @@ async def _background_build_relations(job_id: str) -> None:
                 _set_job_progress(
                     job_id, 3,
                     10 + int(70 * idx / max(total, 1)),
-                    f"正在建立关系（第 {idx + 1}/{total} 组）..." if total > 1 else "正在调用AI建立关系..."
+                    # 前端任务标签已显示「X/Y 组」分组进度，message 只补充剩余数
+                    f"剩余 {total - idx} 组待处理..." if total > 1 else "正在调用AI建立关系..."
                 )
                 group_entities = groups[idx] if idx < len(groups) else []
                 messages = build_prompts.build_step3_group_messages(
@@ -1194,6 +1474,12 @@ async def _background_build_relations(job_id: str) -> None:
                     job.update_time = datetime.now()
                     save_build_job(job_id)
                 logger.info(f"[{job_id}] Step3 第 {idx + 1}/{total} 组完成: {len(group_relations)} 条关系")
+                # 组完成即刷新批次进度（前端标签显示「X/Y 组」）
+                _set_job_progress(
+                    job_id, 3,
+                    10 + int(70 * (idx + 1) / max(total, 1)),
+                    f"剩余 {total - idx - 1} 组处理中..." if idx + 1 < total else "本组完成，正在合并关系..."
+                )
                 _emit_event(job_id, "group_done", {
                     "group_idx": idx,
                     "groups_done": idx + 1,
@@ -1271,6 +1557,9 @@ async def _background_build_relations(job_id: str) -> None:
             f"[{job_id}] 后台关系建模完成: {len(final_relations)} 条关系"
             + (f"（含 {cross_count} 跨组）" if total > 1 else "")
         )
+        # 联动聊天：翻任务标签为完成 + 推送「当前状态+下一步建议」回复
+        # （必须在 step_done 之前：SSE 连接在终态事件后关闭，之后的 chat_message 会丢）
+        await _finalize_task_chat(job_id, 3, True, job.progress_message)
         _emit_event(job_id, "step_done", {
             "step": 3,
             "relations": final_relations,
@@ -1295,6 +1584,7 @@ async def _background_build_relations(job_id: str) -> None:
                 job.progress_message = "跨组关系补充失败，可点击继续重新补充跨组关系"
             job.update_time = datetime.now()
             save_build_job(job_id)
+        await _finalize_task_chat(job_id, 3, False, job.error_message or "关系建模失败")
         _emit_event(job_id, "error", {"step": 3, "message": job.error_message})
     finally:
         _background_tasks.pop(job_id, None)
@@ -1316,8 +1606,8 @@ async def _background_verify_and_report(job_id: str) -> None:
         # v3：优先读 step1_entity_types，兼容旧任务 step1_concepts
         concepts = job.step1_entity_types or job.step1_concepts or []
         entities = job.step2_entities or []
-        # v3：优先读 step2_relations，兼容旧任务 step3_relations
-        relations = job.step2_relations or job.step3_relations or []
+        # step3_relations 是关系建模的最终结果（step2 完成时两者相等，旧 step3 建模后更完整），优先读它
+        relations = job.step3_relations or job.step2_relations or []
         if not entities:
             raise ValueError("实体清单为空，无法验证")
 
@@ -1337,10 +1627,27 @@ async def _background_verify_and_report(job_id: str) -> None:
         if not isinstance(result, dict):
             raise ValueError(f"验证返回格式异常（非对象），原始类型: {type(result).__name__}")
 
+        # LLM 只负责输出存疑项列表；通过/存疑计数由后端计算，避免 LLM 自报计数
+        # 出现「0 项通过、0 项存疑」等明显错误（LLM 统计几十上百个条目不可靠，
+        # 且键名/结构稍有偏差 result.get 就会兜底成 0）。
+        suspects = result.get("suspects")
+        if not isinstance(suspects, list):
+            suspects = []
+        # 验证条目总数 = 实体类型 + 实体 + 全部属性 + 实例间关系（与 prompt 的 item_type 对齐）
+        total_items = (
+            len(concepts)
+            + len(entities)
+            + sum(len(e.get("properties") or []) for e in entities)
+            + len(relations)
+        )
+        # 通过数 = 总数 - 存疑数；存疑列表仅覆盖部分漏检项时通过数偏大属保守可接受
+        verified_count = max(total_items - len(suspects), 0)
+        suspect_count = len(suspects)
+
         verification = {
-            "verified_count": result.get("verified_count", 0),
-            "suspect_count": result.get("suspect_count", 0),
-            "suspects": result.get("suspects", []) if isinstance(result.get("suspects"), list) else [],
+            "verified_count": verified_count,
+            "suspect_count": suspect_count,
+            "suspects": suspects,
         }
 
         async with build_lock:
@@ -1364,6 +1671,9 @@ async def _background_verify_and_report(job_id: str) -> None:
             f"[{job_id}] 后台验证完成: {verification['verified_count']} 通过, "
             f"{verification['suspect_count']} 存疑"
         )
+        # 联动聊天：翻任务标签为完成 + 推送「当前状态+下一步建议」回复
+        # （必须在 step_done 之前：SSE 连接在终态事件后关闭，之后的 chat_message 会丢）
+        await _finalize_task_chat(job_id, 3, True, job.progress_message)
         _emit_event(job_id, "step_done", {
             "step": 3,
             "verification": verification
@@ -1378,12 +1688,13 @@ async def _background_verify_and_report(job_id: str) -> None:
             job.progress_message = f"验证失败: {str(e)[:150]}"
             job.update_time = datetime.now()
             save_build_job(job_id)
+        await _finalize_task_chat(job_id, 3, False, job.error_message or "验证失败")
         _emit_event(job_id, "error", {"step": 3, "message": job.error_message})
     finally:
         _background_tasks.pop(job_id, None)
 
 
-def _generate_formal_ontology(job_id: str) -> str:
+def _generate_formal_ontology(job_id: str, target_ontology_id: str = None) -> str:
     """从已确认的 step1-3 数据生成正式本体（step3 确认时调用）。
 
     v3 四阶段数据 → 正式本体：
@@ -1393,15 +1704,19 @@ def _generate_formal_ontology(job_id: str) -> str:
     - step2_relations → Relation（source/target = 实体名 → 实体ID）
     - 兼容旧任务：step1_entity_types 为空时回退读 step1_concepts
 
+    Args:
+        job_id: 构建任务 ID
+        target_ontology_id: 指定则覆盖更新该本体（再编辑场景），否则生成新本体
+
     Returns:
-        新生成的本体 ID
+        生成/更新的本体 ID
     """
     job = build_jobs_db.get(job_id)
     if not job:
         raise ValueError("构建任务不存在")
 
     now = datetime.now()
-    new_oid = f"ont_{uuid.uuid4().hex[:8]}"
+    new_oid = target_ontology_id or f"ont_{uuid.uuid4().hex[:8]}"
 
     # ── step1_entity_types → EntityType（含层级解析）──
     # 两遍扫描：第一遍创建所有类型并建立 name→id 映射，第二遍解析 parent_entity_type_name → parent_entity_type_id
@@ -1524,8 +1839,8 @@ def _generate_formal_ontology(job_id: str) -> str:
         ))
 
     # ── step2_relations → Relation（实例间关系）──
-    # 兼容旧任务：step2_relations 为空时回退 step3_relations
-    step2_rel_data = job.step2_relations or job.step3_relations or []
+    # step3_relations 是关系建模最终结果，优先读它；兼容仅 step2_relations 的旧任务
+    step2_rel_data = job.step3_relations or job.step2_relations or []
     new_relations: List[Relation] = []
     for rd in step2_rel_data:
         src = ent_map.get(_normalize_name(rd.get("source", "") or rd.get("source_name", "")))
@@ -1956,14 +2271,37 @@ def save_build_job(job_id: str) -> None:
 
 
 def save_build_jobs_index() -> None:
-    """持久化构建任务索引。"""
-    data = [j.dict() for j in build_jobs_db.values()]
+    """持久化构建任务索引（轻量：仅元数据，全量数据存 job_{id}.json）。
+
+    历史版本曾将每个 job 的全量 dict（含 source_text / chat_history / 分批结果）
+    直接写入 index.json，导致 index.json 膨胀到数 MB，且此函数被高频调用
+    （每次进度更新），全量序列化 + 大文件写盘会同步阻塞事件循环，
+    进而拖垮同进程内所有请求（表现为 30s 超时）。改为只存元数据，
+    全量数据由 save_build_job 单独落盘。
+    """
+    data = [
+        {
+            "id": j.id,
+            "name": j.name,
+            "status": j.status,
+            "step": j.step,
+            "build_type": j.build_type,
+            "create_time": j.create_time.isoformat(),
+            "update_time": j.update_time.isoformat(),
+        }
+        for j in build_jobs_db.values()
+    ]
     with FileLock(_lock_path('build_jobs_index')):
         atomic_write_json(BUILD_JOBS_INDEX, data)
 
 
 def load_build_jobs() -> None:
-    """启动时加载所有构建任务到内存，并重试卡死的后台任务。"""
+    """启动时加载所有构建任务到内存，并重试卡死的后台任务。
+
+    索引仅存轻量元数据（见 save_build_jobs_index），全量数据从
+    data/build_jobs/job_{id}.json 逐个加载；兼容旧版全量索引
+    （job 文件缺失时回退用索引内嵌数据，不丢历史任务）。
+    """
     global build_jobs_db
     build_jobs_db = {}
     index = load_json_with_backup(BUILD_JOBS_INDEX, [])
@@ -1971,11 +2309,42 @@ def load_build_jobs() -> None:
         index = []
     for item in index:
         try:
-            job = BuildJob(**item)
+            if not isinstance(item, dict):
+                continue
+            job_id = item.get("id")
+            if not job_id:
+                continue
+            full = load_json_with_backup(_build_job_file(job_id), None)
+            if isinstance(full, dict) and full.get("id"):
+                job = BuildJob(**full)
+            elif "running_step" in item:
+                # 旧版全量索引兜底：job 文件丢失但索引仍内嵌全量数据
+                job = BuildJob(**item)
+            else:
+                logger.warning(f"构建任务文件缺失且索引无全量数据，跳过: {job_id}")
+                continue
             build_jobs_db[job.id] = job
         except Exception as e:
             logger.warning(f"构建任务解析失败，跳过: {e}")
     logger.info(f"加载完成: {len(build_jobs_db)} 个构建任务")
+    # 加载后立即重写一次索引：将旧版 4.5MB 全量索引收敛为轻量元数据格式
+    save_build_jobs_index()
+
+    # 清理残留的 running 阶段状态：服务刚启动时不存在任何后台任务，
+    # progress_stages 中 status=running 的条目必为上次运行中断的残留，
+    # 不清理会导致前端时间线与标签对账永远认为该阶段在跑
+    # （若该阶段随后被自动重试，_mark_stage_started 会重新置为 running）
+    for job in build_jobs_db.values():
+        stale = [s.get("stage") for s in job.progress_stages if s.get("status") == "running"]
+        if not stale:
+            continue
+        for s in job.progress_stages:
+            if s.get("status") == "running":
+                s["status"] = "failed"
+                s["finished_at"] = datetime.now().isoformat()
+        job.update_time = datetime.now()
+        save_build_job(job.id)
+        logger.info(f"[{job.id}] 清理残留 running 阶段状态（服务重启中断）: 阶段 {stale}")
 
     # 重试卡死的后台任务（服务重启前未完成的）
     for job in list(build_jobs_db.values()):
@@ -2350,8 +2719,10 @@ async def _retry_pending_build_jobs():
         if not job or job.status == "completed":
             continue
         # 根据 confirmed 状态判断该重试哪一步（五阶段优先级从后往前）
-        if not job.meta_confirmed and not job.source_text:
-            # 阶段 0「文档解析」尚未完成即被中断：重试解析
+        if not job.meta_confirmed and not job.meta_entity_types:
+            # 阶段 0「文档解析」无任何解析产出（meta 候选为空）即视为未完成：重试解析。
+            # 不再看 source_text：重解析中途被中断时 source_text 已落盘但 meta 为空，
+            # 旧条件会漏掉这种任务，导致阶段 0 永远无人重试、状态悬挂
             logger.info(f"[{job_id}] 自动重试阶段0（文档解析）")
             _set_job_progress(job_id, 0, 5, "服务重启后自动重试文档解析...")
             task = asyncio.create_task(_background_parse_document(job_id))
@@ -4505,6 +4876,244 @@ async def build_upload(
     }
 
 
+@app.post("/ontology/build/create")
+async def build_create(request: Request):
+    """无文件创建构建任务（AI 构建入口）。
+
+    AI 构建不再要求先上传文件，用户可在聊天中上传文档或直接描述需求。
+    """
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    description = (body.get("description") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="名称为必填")
+
+    now = datetime.now()
+    job_id = _gen_job_id()
+    job = BuildJob(
+        id=job_id,
+        name=name,
+        description=description,
+        build_type="ai_build",
+        step=0,
+        status="draft",
+        source_filename="",
+        source_text="",
+        char_count=0,
+        granularity="medium",
+        stage_hints={},
+        create_time=now,
+        update_time=now,
+    )
+
+    async with build_lock:
+        build_jobs_db[job_id] = job
+        save_build_job(job_id)
+        save_build_jobs_index()
+
+    return {
+        "success": True,
+        "message": "AI 构建任务已创建",
+        "data": {"job_id": job_id}
+    }
+
+
+@app.post("/ontology/build/{job_id}/upload-file")
+async def build_upload_file(job_id: str, file: UploadFile = File(...)):
+    """聊天中追加文档到构建任务。
+
+    上传文件后解析文档内容写入 job.source_text，供后续提取阶段使用。
+    """
+    job = _get_job_or_404(job_id)
+    if job.running_step != -1:
+        raise HTTPException(status_code=400, detail="当前有步骤正在后台运行中，请等待完成")
+
+    content = await file.read()
+    filename = file.filename or "unknown.txt"
+
+    # 持久化源文件
+    source_path = os.path.join(BUILD_JOBS_DIR, f'{job_id}_source')
+    with open(source_path, 'wb') as f:
+        f.write(content)
+
+    # 解析文本（传入文件路径，不是字节内容）
+    text = extract_text(source_path, filename)
+
+    # 换文档时级联重置已有产出：旧文档的解析候选/摘要/规划及 step1-3 提取结果
+    # 对新文档全部失效。不清空会导致「已解析免重跑」用旧文档 meta 误判已解析、
+    # 后续提取混入旧文档数据（与 rework 级联重置同一字段集）
+    async with build_lock:
+        had_outputs = bool(
+            job.meta_entity_types or job.meta_relation_types
+            or job.step0_summary or job.step0_suggestion or job.step1_plan
+            or job.step1_entity_types or job.step1_concepts
+            or job.step2_entities or job.step3_verification or job.step4_verification
+        )
+        if had_outputs:
+            logger.info(f"[{job_id}] 上传新文档「{filename}」，级联重置旧文档的全部阶段产出")
+            # 阶段 0：解析产出与自动摘要/规划
+            job.meta_entity_types = []
+            job.meta_relation_types = []
+            job.meta_confirmed = False
+            job.step0_summary = ""
+            job.step0_suggestion = ""
+            job.step1_plan = []
+            job.step1_hierarchy_hint = ""
+            # 阶段 1：实体类型 + 类型间关系 + 分批状态
+            job.step1_entity_types = []
+            job.step1_entity_type_relations = []
+            job.step1_concepts = []
+            job.step1_confirmed = False
+            job.step1_batch_results = []
+            job.step1_batch_relations_results = []
+            job.step1_batches_total = 0
+            job.step1_batches_done = 0
+            job.step1_failed_batch = -1
+            job.step1_failed_reason = None
+            job.step1_cross_batch_done = False
+            job.step1_cross_batch_relations = []
+            # 阶段 2：实体 + 实例间关系 + 分批状态
+            job.step2_entities = []
+            job.step2_relations = []
+            job.step3_relations = []  # 兼容旧字段
+            job.step2_confirmed = False
+            job.step2_batch_results = []
+            job.step2_batch_relations_results = []
+            job.step2_batches_total = 0
+            job.step2_batches_done = 0
+            job.step2_failed_batch = -1
+            job.step2_failed_reason = None
+            # 阶段 3：验证结果
+            job.step3_verification = None
+            job.step3_confirmed = False
+            job.step4_verification = None  # 兼容旧字段
+            job.step4_confirmed = False
+            job.error_message = None
+            job.step = 0
+        # source_text 存完整原文（供分批提取/摘要规划使用）；
+        # LLM 上下文所需的截断在各自调用点用 truncate_for_llm 处理
+        job.source_text = text
+        job.char_count = len(text)
+        job.source_filename = filename
+        job.update_time = datetime.now()
+        save_build_job(job_id)
+
+    return {
+        "success": True,
+        "message": f"文档已上传，共 {len(text)} 字符",
+        "data": {
+            "filename": filename,
+            "char_count": len(text),
+            "reset": had_outputs,  # 本次上传是否触发了旧产出的级联重置
+        }
+    }
+
+
+async def _generate_doc_summary_and_plan(job_id: str) -> None:
+    """解析完成后自动生成「文档摘要 + 构建规划」（阶段 0 收尾）。
+
+    1. extract_headings 提取章节大纲 → LLM 生成 doc_summary / suggestion / 分批方案 / 层级提示
+    2. 分批方案（章节标题组）持久化到 job.step1_plan，step1 提取时优先按此分批
+    3. 摘要+建议以 assistant 消息写入 chat_history，并广播 chat_message 事件推送到前端聊天
+
+    失败静默降级（摘要为空、step1_plan 回退字符切分），不影响解析本身。
+
+    幂等性：首次解析与聊天触发的重新解析都会走到此函数，
+    若已生成过（step0_summary 非空）则跳过，避免聊天里重复推送摘要。
+    """
+    job = build_jobs_db.get(job_id)
+    if not job or not job.source_text:
+        return
+    # 幂等保护：摘要/规划已生成过则不再生成（重解析只更新元模型，不重复推送摘要）
+    if job.step0_summary or job.step0_suggestion or job.step1_plan:
+        return
+    try:
+        _set_job_progress(job_id, 0, 60, "正在生成文档摘要与构建规划...")
+        headings = extract_headings(job.source_text)
+        outline = [
+            {"title": h["title"], "chars": h["end"] - h["start"]}
+            for h in headings
+        ][:60]  # 大纲截断，防止超长文档 prompt 爆炸
+        messages = build_prompts.build_doc_summary_plan_messages(
+            doc_preview=job.source_text[:6000],
+            outline=outline,
+            total_chars=len(job.source_text),
+            meta_entity_types=job.meta_entity_types or [],
+            name=job.name,
+            suggested_batch_chars=config.STEP1_BATCH_MAX_CHARS,
+        )
+        plan_max_tokens, plan_thinking = config.get_chat_llm_params("plan")
+        result = await _llm_json_async(
+            messages, temperature=0.3, max_tokens=plan_max_tokens, thinking_type=plan_thinking
+        )
+
+        doc_summary = (result.get("doc_summary") or "").strip()
+        suggestion = (result.get("suggestion") or "").strip()
+        hierarchy_hint = (result.get("hierarchy_hint") or "").strip()
+        batches = result.get("batches") or []
+
+        # 校验分批方案：标题必须能匹配到大纲章节，非法批组丢弃
+        valid_titles = {h["title"] for h in headings}
+        plan_batches = []
+        for b in batches:
+            titles = [t for t in (b.get("titles") or []) if t in valid_titles]
+            if titles:
+                plan_batches.append({"titles": titles})
+        if headings and not plan_batches:
+            # LLM 方案全部非法：退化为按章节自动打包的方案（仍优于纯字符切批）
+            auto = split_by_headings(
+                job.source_text, headings, max_chars=config.STEP1_BATCH_MAX_CHARS
+            )
+            if auto:
+                plan_batches = [{"titles": t["titles"]} for t in auto]
+
+        async with build_lock:
+            job.step0_summary = doc_summary
+            job.step0_suggestion = suggestion
+            job.step1_plan = plan_batches
+            # 摘要消息与层级提示一并落库，step1 prompt 注入层级提示用
+            job.step1_hierarchy_hint = hierarchy_hint
+            job.update_time = datetime.now()
+            save_build_job(job_id)
+        save_build_jobs_index()
+
+        # 计算实际生效的批次（与 step1 提取共用 _build_step1_batches，同一份 job 状态），
+        # 摘要里展示的「共 N 批」与提取阶段真实批数一致，不再出现「规划 3 批、实际 5 批」。
+        eff_batches, eff_titles = _build_step1_batches(job)
+        parts = []
+        if doc_summary:
+            parts.append(f"**文档摘要**\n\n{doc_summary}")
+        if suggestion:
+            parts.append(f"**构建建议**\n\n{suggestion}")
+        if eff_batches:
+            batch_desc = "、".join(
+                f"第{i + 1}批({'/'.join(t[:2])})"
+                for i, t in enumerate(eff_titles[:8])
+            )
+            parts.append(
+                f"**分批规划**（共 {len(eff_batches)} 批，按章节语义切分）\n\n{batch_desc}"
+            )
+        content = "\n\n---\n\n".join(parts) if parts else "文档解析完成。可回复「开始提取」构建实体类型。"
+
+        async with build_lock:
+            job.chat_history.append({
+                "role": "assistant",
+                "content": content,
+                "intent": "doc_summary",
+                "created_at": datetime.now().isoformat(),
+            })
+            job.update_time = datetime.now()
+            save_build_job(job_id)
+        save_build_jobs_index()
+
+        _emit_event(job_id, "chat_message", {
+            "message": {"role": "assistant", "content": content, "intent": "doc_summary"},
+        })
+        logger.info(f"[{job_id}] 文档摘要与构建规划已生成（{len(eff_batches)} 批）")
+    except Exception as e:
+        logger.warning(f"[{job_id}] 文档摘要/构建规划生成失败（不影响解析结果）: {e}")
+
+
 async def _background_parse_document(job_id: str) -> None:
     """后台任务：阶段 0「文档解析」——解析文档 + 推荐本体模型。
 
@@ -4575,6 +5184,15 @@ async def _background_parse_document(job_id: str) -> None:
             job.update_time = datetime.now()
             save_build_job(job_id)
 
+        # 5. 自动生成文档摘要 + 构建规划（失败静默降级）
+        await _generate_doc_summary_and_plan(job_id)
+        # 联动聊天：翻任务标签为完成（摘要消息已由上方推送，不再追加完成回复）
+        await _finalize_task_chat(
+            job_id, 0, True,
+            f"文档解析完成，识别到 {len(job.meta_entity_types)} 个实体类型候选",
+            no_message=True,
+        )
+
         _set_job_progress(job_id, -1, 100, "文档解析完成")
         _mark_stage_finished(job_id, 0)
         _emit_event(job_id, "parse_done", {
@@ -4586,6 +5204,7 @@ async def _background_parse_document(job_id: str) -> None:
             "meta_relation_types": job.meta_relation_types,
             "estimated_step1_batches": est_step1_batches,
             "estimated_step2_batches": est_step2_batches,
+            "planned_step1_batches": len(job.step1_plan) if job.step1_plan else est_step1_batches,
         })
     except Exception as e:
         logger.exception(f"[{job_id}] 文档解析失败: {e}")
@@ -4595,6 +5214,7 @@ async def _background_parse_document(job_id: str) -> None:
             job.update_time = datetime.now()
             save_build_job(job_id)
         _set_job_progress(job_id, -1, 100, "文档解析失败")
+        await _finalize_task_chat(job_id, 0, False, job.error_message or "文档解析失败")
         _emit_event(job_id, "error", {"step": 0, "message": job.error_message})
     finally:
         _background_tasks.pop(job_id, None)
@@ -4859,7 +5479,9 @@ async def build_stream(job_id: str):
                 if job.step1_concepts and not job.step1_confirmed:
                     yield _sse_format("step_done", {
                         "step": 1,
-                        "concepts": job.step1_concepts,
+                        "entity_types": job.step1_entity_types or job.step1_concepts,
+                        "entity_type_relations": job.step1_entity_type_relations or [],
+                        "concepts": job.step1_concepts,  # 兼容旧前端
                         "total": len(job.step1_concepts)
                     })
                     return
@@ -4920,6 +5542,11 @@ async def build_get(job_id: str):
     """查询构建任务详情（断点续作用）。"""
     job = _get_job_or_404(job_id)
     data = job.dict()
+    # 剔除大字段，避免全量序列化阻塞事件循环 + 响应体过大导致 30s 超时：
+    # source_text 为完整文档原文、chat_history 为全部对话，前端分别通过
+    # getBuildProgress / getChatHistory 获取，此处全量返回既无用又拖慢接口
+    data.pop("source_text", None)
+    data.pop("chat_history", None)
     # 顶层补充 template_name / ontology_model_name 便于前端展示（ontology_model_snapshot 已含完整本体模型）
     data["template_name"] = (job.ontology_model_snapshot or {}).get("name", "")  # 兼容旧前端字段名
     data["ontology_model_name"] = (job.ontology_model_snapshot or {}).get("name", "")
@@ -5432,7 +6059,7 @@ async def build_confirm_step3(job_id: str):
 
     # 统计实体和关系数量
     ent_count = len(job.step2_entities or [])
-    rel_count = len(job.step2_relations or job.step3_relations or [])
+    rel_count = len(job.step3_relations or job.step2_relations or [])
 
     async with build_lock:
         job.ontology_id = new_oid
@@ -5608,6 +6235,10 @@ async def build_rework(job_id: str, step: int, request: Request):
             job.step1_batches_done = 0
             job.step1_failed_batch = -1
             job.step1_failed_reason = None
+            # 跨批关系补充状态一并重置：否则新一轮提取会跳过跨批补充
+            # （step1_cross_batch_done 仍为 True），且旧跨批关系被混入新类型的结果造成污染
+            job.step1_cross_batch_done = False
+            job.step1_cross_batch_relations = []
         if step <= 2:
             job.step2_entities = []
             job.step2_relations = []
@@ -5649,6 +6280,1036 @@ async def build_rework(job_id: str, step: int, request: Request):
         "message": f"步骤 {step}（{step_names[step]}）返工已在后台开始",
         "data": {"job_id": job_id, "running_step": step, "rework": True}
     }
+
+
+# ── AI 构建聊天：当前状态查询 ──
+
+def _get_current_state(job_id: str) -> Dict[str, Any]:
+    """获取构建任务当前状态摘要（下拉面板 / 图谱 / LLM 上下文同源）。"""
+    job = build_jobs_db.get(job_id)
+    if not job:
+        return {"error": "任务不存在"}
+    return {
+        "job_id": job_id,
+        "name": job.name,
+        "running_step": job.running_step,
+        "progress": job.progress,
+        "progress_message": job.progress_message,
+        "meta_confirmed": job.meta_confirmed,
+        "step1_confirmed": job.step1_confirmed,
+        "step2_confirmed": job.step2_confirmed,
+        "step3_confirmed": job.step3_confirmed,
+        "entity_types": job.step1_entity_types or job.step1_concepts or [],
+        "entity_type_relations": job.step1_entity_type_relations or [],
+        "entities": job.step2_entities or [],
+        # step3_relations 是关系建模的最终结果（step2 完成时两者相等，step3 完成后 step3_relations 更完整）
+        "relations": job.step3_relations or job.step2_relations or [],
+        "verification": job.step3_verification or job.step4_verification,
+        "ontology_id": job.ontology_id,
+        "error_message": job.error_message,
+        "status": job.status,
+    }
+
+
+# ── AI 构建聊天：编辑处理 ──
+
+def _apply_edit_operation(job, operation: dict) -> str:
+    """将结构化编辑操作应用到 job 当前状态（即时写回，不落库到正式本体）。
+
+    支持操作类型：
+    - add_entity_type: 新增实体类型
+    - update_entity_type: 更新实体类型（按 name 匹配）
+    - delete_entity_type: 删除实体类型（按 name 匹配）
+    - add_entity: 新增实体
+    - update_entity: 更新实体
+    - delete_entity: 删除实体
+    - add_relation: 新增关系
+    - delete_relation: 删除关系
+    - add_et_relation: 新增类型间关系
+    - delete_et_relation: 删除类型间关系
+
+    Returns:
+        操作结果描述文本
+    """
+    op = operation.get("op", "")
+    target = operation.get("target", {})
+    if not op or not target:
+        return "编辑操作无效：缺少 op 或 target"
+
+    if op == "add_entity_type":
+        if not job.step1_entity_types:
+            job.step1_entity_types = []
+        job.step1_entity_types.append(target)
+        return f"已新增实体类型「{target.get('name', '')}」"
+
+    elif op == "update_entity_type":
+        name = target.get("name", "")
+        source = job.step1_entity_types or job.step1_concepts or []
+        for et in source:
+            if _normalize_name(et.get("name", "")) == _normalize_name(name):
+                et.update(target)
+                return f"已更新实体类型「{name}」"
+        return f"未找到实体类型「{name}」"
+
+    elif op == "delete_entity_type":
+        name = target.get("name", "")
+        source = job.step1_entity_types or job.step1_concepts or []
+        old_len = len(source)
+        kept = [et for et in source if _normalize_name(et.get("name", "")) != _normalize_name(name)]
+        job.step1_entity_types = kept
+        job.step1_concepts = kept  # 同步兼容字段，避免 or 回退读到旧值
+        return f"已删除实体类型「{name}」" if len(kept) < old_len else f"未找到实体类型「{name}」"
+
+    elif op == "keep_only_entity_types":
+        # 白名单保留：仅保留 keep_names 及其子类型（parent_entity_type_name 逐层下钻），
+        # 删除其余实体类型，并级联清理类型间关系、实例及实例间关系。
+        keep_names = target.get("keep_names") or target.get("names") or []
+        keep_names = [_normalize_name(n) for n in keep_names if n]
+        if not keep_names:
+            return "保留名单为空，未执行删除"
+        source = job.step1_entity_types or job.step1_concepts or []
+        # 保留集合：白名单 + 所有父类型在保留集合内的后代子类型（迭代下钻至稳定）
+        keep_set = set(keep_names)
+        changed = True
+        while changed:
+            changed = False
+            for et in source:
+                nm = _normalize_name(et.get("name", ""))
+                if not nm or nm in keep_set:
+                    continue
+                parent = _normalize_name(et.get("parent_entity_type_name") or et.get("parent_concept_name") or "")
+                if parent and parent in keep_set:
+                    keep_set.add(nm)
+                    changed = True
+
+        kept = [et for et in source if _normalize_name(et.get("name", "")) in keep_set]
+        removed_names = {
+            _normalize_name(et.get("name", ""))
+            for et in source if _normalize_name(et.get("name", "")) not in keep_set
+        }
+        job.step1_entity_types = kept
+        job.step1_concepts = kept  # 同步兼容字段
+
+        # 清理类型间关系：任一端类型被删则删
+        et_rels = job.step1_entity_type_relations or []
+        job.step1_entity_type_relations = [
+            r for r in et_rels
+            if _normalize_name(r.get("source_entity_type_name", "") or r.get("source", "")) not in removed_names
+            and _normalize_name(r.get("target_entity_type_name", "") or r.get("target", "")) not in removed_names
+        ]
+
+        # 删除 instance_of 指向被删类型的实体
+        ents = job.step2_entities or []
+        kept_ents = [e for e in ents if _normalize_name(e.get("instance_of", "")) not in removed_names]
+        removed_ent_names = {
+            _normalize_name(e.get("name", ""))
+            for e in ents if _normalize_name(e.get("instance_of", "")) in removed_names
+        }
+        job.step2_entities = kept_ents
+
+        # 删除涉及被删实体的实例间关系（step2/step3 两处兼容字段同步）
+        for field in ("step2_relations", "step3_relations"):
+            rels = getattr(job, field) or []
+            kept_rels = [
+                r for r in rels
+                if _normalize_name(r.get("source", "")) not in removed_ent_names
+                and _normalize_name(r.get("target", "")) not in removed_ent_names
+            ]
+            setattr(job, field, kept_rels)
+
+        return (
+            f"已保留 {len(kept)} 个实体类型（含子类型），"
+            f"删除其余 {len(removed_names)} 个类型及其关联实体/关系"
+        )
+
+    elif op == "add_entity":
+        if not job.step2_entities:
+            job.step2_entities = []
+        job.step2_entities.append(target)
+        return f"已新增实体「{target.get('name', '')}」"
+
+    elif op == "update_entity":
+        name = target.get("name", "")
+        source = job.step2_entities or []
+        for ent in source:
+            if _normalize_name(ent.get("name", "")) == _normalize_name(name):
+                ent.update(target)
+                return f"已更新实体「{name}」"
+        return f"未找到实体「{name}」"
+
+    elif op == "delete_entity":
+        name = target.get("name", "")
+        source = job.step2_entities or []
+        old_len = len(source)
+        job.step2_entities = [ent for ent in source if _normalize_name(ent.get("name", "")) != _normalize_name(name)]
+        return f"已删除实体「{name}」" if len(job.step2_entities) < old_len else f"未找到实体「{name}」"
+
+    elif op == "add_relation":
+        # 同步写入 step2_relations 与 step3_relations，避免两个历史兼容字段不一致
+        if not job.step2_relations:
+            job.step2_relations = []
+        job.step2_relations.append(target)
+        if not job.step3_relations:
+            job.step3_relations = []
+        job.step3_relations.append(target)
+        return f"已新增关系「{target.get('source', '')} → {target.get('target', '')}」"
+
+    elif op == "delete_relation":
+        src = target.get("source", "")
+        tgt = target.get("target", "")
+        rel_type = target.get("relation_type", "")
+        removed_any = False
+        # 同时从 step2_relations 与 step3_relations 删除，避免旧字段仍残留被删关系
+        for field in ("step2_relations", "step3_relations"):
+            source = getattr(job, field) or []
+            keep = []
+            for r in source:
+                if _normalize_name(r.get("source", "")) == _normalize_name(src) and _normalize_name(r.get("target", "")) == _normalize_name(tgt):
+                    # 若用户指明了关系类型，需同时匹配才删除（精确删除）
+                    if rel_type and _normalize_name(r.get("relation_type", "")) != _normalize_name(rel_type):
+                        keep.append(r)
+                        continue
+                    continue
+                keep.append(r)
+            if len(keep) < len(source):
+                removed_any = True
+            setattr(job, field, keep)
+        return f"已删除关系「{src} → {tgt}」" if removed_any else f"未找到关系「{src} → {tgt}」"
+
+    elif op == "add_et_relation":
+        if not job.step1_entity_type_relations:
+            job.step1_entity_type_relations = []
+        job.step1_entity_type_relations.append(target)
+        return f"已新增类型间关系「{target.get('source_entity_type_name', '')} → {target.get('target_entity_type_name', '')}」"
+
+    elif op == "delete_et_relation":
+        src = target.get("source_entity_type_name", "")
+        tgt = target.get("target_entity_type_name", "")
+        source = job.step1_entity_type_relations or []
+        old_len = len(source)
+        job.step1_entity_type_relations = [
+            r for r in source
+            if not (_normalize_name(r.get("source_entity_type_name", "")) == _normalize_name(src)
+                    and _normalize_name(r.get("target_entity_type_name", "")) == _normalize_name(tgt))
+        ]
+        return f"已删除类型间关系「{src} → {tgt}」" if len(job.step1_entity_type_relations) < old_len else f"未找到类型间关系「{src} → {tgt}」"
+
+    return f"未知编辑操作：{op}"
+
+
+# ── AI 构建聊天：SSE 接口 ──
+
+# 重新提取类关键词：命中时不做状态机校正，保留用户「重跑」语义
+_RE_EXTRACT_KEYWORDS = ("重新提取", "再次提取", "重新生成", "再提取一次", "重提", "重新开始提取")
+
+# 重新解析类关键词：命中时跳过「已解析免重跑」逻辑，保留用户「重跑」语义
+_RE_PARSE_KEYWORDS = ("重新解析", "再次解析", "重新分析", "重新读取文档", "换一篇", "换一个文档")
+
+
+def _normalize_intent(job, intent: str, user_message: str) -> str:
+    """基于任务状态的意图校正（LLM 分类结果 + 确定性状态机规则）。
+
+    LLM 对「确认/继续/下一步」类模糊表述的分类受上下文影响不稳定，
+    曾出现 step1 已完成未确认时，「符合预期，确认进行下一步」被反复
+    分到 extract_type，导致流程原地打转、永远进不了实体提取。
+
+    规则：LLM 只需识别出「用户想推进」，具体推进到哪个阶段由构建
+    状态机按已产出的结果确定性推导，保证流程单向前进不回跳：
+
+    - extract_type 但 step1 已有结果未确认 → extract_entity（确认即推进）
+    - extract_entity 但 step1 无结果 → extract_type（顺序不可跳过）
+    - verify 但 step2 无结果 → 回退到最近的未完成阶段
+    - complete 但验证未产出 → 回退到最近的未完成阶段
+
+    用户消息含「重新提取」类关键词时不校正（保留重跑语义）。
+    """
+    if any(kw in user_message for kw in _RE_EXTRACT_KEYWORDS):
+        return intent
+
+    has_step1 = bool(job.step1_entity_types or job.step1_concepts)
+    has_step2 = bool(job.step2_entities)
+    has_verify = bool(job.step3_verification or job.step4_verification)
+
+    if intent == "extract_type" and has_step1 and not job.step1_confirmed:
+        return "extract_entity"
+    if intent == "extract_entity" and not has_step1:
+        return "extract_type"
+    if intent == "verify" and not has_step2:
+        return "extract_entity" if has_step1 else "extract_type"
+    if intent == "complete" and not has_verify:
+        if job.step3_confirmed:
+            return intent  # 验证已确认（旧任务无验证结果字段），允许收尾
+        return "verify" if has_step2 else ("extract_entity" if has_step1 else "extract_type")
+    return intent
+
+
+@app.post("/ontology/build/{job_id}/chat")
+async def build_chat(job_id: str, request: Request):
+    """AI 构建聊天接口（SSE）。
+
+    接收用户消息，意图分类后执行对应操作，流式返回 AI 回复 + 状态更新 + 图谱数据。
+
+    SSE 事件：
+    - chat_status: 状态通知（classifying / executing / replying）
+    - chat_reply: AI 自然语言回复
+    - state_update: 当前状态变更（下拉面板 + 图谱同源）
+    - graph_update: 图谱数据
+    - chat_error: 错误信息
+    - chat_done: 结束标记
+    """
+    body = await request.json()
+    user_message = (body.get("message") or "").strip()
+    if not user_message:
+        raise HTTPException(status_code=400, detail="消息不能为空")
+
+    job = _get_job_or_404(job_id)
+    if job.running_step != -1:
+        raise HTTPException(status_code=400, detail="当前有步骤正在后台运行中，请等待完成")
+
+    # 初始化 chat_history（兼容旧任务）
+    history = job.chat_history or []
+    if not job.chat_history:
+        job.chat_history = []
+
+    async def chat_generator():
+        try:
+            # 1. 意图分类（LLM 结果 + 确定性状态机校正，保证流程按已产出结果单向推进）
+            yield _sse_format("chat_status", {"status": "classifying", "message": "正在理解你的意图..."})
+            # 意图分类/回复生成为同步 LLM 调用，放线程池执行：
+            # 直接在事件循环内调用会阻塞整个服务（SSE 心跳停滞、/progress 轮询堆积），
+            # 表现为页面「卡住后事件一次性涌出」
+            intent_result = await asyncio.to_thread(
+                agent_orchestrator.classify_intent, job, history, user_message
+            )
+            raw_intent = intent_result["intent"]
+            intent = _normalize_intent(job, raw_intent, user_message)
+            if intent != raw_intent:
+                logger.info(f"[{job_id}] 意图状态机校正: {raw_intent} → {intent}")
+            logger.info(f"[{job_id}] 聊天意图: {intent}")
+
+            # 2. 执行操作
+            yield _sse_format("chat_status", {"status": "executing", "message": f"正在执行「{intent}」..."})
+            tool_summary = ""
+            try:
+                if intent == "parse":
+                    tool_summary = await _chat_parse(job_id, user_message)
+                elif intent == "extract_type":
+                    tool_summary = await _chat_extract_type(job_id, user_message)
+                elif intent == "extract_entity":
+                    tool_summary = await _chat_extract_entity(job_id, user_message)
+                elif intent == "verify":
+                    tool_summary = await _chat_verify(job_id)
+                elif intent == "complete":
+                    tool_summary = await _chat_complete(job_id)
+                elif intent == "edit":
+                    tool_summary = await _chat_edit(job_id, user_message)
+                else:
+                    tool_summary = intent_result.get("summary", "")
+            except Exception as e:
+                logger.error(f"[{job_id}] 聊天操作执行失败: {e}")
+                yield _sse_format("chat_error", {"error": str(e)})
+                return
+
+            # 3. 生成自然语言回复（同步 LLM 调用，放线程池避免阻塞事件循环）
+            yield _sse_format("chat_status", {"status": "replying", "message": "正在生成回复..."})
+            reply = await asyncio.to_thread(
+                agent_orchestrator.generate_reply, job, history, user_message, tool_summary
+            )
+
+            # 4. 保存聊天历史
+            # 本轮若启动了后台任务（running_step>=0），回复消息携带任务标记，
+            # 前端在该消息下方渲染常显状态标签（运行中→完成/失败）
+            task_meta = None
+            if job.running_step is not None and job.running_step >= 0:
+                task_meta = {"stage": job.running_step, "status": "running"}
+            now = datetime.now().isoformat()
+            job.chat_history.append({"role": "user", "content": user_message, "created_at": now})
+            assistant_msg = {"role": "assistant", "content": reply, "intent": intent, "created_at": now}
+            if task_meta:
+                assistant_msg["task"] = task_meta
+            job.chat_history.append(assistant_msg)
+
+            # 5. 滚动摘要：超过保留轮数且达到阈值时，压缩较早历史到 history_summary
+            keep_msgs = config.CHAT_HISTORY_KEEP_RECENT * 2
+            if len(job.chat_history) > keep_msgs and len(job.chat_history) >= config.CHAT_HISTORY_SUMMARY_THRESHOLD:
+                older = job.chat_history[:len(job.chat_history) - keep_msgs]
+                recent = job.chat_history[len(job.chat_history) - keep_msgs:]
+                summary = await asyncio.to_thread(
+                    agent_orchestrator.summarize_history, older, old_summary=getattr(job, "history_summary", "")
+                )
+                if summary:
+                    job.history_summary = summary
+                job.chat_history = recent
+
+            save_build_job(job_id)
+            save_build_jobs_index()
+
+            # 6. 先推送状态与图谱（保证前端生成折叠载荷时已拿到最新状态），再推送回复
+            yield _sse_format("state_update", _get_current_state(job_id))
+
+            graph = _build_stage_graph(job, job.running_step if job.running_step >= 0 else 4) if not job.ontology_id else _graph_data(job.ontology_id)
+            yield _sse_format("graph_update", graph)
+
+            yield _sse_format("chat_reply", {"reply": reply, "intent": intent, "task": task_meta})
+
+            yield _sse_format("chat_done", {"status": "done"})
+        except Exception as e:
+            logger.error(f"[{job_id}] 聊天 SSE 异常: {e}")
+            yield _sse_format("chat_error", {"error": str(e)})
+
+    return StreamingResponse(chat_generator(), media_type="text/event-stream")
+
+
+# ── AI 构建聊天：聊天历史 ──
+
+@app.get("/ontology/build/{job_id}/history")
+async def build_chat_history(job_id: str):
+    """获取聊天历史（用于刷新恢复）。"""
+    job = _get_job_or_404(job_id)
+    # 兼容修复：早期版本可能重复推送文档摘要（首次解析+重解析各一次），
+    # 返回前去重，只保留第一条 doc_summary 消息，刷新后不再显示重复
+    seen_summary = False
+    deduped = []
+    for msg in job.chat_history or []:
+        if isinstance(msg, dict) and msg.get("intent") == "doc_summary":
+            if seen_summary:
+                continue
+            seen_summary = True
+        deduped.append(msg)
+
+    # 对账：服务重启等异常中断的任务，消息上的任务标签可能永远停留在 running；
+    # 任务空闲时按各阶段是否已产出结果翻成终态，避免刷新后标签一直转圈
+    if job.running_step == -1:
+        stage_has_output = {
+            0: bool(job.meta_entity_types or job.step0_summary),
+            1: bool(job.step1_entity_types or job.step1_concepts),
+            2: bool(job.step2_entities),
+            3: bool(job.step3_verification or job.step4_verification),
+        }
+        reconciled = False
+        for m in deduped:
+            t = m.get("task") if isinstance(m, dict) else None
+            if t and t.get("status") == "running":
+                t["status"] = "done" if stage_has_output.get(t.get("stage")) else "failed"
+                t["result_summary"] = "任务已结束（刷新时自动对账）"
+                reconciled = True
+        if reconciled:
+            # deduped 内元素与 job.chat_history 同引用，翻状态即改库内数据，落盘自愈
+            async with build_lock:
+                save_build_job(job_id)
+            logger.info(f"[{job_id}] 聊天历史任务标签对账完成（running → 终态）")
+    return {
+        "success": True,
+        "data": {
+            "chat_history": deduped,
+            "state": _get_current_state(job_id),
+        }
+    }
+
+
+# ── AI 构建聊天：编辑接口 ──
+
+@app.post("/ontology/build/{job_id}/edit")
+async def build_edit(job_id: str, request: Request):
+    """增量编辑当前状态（即时写回，step3 确认时才真正落库）。"""
+    body = await request.json()
+    operation = body.get("operation", {})
+    if not operation:
+        raise HTTPException(status_code=400, detail="缺少编辑操作")
+
+    job = _get_job_or_404(job_id)
+    if job.running_step != -1:
+        raise HTTPException(status_code=400, detail="当前有步骤正在后台运行中，请等待完成")
+
+    result = _apply_edit_operation(job, operation)
+    job.update_time = datetime.now()
+    save_build_job(job_id)
+    save_build_jobs_index()
+    return {"success": True, "message": result, "data": _get_current_state(job_id)}
+
+
+# ── AI 构建聊天：从已完成本体开启对话 ──
+
+@app.post("/ontology/build/from-ontology")
+async def build_from_ontology(request: Request):
+    """从已完成本体开启 AI 构建对话任务。
+
+    读取正式本体数据初始化当前状态（step1-3 预填已确认），
+    chat_history 回填该本体全部历史，保证上下文连续。
+    """
+    body = await request.json()
+    ontology_id = (body.get("ontology_id") or "").strip()
+    if not ontology_id:
+        raise HTTPException(status_code=400, detail="缺少 ontology_id")
+
+    ont = ontologies_db.get(ontology_id)
+    if not ont:
+        raise HTTPException(status_code=404, detail="本体不存在")
+
+    now = datetime.now()
+    job_id = f"job_{uuid.uuid4().hex[:8]}"
+
+    # 从正式本体读取数据填充当前状态
+    ets = entity_types_db.get(ontology_id, [])
+    step1_types = []
+    for et in ets:
+        item = {
+            "name": et.name,
+            "description": et.description or "",
+            "color": et.color,
+            "property_schema": [
+                {"name": ps.name, "category": ps.category, "data_type": ps.data_type,
+                 "unit": ps.unit or "", "required": ps.required, "description": ps.description or ""}
+                for ps in (et.property_schema or [])
+            ],
+            "parent_entity_type_name": _find_parent_entity_type_name(et, ets),
+        }
+        step1_types.append(item)
+
+    et_rels = entity_type_relations_db.get(ontology_id, [])
+    step1_et_rels = []
+    for etr in et_rels:
+        src_name = _find_entity_type_name(etr.source_entity_type_id, ets)
+        tgt_name = _find_entity_type_name(etr.target_entity_type_id, ets)
+        if src_name and tgt_name:
+            step1_et_rels.append({
+                "source_entity_type_name": src_name,
+                "target_entity_type_name": tgt_name,
+                "relation_type": etr.relation_type,
+                "description": etr.description or "",
+            })
+
+    ents = entities_db.get(ontology_id, [])
+    step2_entities = []
+    for ent in ents:
+        inst_name = _find_entity_type_name(ent.instance_of, ets) if ent.instance_of else ""
+        step2_entities.append({
+            "name": ent.name,
+            "instance_of": inst_name,
+            "properties": [{"name": p.name, "value": p.value} for p in (ent.properties or [])],
+        })
+
+    rels = relations_db.get(ontology_id, [])
+    ent_map = {e.id: e.name for e in ents}
+    step2_relations = []
+    for rel in rels:
+        src_name = ent_map.get(rel.source_id, "")
+        tgt_name = ent_map.get(rel.target_id, "")
+        if src_name and tgt_name:
+            step2_relations.append({
+                "source": src_name, "target": tgt_name,
+                "relation_type": rel.relation_type,
+            })
+
+    # 查找该本体的构建任务历史，回填 chat_history
+    chat_history = []
+    for j in build_jobs_db.values():
+        if j.ontology_id == ontology_id and j.chat_history:
+            chat_history = list(j.chat_history)
+            break
+
+    job = BuildJob(
+        id=job_id, name=f"再编辑 - {ont.name}", description=ont.description or "",
+        build_type="ai_build_reopen",
+        meta_confirmed=True, step1_confirmed=True, step2_confirmed=True, step3_confirmed=True,
+        step1_entity_types=step1_types, step1_entity_type_relations=step1_et_rels,
+        step2_entities=step2_entities, step2_relations=step2_relations,
+        ontology_id=ontology_id,
+        chat_history=chat_history,
+        create_time=now, update_time=now,
+        progress=100, progress_message="从正式本体加载完成",
+        status="completed",
+        step1_concepts=[],  # 兼容旧字段
+    )
+    build_jobs_db[job_id] = job
+    save_build_job(job_id)
+    save_build_jobs_index()
+
+    return {"success": True, "data": {"job_id": job_id, "state": _get_current_state(job_id)}}
+
+
+def _find_parent_entity_type_name(et, all_ets) -> str:
+    """从所有 EntityType 中查找父类型名称。"""
+    if not et.parent_entity_type_id:
+        return ""
+    for p in all_ets:
+        if p.id == et.parent_entity_type_id:
+            return p.name
+    return ""
+
+
+def _find_entity_type_name(type_id, ets) -> str:
+    """从 EntityType 列表中按 ID 查找名称。"""
+    for et in ets:
+        if et.id == type_id:
+            return et.name
+    return ""
+
+
+# ── AI 构建聊天：各意图处理函数 ──
+
+async def _background_reparse_meta(job_id: str) -> None:
+    """后台任务：聊天触发的文档重新解析（阶段 0）。
+
+    与上传后的首次解析（_background_parse_document）不同：默认只对已有 source_text
+    重新调用 LLM 推荐本体模型；若检测到 source_text 是历史截断文本，则先恢复全文。
+    """
+    job = build_jobs_db.get(job_id)
+    if not job or job.status == "completed":
+        return
+    # 兼容修复：上传接口历史缺陷曾把 source_text 存成截断文本（仅前 ~1.2 万字），
+    # 导致分批提取只覆盖文档开头、后半部分全部丢失。
+    # 源文件仍在且长度小于 char_count 时，重新提取全文并清除基于旧文本的摘要/规划，
+    # 使摘要与分批规划基于完整文档重新生成。
+    try:
+        _src_path = os.path.join(BUILD_JOBS_DIR, f'{job_id}_source')
+        if (job.source_text and job.char_count > 0
+                and len(job.source_text) < job.char_count
+                and os.path.exists(_src_path)):
+            _full = extract_text(_src_path, job.source_filename)
+            if len(_full) > len(job.source_text):
+                job.source_text = _full
+                job.char_count = len(_full)
+                # 旧摘要/规划基于截断文本生成，作废待重新生成
+                job.step0_summary = ""
+                job.step0_suggestion = ""
+                job.step1_plan = []
+                job.step1_hierarchy_hint = ""
+                job.update_time = datetime.now()
+                save_build_job(job_id)
+                save_build_jobs_index()
+                logger.info(
+                    f"[{job_id}] 检测到 source_text 为截断文本（{len(job.source_text)}→{len(_full)} 字符），"
+                    f"已重新提取全文"
+                )
+    except Exception as _e:
+        logger.warning(f"[{job_id}] 重新提取全文失败，继续使用现有文本: {_e}")
+    try:
+        _mark_stage_started(job_id, 0)
+        # 文案不带「重新」：进入本函数时阶段 0 产出必为空（首次解析或重跑前已清空）
+        _set_job_progress(job_id, 0, 30, "正在调用AI解析文档...")
+        from doc_parser import truncate_for_llm
+        from build_prompts import build_meta_messages
+        trunc = truncate_for_llm(job.source_text)
+        messages = build_meta_messages(trunc, job.name)
+        result = await _llm_json_async(messages, temperature=0.3,
+                                       max_tokens=config.LLM_MAX_TOKENS,
+                                       thinking_type=config.get_llm_params("step0")[1])
+        async with build_lock:
+            job.meta_entity_types = result.get("entity_types", [])
+            job.meta_relation_types = result.get("relation_types", [])
+            job.meta_confirmed = False
+            job.update_time = datetime.now()
+            save_build_job(job_id)
+        save_build_jobs_index()
+        # 重新生成文档摘要 + 构建规划（失败静默降级）
+        await _generate_doc_summary_and_plan(job_id)
+        # 联动聊天：翻任务标签为完成（摘要消息已由上方推送，不再追加完成回复）
+        await _finalize_task_chat(
+            job_id, 0, True,
+            f"文档解析完成，识别到 {len(job.meta_entity_types)} 个实体类型候选",
+            no_message=True,
+        )
+        _set_job_progress(
+            job_id, -1, 100,
+            f"文档解析完成，识别到 {len(job.meta_entity_types)} 个实体类型候选"
+        )
+        _mark_stage_finished(job_id, 0)
+        _emit_event(job_id, "parse_done", {
+            "step": 0,
+            "meta_entity_types": job.meta_entity_types,
+            "meta_relation_types": job.meta_relation_types,
+            "planned_step1_batches": len(job.step1_plan) if job.step1_plan else 0,
+        })
+    except Exception as e:
+        logger.exception(f"[{job_id}] 后台文档重新解析失败: {e}")
+        _mark_stage_finished(job_id, 0, success=False)
+        _set_job_progress(job_id, -1, 0, "文档解析异常")
+        await _finalize_task_chat(job_id, 0, False, f"文档解析异常: {str(e)[:200]}")
+        _emit_event(job_id, "error", {"step": 0, "message": str(e)})
+    finally:
+        _background_tasks.pop(job_id, None)
+
+
+async def _chat_parse(job_id: str, user_message: str = "") -> str:
+    """处理文档解析意图。
+
+    已有解析产出（meta 候选/摘要/构建规划任一非空）时默认文档能正确解析，
+    不重复解析同一篇文档：直接同步状态并引导用户进入下一步；
+    仅当用户消息含「重新解析」类关键词时清空旧产出后完整重跑。
+    """
+    job = _get_job_or_404(job_id)
+    if not job.source_text:
+        return "没有可解析的文档内容，请先上传文档"
+    # 解析产出任一非空即视为已解析完成（meta 候选为解析必产出的权威标志）
+    already_done = bool(
+        job.meta_entity_types or job.meta_relation_types
+        or job.step0_summary or job.step0_suggestion or job.step1_plan
+    )
+    wants_reparse = any(kw in user_message for kw in _RE_PARSE_KEYWORDS)
+    if already_done and not wants_reparse:
+        # 已解析且用户无重跑意愿：不启动后台任务，避免重复解析同一篇文档；
+        # 同步进度为完成态并补推 parse_done（刷新前端面板），按构建进度引导下一步
+        _set_job_progress(job_id, -1, 100, "文档解析已完成")
+        _mark_stage_finished(job_id, 0)  # 自愈：上一轮若中断残留 running，此处收敛为 done
+        _emit_event(job_id, "parse_done", {
+            "step": 0,
+            "meta_entity_types": job.meta_entity_types,
+            "meta_relation_types": job.meta_relation_types,
+            "planned_step1_batches": len(job.step1_plan) if job.step1_plan else 0,
+        })
+        logger.info(f"[{job_id}] 文档已解析过，跳过重复解析直接引导下一步")
+        # 按当前构建进度推导下一步（仅提示，不自动推进）
+        next_hint = _next_step_hint(job)
+        return (
+            f"文档此前已解析完成（识别到 {len(job.meta_entity_types)} 个实体类型候选），"
+            f"无需重复解析。{next_hint}；如确需重新解析，请说「重新解析文档」。"
+        )
+    if already_done and wants_reparse:
+        # 用户明确要求重新解析：清空阶段 0 旧产出，让后台任务完整重跑
+        async with build_lock:
+            job.meta_entity_types = []
+            job.meta_relation_types = []
+            job.meta_confirmed = False
+            job.step0_summary = ""
+            job.step0_suggestion = ""
+            job.step1_plan = []
+            job.step1_hierarchy_hint = ""
+            job.update_time = datetime.now()
+            save_build_job(job_id)
+        logger.info(f"[{job_id}] 用户要求重新解析，已清空阶段 0 旧产出")
+    _set_job_progress(job_id, 0, 10, "正在重新解析文档..." if already_done else "正在解析文档...")
+    task = asyncio.create_task(_background_reparse_meta(job_id))
+    _background_tasks[job_id] = task
+    return "文档解析已在后台开始，请稍候查看结果"
+
+
+def _next_step_hint(job) -> str:
+    """按当前构建进度推导下一步引导（仅提示，不自动推进）。"""
+    ets = job.step1_entity_types or job.step1_concepts or []
+    if not ets and not job.step1_confirmed:
+        return "下一步请确认候选清单，然后开始提取实体类型（可直接说「提取实体类型」）"
+    if not job.step1_confirmed:
+        return f"实体类型已提取（共 {len(ets)} 个），下一步请确认类型清单后提取实体"
+    if not job.step2_entities and not job.step2_confirmed:
+        return "下一步请提取实体（可直接说「提取实体」）"
+    if not job.step2_confirmed:
+        return f"实体已提取（共 {len(job.step2_entities)} 个），下一步请确认实体清单后进行验证"
+    if not (job.step3_verification or job.step4_verification) and not job.step3_confirmed:
+        return "下一步请进行分析验证（可直接说「开始验证」）"
+    return "验证已完成，下一步请确认验证结果并完成构建（可直接说「完成构建」）"
+
+
+async def _finalize_task_chat(job_id: str, stage: int, success: bool,
+                              result_summary: str, no_message: bool = False) -> None:
+    """后台任务收尾（聊天联动）：翻消息上的任务标签 + 推送完成引导回复。
+
+    - 在 chat_history 中找到该 stage 最后一条 running 标签消息，翻成 done/failed（含结果摘要）
+    - no_message=False 时用 LLM 生成「当前状态 + 下一步建议」回复，追加进 chat_history
+      并通过 chat_message 事件推送（message 字段）；LLM 失败降级为结果摘要模板
+    - no_message=True 时不追加回复（阶段 0 的完成回复即文档摘要消息，避免重复）
+    - 幂等：标签已是终态时只按需补推消息，不重复翻转
+    """
+    job = build_jobs_db.get(job_id)
+    if not job:
+        return
+    status = "done" if success else "failed"
+    # 找该 stage 最后一条带任务标签的消息（通常就是启动该任务的那条 AI 回复）
+    target_idx = None
+    for i in range(len(job.chat_history) - 1, -1, -1):
+        m = job.chat_history[i]
+        t = m.get("task") if isinstance(m, dict) else None
+        if t and t.get("stage") == stage:
+            target_idx = i
+            break
+    if target_idx is not None and job.chat_history[target_idx]["task"].get("status") == "running":
+        job.chat_history[target_idx]["task"].update({
+            "status": status,
+            "result_summary": result_summary,
+        })
+
+    message_payload = None
+    if not no_message:
+        # 失败时引导续跑/重跑，成功时按构建进度推导下一步
+        next_hint = (
+            _next_step_hint(job) if success
+            else "可回复「继续提取」从失败批次续跑（已成功批次不会重复处理），或回复「重新提取」完整重跑"
+        )
+        reply = ""
+        try:
+            messages = agent_prompts.build_stage_done_messages(
+                job, stage, result_summary, next_hint
+            )
+            max_tokens, thinking = config.get_chat_llm_params("chat")
+            # LLM 调用放线程池，避免阻塞事件循环（后台任务与 SSE 共用事件循环）
+            reply = await asyncio.to_thread(
+                call_llm, messages, temperature=0.5,
+                max_tokens=max_tokens, thinking_type=thinking,
+            )
+        except Exception as e:
+            logger.warning(f"[{job_id}] 阶段 {stage} 完成回复生成失败，降级为模板: {e}")
+        if not reply:
+            reply = f"{result_summary}。{next_hint}。"
+        message_payload = {
+            "role": "assistant",
+            "content": reply,
+            "intent": f"stage{stage}_done",
+            "created_at": datetime.now().isoformat(),
+        }
+
+    async with build_lock:
+        if message_payload is not None:
+            job.chat_history.append(message_payload)
+        job.update_time = datetime.now()
+        save_build_job(job_id)
+    save_build_jobs_index()
+    _emit_event(job_id, "chat_message", {
+        "message": message_payload,  # None 时前端仅应用 task_update 翻标签
+        "task_update": {"stage": stage, "status": status, "result_summary": result_summary},
+    })
+    logger.info(f"[{job_id}] 阶段 {stage} 任务收尾（{status}），已联动聊天标签与完成回复")
+
+
+async def _chat_extract_type(job_id: str, user_message: str = "") -> str:
+    """处理实体类型提取意图。"""
+    job = _get_job_or_404(job_id)
+    # 如果文档解析已提取但未确认，自动确认
+    if not job.meta_confirmed:
+        if not job.source_text:
+            return "请先上传文档进行解析"
+        job.meta_confirmed = True
+        job.update_time = datetime.now()
+        save_build_job(job_id)
+        save_build_jobs_index()
+        logger.info(f"[{job_id}] 自动确认文档解析")
+    existing_types = job.step1_entity_types or job.step1_concepts or []
+    already_done = (bool(existing_types)
+                    and job.step1_batches_done >= job.step1_batches_total
+                    and job.step1_failed_batch < 0)
+    wants_reextract = any(kw in user_message for kw in _RE_EXTRACT_KEYWORDS)
+    if already_done and not wants_reextract:
+        # 已有完整提取结果且无失败且用户无重跑意愿：无需启动后台任务
+        # （防重复跑分支本来也不会重提取），直接同步状态并如实告知，
+        # 避免「已在后台开始」话术与秒完成的实际不符，用户干等通知却永远等不到
+        _set_job_progress(job_id, -1, 100, "本体提取已完成")
+        _mark_stage_finished(job_id, 1)  # 自愈：上一轮若中断残留 running，此处收敛为 done
+        _emit_event(job_id, "step_done", {
+            "step": 1,
+            "entity_types": existing_types,
+            "entity_type_relations": job.step1_entity_type_relations or [],
+            "concepts": existing_types,  # 兼容旧前端
+            "total": len(existing_types)
+        })
+        logger.info(f"[{job_id}] 实体类型已有完整结果（{len(existing_types)} 个），跳过重复提取直接展示")
+        return (
+            f"实体类型此前已提取完成（共 {len(existing_types)} 个类型），已直接展示在结果面板中，"
+            f"无需重新提取。请确认后进入实体提取阶段。"
+        )
+    if already_done and wants_reextract:
+        # 用户明确要求重新提取：清空 step1 旧结果，让后台任务完整重跑
+        # （不清空会被防重复跑分支秒结束，等于没重提）
+        async with build_lock:
+            job.step1_entity_types = []
+            job.step1_concepts = []
+            job.step1_entity_type_relations = []
+            job.step1_batch_results = []
+            job.step1_batch_relations_results = []
+            job.step1_batches_total = 0
+            job.step1_batches_done = 0
+            job.step1_failed_batch = -1
+            job.step1_failed_reason = None
+            job.step1_cross_batch_done = False
+            job.step1_cross_batch_relations = []
+            job.update_time = datetime.now()
+            save_build_job(job_id)
+        logger.info(f"[{job_id}] 用户要求重新提取，已清空 step1 旧结果（{len(existing_types)} 个类型）")
+    _set_job_progress(job_id, 1, 20, "正在提取实体类型...")
+    task = asyncio.create_task(_background_extract_entity_types(job_id))
+    _background_tasks[job_id] = task
+    # 如实写明本轮启动的阶段（step1 类型层），供 LLM 回复对齐本轮动作
+    return (
+        "本轮动作：已启动【实体类型提取】阶段（step1，类型层，提取抽象类型定义而非具体实例）。"
+        "提取完成后请在结果面板确认类型清单，确认后进入实体+关系提取阶段。"
+    )
+
+
+async def _chat_extract_entity(job_id: str, user_message: str = "") -> str:
+    """处理实体提取意图。"""
+    job = _get_job_or_404(job_id)
+    # 如果实体类型已提取但未确认，自动确认（用户说"确认"后进入此意图）
+    if not job.step1_confirmed:
+        ets = job.step1_entity_types or job.step1_concepts or []
+        if not ets:
+            return "请先提取实体类型"
+        job.step1_confirmed = True
+        job.update_time = datetime.now()
+        save_build_job(job_id)
+        save_build_jobs_index()
+        logger.info(f"[{job_id}] 自动确认 step1（实体类型 {len(ets)} 个）")
+    existing_entities = job.step2_entities or []
+    already_done = (bool(existing_entities)
+                    and job.step2_batches_done >= job.step2_batches_total
+                    and job.step2_failed_batch < 0)
+    wants_reextract = any(kw in user_message for kw in _RE_EXTRACT_KEYWORDS)
+    if already_done and not wants_reextract:
+        # 已有完整提取结果且无失败且用户无重跑意愿：不启动后台任务
+        # （防重复跑分支会秒结束，任务状态卡片一闪而逝且告知话术与实际不符），
+        # 直接同步状态并如实告知
+        _set_job_progress(job_id, -1, 100, "实体提取已完成")
+        _mark_stage_finished(job_id, 2)  # 自愈：上一轮若中断残留 running，此处收敛为 done
+        _emit_event(job_id, "step_done", {
+            "step": 2,
+            "entities": existing_entities,
+            "total": len(existing_entities)
+        })
+        logger.info(f"[{job_id}] 实体已有完整结果（{len(existing_entities)} 个），跳过重复提取直接展示")
+        return (
+            f"实体此前已提取完成（共 {len(existing_entities)} 个），已直接展示在结果面板中，"
+            f"无需重新提取。请确认后进入验证阶段。"
+        )
+    if already_done and wants_reextract:
+        # 用户明确要求重新提取：清空 step2 旧结果及依赖实体的 step3 验证，
+        # 让后台任务完整重跑（不清空会被防重复跑分支秒结束，等于没重提）
+        async with build_lock:
+            job.step2_entities = []
+            job.step2_relations = []
+            job.step3_relations = []  # 兼容旧字段
+            job.step2_confirmed = False
+            job.step2_batch_results = []
+            job.step2_batch_relations_results = []
+            job.step2_batches_total = 0
+            job.step2_batches_done = 0
+            job.step2_failed_batch = -1
+            job.step2_failed_reason = None
+            job.step3_verification = None
+            job.step3_confirmed = False
+            job.step4_verification = None  # 兼容旧字段
+            job.step4_confirmed = False
+            job.update_time = datetime.now()
+            save_build_job(job_id)
+        logger.info(f"[{job_id}] 用户要求重新提取，已清空 step2 旧结果（{len(existing_entities)} 个实体）")
+    _set_job_progress(job_id, 2, 20, "正在提取实体...")
+    task = asyncio.create_task(_background_extract_entities(job_id))
+    _background_tasks[job_id] = task
+    # 回复模板如实写明「确认了什么 + 启动了哪个阶段」，供 LLM 生成回复时对齐本轮动作，
+    # 避免回复照搬历史中 step1 的旧话术（用户误以为重新提取实体类型）
+    type_count = len(job.step1_entity_types or job.step1_concepts or [])
+    return (
+        f"本轮动作：1) 已确认实体类型清单（共 {type_count} 个类型，step1 完成）；"
+        f"2) 已启动【实体+关系提取】阶段（step2，实例层，非实体类型提取）。"
+        f"提取完成后请在结果面板确认实体与关系清单，确认后进入验证阶段。"
+    )
+
+
+async def _chat_verify(job_id: str) -> str:
+    """处理验证意图。"""
+    job = _get_job_or_404(job_id)
+    # 实体+关系已提取但未确认时，自动确认（与 _chat_extract_type/_chat_extract_entity 的自动确认保持一致），
+    # 避免用户说「验证」却被「请先确认实体提取结果」拦截，导致回复与实际动作不一致。
+    if not job.step2_confirmed:
+        ents = job.step2_entities or []
+        if not ents:
+            return "实体清单为空，请先提取实体"
+        job.step2_confirmed = True
+        job.step = max(job.step, 3)
+        job.update_time = datetime.now()
+        save_build_job(job_id)
+        save_build_jobs_index()
+        logger.info(f"[{job_id}] 自动确认 step2（实体 {len(ents)} 个）")
+    _set_job_progress(job_id, 3, 20, "正在验证...")
+    task = asyncio.create_task(_background_verify_and_report(job_id))
+    _background_tasks[job_id] = task
+    return "验证已在后台开始，请稍候查看结果"
+
+
+async def _chat_complete(job_id: str) -> str:
+    """处理完成构建意图。"""
+    job = _get_job_or_404(job_id)
+    # 验证已完成但未确认时，自动确认（用户说「完成构建/接受存疑完成构建」即视为接受验证结果），
+    # 再生成正式本体，避免被「请先完成验证」拦截导致无法收尾。
+    if not job.step3_confirmed:
+        if not job.step3_verification and not job.step4_verification:
+            return "请先完成验证"
+        job.step3_confirmed = True
+        job.step4_confirmed = True  # 兼容旧字段
+        job.update_time = datetime.now()
+        save_build_job(job_id)
+        save_build_jobs_index()
+        logger.info(f"[{job_id}] 自动确认 step3（验证完成，接受存疑项）")
+
+    ent_count = len(job.step2_entities or [])
+    rel_count = len(job.step3_relations or job.step2_relations or [])
+    oid = _generate_formal_ontology(job_id, target_ontology_id=job.ontology_id)
+    job.ontology_id = oid
+    job.status = "completed"
+    job.step = 4
+    job.running_step = -1
+    job.progress = 100
+    job.progress_message = f"本体生成成功！共 {ent_count} 个实体，{rel_count} 条关系"
+    job.error_message = None
+    job.update_time = datetime.now()
+    save_build_job(job_id)
+    save_build_jobs_index()
+    return f"构建完成！正式本体已生成，ID: {oid}"
+
+
+async def _chat_edit(job_id: str, user_message: str) -> str:
+    """处理编辑意图：用 LLM 将用户自然语言转为结构化编辑操作。"""
+    job = _get_job_or_404(job_id)
+    state = _get_current_state(job_id)
+    # 构造编辑 prompts
+    from agent.prompts import build_state_summary, build_context_history
+    system = (
+        "你是本体构建编辑助手。根据用户输入、当前状态和最近对话，生成结构化编辑操作。\n"
+        "重要：编辑操作随时可执行，不受「阶段是否确认」限制——用户要求删除/修改某条关系、实体或实体类型时，"
+        "只要当前状态里存在对应目标，就立即生成对应操作，不要因为阶段未确认而拒绝。\n"
+        "「恢复/撤销上一个删除」等表述，请结合「最近对话」判断之前删除的是哪条关系/实体，"
+        "生成对应的 add_relation（或 add_entity）来恢复；用户说「仅删除X」时，只生成删除 X 的操作，不要误删其它。\n"
+        "当用户要求「仅保留 A/B/C（及其子类型），其余实体类型全部删除」这类白名单保留意图时，"
+        "务必使用 keep_only_entity_types 操作，target 为 {\"keep_names\": [\"A\", \"B\", \"C\"]}，"
+        "只列出要保留的类型名，不要逐个生成 delete_entity_type。\n"
+        "只返回 JSON 数组，每个元素一个操作：\n"
+        '{"op": "add_entity_type|update_entity_type|delete_entity_type|keep_only_entity_types|add_entity|update_entity|delete_entity|add_relation|delete_relation|add_et_relation|delete_et_relation", "target": {...}}\n'
+        "keep_only_entity_types 的 target 格式：{\"keep_names\": [\"要保留的类型名\", ...]}。\n"
+        "删除关系的 target 格式：{\"source\": \"源实体名\", \"target\": \"目标实体名\"}，"
+        "若用户指明了关系类型，可附 \"relation_type\": \"类型名\" 用于精确匹配。\n"
+        "新增关系的 target 格式：{\"source\": \"源实体名\", \"target\": \"目标实体名\", \"relation_type\": \"类型名\"}。\n"
+        "不要任何解释或 markdown。如果无法确定编辑意图，返回空数组 []。"
+    )
+    history_text = build_context_history(job.chat_history or [], getattr(job, "history_summary", ""))
+    # 编辑判断需要完整类型名清单（build_state_summary 截断前 30 个），
+    # 此处额外注入全量类型名，确保「仅保留X其余删除」能拿到准确的保留名单、不漏删。
+    full_types = job.step1_entity_types or job.step1_concepts or []
+    full_type_names = [
+        et.get("name", "") for et in full_types
+        if isinstance(et, dict) and et.get("name")
+    ]
+    user = (
+        f"当前状态：\n{build_state_summary(job)}\n\n"
+        f"完整实体类型清单（共 {len(full_type_names)} 个，用于准确判断保留/删除，勿遗漏）：\n"
+        f"{'、'.join(full_type_names)}\n\n"
+        f"最近对话：\n{history_text or '（无）'}\n\n"
+        f"用户输入：{user_message}\n\n"
+        f"请生成编辑操作 JSON 数组。"
+    )
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    max_tokens, thinking = config.get_chat_llm_params("edit")
+    try:
+        ops = call_llm_json(messages, temperature=0.2, max_tokens=max_tokens, thinking_type=thinking)
+    except Exception as e:
+        return f"编辑解析失败：{e}"
+
+    if not ops or not isinstance(ops, list):
+        return "无法理解你的编辑意图，请换个方式描述"
+
+    results = []
+    for op in ops:
+        result = _apply_edit_operation(job, op)
+        results.append(result)
+
+    job.update_time = datetime.now()
+    save_build_job(job_id)
+    return "；".join(results)
 
 
 if __name__ == "__main__":

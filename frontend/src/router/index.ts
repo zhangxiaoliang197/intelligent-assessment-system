@@ -77,7 +77,7 @@ const routes: Array<RouteRecordRaw> = [
     path: '/ontology-build/:jobId',
     name: 'OntologyBuild',
     component: OntologyBuild,
-    meta: { title: '文档构建' }
+    meta: { title: 'AI 构建' }
   },
   {
     path: '/admin',
