@@ -1605,7 +1605,7 @@ const showLlmDialog = ref(false)
 const editingLlmId = ref('')
 const llmForm = ref({
   name: '', type: 'deepseek', apiUrl: '', apiKey: '', model: '',
-  temperature: 0.7, maxTokens: 2000, topP: 0.9
+  temperature: 0.3, maxTokens: 32000, topP: 0.9
 })
 
 const tempMarks = { 0: '0', 0.5: '0.5', 1: '1' }
