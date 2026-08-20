@@ -22,6 +22,7 @@ from collections import defaultdict, deque
 import uuid
 import json
 import os
+import shutil
 import logging
 import tempfile
 import asyncio
@@ -1901,12 +1902,51 @@ def _ontology_file(ontology_id: str) -> str:
     return os.path.join(USER_ONTOLOGIES_DIR, f'ontology_{ontology_id}.json')
 
 
+def _recover_bak_if_needed(json_path: str) -> bool:
+    """从 .bak 恢复：atomic_write_json 在写入失败/进程被杀时会留下 .bak 而无 .json。
+
+    场景：原子写流程为「tmp → rename(path, path.bak) → rename(tmp, path)」，
+    若最后一步未完成（服务被 kill / git clean 删除 .json 但 .bak 被保留），
+    本体内容只剩 .bak。此函数检测到这种情况时把 .bak 复制为 .json，
+    让后续按 .json 路径正常加载，原 .bak 保留作兜底。
+
+    Returns:
+        True 表示触发了恢复（.bak → .json 复制）
+    """
+    if os.path.exists(json_path):
+        return False
+    bak_path = json_path + '.bak'
+    if not os.path.exists(bak_path):
+        return False
+    if os.path.getsize(bak_path) < 50:
+        # 过小的 .bak 通常是空本体占位，不恢复避免覆盖错误
+        return False
+    try:
+        # 校验 .bak 是否为合法 JSON
+        with open(bak_path, 'r', encoding='utf-8') as f:
+            json.load(f)
+        # 复制 .bak → .json（保留 .bak 作兜底，不删除）
+        shutil.copy2(bak_path, json_path)
+        logger.warning(f"本体文件 {json_path} 不存在，已从 .bak 自动恢复")
+        return True
+    except Exception as e:
+        logger.error(f"从 .bak 恢复 {bak_path} 失败: {e}")
+        return False
+
+
 def _resolve_ontology_file(ontology_id: str) -> str:
-    """定位本体数据文件用于读取/删除：优先新目录，兼容 data 根目录下已入库的历史本体文件。"""
+    """定位本体数据文件用于读取/删除：优先新目录，兼容 data 根目录下已入库的历史本体文件。
+
+    .json 不存在时自动从 .bak 恢复（atomic_write_json 写入失败/进程被杀场景）。
+    """
     new_path = _ontology_file(ontology_id)
+    # .json 不存在时先尝试从 .bak 恢复（同一目录）
+    _recover_bak_if_needed(new_path)
     if os.path.exists(new_path):
         return new_path
     legacy_path = os.path.join(DATA_DIR, f'ontology_{ontology_id}.json')
+    # 历史目录的 .bak 也兜底恢复
+    _recover_bak_if_needed(legacy_path)
     if os.path.exists(legacy_path):
         return legacy_path
     return new_path
@@ -2389,6 +2429,65 @@ async def _parse_form_field(request: Request, field: str, default: str = "") -> 
         return default
 
 
+def _rebuild_index_from_disk() -> List[Dict[str, Any]]:
+    """索引缺失时从磁盘扫描重建 ontologies_index.json。
+
+    扫描 user_ontologies/ 与 data 根目录下所有 ontology_ont_*.json，
+    从每个本体数据文件的 `ontology` 元数据构建索引项。
+
+    场景：ontologies_index.json 被 .gitignore 忽略，git pull --rebase /
+    git clean -fd / 服务异常退出后会丢失，但本体数据文件仍在。
+    重建后回写索引文件，避免每次启动都全量扫描。
+    """
+    import glob
+    seen_ids: set = set()
+    rebuilt: List[Dict[str, Any]] = []
+
+    # 扫描目录：优先 user_ontologies/，再扫 data 根目录兼容历史文件
+    scan_dirs = [USER_ONTOLOGIES_DIR, DATA_DIR]
+    for scan_dir in scan_dirs:
+        if not os.path.isdir(scan_dir):
+            continue
+        for fp in glob.glob(os.path.join(scan_dir, 'ontology_ont_*.json')):
+            try:
+                # .json 缺失时先从 .bak 恢复（同目录）
+                _recover_bak_if_needed(fp)
+                if not os.path.exists(fp):
+                    continue
+                data = load_json_with_backup(fp, None)
+                if not isinstance(data, dict):
+                    continue
+                ont_meta = data.get('ontology')
+                if not isinstance(ont_meta, dict) or not ont_meta.get('id'):
+                    # 非本体数据文件（如 index.json 本身）跳过
+                    continue
+                ont_id = ont_meta['id']
+                if ont_id in seen_ids:
+                    continue  # user_ontologies/ 与 data 根目录可能同名，去重
+                seen_ids.add(ont_id)
+                # 确保索引项含 OntologyModel 必填字段
+                ont_meta.setdefault('schema_version', 1)
+                ont_meta.setdefault('version', '1.0.0')
+                ont_meta.setdefault('status', '活跃')
+                ont_meta.setdefault('entity_types', [])
+                ont_meta.setdefault('relation_types', [])
+                rebuilt.append(ont_meta)
+            except Exception as e:
+                logger.error(f"重建索引时读取 {fp} 失败: {e}")
+
+    # 回写索引文件，避免下次启动重复全量扫描
+    if rebuilt:
+        try:
+            with FileLock(_lock_path('index')):
+                atomic_write_json(INDEX_FILE, rebuilt)
+            logger.info(f"索引重建完成：共 {len(rebuilt)} 个本体，已写入 {INDEX_FILE}")
+        except Exception as e:
+            logger.error(f"回写索引文件失败: {e}")
+    else:
+        logger.warning("扫描未发现任何本体数据文件，索引仍为空")
+    return rebuilt
+
+
 def load_db() -> None:
     """启动时加载所有本体数据到内存。
 
@@ -2407,6 +2506,15 @@ def load_db() -> None:
     index = load_json_with_backup(INDEX_FILE, [])
     if not isinstance(index, list):
         index = []
+
+    # ── 索引缺失自动重建：INDEX_FILE 不存在或为空时扫描 user_ontologies/
+    # 与 data 根目录的所有 ontology_ont_*.json，从本体文件本体元数据构建索引项。
+    # 场景：ontologies_index.json 被 .gitignore 忽略，git pull --rebase /
+    # git clean -fd / 服务异常退出后会丢失，但本体数据文件（user_ontologies/）还在。
+    # 若不重建索引，服务内存 db 为空 → 前端列表显示空，造成"本体都没了"的错觉。
+    if not index:
+        logger.warning("ontologies_index.json 缺失或为空，启动自动扫描重建...")
+        index = _rebuild_index_from_disk()
 
     # ── 迁移检测：扫描所有本体文件，判断是否需要迁移 ──
     needs_migration = False
