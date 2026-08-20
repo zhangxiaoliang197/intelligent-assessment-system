@@ -116,8 +116,11 @@
 
                     <!-- AI消息 -->
                     <div v-else class="ai-response">
-                      <!-- loading 提示（step1 阶段，指标卡片到达前显示） -->
-                      <div v-if="msg.querying && !msg.rawResults && (!msg.indicators || msg.indicators.length === 0)" class="message-loading">分析中...</div>
+                      <!-- loading 提示：querying 期间且 content 还未开始流式输出时显示 -->
+                      <div v-if="msg.querying && !msg.content" class="message-loading">
+                        <span class="loading-dots"><i></i><i></i><i></i></span>
+                        <span class="loading-text">{{ getLoadingPhaseLabel(msg) }}</span>
+                      </div>
 
                       <!-- 地图显示提示 -->
                       <div v-if="msg.showMapPrompt" class="map-prompt">
@@ -143,7 +146,7 @@
                           <h5>指标树状结构</h5>
                           <el-icon :class="{ rotated: !msg.treeCollapsed }"><ArrowDown /></el-icon>
                         </div>
-                        <div v-show="!msg.treeCollapsed" :ref="el => setTreeChartRef(el, index)" class="tree-chart"></div>
+                        <div v-show="!msg.treeCollapsed" :ref="el => setTreeChartRef(el, index)" class="tree-chart" :style="{ height: getTreeHeight(msg.tree) + 'px' }"></div>
                       </div>
 
                       <!-- 指标卡片列表 -->
@@ -229,12 +232,16 @@
 
                       <!-- 追问快捷操作按钮 -->
                       <div v-if="msg.confirmActions" class="confirm-actions">
-                        <el-button type="primary" size="large" @click="quickConfirm('查询')">
-                          <el-icon><CircleCheck /></el-icon> 查询指标
-                        </el-button>
-                        <el-button size="large" @click="quickConfirm('不查询')">
-                          暂不需要
-                        </el-button>
+                        <el-tooltip content="弹出指标列表，勾选后仅查询选中的指标" placement="top">
+                          <el-button type="primary" size="large" @click="quickConfirm('查询')">
+                            <el-icon><CircleCheck /></el-icon> 选择指标查询
+                          </el-button>
+                        </el-tooltip>
+                        <el-tooltip content="结束本轮分析，不进入查询阶段" placement="top">
+                          <el-button size="large" @click="quickConfirm('不查询')">
+                            暂不查询
+                          </el-button>
+                        </el-tooltip>
                       </div>
                     </div>
                   </div>
@@ -1285,6 +1292,34 @@ const saveHistory = (id: string, question: string) => {
 
 const setTreeChartRef = (el: any, index: number) => { if (el) treeChartRefs.value[index] = el }
 
+// ── loading 阶段文案：根据最近一条 in_progress 步骤推导 ──
+const getLoadingPhaseLabel = (msg: any): string => {
+  const steps = msg.steps || []
+  // 优先取最近一条 in_progress
+  const active = [...steps].reverse().find((s: any) => s.status === 'in_progress')
+    || steps[steps.length - 1]
+  if (!active) return '正在思考...'
+  const phaseMap: Record<string, string> = {
+    indicator_gen: '正在生成指标体系…',
+    data_query: '正在查询数据…',
+    dataset: '正在执行数据集…',
+  }
+  return phaseMap[active.phase] || `正在${active.description || '分析'}…`
+}
+
+// ── 树图动态高度：根据叶子数推算（echarts tree 默认 LR 布局，叶子数决定垂直高度）──
+const countTreeLeaves = (node: any): number => {
+  if (!node) return 0
+  if (!node.children || node.children.length === 0) return 1
+  return node.children.reduce((sum: number, c: any) => sum + countTreeLeaves(c), 0)
+}
+
+// 每叶 28px + 80px padding，限制 200~800px
+const getTreeHeight = (tree: any): number => {
+  const leaves = countTreeLeaves(tree)
+  return Math.min(800, Math.max(200, leaves * 28 + 80))
+}
+
 const renderTreesForMessages = () => {
   messages.value.forEach((msg, index) => {
     if (msg.tree && treeChartRefs.value[index]) {
@@ -1457,7 +1492,6 @@ onMounted(async () => {
     restoreExecutionState(sessionId.value)
     nextTick(() => { setTimeout(() => renderTreesForMessages(), 300) })
   }
-  ElMessage.info('指标分析系统加载完成')
 })
 </script>
 
@@ -1727,15 +1761,48 @@ onMounted(async () => {
 
 .message-text { padding: 14px 18px; border-radius: 16px; line-height: 1.75; font-size: 15px; white-space: pre-wrap; word-wrap: break-word; }
 .message.user .message-text { background: linear-gradient(135deg, #4f8cff 0%, #3b82f6 100%); color: white; border-bottom-right-radius: 4px; }
-.message.assistant .message-text { background: transparent; color: var(--text-primary); padding: 0; border-radius: 0; border: none; }
+.message.assistant .message-text {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  padding: 14px 18px;
+  border: 1px solid var(--border-light);
+  border-radius: 16px;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
 
-.message-loading { color: var(--text-muted); font-size: 14px; padding: 8px 0; }
+.message-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  border-bottom-left-radius: 4px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.loading-dots { display: inline-flex; gap: 4px; }
+.loading-dots i {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--primary-500);
+  animation: loading-bounce 1.2s infinite ease-in-out;
+}
+.loading-dots i:nth-child(2) { animation-delay: 0.2s; }
+.loading-dots i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes loading-bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+.loading-text { font-weight: 500; }
 
 /* ── AI 响应 ── */
 .ai-response { display: flex; flex-direction: column; gap: 1rem; }
 
-.tree-section, .indicators-section, .references-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
-.data-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
+.tree-section, .indicators-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
+.references-section, .data-section { padding: 0.75rem 1rem; background: var(--gray-50, #fafbfc); border: 1px dashed #e2e8f0; border-radius: 0.5rem; }
+.references-section h5, .data-section .section-collapse-header h5 { font-size: 0.85rem; font-weight: 500; color: #64748b; }
 
 /* ── 可折叠区域标题 ── */
 .section-collapse-header {
@@ -1746,7 +1813,7 @@ onMounted(async () => {
 .section-collapse-header .el-icon { transition: transform 0.25s; color: #909399; font-size: 16px; flex-shrink: 0; }
 .section-collapse-header .el-icon.rotated { transform: rotate(180deg); }
 
-.tree-chart { width: 100%; height: 350px; margin-top: 0.75rem; }
+.tree-chart { width: 100%; min-height: 200px; margin-top: 0.75rem; }
 
 .indicator-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.75rem; margin-top: 0.75rem; }
 
@@ -1763,8 +1830,8 @@ onMounted(async () => {
 .expand-tip { text-align: center; padding: 8px; color: #409eff; cursor: pointer; font-size: 0.85rem; border-top: 1px dashed #e2e8f0; margin-top: 4px; }
 .expand-tip:hover { background: #f0f7ff; border-radius: 0 0 0.75rem 0.75rem; }
 
-.references-section ul { list-style: disc; padding-left: 1.5rem; margin: 0; color: #606266; }
-.references-section li { padding: 0.25rem 0; font-size: 0.95rem; }
+.references-section ul { list-style: disc; padding-left: 1.5rem; margin: 0; color: #64748b; }
+.references-section li { padding: 0.2rem 0; font-size: 0.85rem; }
 
 /* ── 数据表格 ── */
 .data-table-wrapper { overflow-x: auto; max-height: 350px; overflow-y: auto; }
