@@ -26,6 +26,7 @@ class Stage(str, enum.Enum):
     WRITE = "write"        # Writer Agents 并行产图 + 产地图
     VERIFY = "verify"      # Verifier Agent 校验
     NARRATIVE = "narrative"  # narrative Writer 文本（最后串行）
+    LAYOUT = "layout"      # layout Writer 布局树（可选增强，失败跳过）
     EMIT = "emit"          # 输出 SSE done 事件
     FAILED = "failed"
 
@@ -36,7 +37,8 @@ _ALLOWED_TRANSITIONS: Dict[Stage, List[Stage]] = {
     Stage.RESEARCH: [Stage.WRITE, Stage.FAILED],
     Stage.WRITE: [Stage.VERIFY, Stage.NARRATIVE, Stage.FAILED],  # VERIFY 跳过则直入 NARRATIVE
     Stage.VERIFY: [Stage.WRITE, Stage.NARRATIVE, Stage.EMIT, Stage.FAILED],  # WRITE = Reflection 回写
-    Stage.NARRATIVE: [Stage.EMIT, Stage.FAILED],
+    Stage.NARRATIVE: [Stage.LAYOUT, Stage.EMIT, Stage.FAILED],  # LAYOUT 可选，跳过则直入 EMIT
+    Stage.LAYOUT: [Stage.EMIT, Stage.FAILED],
     Stage.EMIT: [],  # 终态
     Stage.FAILED: [],  # 终态
 }

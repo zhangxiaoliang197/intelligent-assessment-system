@@ -75,6 +75,38 @@ export interface Narrative {
   mapExplanation?: string
 }
 
+// ── 布局树（LLM 布局增强）：只含产物引用与几何参数，不含数据值 ──
+export interface LayoutMetric {
+  label: string
+  column: string
+  agg: 'sum' | 'count' | 'max' | 'min' | 'avg'
+}
+
+export interface LayoutSlot {
+  kind: 'chart' | 'map' | 'narrative_intro' | 'narrative_chart' | 'map_explanation' | 'metrics'
+  /** chart/narrative_chart→chartId；map→"*"；metrics→datasetId */
+  ref?: string
+  metrics?: LayoutMetric[]
+}
+
+export interface LayoutBlock {
+  type: 'block'
+  /** 12 列栅格占宽（3-12） */
+  span: number
+  /** 块最小高度（px），0=自适应（文本块） */
+  minHeight: number
+  slots: LayoutSlot[]
+}
+
+export interface LayoutTree {
+  version: number
+  root: {
+    type: 'grid'
+    props: { gap: number }
+    children: LayoutBlock[]
+  }
+}
+
 export interface Viewport {
   center: [number, number]
   zoom: number
@@ -82,7 +114,7 @@ export interface Viewport {
 
 // ── 执行步骤（SSE 事件转步骤，供 execution-panel 展示）──
 export interface ExecStep {
-  phase: 'plan' | 'step' | 'dataset' | 'chart' | 'map_layer' | 'narrative' | 'done' | 'error'
+  phase: 'plan' | 'step' | 'dataset' | 'chart' | 'map_layer' | 'narrative' | 'layout' | 'done' | 'error'
   description: string
   status: 'in_progress' | 'completed' | 'error'
   detail?: string
@@ -317,6 +349,7 @@ export const useSituationStore = defineStore('situation', () => {
   const charts = ref<ChartSpec[]>([])
   const mapLayers = ref<MapLayer[]>([])
   const narrative = ref<Narrative>({ intro: '', explanations: [] })
+  const layout = ref<LayoutTree | null>(null)
   const evidence = ref<ResultEvidence>({})
   const mapExplanation = ref('')
 
@@ -393,6 +426,7 @@ export const useSituationStore = defineStore('situation', () => {
     charts.value = []
     mapLayers.value = []
     narrative.value = { intro: '', explanations: [] }
+    layout.value = null
     evidence.value = {}
     mapExplanation.value = ''
     selectedRegion.value = null
@@ -471,6 +505,11 @@ export const useSituationStore = defineStore('situation', () => {
       return rebuildMapLayer(l, ds)
     })
     narrative.value = snapshot.narrative || { intro: '', explanations: [] }
+    // 布局树（可选增强）：旧快照无此字段 → null → 页面回退固定三段布局
+    layout.value = snapshot.layout?.root?.type === 'grid' && Array.isArray(snapshot.layout.root.children)
+      && snapshot.layout.root.children.length
+      ? snapshot.layout as LayoutTree
+      : null
     mapExplanation.value = snapshot.map?.explanation || snapshot.mapExplanation || snapshot.narrative?.mapExplanation || ''
     // 兜底：历史产物若 chart.explanation 缺失，用 narrative.explanations 回填逐图说明
     const expMap = new Map<string, string>(
@@ -719,6 +758,17 @@ export const useSituationStore = defineStore('situation', () => {
           pushStep('narrative', '撰写态势介绍', 'completed')
         }
         break
+      case 'layout': {
+        // 布局树（可选增强）：后端已做校验修复，此处结构兜底后落 store
+        if (data?.root?.type === 'grid' && Array.isArray(data.root.children) && data.root.children.length) {
+          layout.value = data as LayoutTree
+          const blockCount = data.root.children.length
+          if (!executionSteps.value.some((step) => step.phase === 'layout')) {
+            pushStep('layout', `生成页面布局（${blockCount} 个版块）`, 'completed')
+          }
+        }
+        break
+      }
       case 'done':
         evidence.value = {
           evidenceHash: data.evidenceHash || evidence.value.evidenceHash,
@@ -949,7 +999,7 @@ export const useSituationStore = defineStore('situation', () => {
   return {
     // state
     reportId, status, query, source, title, activeSkill, skillParameters,
-    datasets, activeDatasetId, charts, mapLayers, narrative, evidence, mapExplanation,
+    datasets, activeDatasetId, charts, mapLayers, narrative, layout, evidence, mapExplanation,
     selectedRegion, selectedTimeRange, filters, viewport,
     eventSource, errorMsg, requestPending,
     history, executionSteps,

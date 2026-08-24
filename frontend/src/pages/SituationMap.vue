@@ -166,33 +166,57 @@
                     </div>
 
                     <div class="ai-response">
-                      <!-- 图表区 -->
-                      <div v-if="store.charts.length" class="tree-section">
-                        <SituationChartGrid :charts="store.charts" :loading="store.isGenerating" :cols="1" :body-height="360" />
-                      </div>
+                      <!-- 布局树渲染（LLM 动态排版；无布局时回退固定三段） -->
+                      <SituationLayoutRenderer
+                        v-if="store.layout"
+                        :layout="store.layout"
+                        :charts="store.charts"
+                        :map-layers="store.mapLayers"
+                        :narrative="store.narrative"
+                        :datasets="store.datasets"
+                        :active-dataset="store.activeDataset"
+                        :viewport="store.viewport"
+                        :selected-region="store.selectedRegion"
+                        :time-range="store.selectedTimeRange"
+                        :filters="store.filters"
+                        :map-explanation="store.mapExplanation"
+                        @region-select="onRegionSelect"
+                        @marker-click="onMarkerClick"
+                        @layer-toggle="onLayerToggle"
+                        @draw-end="onDrawEnd"
+                        @viewport-change="onViewportChange"
+                      />
 
-                      <!-- 地图（仅有图层时显示） -->
-                      <div v-if="store.mapLayers.length" class="data-section ai-map-section">
-                        <SituationMapSlot
-                          :dataset="store.activeDataset"
-                          :layers="store.mapLayers"
-                          :viewport="store.viewport"
-                          :selected-region="store.selectedRegion"
-                          :time-range="store.selectedTimeRange"
-                          :filters="store.filters"
-                          :explanation="store.mapExplanation"
-                          @region-select="onRegionSelect"
-                          @marker-click="onMarkerClick"
-                          @layer-toggle="onLayerToggle"
-                          @draw-end="onDrawEnd"
-                          @viewport-change="onViewportChange"
-                        />
-                      </div>
+                      <!-- 固定三段布局（回退路径：旧产物/布局生成失败） -->
+                      <template v-else>
+                        <!-- 图表区 -->
+                        <div v-if="store.charts.length" class="tree-section">
+                          <SituationChartGrid :charts="store.charts" :loading="store.isGenerating" :cols="1" :body-height="360" />
+                        </div>
 
-                      <!-- 分析结论 -->
-                      <div v-if="store.narrative.intro" class="references-section">
-                        <SituationNarrative :narrative="store.narrative" />
-                      </div>
+                        <!-- 地图（仅有图层时显示） -->
+                        <div v-if="store.mapLayers.length" class="data-section ai-map-section">
+                          <SituationMapSlot
+                            :dataset="store.activeDataset"
+                            :layers="store.mapLayers"
+                            :viewport="store.viewport"
+                            :selected-region="store.selectedRegion"
+                            :time-range="store.selectedTimeRange"
+                            :filters="store.filters"
+                            :explanation="store.mapExplanation"
+                            @region-select="onRegionSelect"
+                            @marker-click="onMarkerClick"
+                            @layer-toggle="onLayerToggle"
+                            @draw-end="onDrawEnd"
+                            @viewport-change="onViewportChange"
+                          />
+                        </div>
+
+                        <!-- 分析结论 -->
+                        <div v-if="store.narrative.intro" class="references-section">
+                          <SituationNarrative :narrative="store.narrative" />
+                        </div>
+                      </template>
 
                       <!-- 错误提示 -->
                       <div v-if="store.errorMsg">
@@ -405,6 +429,7 @@ import { useToolNav } from '@/composables/useToolNav'
 import SituationChartGrid from '@/components/situation/SituationChartGrid.vue'
 import SituationMapSlot from '@/components/situation/SituationMapSlot.vue'
 import SituationNarrative from '@/components/situation/SituationNarrative.vue'
+import SituationLayoutRenderer from '@/components/situation/SituationLayoutRenderer.vue'
 import SituationSkillToolbar from '@/components/situation/SituationSkillToolbar.vue'
 import SituationSkillDrawer from '@/components/situation/SituationSkillDrawer.vue'
 import SituationSkillParametersDialog from '@/components/situation/SituationSkillParametersDialog.vue'

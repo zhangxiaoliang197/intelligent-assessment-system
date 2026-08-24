@@ -12,6 +12,8 @@
 数据源无关：prompt 只描述「可用数据集 schema」，不出现任何特定表名/字段。
 """
 import json
+from typing import Optional
+
 from agent.map_skill_loader import load_map_skill_guide
 
 
@@ -341,4 +343,94 @@ def build_narrative_messages(query: str, charts: list, map_layer: dict) -> list:
             "规则：explanations 的 chartId 必须命中已产出图表；mapExplanation 需说明地图展示的内容与联动分析要点；"
             "intro 不超过 300 字；中文。"},
         {"role": "user", "content": f"用户问题：{query}\n\n已产出图表：\n{charts_summary}\n\n地图：{map_summary}"},
+    ]
+
+
+def build_layout_messages(
+    query: str,
+    charts: list,
+    map_layer: Optional[dict],
+    datasets: list,
+    narrative: Optional[dict],
+) -> list:
+    """阶段6：排版（可选增强）。LLM 基于已产出产物元信息生成页面布局树。
+
+    数据源无关设计：输入只有产物元信息（图表清单/图层要素统计/数据集列名与行数），
+    不含表名、SQL、数据库方言——与 _format_meta 的"数据源无关"分层一致。
+
+    布局树只含引用（chartId/layerId/datasetId）与几何参数（span/minHeight），
+    不含任何数据值；数据仍由前端按 dataset rows + fieldMapping 通道填充。
+
+    Args:
+        query: 用户原始问题
+        charts: 已产出图表 [{chartId, type, title, explanation, datasetRef}]
+        map_layer: 已产出地图图层 dict（可为 None）
+        datasets: 数据集元信息 [{datasetId, summary, columns, rowCount}]
+        narrative: 文本产物 {"intro": ..., "mapExplanation": ...}
+    """
+    charts_text = "\n".join(
+        f"- chartId={c.get('chartId','')} [{c.get('type','')}] {c.get('title','')}"
+        f"（数据集 {c.get('datasetRef','')}；说明：{c.get('explanation','')}）"
+        for c in charts
+    ) or "（无图表）"
+
+    if map_layer:
+        points = map_layer.get("points", []) or []
+        routes = map_layer.get("routes", []) or []
+        areas = map_layer.get("areas", []) or []
+        circles = map_layer.get("circles", []) or []
+        map_text = (
+            f"图层 {map_layer.get('layerId','')}（ref 可用 \"*\" 表示全部图层）："
+            f"{len(points)} 个标点、{len(routes)} 条路线、{len(areas)} 个区域、{len(circles)} 个圆形区域"
+        )
+    else:
+        map_text = "（无地图，禁止放置 map 块）"
+
+    datasets_text = "\n".join(
+        f"- datasetId={d.get('datasetId','')}：{d.get('summary','')}"
+        f"（{d.get('rowCount', 0)} 行；可用列：{', '.join(d.get('columns', [])[:20])}）"
+        for d in datasets
+    ) or "（无数据集）"
+
+    intro_preview = _trim(str((narrative or {}).get("intro", "")), 80)
+    narrative_text = f"intro（前 80 字）：{intro_preview}" if intro_preview else "（intro 为空，可不放 narrative_intro 块）"
+
+    return [
+        {"role": "system", "content": get_system_prompt() +
+            "\n\n【当前阶段：排版】\n"
+            "你是态势页面排版设计师。根据下方已产出产物清单，设计最终页面的布局。\n"
+            "返回 JSON（仅 JSON，无其它文字）：\n"
+            "{\n"
+            '  "version": 1,\n'
+            '  "root": {\n'
+            '    "type": "grid",\n'
+            '    "props": {"gap": 12},\n'
+            '    "children": [\n'
+            '      {"type": "block", "span": 8, "minHeight": 360, "slots": [{"kind": "chart", "ref": "图表ID"}]},\n'
+            '      {"type": "block", "span": 4, "slots": [{"kind": "metrics", "ref": "数据集ID", "metrics": [{"label": "指标名", "column": "列名", "agg": "sum|count|max|min|avg"}]}]},\n'
+            '      {"type": "block", "span": 12, "minHeight": 460, "slots": [{"kind": "map", "ref": "*"}]},\n'
+            '      {"type": "block", "span": 12, "slots": [{"kind": "narrative_intro"}]},\n'
+            '      {"type": "block", "span": 6, "slots": [{"kind": "chart", "ref": "图表ID"}, {"kind": "narrative_chart", "ref": "图表ID"}]}\n'
+            "    ]\n"
+            "  }\n"
+            "}\n"
+            "排版原则（按产物特征自由决策，不设唯一正确答案）：\n"
+            "1. 地图要素多（>20 个标点或含路线/区域）→ 地图全宽大块（span 12）；要素少可与核心图表 7/5 同排；\n"
+            "2. 最贴合问题主旨的核心图表优先展示、占宽（span 6-8）；辅助图表 span 3-4；\n"
+            "3. 图表说明块（narrative_chart）紧跟对应图表块，就近帮助阅读，而不是全部堆在底部；\n"
+            "4. narrative_intro 可作页首引导（span 12），也可与首个图表同排；\n"
+            "5. metrics 块适合放 2-4 个关键数值指标（如总数/均值/极值），常置于页首或图表旁（span 3-4）；\n"
+            "6. block 数量 ≤ 产物数 + 2；span 为 3-12 的整数；一页最多 6 个指标项。\n"
+            "硬约束：\n"
+            "- ref 只能取清单中出现的 chartId / layerId / datasetId 或 \"*\"，禁止发明新 id；\n"
+            "- metrics 的 column 必须逐字来自该数据集的可用列名，agg 只能是 sum/count/max/min/avg；\n"
+            "- 地图块最多一个（ref 用 \"*\"）；布局不包含任何数据值，只含引用与几何参数；\n"
+            "- 每个图表至少被一个 chart 块引用一次。"},
+        {"role": "user", "content": (
+            f"用户问题：{query}\n\n"
+            f"已产出图表：\n{charts_text}\n\n"
+            f"地图：{map_text}\n\n"
+            f"数据集：\n{datasets_text}\n\n"
+            f"文本：{narrative_text}"
+        )},
     ]

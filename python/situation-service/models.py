@@ -149,5 +149,7 @@ class Report(BaseModel):
     charts: List[ChartSpec] = Field(default_factory=list)
     map: Dict[str, Any] = Field(default_factory=dict)         # { layers: [MapLayerSpec] }
     narrative: Narrative = Field(default_factory=Narrative)
+    # LLM 布局树（可选增强）：None = 旧版固定三段布局，前端据此分叉渲染
+    layout: Optional[Dict[str, Any]] = None
     datasets: List[DatasetSummary] = Field(default_factory=list)
     execution: List[Dict[str, Any]] = Field(default_factory=list)

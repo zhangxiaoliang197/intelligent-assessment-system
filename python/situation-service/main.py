@@ -799,6 +799,9 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
         # 回填地图说明
         if data.get("mapExplanation"):
             report.map["explanation"] = data.get("mapExplanation", "")
+    elif event_type == "layout":
+        # 布局树（可选增强）：仅引用 chartId/layerId/datasetId，不含数据值
+        report.layout = dict(data or {})
     elif event_type == "dataset":
         item = {
             "datasetId": data.get("datasetId", ""),

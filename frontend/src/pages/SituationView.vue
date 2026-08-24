@@ -21,44 +21,68 @@
         </div>
       </div>
 
-      <!-- 纯展示内容：左图表 + 右地图（等高自适应）+ 底部态势分析 -->
+      <!-- 纯展示内容：布局树动态排版（回退：左图表 + 右地图 + 底部态势分析） -->
       <div class="view-content custom-scroll" ref="captureRef">
-        <div
-          class="main-row"
-          :class="{ 'only-map': !store.charts.length }"
-          :style="{ minHeight: chartLayout.minHeight + 'px' }"
-        >
-          <div v-if="store.charts.length" class="chart-side">
-            <h3 class="section-label">统计图表</h3>
-            <SituationChartGrid :charts="store.charts" :cols="chartLayout.cols" :body-height="230" :row-min-height="300" :show-explanation="false" />
-          </div>
+        <!-- LLM 布局树渲染（有 layout 时） -->
+        <SituationLayoutRenderer
+          v-if="store.layout"
+          :layout="store.layout"
+          :charts="store.charts"
+          :map-layers="store.mapLayers"
+          :narrative="store.narrative"
+          :datasets="store.datasets"
+          :active-dataset="store.activeDataset"
+          :viewport="store.viewport"
+          :selected-region="store.selectedRegion"
+          :time-range="store.selectedTimeRange"
+          :filters="store.filters"
+          :map-explanation="store.mapExplanation"
+          @region-select="onRegionSelect"
+          @marker-click="onMarkerClick"
+          @layer-toggle="onLayerToggle"
+          @draw-end="onDrawEnd"
+          @viewport-change="onViewportChange"
+        />
 
-          <div v-if="store.mapLayers.length" class="map-side">
-            <h3 class="section-label">地理分布</h3>
-            <div class="view-map-section">
-              <SituationMapSlot
-                :dataset="store.activeDataset"
-                :layers="store.mapLayers"
-                :viewport="store.viewport"
-                :selected-region="store.selectedRegion"
-                :time-range="store.selectedTimeRange"
-                :filters="store.filters"
-                :explanation="store.mapExplanation"
-                :show-explanation="false"
-                @region-select="onRegionSelect"
-                @marker-click="onMarkerClick"
-                @layer-toggle="onLayerToggle"
-                @draw-end="onDrawEnd"
-                @viewport-change="onViewportChange"
-              />
+        <!-- 固定三段布局（回退路径：旧产物/布局生成失败） -->
+        <template v-else>
+          <div
+            class="main-row"
+            :class="{ 'only-map': !store.charts.length }"
+            :style="{ minHeight: chartLayout.minHeight + 'px' }"
+          >
+            <div v-if="store.charts.length" class="chart-side">
+              <h3 class="section-label">统计图表</h3>
+              <SituationChartGrid :charts="store.charts" :cols="chartLayout.cols" :body-height="230" :row-min-height="300" :show-explanation="false" />
+            </div>
+
+            <div v-if="store.mapLayers.length" class="map-side">
+              <h3 class="section-label">地理分布</h3>
+              <div class="view-map-section">
+                <SituationMapSlot
+                  :dataset="store.activeDataset"
+                  :layers="store.mapLayers"
+                  :viewport="store.viewport"
+                  :selected-region="store.selectedRegion"
+                  :time-range="store.selectedTimeRange"
+                  :filters="store.filters"
+                  :explanation="store.mapExplanation"
+                  :show-explanation="false"
+                  @region-select="onRegionSelect"
+                  @marker-click="onMarkerClick"
+                  @layer-toggle="onLayerToggle"
+                  @draw-end="onDrawEnd"
+                  @viewport-change="onViewportChange"
+                />
+              </div>
             </div>
           </div>
-        </div>
 
-        <div v-if="store.narrative.intro" class="narrative-section">
-          <h3 class="section-label">态势分析</h3>
-          <SituationNarrative :narrative="store.narrative" />
-        </div>
+          <div v-if="store.narrative.intro" class="narrative-section">
+            <h3 class="section-label">态势分析</h3>
+            <SituationNarrative :narrative="store.narrative" />
+          </div>
+        </template>
 
         <el-empty
           v-if="!store.charts.length && !store.mapLayers.length && !store.narrative.intro && !loading"
@@ -86,6 +110,7 @@ import Layout from '@/components/Layout.vue'
 import SituationChartGrid from '@/components/situation/SituationChartGrid.vue'
 import SituationMapSlot from '@/components/situation/SituationMapSlot.vue'
 import SituationNarrative from '@/components/situation/SituationNarrative.vue'
+import SituationLayoutRenderer from '@/components/situation/SituationLayoutRenderer.vue'
 import { useSituationStore, type Viewport } from '@/stores/situation'
 import { useSituationExport } from '@/composables/useSituationExport'
 import api from '@/services/api'

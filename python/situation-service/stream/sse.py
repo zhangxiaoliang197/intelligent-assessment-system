@@ -13,7 +13,7 @@ def format_event(event_type: str, data: dict, event_id: int = None) -> str:
     """格式化一条 SSE 事件。
 
     Args:
-        event_type: 事件类型（plan/dataset/chart/map_layer/narrative/done/error 等）
+        event_type: 事件类型（plan/dataset/chart/map_layer/narrative/layout/done/error 等）
         data: 事件数据字典
 
     Returns:

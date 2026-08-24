@@ -23,6 +23,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from stream.sse import SSEEvent
 import config
 from agent import map_builder, tools, executor, writer, verifier
+from agent import layout_postprocess
 from agent.evidence_store import EvidenceStore
 from agent.planner import Planner
 from agent.state_machine import Stage, StateMachine
@@ -1129,6 +1130,25 @@ async def _real_generate_v2_body(
             "mapExplanation": "",
         }
 
+    # ───── 阶段 5.5：LAYOUT（可选增强：LLM 产布局树；失败静默跳过，前端回退固定布局） ─────
+    layout_tree: Optional[Dict[str, Any]] = None
+    if config.SITUATION_LAYOUT_ENABLED and (charts or map_layer):
+        await sm.enter(Stage.LAYOUT)
+        try:
+            layout_raw = await writer.write_layout(
+                effective_query, store, charts, map_layer, narrative,
+            )
+            layout_tree = layout_postprocess.sanitize_layout(
+                layout_raw, charts, map_layer, store.list_evidences(),
+            )
+            await sm.exit(Stage.LAYOUT, success=layout_tree is not None, meta={
+                "blocks": len((layout_tree or {}).get("root", {}).get("children", [])),
+                "skipped": layout_raw is None,
+            })
+        except Exception as exc:
+            logger.warning("V2 layout 阶段失败（跳过，前端回退固定布局）: %s", exc)
+            await sm.exit(Stage.LAYOUT, success=False, error=str(exc)[:200])
+
     # ───── 阶段 6：EMIT（推送产物） ─────
     await sm.enter(Stage.EMIT)
 
@@ -1146,6 +1166,9 @@ async def _real_generate_v2_body(
         yield "map_layer", map_layer
     # 推送 narrative 事件
     yield "narrative", narrative
+    # 推送 layout 事件（可选增强；无 layout 时前端回退固定三段布局）
+    if layout_tree:
+        yield "layout", layout_tree
     # 推送 verify 事件（前端可选展示）
     yield "verify", {
         "passed": verify_result["passed"] and narrative_check["passed"],

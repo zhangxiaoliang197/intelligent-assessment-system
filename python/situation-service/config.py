@@ -60,6 +60,9 @@ SITUATION_MIN_CHARTS = max(1, int(os.getenv("SITUATION_MIN_CHARTS", "2")))
 SITUATION_REFLECTION_MAX_ROUNDS = max(0, min(int(os.getenv("SITUATION_REFLECTION_MAX_ROUNDS", "2")), 4))
 # Verifier LLM 通道开关（默认关闭，仅用规则通道；启用后增加 LLM 成本）
 SITUATION_VERIFIER_LLM = os.getenv("SITUATION_VERIFIER_LLM", "false").strip().lower() in {"1", "true", "yes", "on"}
+# 布局增强开关：NARRATIVE 之后由 LLM 生成布局树（layout 事件 + 前端动态排版）。
+# 关闭或生成失败时前端回退固定三段布局，不影响其它产物。
+SITUATION_LAYOUT_ENABLED = os.getenv("SITUATION_LAYOUT_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 # Planner 失败重试上限（共 attempts+1 次机会；2 表示 3 次）
 SITUATION_PLANNER_MAX_RETRIES = max(0, min(int(os.getenv("SITUATION_PLANNER_MAX_RETRIES", "2")), 5))
 

@@ -374,9 +374,74 @@ async def write_narrative(
     }
 
 
+async def write_layout(
+    query: str,
+    store: EvidenceStore,
+    charts: List[Dict[str, Any]],
+    map_layer: Optional[Dict[str, Any]],
+    narrative: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """layout Writer（可选增强，NARRATIVE 之后串行）：LLM 产页面布局树。
+
+    输入只有产物元信息（数据源无关）：图表清单 / 图层要素统计 / 数据集列名与行数。
+    返回 LLM 原始布局树（未经校验）；调用方需经 layout_postprocess.sanitize_layout
+    修复后方可使用。LLM 失败返回 None（前端回退固定布局）。
+    """
+    if not charts and not map_layer:
+        return None
+
+    # 数据集元信息：evidence id / 摘要 / 列名 / 行数（不含表名与 SQL，数据源无关）
+    datasets = [
+        {
+            "datasetId": ev.id,
+            "summary": ev.summary or ev.sub_question,
+            "columns": list(ev.columns or []),
+            "rowCount": int(ev.meta.get("totalRows", len(ev.rows)) or 0),
+        }
+        for ev in store.list_evidences()
+        if ev.rows
+    ]
+
+    messages = prompts.build_layout_messages(
+        query,
+        [
+            {
+                "chartId": c.get("chartId", ""),
+                "type": c.get("type", ""),
+                "title": c.get("title", ""),
+                "explanation": c.get("explanation", ""),
+                "datasetRef": c.get("datasetRef", ""),
+            }
+            for c in charts
+        ],
+        map_layer,
+        datasets,
+        narrative,
+    )
+
+    try:
+        # 布局是小型结构化 JSON：禁用 thinking，温度略高（0.5）增加布局多样性
+        raw = await asyncio.to_thread(
+            call_llm_json,
+            messages,
+            0.5,
+            min(config.LLM_MAX_TOKENS, 4000),
+            "disabled",
+        )
+    except Exception as exc:
+        logger.warning("layout LLM 调用失败: %s", exc)
+        return None
+
+    if not isinstance(raw, dict):
+        logger.warning("layout LLM 返回非对象: %s", type(raw).__name__)
+        return None
+    return raw
+
+
 __all__ = [
     "write_single_chart",
     "write_charts_parallel",
     "write_map",
     "write_narrative",
+    "write_layout",
 ]
