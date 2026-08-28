@@ -1,0 +1,136 @@
+# ═══════════════════════════════════════════
+#  AEGIS – .gitignore
+# ═══════════════════════════════════════════
+
+# ── .NET / C# ──────────────────────────────
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings
+*.DotSettings.user
+.vs/
+project.lock.json
+*.nuget.props
+*.nuget.targets
+*.nupkg
+*.snupkg
+launchSettings.json
+
+# User-specific files
+*.rsuser
+*.cache
+*.dbmdl
+*.jfm
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+[Rr]eleases/
+bld/
+[Ll]og/
+[Ll]ogs/
+artifacts/
+TestResults/
+PublishOutput/
+
+# NuGet
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nupkg
+**/packages/repositories.config
+
+# ── Node / React / Vite ───────────────────
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+.eslintcache
+.parcel-cache/
+coverage/
+*.lcov
+
+# ── Python ─────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+*.whl
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# ── Environment / Secrets ─────────────────
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+*.pem
+*.key
+*.pfx
+*.p12
+appsettings.Development.json
+appsettings.*.local.json
+
+# ── IDE / Editors ──────────────────────────
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+.project
+.classpath
+.settings/
+
+# ── OS artifacts ───────────────────────────
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ── Docker ─────────────────────────────────
+# Persistent volume data (created by docker compose)
+neo4j-data/
+es-data/
+redis-data/
+docker-compose.override.yml
+
+# ── Logs ───────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── Misc ───────────────────────────────────
+*.tmp
+*.temp
+*.bak
+*.orig
+*.patch
+*.diff

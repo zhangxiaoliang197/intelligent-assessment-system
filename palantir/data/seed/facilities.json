@@ -1,0 +1,182 @@
+[
+  {
+    "id": "FAC-001",
+    "name": "ETAP Norte",
+    "type": "WaterTreatmentPlant",
+    "lat": 40.48,
+    "lon": -3.69,
+    "criticality": "CRITICAL",
+    "location": "LOC-001"
+  },
+  {
+    "id": "FAC-002",
+    "name": "ETAP Torrejón",
+    "type": "WaterTreatmentPlant",
+    "lat": 40.4553,
+    "lon": -3.4697,
+    "criticality": "CRITICAL",
+    "location": "LOC-005"
+  },
+  {
+    "id": "FAC-003",
+    "name": "ETAP Colmenar Viejo",
+    "type": "WaterTreatmentPlant",
+    "lat": 40.6594,
+    "lon": -3.7666,
+    "criticality": "HIGH",
+    "location": "LOC-014"
+  },
+  {
+    "id": "FAC-004",
+    "name": "ETAP Móstoles",
+    "type": "WaterTreatmentPlant",
+    "lat": 40.3223,
+    "lon": -3.865,
+    "criticality": "HIGH",
+    "location": "LOC-006"
+  },
+  {
+    "id": "FAC-005",
+    "name": "Estación Bombeo Sur",
+    "type": "PumpStation",
+    "lat": 40.38,
+    "lon": -3.71,
+    "criticality": "HIGH",
+    "location": "LOC-002"
+  },
+  {
+    "id": "FAC-006",
+    "name": "Estación Bombeo Móstoles",
+    "type": "PumpStation",
+    "lat": 40.325,
+    "lon": -3.868,
+    "criticality": "MEDIUM",
+    "location": "LOC-006"
+  },
+  {
+    "id": "FAC-007",
+    "name": "Estación Bombeo Majadahonda",
+    "type": "PumpStation",
+    "lat": 40.4726,
+    "lon": -3.8722,
+    "criticality": "MEDIUM",
+    "location": "LOC-010"
+  },
+  {
+    "id": "FAC-008",
+    "name": "Estación Bombeo Fuenlabrada",
+    "type": "PumpStation",
+    "lat": 40.2841,
+    "lon": -3.794,
+    "criticality": "MEDIUM",
+    "location": "LOC-009"
+  },
+  {
+    "id": "FAC-009",
+    "name": "Estación Bombeo Las Rozas",
+    "type": "PumpStation",
+    "lat": 40.4929,
+    "lon": -3.876,
+    "criticality": "LOW",
+    "location": "LOC-012"
+  },
+  {
+    "id": "FAC-010",
+    "name": "Depósito Alcalá",
+    "type": "Reservoir",
+    "lat": 40.4818,
+    "lon": -3.3635,
+    "criticality": "HIGH",
+    "location": "LOC-003"
+  },
+  {
+    "id": "FAC-011",
+    "name": "Depósito Getafe",
+    "type": "Reservoir",
+    "lat": 40.3047,
+    "lon": -3.7311,
+    "criticality": "MEDIUM",
+    "location": "LOC-004"
+  },
+  {
+    "id": "FAC-012",
+    "name": "Depósito Leganés",
+    "type": "Reservoir",
+    "lat": 40.3281,
+    "lon": -3.7635,
+    "criticality": "MEDIUM",
+    "location": "LOC-008"
+  },
+  {
+    "id": "FAC-013",
+    "name": "Depósito Tres Cantos",
+    "type": "Reservoir",
+    "lat": 40.6008,
+    "lon": -3.7074,
+    "criticality": "HIGH",
+    "location": "LOC-019"
+  },
+  {
+    "id": "FAC-014",
+    "name": "Depósito Pozuelo",
+    "type": "Reservoir",
+    "lat": 40.4356,
+    "lon": -3.8145,
+    "criticality": "MEDIUM",
+    "location": "LOC-011"
+  },
+  {
+    "id": "FAC-015",
+    "name": "Nodo Distribución Getafe",
+    "type": "DistributionNode",
+    "lat": 40.3047,
+    "lon": -3.7311,
+    "criticality": "MEDIUM",
+    "location": "LOC-004"
+  },
+  {
+    "id": "FAC-016",
+    "name": "Nodo Distribución Alcorcón",
+    "type": "DistributionNode",
+    "lat": 40.3459,
+    "lon": -3.8248,
+    "criticality": "MEDIUM",
+    "location": "LOC-007"
+  },
+  {
+    "id": "FAC-017",
+    "name": "Nodo Distribución Parla",
+    "type": "DistributionNode",
+    "lat": 40.238,
+    "lon": -3.7676,
+    "criticality": "LOW",
+    "location": "LOC-016"
+  },
+  {
+    "id": "FAC-018",
+    "name": "Nodo Distribución S.S. Reyes",
+    "type": "DistributionNode",
+    "lat": 40.5475,
+    "lon": -3.6269,
+    "criticality": "MEDIUM",
+    "location": "LOC-015"
+  },
+  {
+    "id": "FAC-019",
+    "name": "Nodo Distribución Rivas",
+    "type": "DistributionNode",
+    "lat": 40.352,
+    "lon": -3.5243,
+    "criticality": "LOW",
+    "location": "LOC-013"
+  },
+  {
+    "id": "FAC-020",
+    "name": "Nodo Distribución Valdemoro",
+    "type": "DistributionNode",
+    "lat": 40.1907,
+    "lon": -3.6744,
+    "criticality": "LOW",
+    "location": "LOC-017"
+  }
+]

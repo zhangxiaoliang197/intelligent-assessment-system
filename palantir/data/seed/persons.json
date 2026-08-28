@@ -1,0 +1,802 @@
+[
+  {
+    "id": "PER-001",
+    "name": "Javier Torres Romero",
+    "role": "Security Manager",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-002",
+    "name": "Rubén Rodríguez Medina",
+    "role": "Plant Operator",
+    "type": "Employee",
+    "clearance": "L3",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-003",
+    "name": "Marta Muñoz Garrido",
+    "role": "Environmental Compliance Officer",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-004",
+    "name": "Julia Santos Ortega",
+    "role": "Process Engineer",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-005",
+    "name": "Carlos Ruiz Castro",
+    "role": "Network Administrator",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-006",
+    "name": "Silvia Serrano Sánchez",
+    "role": "Lab Technician",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-007",
+    "name": "Blanca Ramos Herrera",
+    "role": "Distribution Manager",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-008",
+    "name": "Beatriz Santos Pérez",
+    "role": "SCADA Engineer",
+    "type": "Employee",
+    "clearance": "L3",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-009",
+    "name": "Juan Delgado Álvarez",
+    "role": "Plant Operator",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-010",
+    "name": "Héctor Rodríguez Muñoz",
+    "role": "Lab Technician",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-011",
+    "name": "Julia Blanco Ruiz",
+    "role": "Shift Supervisor",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-012",
+    "name": "Paula González Herrera",
+    "role": "Environmental Compliance Officer",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-013",
+    "name": "Andrés Marín Molina",
+    "role": "Health & Safety Officer",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-014",
+    "name": "Santiago Muñoz Vázquez",
+    "role": "Water Quality Analyst",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-015",
+    "name": "Iván Suárez Torres",
+    "role": "Water Quality Analyst",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-016",
+    "name": "Tomás Vázquez Moreno",
+    "role": "Lab Technician",
+    "type": "Employee",
+    "clearance": "L3",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-017",
+    "name": "Pedro Gómez Jiménez",
+    "role": "Water Quality Analyst",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-018",
+    "name": "Rubén Jiménez Medina",
+    "role": "Health & Safety Officer",
+    "type": "Employee",
+    "clearance": "L3",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-019",
+    "name": "Juan Muñoz Fernández",
+    "role": "SCADA Engineer",
+    "type": "Employee",
+    "clearance": "L3",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-020",
+    "name": "Sergio Gómez Cabrera",
+    "role": "Distribution Manager",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-021",
+    "name": "Pablo Molina Molina",
+    "role": "Environmental Compliance Officer",
+    "type": "Employee",
+    "clearance": "L3",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-022",
+    "name": "Diana García Pérez",
+    "role": "Distribution Manager",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-023",
+    "name": "Sergio Navarro Castro",
+    "role": "Process Engineer",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-024",
+    "name": "Rosa Jiménez Garrido",
+    "role": "Environmental Compliance Officer",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-025",
+    "name": "Hugo Cabrera Garrido",
+    "role": "Security Manager",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-026",
+    "name": "Laura Santos Guerrero",
+    "role": "Operations Director",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-027",
+    "name": "Ana Pérez Blanco",
+    "role": "Water Quality Analyst",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-028",
+    "name": "Inés Delgado Rodríguez",
+    "role": "Instrumentation Engineer",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-029",
+    "name": "Pablo Santos Fernández",
+    "role": "Control Room Operator",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-030",
+    "name": "Santiago Ruiz Jiménez",
+    "role": "Water Quality Analyst",
+    "type": "Employee",
+    "clearance": "L3",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-031",
+    "name": "Diego Domínguez Suárez",
+    "role": "Process Engineer",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-032",
+    "name": "Óscar Pérez Romero",
+    "role": "SCADA Engineer",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-033",
+    "name": "Eva Prieto Muñoz",
+    "role": "Plant Operator",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-034",
+    "name": "Julia Hernández Muñoz",
+    "role": "Health & Safety Officer",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-035",
+    "name": "Raquel González Garrido",
+    "role": "Network Administrator",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-036",
+    "name": "Eduardo Santos Fernández",
+    "role": "Water Quality Analyst",
+    "type": "Employee",
+    "clearance": "L3",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-037",
+    "name": "Marcos Álvarez Sánchez",
+    "role": "Control Room Operator",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-038",
+    "name": "Cristina Ortega Marín",
+    "role": "Control Room Operator",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-039",
+    "name": "Daniel Hernández Suárez",
+    "role": "Distribution Manager",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-040",
+    "name": "Fernando Álvarez Álvarez",
+    "role": "Security Manager",
+    "type": "Employee",
+    "clearance": "L3",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-041",
+    "name": "Paula Marín Romero",
+    "role": "Process Engineer",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-042",
+    "name": "Santiago Sánchez Hernández",
+    "role": "SCADA Engineer",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-043",
+    "name": "Fernando Ruiz Ortega",
+    "role": "Process Engineer",
+    "type": "Employee",
+    "clearance": "L3",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-044",
+    "name": "Isabel Hernández Ruiz",
+    "role": "Plant Operator",
+    "type": "Employee",
+    "clearance": "L3",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-045",
+    "name": "Francisco Marín Navarro",
+    "role": "Instrumentation Engineer",
+    "type": "Employee",
+    "clearance": "L3",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-046",
+    "name": "Santiago Cortés Gómez",
+    "role": "Network Administrator",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-047",
+    "name": "Lucía Medina Santos",
+    "role": "Instrumentation Engineer",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-048",
+    "name": "Lucía Medina Iglesias",
+    "role": "Plant Operator",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-049",
+    "name": "David Díaz González",
+    "role": "Control Room Operator",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-050",
+    "name": "Manuel Pérez Delgado",
+    "role": "Operations Director",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-051",
+    "name": "David Ortega Medina",
+    "role": "Health & Safety Officer",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-052",
+    "name": "Nuria Vázquez Romero",
+    "role": "Lab Technician",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-053",
+    "name": "Julia Domínguez Marín",
+    "role": "Health & Safety Officer",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-054",
+    "name": "Pablo García Marín",
+    "role": "SCADA Engineer",
+    "type": "Employee",
+    "clearance": "L1",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-055",
+    "name": "Ricardo Jiménez Fernández",
+    "role": "Health & Safety Officer",
+    "type": "Employee",
+    "clearance": "L2",
+    "org": "ORG-001"
+  },
+  {
+    "id": "PER-056",
+    "name": "Carlos Pérez",
+    "role": "Pump Specialist",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-004"
+  },
+  {
+    "id": "PER-057",
+    "name": "Víctor Prieto",
+    "role": "IT Consultant",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-004"
+  },
+  {
+    "id": "PER-058",
+    "name": "Youssef Kuznetsov",
+    "role": "Diving Inspector",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-004"
+  },
+  {
+    "id": "PER-059",
+    "name": "Sofía Sánchez",
+    "role": "Pipeline Inspector",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-002"
+  },
+  {
+    "id": "PER-060",
+    "name": "Fernando Ruiz",
+    "role": "Diving Inspector",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-002"
+  },
+  {
+    "id": "PER-061",
+    "name": "Rosa Serrano",
+    "role": "Diving Inspector",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-002"
+  },
+  {
+    "id": "PER-062",
+    "name": "Fernando Torres",
+    "role": "IT Consultant",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-002"
+  },
+  {
+    "id": "PER-063",
+    "name": "Alicia Muñoz",
+    "role": "Electrical Engineer",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-003"
+  },
+  {
+    "id": "PER-064",
+    "name": "Enrique Muñoz",
+    "role": "Maintenance Technician",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-004"
+  },
+  {
+    "id": "PER-065",
+    "name": "Elena Torres",
+    "role": "Pipeline Inspector",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-004"
+  },
+  {
+    "id": "PER-066",
+    "name": "Jorge Martínez",
+    "role": "Pump Specialist",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-003"
+  },
+  {
+    "id": "PER-067",
+    "name": "Youssef Volkov",
+    "role": "Pump Specialist",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-002"
+  },
+  {
+    "id": "PER-068",
+    "name": "Mario Herrera",
+    "role": "Civil Works Supervisor",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-005"
+  },
+  {
+    "id": "PER-069",
+    "name": "Francisco López",
+    "role": "Welding Specialist",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-003"
+  },
+  {
+    "id": "PER-070",
+    "name": "Oleg Ivanov",
+    "role": "Pipeline Inspector",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-003"
+  },
+  {
+    "id": "PER-071",
+    "name": "Andrei Benali",
+    "role": "Pipeline Inspector",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-007"
+  },
+  {
+    "id": "PER-072",
+    "name": "Patricia Ortega",
+    "role": "Pipeline Inspector",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-008"
+  },
+  {
+    "id": "PER-073",
+    "name": "Diego Ortega",
+    "role": "Crane Operator",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-005"
+  },
+  {
+    "id": "PER-074",
+    "name": "Tomás Domínguez",
+    "role": "SCADA Integrator",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-004"
+  },
+  {
+    "id": "PER-075",
+    "name": "Teresa Medina",
+    "role": "Chemical Dosing Specialist",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-003"
+  },
+  {
+    "id": "PER-076",
+    "name": "Eduardo Garrido",
+    "role": "Telemetry Technician",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-007"
+  },
+  {
+    "id": "PER-077",
+    "name": "Nuria Cabrera",
+    "role": "Chemical Dosing Specialist",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-006"
+  },
+  {
+    "id": "PER-078",
+    "name": "Nikolai El Fassi",
+    "role": "Electrical Engineer",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-006"
+  },
+  {
+    "id": "PER-079",
+    "name": "Dmitri Ivanov",
+    "role": "Telemetry Technician",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-002"
+  },
+  {
+    "id": "PER-080",
+    "name": "Tomás Álvarez",
+    "role": "Welding Specialist",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-005"
+  },
+  {
+    "id": "PER-081",
+    "name": "Julia García",
+    "role": "Diving Inspector",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-008"
+  },
+  {
+    "id": "PER-082",
+    "name": "Teresa Guerrero",
+    "role": "Telemetry Technician",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-003"
+  },
+  {
+    "id": "PER-083",
+    "name": "Sergio Marín",
+    "role": "IT Consultant",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-007"
+  },
+  {
+    "id": "PER-084",
+    "name": "Iván Rubio",
+    "role": "Chemical Dosing Specialist",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-005"
+  },
+  {
+    "id": "PER-085",
+    "name": "Andrés Iglesias",
+    "role": "Telemetry Technician",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-006"
+  },
+  {
+    "id": "PER-086",
+    "name": "Gonzalo Guerrero",
+    "role": "Telemetry Technician",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-002"
+  },
+  {
+    "id": "PER-087",
+    "name": "Viktor El Fassi",
+    "role": "Electrical Engineer",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-003"
+  },
+  {
+    "id": "PER-088",
+    "name": "David Fernández",
+    "role": "IT Consultant",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-002"
+  },
+  {
+    "id": "PER-089",
+    "name": "Marta González",
+    "role": "SCADA Integrator",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-002"
+  },
+  {
+    "id": "PER-090",
+    "name": "Alejandro Moreno",
+    "role": "Calibration Technician",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-006"
+  },
+  {
+    "id": "PER-091",
+    "name": "Javier Delgado",
+    "role": "SCADA Integrator",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-002"
+  },
+  {
+    "id": "PER-092",
+    "name": "Andrei El Fassi",
+    "role": "Diving Inspector",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-005"
+  },
+  {
+    "id": "PER-093",
+    "name": "Marcos Santos",
+    "role": "Welding Specialist",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-003"
+  },
+  {
+    "id": "PER-094",
+    "name": "Alicia Martínez",
+    "role": "SCADA Integrator",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-005"
+  },
+  {
+    "id": "PER-095",
+    "name": "Andrés Marín",
+    "role": "IT Consultant",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-004"
+  },
+  {
+    "id": "PER-096",
+    "name": "Javier Rodríguez",
+    "role": "Crane Operator",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-002"
+  },
+  {
+    "id": "PER-097",
+    "name": "Bogdan Hassan",
+    "role": "Maintenance Technician",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-003"
+  },
+  {
+    "id": "PER-098",
+    "name": "Raquel Serrano",
+    "role": "Diving Inspector",
+    "type": "Contractor",
+    "clearance": "L2",
+    "org": "ORG-004"
+  },
+  {
+    "id": "PER-099",
+    "name": "Hassan El Fassi",
+    "role": "Calibration Technician",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-003"
+  },
+  {
+    "id": "PER-100",
+    "name": "Alejandro Ramos",
+    "role": "Electrical Engineer",
+    "type": "Contractor",
+    "clearance": "L1",
+    "org": "ORG-002"
+  }
+]

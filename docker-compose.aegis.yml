@@ -1,0 +1,20 @@
+# ============================================================
+# AEGIS（Palantir 动态本体）合并编排
+# ------------------------------------------------------------
+# 通过 Compose include 引入 palantir/ 目录下的 AEGIS 独立编排，
+# 与智能评估系统 docker-compose.yml 统一编排启动。
+#
+# 依赖：Docker Compose v2.20+（Docker 29 已内置）
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.aegis.yml up -d
+#   （或直接运行 start-all.ps1）
+#
+# 端口：neo4j 7474/7687、opensearch 9200、redis 6379、
+#       aegis-api 5000、aegis-frontend 3000（与宿主 10086/10252-10258 无冲突）
+#
+# 环境变量（可选，均可由 .env 或环境变量覆盖）：
+#   NEO4J_AUTH         默认 neo4j/aegis2026!
+#   DEEPSEEK_API_KEY   必填才能使用 DeepSeek 能力，否则服务照常启动
+# ============================================================
+include:
+  - ./palantir/docker-compose.yml

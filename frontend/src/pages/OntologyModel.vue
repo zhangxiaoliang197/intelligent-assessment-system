@@ -15,6 +15,18 @@
 
       <!-- 统计卡片 -->
       <div class="stats-cards">
+        <!-- 动态本体（Palantir 项目）入口：点击新标签页打开 -->
+        <el-card class="stat-card stat-card-clickable" shadow="hover" @click="openDynamicOntology">
+          <div class="stat-content">
+            <div class="stat-icon purple">
+              <el-icon :size="36"><Connection /></el-icon>
+            </div>
+            <div class="stat-info">
+              <h3>动态本体</h3>
+              <p>点击进入 Palantir 项目</p>
+            </div>
+          </div>
+        </el-card>
         <el-card class="stat-card stat-card-clickable" shadow="hover" @click="openOntologyModelManage">
           <div class="stat-content">
             <div class="stat-icon cyan">
@@ -440,7 +452,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Box, SetUp,
+  Box, SetUp, Connection,
   Refresh, Plus, Document, Upload, UploadFilled, EditPen, ArrowDown, Files
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -665,6 +677,14 @@ const startManualBuild = async () => {
   } finally {
     submitting.value = false
   }
+}
+
+// ── 动态本体（Palantir 项目）入口 ──
+// AEGIS 前端地址：可通过 VITE_AEGIS_URL 环境变量覆盖，默认与 palantir compose 前端端口一致
+const AEGIS_URL = import.meta.env.VITE_AEGIS_URL || 'http://localhost:3000'
+
+const openDynamicOntology = () => {
+  window.open(AEGIS_URL, '_blank', 'noopener')
 }
 
 // ── 本体模型操作 ──
@@ -1080,6 +1100,7 @@ onMounted(() => {
 .stat-icon.cyan { background: rgba(6, 182, 212, 0.12); color: #06b6d4; }
 .stat-icon.blue { background: rgba(64, 158, 255, 0.12); color: #409eff; }
 .stat-icon.indigo { background: rgba(99, 102, 241, 0.12); color: #6366f1; }
+.stat-icon.purple { background: rgba(139, 92, 246, 0.12); color: #8b5cf6; }
 
 .stat-info h3 {
   margin: 0;

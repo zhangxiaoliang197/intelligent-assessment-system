@@ -1,0 +1,304 @@
+@prefix : <http://aegis.intelligence/ontology/water#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dc: <http://purl.org/dc/elements/1.1/> .
+
+# ============================================================
+# AEGIS Water Supply Sabotage Ontology
+# Version: 1.0
+# Domain: Critical Infrastructure – Water Utilities
+# Purpose: Model entities, events, and relationships for
+#          sabotage detection and forensic investigation
+# ============================================================
+
+<http://aegis.intelligence/ontology/water>
+    a owl:Ontology ;
+    dc:title "AEGIS Water Supply Sabotage Ontology" ;
+    dc:description "OWL ontology for modeling water supply infrastructure, events, actors, and risk cases for sabotage detection." ;
+    dc:creator "AEGIS Intelligence Platform" ;
+    owl:versionInfo "1.0" .
+
+# ============================================================
+# CLASSES – Core Entities (TBox)
+# ============================================================
+
+# --- Infrastructure ---
+:Facility a owl:Class ;
+    rdfs:label "Facility" ;
+    skos:definition "A water supply infrastructure element (plant, reservoir, pump station, etc.)" .
+
+:WaterTreatmentPlant a owl:Class ;
+    rdfs:subClassOf :Facility ;
+    rdfs:label "Water Treatment Plant" .
+
+:PumpStation a owl:Class ;
+    rdfs:subClassOf :Facility ;
+    rdfs:label "Pump Station" .
+
+:Reservoir a owl:Class ;
+    rdfs:subClassOf :Facility ;
+    rdfs:label "Reservoir" .
+
+:DistributionNode a owl:Class ;
+    rdfs:subClassOf :Facility ;
+    rdfs:label "Distribution Node" .
+
+# --- Sensors & Observations ---
+:Sensor a owl:Class ;
+    rdfs:label "Sensor" ;
+    skos:definition "An IoT sensor installed in a facility" .
+
+:Observation a owl:Class ;
+    rdfs:label "Observation" ;
+    skos:definition "A single sensor reading at a point in time" .
+
+# --- Events (abstract hierarchy) ---
+:Event a owl:Class ;
+    rdfs:label "Event" ;
+    skos:definition "Any notable occurrence in the system" .
+
+:PhysicalAnomalyEvent a owl:Class ;
+    rdfs:subClassOf :Event ;
+    rdfs:label "Physical Anomaly Event" ;
+    skos:definition "Abnormal sensor reading (chlorine, turbidity, pH, flow rate)" .
+
+:AccessEvent a owl:Class ;
+    rdfs:subClassOf :Event ;
+    rdfs:label "Access Event" ;
+    skos:definition "Physical access log (badge, door, camera)" .
+
+:CyberAlertEvent a owl:Class ;
+    rdfs:subClassOf :Event ;
+    rdfs:label "Cyber Alert Event" ;
+    skos:definition "Cybersecurity alert (PLC login attempt, SCADA anomaly)" .
+
+:MaintenanceEvent a owl:Class ;
+    rdfs:subClassOf :Event ;
+    rdfs:label "Maintenance Event" ;
+    skos:definition "Scheduled or unscheduled maintenance activity" .
+
+:CitizenReportEvent a owl:Class ;
+    rdfs:subClassOf :Event ;
+    rdfs:label "Citizen Report Event" ;
+    skos:definition "Public complaint (smell, taste, color, health symptoms)" .
+
+# --- Actors ---
+:Person a owl:Class ;
+    rdfs:label "Person" ;
+    skos:definition "An employee, contractor, or identified individual" .
+
+:Employee a owl:Class ;
+    rdfs:subClassOf :Person ;
+    rdfs:label "Employee" .
+
+:Contractor a owl:Class ;
+    rdfs:subClassOf :Person ;
+    rdfs:label "Contractor" .
+
+:Organization a owl:Class ;
+    rdfs:label "Organization" ;
+    skos:definition "A company, agency, or entity" .
+
+# --- Assets ---
+:Asset a owl:Class ;
+    rdfs:label "Asset" ;
+    skos:definition "A physical or digital asset (valve, PLC, camera, pump)" .
+
+:Valve a owl:Class ;
+    rdfs:subClassOf :Asset ;
+    rdfs:label "Valve" .
+
+:PLC a owl:Class ;
+    rdfs:subClassOf :Asset ;
+    rdfs:label "PLC Controller" .
+
+:Camera a owl:Class ;
+    rdfs:subClassOf :Asset ;
+    rdfs:label "Security Camera" .
+
+:Pump a owl:Class ;
+    rdfs:subClassOf :Asset ;
+    rdfs:label "Pump" .
+
+# --- Substances ---
+:Substance a owl:Class ;
+    rdfs:label "Substance" ;
+    skos:definition "A chemical substance (chlorine, contaminant, etc.)" .
+
+# --- Risk & Investigation ---
+:RiskCase a owl:Class ;
+    rdfs:label "Risk Case" ;
+    skos:definition "An investigated case linking correlated events" .
+
+:SuspectedSabotage a owl:Class ;
+    rdfs:subClassOf :RiskCase ;
+    rdfs:label "Suspected Sabotage" ;
+    skos:definition "A risk case inferred from correlation of physical, access, and cyber events" .
+
+# --- Location ---
+:Location a owl:Class ;
+    rdfs:label "Location" ;
+    skos:definition "A geographic location with coordinates" .
+
+# ============================================================
+# OBJECT PROPERTIES
+# ============================================================
+
+:locatedAt a owl:ObjectProperty ;
+    rdfs:label "located at" ;
+    rdfs:domain :Facility ;
+    rdfs:range :Location .
+
+:hasSensor a owl:ObjectProperty ;
+    rdfs:label "has sensor" ;
+    rdfs:domain :Facility ;
+    rdfs:range :Sensor .
+
+:producesObservation a owl:ObjectProperty ;
+    rdfs:label "produces observation" ;
+    rdfs:domain :Sensor ;
+    rdfs:range :Observation .
+
+:occursAt a owl:ObjectProperty ;
+    rdfs:label "occurs at" ;
+    rdfs:domain :Event ;
+    rdfs:range :Facility .
+
+:involvesPerson a owl:ObjectProperty ;
+    rdfs:label "involves person" ;
+    rdfs:domain :Event ;
+    rdfs:range :Person .
+
+:involvesAsset a owl:ObjectProperty ;
+    rdfs:label "involves asset" ;
+    rdfs:domain :Event ;
+    rdfs:range :Asset .
+
+:involvesSubstance a owl:ObjectProperty ;
+    rdfs:label "involves substance" ;
+    rdfs:domain :Event ;
+    rdfs:range :Substance .
+
+:belongsTo a owl:ObjectProperty ;
+    rdfs:label "belongs to" ;
+    rdfs:domain :Person ;
+    rdfs:range :Organization .
+
+:operatesIn a owl:ObjectProperty ;
+    rdfs:label "operates in" ;
+    rdfs:domain :Organization ;
+    rdfs:range :Location .
+
+:hasAsset a owl:ObjectProperty ;
+    rdfs:label "has asset" ;
+    rdfs:domain :Facility ;
+    rdfs:range :Asset .
+
+:indicates a owl:ObjectProperty ;
+    rdfs:label "indicates" ;
+    rdfs:domain :Event ;
+    rdfs:range :RiskCase .
+
+:linkedEvent a owl:ObjectProperty ;
+    rdfs:label "linked event" ;
+    rdfs:domain :RiskCase ;
+    rdfs:range :Event .
+
+:linkedFacility a owl:ObjectProperty ;
+    rdfs:label "linked facility" ;
+    rdfs:domain :RiskCase ;
+    rdfs:range :Facility .
+
+:linkedPerson a owl:ObjectProperty ;
+    rdfs:label "linked person" ;
+    rdfs:domain :RiskCase ;
+    rdfs:range :Person .
+
+:connectedTo a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:label "connected to" ;
+    rdfs:domain :Person ;
+    rdfs:range :Person .
+
+# ============================================================
+# DATATYPE PROPERTIES
+# ============================================================
+
+:hasName a owl:DatatypeProperty ;
+    rdfs:range xsd:string .
+
+:hasTimestamp a owl:DatatypeProperty ;
+    rdfs:domain :Event ;
+    rdfs:range xsd:dateTime .
+
+:hasSeverity a owl:DatatypeProperty ;
+    rdfs:domain :Event ;
+    rdfs:range xsd:integer .
+
+:hasDescription a owl:DatatypeProperty ;
+    rdfs:range xsd:string .
+
+:hasLatitude a owl:DatatypeProperty ;
+    rdfs:domain :Location ;
+    rdfs:range xsd:decimal .
+
+:hasLongitude a owl:DatatypeProperty ;
+    rdfs:domain :Location ;
+    rdfs:range xsd:decimal .
+
+:observedValue a owl:DatatypeProperty ;
+    rdfs:domain :Observation ;
+    rdfs:range xsd:decimal .
+
+:observedMetric a owl:DatatypeProperty ;
+    rdfs:domain :Observation ;
+    rdfs:range xsd:string .
+
+:riskScore a owl:DatatypeProperty ;
+    rdfs:domain :RiskCase ;
+    rdfs:range xsd:decimal .
+
+:hasStatus a owl:DatatypeProperty ;
+    rdfs:range xsd:string .
+
+:hasRole a owl:DatatypeProperty ;
+    rdfs:domain :Person ;
+    rdfs:range xsd:string .
+
+:hasConfidence a owl:DatatypeProperty ;
+    rdfs:domain :RiskCase ;
+    rdfs:range xsd:decimal .
+
+:windowId a owl:DatatypeProperty ;
+    rdfs:domain :Event ;
+    rdfs:range xsd:string .
+
+# ============================================================
+# OWL RESTRICTIONS (Axioms)
+# ============================================================
+
+:PhysicalAnomalyEvent rdfs:subClassOf [
+    a owl:Restriction ;
+    owl:onProperty :occursAt ;
+    owl:someValuesFrom :Facility
+] .
+
+:AccessEvent rdfs:subClassOf [
+    a owl:Restriction ;
+    owl:onProperty :involvesPerson ;
+    owl:someValuesFrom :Person
+] .
+
+:CyberAlertEvent rdfs:subClassOf [
+    a owl:Restriction ;
+    owl:onProperty :occursAt ;
+    owl:someValuesFrom :Facility
+] .
+
+:SuspectedSabotage rdfs:subClassOf [
+    a owl:Restriction ;
+    owl:onProperty :linkedEvent ;
+    owl:minCardinality "3"^^xsd:nonNegativeInteger
+] .

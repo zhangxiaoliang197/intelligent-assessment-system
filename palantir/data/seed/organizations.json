@@ -1,0 +1,42 @@
+[
+  {
+    "id": "ORG-001",
+    "name": "Canal de Isabel II",
+    "type": "WaterUtility"
+  },
+  {
+    "id": "ORG-002",
+    "name": "AquaServ Mantenimiento SL",
+    "type": "MaintenanceContractor"
+  },
+  {
+    "id": "ORG-003",
+    "name": "HidroTec Ingeniería SA",
+    "type": "MaintenanceContractor"
+  },
+  {
+    "id": "ORG-004",
+    "name": "TechPipe Solutions SL",
+    "type": "MaintenanceContractor"
+  },
+  {
+    "id": "ORG-005",
+    "name": "Ibérica de Bombas y Válvulas",
+    "type": "MaintenanceContractor"
+  },
+  {
+    "id": "ORG-006",
+    "name": "CyberSec Industrial SA",
+    "type": "SecurityProvider"
+  },
+  {
+    "id": "ORG-007",
+    "name": "SecurIT Consulting",
+    "type": "SecurityProvider"
+  },
+  {
+    "id": "ORG-008",
+    "name": "SmartWater Analytics SL",
+    "type": "ITConsulting"
+  }
+]

@@ -44,6 +44,12 @@
 - JSON 文件 - Python 服务的业务数据持久化（知识库、本体模型、会话记录等，原子写入 + .bak 备份）
 - 业务数据源 - 通过 admin-service 的 JDBC 动态连接，支持 MySQL/PostgreSQL/Oracle/达梦 V8/SQL Server
 
+### 动态本体模块（palantir/）
+- 独立子系统 AEGIS（Palantir 动态本体），技术栈：.NET 10 + Neo4j + OpenSearch + Redis，代码位于 `palantir/` 目录
+- 入口：智能评估系统「本体模型」页面顶部「动态本体」卡片，点击在新标签页打开（默认 `http://localhost:3000`）
+- 与宿主系统解耦：独立端口（5000/3000/7474/7687/9200/6379）、独立网络、独立数据卷
+- 维护说明：`palantir/` 为整目录独立维护模块，含自有 `docker-compose.yml`、Dockerfile、种子数据
+
 ## 🚀 快速开始
 
 ### 环境要求
@@ -105,6 +111,19 @@ Windows PowerShell 构建：
 编辑；源码克隆默认使用各服务自身的 `data` 目录，Docker 则使用持久化卷，
 不依赖开发者机器上的绝对路径。
 
+#### 一键启动（智能评估系统 + 动态本体模块）
+
+Windows PowerShell：
+
+```powershell
+.\start-all.ps1            # 使用已有镜像启动全部服务
+.\start-all.ps1 -Build     # 重新构建全部镜像后启动（首次使用）
+```
+
+- 脚本统一拉起宿主的 9 个服务与 AEGIS 的 5 个服务，并自动灌入 AEGIS 种子数据（幂等）
+- AEGIS 手动灌数据：`Invoke-RestMethod -Uri http://localhost:5000/api/seed -Method Post`
+- 动态本体前端地址可用 `VITE_AEGIS_URL` 环境变量覆盖（frontend 构建时读取）
+
 ## 📁 项目结构
 
 ```
@@ -127,8 +146,19 @@ intelligent-assessment-system/
 │   └── admin-service/          # 基础管理服务（数据库配置/数据集/指标/大模型配置/SQL执行）
 ├── docker/                      # Docker配置
 ├── scripts/                    # 部署脚本
-├── docker-compose.yml          # Docker Compose配置
+├── docker-compose.yml          # Docker Compose配置（智能评估系统）
+├── docker-compose.aegis.yml    # Docker Compose合并编排（include palantir/）
+├── start-all.ps1               # 统一启动脚本（含 AEGIS 种子灌入）
 └── README.md
+```
+
+```
+palantir/                       # 动态本体模块（AEGIS，整目录独立维护）
+├── src/backend/Aegis.API/     # .NET 10 后端
+├── src/frontend/              # Vue 3 前端
+├── data/                      # 种子数据（seed.cypher / intel_documents.json）
+├── ontology/                  # 本体定义文件
+└── docker-compose.yml         # AEGIS 自有编排（被根目录 include 引入）
 ```
 
 ## 🎨 功能演示

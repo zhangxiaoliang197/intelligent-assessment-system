@@ -1,0 +1,13 @@
+# Docker
+.dockerignore
+**/bin/
+**/obj/
+**/node_modules/
+**/.git
+**/.vs
+**/.vscode
+**/dist/
+**/out/
+*.md
+*.sln.DotSettings
+.env.local
