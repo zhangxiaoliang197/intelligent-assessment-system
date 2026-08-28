@@ -81,6 +81,7 @@ _build_docker.ps1
 # Personal dev docs (don't commit)
 CLAUDE.md
 CLAUDE.local.md
+CODEBUDDY.md
 
 读我.docx
 GeoWebCache-使用指南.md
@@ -115,6 +116,8 @@ python/tile-service/tiles/
 # 本地启动/停止脚本
 start.ps1
 stop.ps1
+start-local.ps1
+start-all.ps1
 
 # IDE 本地配置（不提交）
 .trae/settings.local.json

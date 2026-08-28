@@ -111,16 +111,18 @@ Windows PowerShell 构建：
 编辑；源码克隆默认使用各服务自身的 `data` 目录，Docker 则使用持久化卷，
 不依赖开发者机器上的绝对路径。
 
-#### 一键启动（智能评估系统 + 动态本体模块）
+#### 一键启动（智能评估系统 + 动态本体模块，本地开发模式）
 
 Windows PowerShell：
 
 ```powershell
-.\start-all.ps1            # 使用已有镜像启动全部服务
-.\start-all.ps1 -Build     # 重新构建全部镜像后启动（首次使用）
+.\start.ps1            # 一键启动全部服务（幂等，可重复执行）
+.\start.ps1 -SkipSeed  # 跳过 AEGIS 种子数据灌入（已灌过可加速）
 ```
 
-- 脚本统一拉起宿主的 9 个服务与 AEGIS 的 5 个服务，并自动灌入 AEGIS 种子数据（幂等）
+- 脚本按序拉起：Qdrant 向量库 → AEGIS 基础设施容器（Neo4j/OpenSearch/Redis）→ 主系统 7 个后端服务（admin + 6 个 Python）→ AEGIS 后端 API（dotnet）→ 两个前端（10086 / 3000），并自动灌入 AEGIS 种子数据（幂等）
+- 重复执行自动跳过已在运行的服务；日志统一在 `logs\` 目录
+- 若需 Docker 部署（构建镜像），可参考根目录 `docker-compose.yml` 与 `docker-compose.aegis.yml` 手动编排
 - AEGIS 手动灌数据：`Invoke-RestMethod -Uri http://localhost:5000/api/seed -Method Post`
 - 动态本体前端地址可用 `VITE_AEGIS_URL` 环境变量覆盖（frontend 构建时读取）
 
@@ -148,7 +150,8 @@ intelligent-assessment-system/
 ├── scripts/                    # 部署脚本
 ├── docker-compose.yml          # Docker Compose配置（智能评估系统）
 ├── docker-compose.aegis.yml    # Docker Compose合并编排（include palantir/）
-├── start-all.ps1               # 统一启动脚本（含 AEGIS 种子灌入）
+├── start.ps1                   # 唯一一键启动脚本（本地模式，含 AEGIS 种子灌入）
+├── stop.ps1                    # 停止主系统 + AEGIS 本地进程
 └── README.md
 ```
 
