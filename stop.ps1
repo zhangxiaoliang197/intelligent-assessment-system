@@ -1,4 +1,4 @@
-﻿# ============================================================
+# ============================================================
 # 自举引导：强制使用 PowerShell 7+（pwsh）运行本脚本。
 # 若由 Windows PowerShell 5.1（或更低）启动，自动用 pwsh 重启自身。
 # ============================================================
@@ -34,10 +34,8 @@ Write-Host "========================================" -ForegroundColor Cyan
 # 注意：GeoServer (:9090) 故意不在此列表 —— 它是仓库外的常驻外部服务，由 start.ps1 按
 # ensure-up 语义管理（已在运行就跳过，从不强杀）。如需停止请用其 Jetty STOP 端口 8079
 # （-DSTOP.KEY=geoserver）或 bin\shutdown.bat。
-# AEGIS 动态本体（:5000 API / :3000 前端）一并纳入；其基础设施容器（Neo4j/OpenSearch/Redis）
-# 不在此列表，如需停止可执行: docker compose -f palantir\docker-compose.yml down
-$ports = @(10086, 10252, 10253, 10254, 10255, 10256, 10257, 10258, 5000, 3000)
-$names = @("Frontend","Knowledge","QA","Indicator","Evaluation","Ontology","Situation","Admin","AEGIS_API","AEGIS_Frontend")
+$ports = @(10086, 10252, 10253, 10254, 10255, 10256, 10257, 10258)
+$names = @("Frontend","Knowledge","QA","Indicator","Evaluation","Ontology","Situation","Admin")
 
 # ── 第 1 步：按端口杀进程树 ──
 $stopped = 0
@@ -60,17 +58,17 @@ for ($i = 0; $i -lt $ports.Count; $i++) {
     }
 }
 
-# ── 第 2 步：按进程名杀残留 python/node/dotnet ──
-Write-Host "`n[2/3] Killing Python/Node/dotnet processes..." -ForegroundColor Yellow
-$procNames = @("python", "node", "dotnet")
+# ── 第 2 步：按进程名杀残留 python/node ──
+Write-Host "`n[2/3] Killing Python/Node processes..." -ForegroundColor Yellow
+$procNames = @("python", "node")
 foreach ($pn in $procNames) {
     $procs = Get-Process -Name $pn -ErrorAction SilentlyContinue
     if ($procs) {
         foreach ($p in $procs) {
             try {
                 $cmd = (Get-WmiObject Win32_Process -Filter "ProcessId=$($p.Id)" -ErrorAction SilentlyContinue).CommandLine -as [string]
-                # 只杀项目相关的 python/node/dotnet 进程
-                if ($cmd -match "uvicorn|vite|npx|knowledge-service|qa-service|indicator-service|evaluation-service|ontology-service|situation-service|frontend|Aegis.API") {
+                # 只杀项目相关的 python/node 进程
+                if ($cmd -match "uvicorn|vite|npx|knowledge-service|qa-service|indicator-service|evaluation-service|ontology-service|situation-service|frontend") {
                     Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
                     Start-Sleep -Milliseconds 200
                     taskkill.exe /F /PID $p.Id /T 2>$null

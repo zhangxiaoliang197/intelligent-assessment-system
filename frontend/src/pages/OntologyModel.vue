@@ -15,18 +15,6 @@
 
       <!-- 统计卡片 -->
       <div class="stats-cards">
-        <!-- 动态本体（Palantir 项目）入口：点击新标签页打开 -->
-        <el-card class="stat-card stat-card-clickable" shadow="hover" @click="openDynamicOntology">
-          <div class="stat-content">
-            <div class="stat-icon purple">
-              <el-icon :size="36"><Connection /></el-icon>
-            </div>
-            <div class="stat-info">
-              <h3>动态本体</h3>
-              <p>点击进入 Palantir 项目</p>
-            </div>
-          </div>
-        </el-card>
         <el-card class="stat-card stat-card-clickable" shadow="hover" @click="openOntologyModelManage">
           <div class="stat-content">
             <div class="stat-icon cyan">
@@ -677,14 +665,6 @@ const startManualBuild = async () => {
   } finally {
     submitting.value = false
   }
-}
-
-// ── 动态本体（Palantir 项目）入口 ──
-// AEGIS 前端地址：可通过 VITE_AEGIS_URL 环境变量覆盖，默认与 palantir compose 前端端口一致
-const AEGIS_URL = import.meta.env.VITE_AEGIS_URL || 'http://localhost:3000'
-
-const openDynamicOntology = () => {
-  window.open(AEGIS_URL, '_blank', 'noopener')
 }
 
 // ── 本体模型操作 ──
