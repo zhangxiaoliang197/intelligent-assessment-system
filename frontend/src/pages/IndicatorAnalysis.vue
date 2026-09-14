@@ -853,7 +853,7 @@ const restoreExecutionState = (sid: string) => {
     if (state.sections) {
       panelState.value.sections = state.sections
     }
-    if (hasExecutionData.value) showExecutionPanel.value = true
+    // 恢复历史执行数据时不自动弹出面板，仅在有任务真正执行时弹出（右侧保留手动展开按钮）
   }
 }
 

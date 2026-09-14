@@ -166,9 +166,19 @@
                     </div>
 
                     <div class="ai-response">
-                      <!-- 布局树渲染（LLM 动态排版；无布局时回退固定三段） -->
+                      <!-- HTML Artifact 沙箱渲染（优先；LLM 整页排版 + situation-kit 挂载真实图表/地图） -->
+                      <ArtifactSandbox
+                        v-if="store.artifact"
+                        :html="store.artifact.html"
+                        :charts="store.charts"
+                        :map-layers="store.mapLayers"
+                        :datasets="store.datasets"
+                        :narrative="store.narrative"
+                      />
+
+                      <!-- 布局树渲染（回退路径：无 artifact 时；无布局再回退固定三段） -->
                       <SituationLayoutRenderer
-                        v-if="store.layout"
+                        v-else-if="store.layout"
                         :layout="store.layout"
                         :charts="store.charts"
                         :map-layers="store.mapLayers"
@@ -430,6 +440,7 @@ import SituationChartGrid from '@/components/situation/SituationChartGrid.vue'
 import SituationMapSlot from '@/components/situation/SituationMapSlot.vue'
 import SituationNarrative from '@/components/situation/SituationNarrative.vue'
 import SituationLayoutRenderer from '@/components/situation/SituationLayoutRenderer.vue'
+import ArtifactSandbox from '@/components/situation/ArtifactSandbox.vue'
 import SituationSkillToolbar from '@/components/situation/SituationSkillToolbar.vue'
 import SituationSkillDrawer from '@/components/situation/SituationSkillDrawer.vue'
 import SituationSkillParametersDialog from '@/components/situation/SituationSkillParametersDialog.vue'

@@ -7,6 +7,7 @@ export {}
 
 declare module 'vue' {
   export interface GlobalComponents {
+    ArtifactSandbox: typeof import('./components/situation/ArtifactSandbox.vue')['default']
     CurrentStatePanel: typeof import('./components/CurrentStatePanel.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAvatar: typeof import('element-plus/es')['ElAvatar']

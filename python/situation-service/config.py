@@ -63,6 +63,9 @@ SITUATION_VERIFIER_LLM = os.getenv("SITUATION_VERIFIER_LLM", "false").strip().lo
 # 布局增强开关：NARRATIVE 之后由 LLM 生成布局树（layout 事件 + 前端动态排版）。
 # 关闭或生成失败时前端回退固定三段布局，不影响其它产物。
 SITUATION_LAYOUT_ENABLED = os.getenv("SITUATION_LAYOUT_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+# HTML Artifact 排版增强开关（优先于布局树）：LLM 生成整页 HTML 排版，
+# 前端 iframe 沙箱渲染；失败回退布局树，再回退固定三段布局。
+SITUATION_ARTIFACT_ENABLED = os.getenv("SITUATION_ARTIFACT_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 # Planner 失败重试上限（共 attempts+1 次机会；2 表示 3 次）
 SITUATION_PLANNER_MAX_RETRIES = max(0, min(int(os.getenv("SITUATION_PLANNER_MAX_RETRIES", "2")), 5))
 

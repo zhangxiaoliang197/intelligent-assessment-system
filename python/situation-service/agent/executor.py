@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import config
 from agent import prompts, tools
+from agent import geo_profile
 from agent.evidence_store import Evidence, EvidenceStore
 from llm_client import call_llm_json
 
@@ -74,12 +75,16 @@ def _query_dataset_with_sql(
     query: str,
     intent: str,
     limit: int,
+    raw_mode: bool = False,
 ) -> Dict[str, Any]:
     """V2 取数：优先用 LLM 生成精确 SQL 执行，失败回退整表查询。
 
     复用评估分析 Text-to-SQL 能力（LLM 按 schema 生成 WHERE/聚合/GROUP BY），
     只有 schema 无字段元数据或 SQL 生成/执行失败时才回退原 query_admin_dataset，
     保证 V2 五阶段流程不因取数方式升级而中断。
+
+    raw_mode=True 时为明细保真模式（geoMode=raw）：SQL 禁止聚合，必须保留
+    全部列（尤其经纬度/名称/途经点列）的行级原值，供地图确定性管线使用。
     """
     # 先取数据集物理表结构，构建 Text-to-SQL 所需的 schema
     schema = tools.fetch_dataset_structure(ds_id)
@@ -89,7 +94,7 @@ def _query_dataset_with_sql(
 
     try:
         sql_result = call_llm_json(
-            prompts.build_sql_messages(query, schema, intent),
+            prompts.build_sql_messages(query, schema, intent, raw_mode=raw_mode),
             0.3,
             config.LLM_MAX_TOKENS,
         )
@@ -251,10 +256,14 @@ async def execute_sub_question(
     effective_row_limit = row_limit or config.SITUATION_DATA_ROW_LIMIT
     sensitive_columns = config.SITUATION_SENSITIVE_COLUMNS
 
-    # 取数策略：sub_question 携带 filters/aggregation 时走 Text-to-SQL（LLM 按表结构
-    # 生成精确 SQL），否则回退确定性 query_admin_dataset。任一路径失败均回退整表查询。
+    # 取数策略（地图生成链路重构 §4.3）：
+    # - geoMode=raw：明细保真模式，坐标列必须行级原值保留。带 filters 时走保真 Text-to-SQL
+    #   （禁止聚合），否则直接整表查询（坐标列天然保留）；
+    # - geoMode=aggregate（默认）：携带 filters/aggregation 时走 Text-to-SQL（LLM 按表结构
+    #   生成精确 SQL），否则回退确定性 query_admin_dataset。任一路径失败均回退整表查询。
     filters = sub_question.get("filters")
     aggregation = sub_question.get("aggregation")
+    geo_mode = str(sub_question.get("geoMode") or "aggregate").strip().lower()
     use_text_to_sql = bool(filters or aggregation)
 
     # 构建 Text-to-SQL 的 intent 文本（让 LLM 知道过滤与聚合意图）
@@ -269,7 +278,25 @@ async def execute_sub_question(
     sql_intent = "；".join(intent_parts) if intent_parts else str(sub_question.get("intent") or "")
 
     try:
-        if use_text_to_sql:
+        if geo_mode == "raw":
+            # 明细保真模式：带 filters 时走保真 Text-to-SQL（禁止聚合、保留全部列），
+            # 否则直接整表查询（所有列行级原值保留）
+            if filters:
+                payload = await asyncio.to_thread(
+                    _query_dataset_with_sql,
+                    dataset_id,
+                    question,
+                    sql_intent,
+                    effective_row_limit,
+                    True,
+                )
+            else:
+                payload = await asyncio.to_thread(
+                    tools.query_admin_dataset,
+                    {"id": dataset_id, "name": "", "tableName": ""},
+                    effective_row_limit,
+                )
+        elif use_text_to_sql:
             # Text-to-SQL：LLM 按数据集表结构生成精确 SQL（WHERE/聚合/GROUP BY）
             payload = await asyncio.to_thread(
                 _query_dataset_with_sql,
@@ -331,6 +358,10 @@ async def execute_sub_question(
     summary = _build_summary(rows, columns, question)
     total_rows = payload.get("total") or payload.get("rowCount") or len(rows)
 
+    # 地理能力画像：取数后立即测定（地图生成链路重构 §4.1），
+    # 全链路（map Writer / verifier / layout）只读该画像，不再各自判断
+    geo = geo_profile.compute_geo_profile(columns, rows)
+
     evidence = Evidence(
         id=sq_id,
         sub_question=question,
@@ -345,16 +376,19 @@ async def execute_sub_question(
             "truncated": total_rows > len(rows),
             "filters": sub_question.get("filters"),
             "aggregation": sub_question.get("aggregation"),
+            "geoMode": geo_mode,
             "intent": sub_question.get("intent", ""),
             "viaSql": bool(payload.get("_via_sql")) if isinstance(payload, dict) else False,
             "relaxedTime": bool(sub_question.get("_relaxed_time")),
+            "geoProfile": geo,
         },
     )
     await store.add_evidence(evidence)
     logger.info(
-        "Executor 子问题 %s 取数完成: datasetId=%s rows=%s cols=%s viaSql=%s",
+        "Executor 子问题 %s 取数完成: datasetId=%s rows=%s cols=%s viaSql=%s geoMode=%s hasGeo=%s",
         sq_id, dataset_id, len(rows), len(columns),
         bool(payload.get("_via_sql")) if isinstance(payload, dict) else False,
+        geo_mode, geo.get("hasGeo"),
     )
     return evidence
 

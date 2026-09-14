@@ -107,6 +107,12 @@ export interface LayoutTree {
   }
 }
 
+// ── HTML Artifact 排版（优先于布局树）：整页 HTML 由沙箱渲染 ──
+export interface ArtifactDoc {
+  html: string
+  version: number
+}
+
 export interface Viewport {
   center: [number, number]
   zoom: number
@@ -114,7 +120,7 @@ export interface Viewport {
 
 // ── 执行步骤（SSE 事件转步骤，供 execution-panel 展示）──
 export interface ExecStep {
-  phase: 'plan' | 'step' | 'dataset' | 'chart' | 'map_layer' | 'narrative' | 'layout' | 'done' | 'error'
+  phase: 'plan' | 'step' | 'dataset' | 'chart' | 'map_layer' | 'narrative' | 'layout' | 'artifact' | 'done' | 'error'
   description: string
   status: 'in_progress' | 'completed' | 'error'
   detail?: string
@@ -350,6 +356,8 @@ export const useSituationStore = defineStore('situation', () => {
   const mapLayers = ref<MapLayer[]>([])
   const narrative = ref<Narrative>({ intro: '', explanations: [] })
   const layout = ref<LayoutTree | null>(null)
+  // HTML Artifact 排版（优先于布局树）：null = 未生成（回退布局树/固定三段）
+  const artifact = ref<ArtifactDoc | null>(null)
   const evidence = ref<ResultEvidence>({})
   const mapExplanation = ref('')
 
@@ -427,6 +435,7 @@ export const useSituationStore = defineStore('situation', () => {
     mapLayers.value = []
     narrative.value = { intro: '', explanations: [] }
     layout.value = null
+    artifact.value = null
     evidence.value = {}
     mapExplanation.value = ''
     selectedRegion.value = null
@@ -462,6 +471,8 @@ export const useSituationStore = defineStore('situation', () => {
     charts.value = []
     mapLayers.value = []
     narrative.value = { intro: '', explanations: [] }
+    layout.value = null
+    artifact.value = null
     selectedRegion.value = null
     selectedTimeRange.value = null
     filters.value = {}
@@ -509,6 +520,10 @@ export const useSituationStore = defineStore('situation', () => {
     layout.value = snapshot.layout?.root?.type === 'grid' && Array.isArray(snapshot.layout.root.children)
       && snapshot.layout.root.children.length
       ? snapshot.layout as LayoutTree
+      : null
+    // HTML Artifact 排版（优先于布局树）：旧快照无此字段 → null → 回退布局树/固定三段
+    artifact.value = (snapshot.artifact?.html || '').trim()
+      ? (snapshot.artifact as ArtifactDoc)
       : null
     mapExplanation.value = snapshot.map?.explanation || snapshot.mapExplanation || snapshot.narrative?.mapExplanation || ''
     // 兜底：历史产物若 chart.explanation 缺失，用 narrative.explanations 回填逐图说明
@@ -759,12 +774,22 @@ export const useSituationStore = defineStore('situation', () => {
         }
         break
       case 'layout': {
-        // 布局树（可选增强）：后端已做校验修复，此处结构兜底后落 store
+        // 布局树（回退路径）：后端已做校验修复，此处结构兜底后落 store
         if (data?.root?.type === 'grid' && Array.isArray(data.root.children) && data.root.children.length) {
           layout.value = data as LayoutTree
           const blockCount = data.root.children.length
           if (!executionSteps.value.some((step) => step.phase === 'layout')) {
             pushStep('layout', `生成页面布局（${blockCount} 个版块）`, 'completed')
+          }
+        }
+        break
+      }
+      case 'artifact': {
+        // HTML Artifact 排版（优先于布局树）：整页 HTML 落 store，沙箱渲染
+        if (data?.html && String(data.html).trim()) {
+          artifact.value = { html: String(data.html), version: Number(data.version) || 1 }
+          if (!executionSteps.value.some((step) => step.phase === 'artifact')) {
+            pushStep('artifact', '生成页面排版（HTML Artifact）', 'completed')
           }
         }
         break
@@ -999,7 +1024,7 @@ export const useSituationStore = defineStore('situation', () => {
   return {
     // state
     reportId, status, query, source, title, activeSkill, skillParameters,
-    datasets, activeDatasetId, charts, mapLayers, narrative, layout, evidence, mapExplanation,
+    datasets, activeDatasetId, charts, mapLayers, narrative, layout, artifact, evidence, mapExplanation,
     selectedRegion, selectedTimeRange, filters, viewport,
     eventSource, errorMsg, requestPending,
     history, executionSteps,

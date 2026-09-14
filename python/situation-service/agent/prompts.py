@@ -89,6 +89,17 @@ def _format_meta(meta: dict) -> str:
                     lines.append(f"    · {f.get('column','')} ({f.get('type','')}): {biz}")
                 if len(fields) > 12:
                     lines.append(f"    · ...（共 {len(fields)} 个字段）")
+            # 地理能力标注（地图生成链路重构 §4.2）：Planner 据此决定 geoMode 与 mapSpecs
+            geo = s.get("geo") or {}
+            if geo.get("hasGeo"):
+                kinds = "、".join(
+                    {"routes": "路线图", "points": "标点图", "areas": "区域图", "circles": "圆形范围"}.get(k, k)
+                    for k in (geo.get("kinds") or [])
+                ) or "标点图"
+                waypoints_hint = "，含途经点 JSON" if geo.get("hasWaypoints") else ""
+                lines.append(f"    [地理能力] 支持{kinds}{waypoints_hint}（geoMode=raw 取数可保坐标明细）")
+            else:
+                lines.append("    [地理能力] 无地理坐标字段（禁止规划 mapSpecs / geoMode=raw）")
     indicators = data.get("indicators", [])
     if indicators:
         lines.append("【可用指标】")
@@ -132,21 +143,28 @@ def _format_schema_for_sql(schema: dict) -> str:
     return "\n".join(lines)
 
 
-def build_sql_messages(query: str, schema: dict, intent: str = "") -> list:
+def build_sql_messages(query: str, schema: dict, intent: str = "", raw_mode: bool = False) -> list:
     """阶段2（取数）：让 LLM 基于单个数据集表结构生成一条精确 SELECT。
 
     复用评估分析 Text-to-SQL 的思路：按问题意图生成带 WHERE/聚合/GROUP BY
     的精确查询，替代原来整表拉取（SELECT * 或数据集预定义 sql_text）。
     仅返回 {"sql": "..."} JSON，由编排器提取后交给 admin-service 执行。
+
+    raw_mode=True（geoMode=raw 明细保真，地图生成链路重构 §4.3）：禁止聚合，
+    必须保留全部列（尤其经纬度/名称/途经点 JSON 列）的行级原值，供地图确定性管线使用。
     """
     intent_text = f"\n查询意图：{intent}" if intent else ""
-    return [
-        {"role": "system", "content": get_system_prompt() +
-            "\n\n【当前阶段：取数】\n"
-            "你是 SQL 生成专家。根据用户问题与下方单个数据集的表结构，生成一条精确的只读 SELECT 查询。\n"
-            "返回 JSON（仅 JSON，无其它文字）：\n"
-            '{"sql": "SELECT ..."}\n'
-            "规则：\n"
+    if raw_mode:
+        rules = (
+            "1. 只能生成一条 SELECT 语句，禁止 INSERT/UPDATE/DELETE/DROP/ALTER/CREATE；\n"
+            "2. 表名与列名必须严格来自下方表结构，不得跨表混用字段；\n"
+            "3. 明细保真模式：禁止任何聚合函数/GROUP BY/DISTINCT，必须 SELECT 表结构列出的**全部列**，"
+            "逐行保留原始明细（尤其所有经纬度列、城市/名称列、JSON 途经点列的原值不得拼接/截断/计算）；\n"
+            "4. 可根据查询意图与过滤条件生成 WHERE 子句精确过滤，必要时 ORDER BY；\n"
+            "5. 使用标准 SQL 语法（ANSI），避免厂商专用函数；不要添加 LIMIT，返回全部数据（行数由后端统一限制）。"
+        )
+    else:
+        rules = (
             "1. 只能生成一条 SELECT 语句，禁止 INSERT/UPDATE/DELETE/DROP/ALTER/CREATE；\n"
             "2. 表名与列名必须严格来自下方表结构，不得跨表混用字段；\n"
             "3. 根据问题与查询意图生成精确过滤（WHERE）、聚合（COUNT/SUM/AVG/MAX/MIN）与分组（GROUP BY），必要时 ORDER BY 排序；\n"
@@ -155,7 +173,15 @@ def build_sql_messages(query: str, schema: dict, intent: str = "") -> list:
             "明细类查询后端会返回全量行（默认上限数千行），供前端图表/地图展示全部明细；"
             "聚合类查询必须带 GROUP BY 且结果集即为全部分组，确保聚合图表展示所有类目/时段，不得遗漏分组；\n"
             "6. 明细/轨迹/地图类问题（查询轨迹、点位、列表、目标/设备信息等）必须 SELECT 表结构里列出的**全部业务列**，不得只选经纬度或少数列，确保地图节点和图表能展示完整字段（名称、机型、高度、速度、航向、时间、状态等）；\n"
-            "7. 仅当问题明确要求统计/汇总时才使用聚合函数与 GROUP BY，聚合场景只 SELECT 聚合列和分组列，不得混入未聚合的明细列。"},
+            "7. 仅当问题明确要求统计/汇总时才使用聚合函数与 GROUP BY，聚合场景只 SELECT 聚合列和分组列，不得混入未聚合的明细列。"
+        )
+    return [
+        {"role": "system", "content": get_system_prompt() +
+            "\n\n【当前阶段：取数】\n"
+            "你是 SQL 生成专家。根据用户问题与下方单个数据集的表结构，生成一条精确的只读 SELECT 查询。\n"
+            "返回 JSON（仅 JSON，无其它文字）：\n"
+            '{"sql": "SELECT ..."}\n'
+            "规则：\n" + rules},
         {"role": "user", "content": f"用户问题：{query}\n{intent_text}\n\n表结构：\n{_format_schema_for_sql(schema)}"},
     ]
 
@@ -379,10 +405,15 @@ def build_layout_messages(
         routes = map_layer.get("routes", []) or []
         areas = map_layer.get("areas", []) or []
         circles = map_layer.get("circles", []) or []
-        map_text = (
-            f"图层 {map_layer.get('layerId','')}（ref 可用 \"*\" 表示全部图层）："
-            f"{len(points)} 个标点、{len(routes)} 条路线、{len(areas)} 个区域、{len(circles)} 个圆形区域"
-        )
+        feature_count = len(points) + len(routes) + len(areas) + len(circles)
+        if feature_count >= 1:
+            map_text = (
+                f"图层 {map_layer.get('layerId','')}（ref 可用 \"*\" 表示全部图层）："
+                f"{len(points)} 个标点、{len(routes)} 条路线、{len(areas)} 个区域、{len(circles)} 个圆形区域"
+            )
+        else:
+            # 空图层不允许占布局块（地图生成链路重构 §4.7）
+            map_text = "（地图图层要素为 0，禁止放置 map 块）"
     else:
         map_text = "（无地图，禁止放置 map 块）"
 
@@ -416,7 +447,8 @@ def build_layout_messages(
             "}\n"
             "排版原则（按产物特征自由决策，不设唯一正确答案）：\n"
             "1. 地图要素多（>20 个标点或含路线/区域）→ 地图全宽大块（span 12）；要素少可与核心图表 7/5 同排；\n"
-            "2. 最贴合问题主旨的核心图表优先展示、占宽（span 6-8）；辅助图表 span 3-4；\n"
+            "2. 图表块必须按下方清单顺序排列（c1 在 c2 前、c2 在 c3 前……），不得乱序；"
+            "最贴合问题主旨的核心图表可占宽（span 6-8），辅助图表 span 3-4；\n"
             "3. 图表说明块（narrative_chart）紧跟对应图表块，就近帮助阅读，而不是全部堆在底部；\n"
             "4. narrative_intro 可作页首引导（span 12），也可与首个图表同排；\n"
             "5. metrics 块适合放 2-4 个关键数值指标（如总数/均值/极值），常置于页首或图表旁（span 3-4）；\n"
@@ -433,4 +465,125 @@ def build_layout_messages(
             f"数据集：\n{datasets_text}\n\n"
             f"文本：{narrative_text}"
         )},
+    ]
+
+
+def build_artifact_messages(
+    query: str,
+    charts: list,
+    map_layer: Optional[dict],
+    datasets: list,
+    narrative: Optional[dict],
+) -> list:
+    """阶段5.6：HTML Artifact 排版（优先于布局树）。
+
+    LLM 生成整页 HTML（只有排版结构 + 内联 CSS + data-sit 占位符，禁止 script），
+    前端在 iframe 沙箱中渲染，situation-kit 按 data-sit 占位符挂载真实图表/地图。
+
+    Args:
+        query: 用户原始问题
+        charts: 已产出图表 [{chartId, type, title, explanation, datasetRef}]
+        map_layer: 已产出地图图层 dict（可为 None）
+        datasets: 数据集元信息 [{datasetId, summary, columns, rowCount}]
+        narrative: 文本产物 {"intro": ..., "mapExplanation": ...}
+    """
+    charts_text = "\n".join(
+        f"- chartId={c.get('chartId','')} [{c.get('type','')}] {c.get('title','')}"
+        f"（数据集 {c.get('datasetRef','')}；说明：{(c.get('explanation','') or '')[:60]}）"
+        for c in charts
+    ) or "（无图表）"
+
+    if map_layer:
+        points = map_layer.get("points", []) or []
+        routes = map_layer.get("routes", []) or []
+        areas = map_layer.get("areas", []) or []
+        circles = map_layer.get("circles", []) or []
+        feature_count = len(points) + len(routes) + len(areas) + len(circles)
+        if feature_count >= 1:
+            map_text = (
+                f"有地图图层（必须放置恰好一个 <div data-sit=\"map\"></div>）："
+                f"{len(points)} 个标点、{len(routes)} 条路线、{len(areas)} 个区域、{len(circles)} 个圆形区域"
+            )
+        else:
+            map_text = "（地图图层要素为 0，禁止放置 map 占位符）"
+    else:
+        map_text = "（无地图，禁止放置 map 占位符）"
+
+    datasets_text = "\n".join(
+        f"- datasetId={d.get('datasetId','')}：{d.get('summary','')}"
+        f"（{d.get('rowCount', 0)} 行；可用列：{', '.join((d.get('columns') or [])[:20])}）"
+        for d in datasets
+    ) or "（无数据集）"
+
+    has_intro = bool((narrative or {}).get("intro", "").strip())
+    has_explanations = bool((narrative or {}).get("explanations"))
+    has_map_explanation = bool((narrative or {}).get("mapExplanation", "").strip())
+    narrative_text = (
+        f"态势介绍：{'有（可放 narrative 占位符）' if has_intro else '无'}；"
+        f"逐图说明：{'有（可放 narrative_chart 占位符）' if has_explanations else '无'}；"
+        f"地图说明：{'有（可放 map_explanation 占位符）' if has_map_explanation else '无'}"
+    )
+
+    system = (
+        get_system_prompt() +
+        "\n\n【当前阶段：排版（HTML Artifact）】\n"
+        "你是资深 Web 排版设计师。基于下方已产出产物清单，输出一个完整的单文件 HTML 页面，"
+        "作为态势报告的最终排版。返回纯 HTML（以 <!DOCTYPE html> 开头），不要任何解释文字。\n\n"
+        "【输出契约】\n"
+        "1. 完整 HTML 文档：<style> 内联样式写在 <head>，页面结构写在 <body>；\n"
+        "2. 禁止 <script>、禁止任何外链资源（src/href 指向 http 的都会被剥离）；\n"
+        "3. 图表/地图/KPI/文本不要自己画，只放占位符，运行时由宿主注入真实内容：\n"
+        '   图表：<div data-sit="chart" data-ref="图表ID"></div>（容器必须有确定高度，如 style="height:360px"）；\n'
+        '   地图：<div data-sit="map"></div>（容器必须有确定高度，建议 ≥480px）；\n'
+        '   指标卡：<div data-sit="kpi" data-ref="数据集ID" data-metrics=\'[{"label":"总订单","column":"列名","agg":"count"}]\'></div>（agg 只能是 sum/count/max/min/avg）；\n'
+        '   态势介绍：<div data-sit="narrative" data-part="intro"></div>；\n'
+        '   图表说明：<div data-sit="narrative_chart" data-ref="图表ID"></div>；\n'
+        '   地图说明：<div data-sit="map_explanation"></div>；\n'
+        "4. 占位符之外的内容（标题、分栏、卡片框、配色、留白、图例说明文字）由你自由设计；\n"
+        "5. 每个图表至少被一个 chart 占位符引用一次；map 占位符最多一个（有地图时必须放）；\n"
+        "6. 引用的 chartId / datasetId 必须逐字来自下方清单，禁止发明。\n\n"
+        "【排版要求】\n"
+        "- 使用 CSS Grid/Flex 设计高质量仪表盘版式：页头（问题主题）→ KPI 指标带 → "
+        "核心图表大卡 → 辅助图表小卡 → 地图大块 → 态势介绍收尾（可按产物特征调整）；\n"
+        "- 配色专业克制（白底卡片 + 浅灰页面底 + 一个主色调），卡片圆角、阴影、留白得当；\n"
+        "- 图表说明（narrative_chart）紧跟对应图表就近摆放；地图全宽大块；\n"
+        "- 页面自适应宽度（max-width: 1400px 居中），块间距一致。\n\n"
+        "【完整示例】（结构示意，实际按产物清单自由发挥）\n"
+        "<!DOCTYPE html>\n"
+        "<html lang=\"zh\">\n<head><meta charset=\"utf-8\"><style>\n"
+        "*{box-sizing:border-box} body{margin:0;padding:24px;background:#f5f7fa;"
+        "font-family:'Microsoft YaHei',sans-serif}\n"
+        ".wrap{max-width:1400px;margin:0 auto}\n"
+        ".grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}\n"
+        ".card{background:#fff;border-radius:12px;padding:16px;"
+        "box-shadow:0 1px 4px rgba(0,0,0,.06)}\n"
+        ".card h3{margin:0 0 12px;font-size:15px;color:#1f2d3d}\n"
+        ".kpi-row{display:flex;gap:16px;margin-bottom:16px}\n"
+        ".kpi{flex:1;text-align:center}.kpi b{font-size:26px;color:#2563eb}\n"
+        "</style></head>\n<body><div class=\"wrap\">\n"
+        "<h1>页面标题</h1>\n"
+        "<div class=\"kpi-row\">…<div data-sit=\"kpi\" …></div>…</div>\n"
+        "<div class=\"grid\">"
+        "<div class=\"card\" style=\"grid-column:span 8\"><h3>图表标题</h3>"
+        "<div data-sit=\"chart\" data-ref=\"c1\" style=\"height:360px\"></div>"
+        "<div data-sit=\"narrative_chart\" data-ref=\"c1\"></div></div>\n"
+        "<div class=\"card\" style=\"grid-column:span 12\"><h3>地理分布</h3>"
+        "<div data-sit=\"map\" style=\"height:480px\"></div>"
+        "<div data-sit=\"map_explanation\"></div></div>\n"
+        "<div class=\"card\" style=\"grid-column:span 12\"><h3>态势介绍</h3>"
+        "<div data-sit=\"narrative\" data-part=\"intro\"></div></div>"
+        "</div></div></body></html>\n"
+    )
+
+    user = (
+        f"用户问题：{query}\n\n"
+        f"已产出图表：\n{charts_text}\n\n"
+        f"地图：{map_text}\n\n"
+        f"数据集（供 kpi 占位符引用）：\n{datasets_text}\n\n"
+        f"文本产物：{narrative_text}\n\n"
+        "请输出完整 HTML。"
+    )
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
     ]

@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from llm_client import call_llm_with_tools
 from agent import prompts
+from agent import geo_profile
 import config
 
 logger = logging.getLogger("situation-service")
@@ -67,6 +68,15 @@ EMIT_RESEARCH_PLAN_TOOL = {
                             "aggregation": {
                                 "type": "string",
                                 "description": "可选：聚合方式，如 sum/avg/count/monthly_sum",
+                            },
+                            "geoMode": {
+                                "type": "string",
+                                "enum": ["raw", "aggregate"],
+                                "description": (
+                                    "取数模式（默认 aggregate）：raw=明细保真，保留全部坐标/名称/途经点列的原始明细行，"
+                                    "用于地图与轨迹展示，仅当数据集元数据标注了地理能力（geo）时允许；"
+                                    "aggregate=聚合统计，用于图表分析"
+                                ),
                             },
                         },
                     },
@@ -229,7 +239,12 @@ def _build_planner_system_prompt(profile: Dict[str, Any], meta_text: str) -> str
         "   - bar：分类数 ≤ 30；\n"
         "   - scatter：点数 ≥ 5；\n"
         "4. chartSpecs[*].subQuestionRef 必须命中 subQuestions[*].id；\n"
-        "5. 若数据集元数据中无明显地理坐标字段，mapSpecs 留空数组；\n"
+        "5. 地图规划（由数据地理能力决定）：元数据中每个数据集标注了地理能力"
+        "（[地理能力] 路线图/标点图 或 无地理坐标字段）；\n"
+        "   - 有地理能力且需要展示地图/轨迹时：对应子问题 geoMode 必须置 raw（明细保真，保留坐标原值），"
+        "并规划 mapSpecs（含路线坐标的数据集 layerType 用 routes，仅点位数据用 points）；\n"
+        "   - 无地理能力的数据集：geoMode 保持 aggregate，且禁止出现在 mapSpecs 引用中；\n"
+        "   - 用户问题与地理无关时 mapSpecs 留空数组（不强求地图）；\n"
         "6. 数据源无关：不得在 chartSpecs.title 或 narrativeOutline 中出现未在元数据中的具体字段值。\n\n"
         "直接调用 emit_research_plan 工具，不要输出额外文本。\n\n"
         f"可用数据集元数据：\n{meta_text}"
@@ -273,7 +288,11 @@ def _validate_plan(plan: Dict[str, Any], profile: Dict[str, Any], meta: Dict[str
             if ds_id:
                 available_dataset_ids.add(ds_id)
 
+    # 地理能力标注（annotate_meta 后存在；未标注时跳过地理强校验，兼容 mock 场景）
+    geo_datasets = geo_profile.geo_capable_dataset_ids(meta)
+
     sub_q_ids = set()
+    sub_q_geo_raw: Dict[str, str] = {}  # subQuestionId -> datasetId（geoMode=raw 的子问题）
     for idx, sq in enumerate(sub_questions):
         if not isinstance(sq, dict):
             return f"subQuestions[{idx}] 不是对象"
@@ -289,6 +308,14 @@ def _validate_plan(plan: Dict[str, Any], profile: Dict[str, Any], meta: Dict[str
         # meta 为空时（mock 测试场景）跳过白名单校验
         if available_dataset_ids and ds_id not in available_dataset_ids:
             return f"subQuestions[{idx}].datasetId={ds_id} 不在可用数据集中"
+        # geoMode 校验：raw 模式要求数据集具备地理能力（标注缺失时跳过，兼容 mock）
+        geo_mode = str(sq.get("geoMode") or "aggregate").strip().lower()
+        if geo_mode not in ("raw", "aggregate"):
+            return f"subQuestions[{idx}].geoMode={geo_mode} 必须是 raw 或 aggregate"
+        if geo_mode == "raw" and geo_datasets and ds_id not in geo_datasets:
+            return f"subQuestions[{idx}].datasetId={ds_id} 无地理坐标字段，不允许 geoMode=raw"
+        if geo_mode == "raw":
+            sub_q_geo_raw[sq_id] = ds_id
 
     chart_specs = plan.get("chartSpecs")
     if not isinstance(chart_specs, list) or len(chart_specs) < 2:
@@ -314,7 +341,7 @@ def _validate_plan(plan: Dict[str, Any], profile: Dict[str, Any], meta: Dict[str
         if ref not in sub_q_ids:
             return f"chartSpecs[{idx}].subQuestionRef={ref} 未命中任何子问题 ID"
 
-    # mapSpecs 可选；如提供，校验 subQuestionRef
+    # mapSpecs 可选；如提供，校验 subQuestionRef + 地理能力硬约束
     map_specs = plan.get("mapSpecs")
     if isinstance(map_specs, list):
         for idx, ms in enumerate(map_specs):
@@ -323,6 +350,12 @@ def _validate_plan(plan: Dict[str, Any], profile: Dict[str, Any], meta: Dict[str
             ref = str(ms.get("subQuestionRef") or "").strip()
             if ref and ref not in sub_q_ids:
                 return f"mapSpecs[{idx}].subQuestionRef={ref} 未命中任何子问题 ID"
+            # 硬约束：mapSpecs 引用的子问题必须 geoMode=raw（有坐标保真证据）
+            if ref and ref not in sub_q_geo_raw:
+                return (
+                    f"mapSpecs[{idx}].subQuestionRef={ref} 对应子问题未声明 geoMode=raw，"
+                    "地图图层只能引用明细保真取数的子问题"
+                )
 
     return None
 
@@ -380,14 +413,22 @@ def _fallback_plan_from_skill(profile: Dict[str, Any], meta: Dict[str, Any]) -> 
 
     sub_q_id = "q1"
     skill_label = profile.get("skillName") or "通用态势"
+    # 降级计划同样尊重地理能力：兜底数据集有坐标时置 raw，保证地图管线有明细保真证据
+    fallback_sub_question: Dict[str, Any] = {
+        "id": sub_q_id,
+        "question": f"围绕「{skill_label}」采集核心数据",
+        "datasetId": fallback_dataset,
+    }
+    if isinstance(meta, dict) and meta.get("success"):
+        schemas = (meta.get("data", {}) or {}).get("schemas") or []
+        for schema in schemas:
+            if str(schema.get("datasetId") or "").strip() == fallback_dataset:
+                geo = schema.get("geo")
+                if isinstance(geo, dict) and geo.get("hasGeo"):
+                    fallback_sub_question["geoMode"] = "raw"
+                break
     return {
-        "subQuestions": [
-            {
-                "id": sub_q_id,
-                "question": f"围绕「{skill_label}」采集核心数据",
-                "datasetId": fallback_dataset,
-            }
-        ],
+        "subQuestions": [fallback_sub_question],
         "chartSpecs": [
             {
                 "id": "c1",
@@ -424,8 +465,9 @@ class Planner:
 
     def __init__(self, profile: Dict[str, Any], meta: Dict[str, Any]):
         self.profile = profile
-        self.meta = meta
-
+        # 地理能力标注一次到位：prompt 文本与 _validate_plan 读取同一份标注（口径同源）
+        self.meta = geo_profile.annotate_meta(meta)
+   
     def _build_messages(self, query: str) -> List[Dict[str, Any]]:
         meta_text = prompts._format_meta(self.meta)
         system_prompt = _build_planner_system_prompt(self.profile, meta_text)

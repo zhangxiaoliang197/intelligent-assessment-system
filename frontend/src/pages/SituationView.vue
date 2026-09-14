@@ -21,11 +21,21 @@
         </div>
       </div>
 
-      <!-- 纯展示内容：布局树动态排版（回退：左图表 + 右地图 + 底部态势分析） -->
+      <!-- 纯展示内容：HTML Artifact 沙箱（回退：布局树动态排版 → 左图表 + 右地图 + 底部态势分析） -->
       <div class="view-content custom-scroll" ref="captureRef">
-        <!-- LLM 布局树渲染（有 layout 时） -->
+        <!-- HTML Artifact 沙箱渲染（优先；LLM 整页排版 + situation-kit 挂载真实图表/地图） -->
+        <ArtifactSandbox
+          v-if="store.artifact"
+          :html="store.artifact.html"
+          :charts="store.charts"
+          :map-layers="store.mapLayers"
+          :datasets="store.datasets"
+          :narrative="store.narrative"
+        />
+
+        <!-- LLM 布局树渲染（回退路径：无 artifact 时） -->
         <SituationLayoutRenderer
-          v-if="store.layout"
+          v-else-if="store.layout"
           :layout="store.layout"
           :charts="store.charts"
           :map-layers="store.mapLayers"
@@ -111,6 +121,7 @@ import SituationChartGrid from '@/components/situation/SituationChartGrid.vue'
 import SituationMapSlot from '@/components/situation/SituationMapSlot.vue'
 import SituationNarrative from '@/components/situation/SituationNarrative.vue'
 import SituationLayoutRenderer from '@/components/situation/SituationLayoutRenderer.vue'
+import ArtifactSandbox from '@/components/situation/ArtifactSandbox.vue'
 import { useSituationStore, type Viewport } from '@/stores/situation'
 import { useSituationExport } from '@/composables/useSituationExport'
 import api from '@/services/api'

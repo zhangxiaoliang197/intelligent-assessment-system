@@ -6,6 +6,7 @@
 
 输出结构对齐态势图 map_layer 契约（points/routes/areas/circles）。
 """
+import json
 import logging
 import re
 
@@ -17,6 +18,9 @@ _EXCLUDE = {
     "lng", "lon", "longitude", "lat", "latitude", "raw",
     "_dataset",
 }
+
+# 途经点 JSON 列名识别：waypoints_json / 途经点 等（内容抽检见 _parse_waypoints）
+_WAYPOINT_COLUMN_PATTERN = re.compile(r"(waypoint|途经)", re.IGNORECASE)
 
 # 标注配色：按分组/行索引取色，同路线同色、不同路线不同色，避免全部退化为同一种颜色
 _PALETTE = [
@@ -86,6 +90,7 @@ def _prop_labels(props, field_labels):
 # 路线命名候选字段（按优先级排序）：名称 → 编号/航班号 → 型号/类型 → 标识
 _ROUTE_NAME_KEYS = (
     "name", "title", "label", "名称", "标题",
+    "track_name", "route_name", "线路名称", "轨迹名称",
     "flight_no", "flightno", "航班号", "车次", "train_no", "班次",
     "route_id", "routeid", "线路号", "线路编号",
     "no", "code", "number", "编号", "编码", "序号",
@@ -93,6 +98,81 @@ _ROUTE_NAME_KEYS = (
     "type", "类型", "类别",
     "id", "aircraft_id", "标识",
 )
+
+
+def _find_waypoint_column(columns):
+    """从列名列表中定位途经点 JSON 列（列名含 waypoint/途经），无则返回 None。"""
+    for col in columns:
+        if _WAYPOINT_COLUMN_PATTERN.search(str(col)):
+            return col
+    return None
+
+
+def _parse_waypoints(row, waypoint_key):
+    """解析行内途经点 JSON 数组，返回 [{"seq","lng","lat","city"}]（按 seq 升序）。
+
+    元素形态：{"seq":1, "city":"东莞", "lng":113.75, "lat":23.02}；
+    无法解析或无合法坐标时返回空列表（调用方退化为起终点两点路线）。
+    """
+    raw = row.get(waypoint_key)
+    if raw in (None, ""):
+        return []
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    waypoints = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        lng = _to_float(item.get("lng", item.get("lon", item.get("longitude"))), None)
+        lat = _to_float(item.get("lat", item.get("latitude")), None)
+        if lng is None or lat is None:
+            continue
+        if not (-180 <= lng <= 180 and -90 <= lat <= 90):
+            continue
+        waypoints.append({
+            "seq": _to_int(item.get("seq"), len(waypoints) + 1),
+            "lng": lng,
+            "lat": lat,
+            "city": str(item.get("city") or item.get("name") or "").strip(),
+        })
+    waypoints.sort(key=lambda p: p["seq"])
+    return waypoints
+
+
+def _city_pair_name(row, columns_lower):
+    """从起终点城市列构造路线名（如「佛山→惠州」），无城市列返回 None。"""
+    origin_keys = ("origin_city", "from_city", "start_city", "src_city", "起点城市")
+    dest_keys = ("dest_city", "to_city", "end_city", "dst_city", "终点城市")
+    origin_city = next((row.get(columns_lower[k]) for k in origin_keys if k in columns_lower), None)
+    dest_city = next((row.get(columns_lower[k]) for k in dest_keys if k in columns_lower), None)
+    if origin_city and dest_city:
+        return f"{origin_city}→{dest_city}"
+    return None
+
+
+def _point_name(row, columns, index):
+    """标点名称：显式名称类字段 → 含 city/城市 的字段 → 首个非坐标字符串字段 → 点位N。"""
+    cols_lower = {str(k).lower(): k for k in columns}
+    for key in ("name", "名称", "title", "label", "city", "城市", "station", "站点", "area", "区域"):
+        col = cols_lower.get(key)
+        if col is not None:
+            value = row.get(col)
+            if value not in (None, ""):
+                return str(value)[:40]
+    for col in columns:
+        col_str = str(col)
+        if _COORD_PATTERN.search(col_str):
+            continue
+        if "zip" in col_str.lower() or "邮编" in col_str:
+            continue
+        value = row.get(col)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:40]
+    return f"点位{index + 1}"
 
 
 def _pick_route_name(row, columns, index):
@@ -303,6 +383,10 @@ def build_map_annotations(rows, field_labels=None):
     dest_pair = next((p for p in pairs if p["prefix"].lower() in dest_prefixes), None)
 
     if origin_pair and dest_pair:
+        # 途经点 JSON 列（如 waypoints_json）：存在时展开为 起点→途经→终点 的多点折线
+        waypoint_key = _find_waypoint_column(columns)
+        cols_lower = {str(k).lower(): k for k in columns}
+
         # 为每行数据生成从 origin 到 dest 的路线，以及起/终点标记
         for index, row in enumerate(rows):
             origin_lng = _to_float(row.get(origin_pair["lng"]))
@@ -317,18 +401,29 @@ def build_map_annotations(rows, field_labels=None):
                 continue
 
             name = _pick_route_name(row, columns, index)
+            # 兜底命名：起终点城市对（如「佛山→惠州」）优于「路线N」
+            if name == f"路线{index + 1}":
+                name = _city_pair_name(row, cols_lower) or name
             color = _color_for(len(result["routes"]))
             props = _make_props(row, columns)
             labels = _prop_labels(props, field_labels)
 
-            # 生成路线（origin -> dest）
+            # 途经点展开：起点 → 途经点（seq 升序）→ 终点，相邻重复坐标去重
+            waypoints = _parse_waypoints(row, waypoint_key) if waypoint_key else []
+            route_points = [{"lng": origin_lng, "lat": origin_lat}]
+            for wp in waypoints:
+                pt = {"lng": wp["lng"], "lat": wp["lat"]}
+                if pt != route_points[-1]:
+                    route_points.append(pt)
+            dest_pt = {"lng": dest_lng, "lat": dest_lat}
+            if dest_pt != route_points[-1]:
+                route_points.append(dest_pt)
+
+            # 生成路线
             result["routes"].append({
                 "name": name,
                 "color": color,
-                "points": [
-                    {"lng": origin_lng, "lat": origin_lat},
-                    {"lng": dest_lng, "lat": dest_lat},
-                ],
+                "points": route_points,
             })
 
             # 起点标记
@@ -344,6 +439,19 @@ def build_map_annotations(rows, field_labels=None):
             if labels:
                 origin_point["propLabels"] = labels
             result["points"].append(origin_point)
+
+            # 途经点标记（城市名可用时直接作为标点名）
+            for wp in waypoints:
+                waypoint_point = {
+                    "name": wp["city"] or f"{name}-途经",
+                    "lng": wp["lng"],
+                    "lat": wp["lat"],
+                    "routeName": name,
+                    "color": color,
+                }
+                if wp["city"]:
+                    waypoint_point["props"] = {"city": wp["city"]}
+                result["points"].append(waypoint_point)
 
             # 终点标记
             dest_point = {
@@ -369,7 +477,7 @@ def build_map_annotations(rows, field_labels=None):
                 elat = _to_float(row.get(extra["lat"]))
                 if not (-180 <= elng <= 180 and -90 <= elat <= 90):
                     continue
-                extra_name = str(row.get("name", row.get("aircraft_name", f"点位{index+1}")))
+                extra_name = _point_name(row, columns, index)
                 extra_point = {
                     "name": extra_name,
                     "lng": elng,
@@ -388,7 +496,7 @@ def build_map_annotations(rows, field_labels=None):
 
     # 默认标记点（无半径、无轨迹、无 origin+dest）
     for index, row in enumerate(rows):
-        name = str(row.get("name", row.get("aircraft_name", "")))
+        name = _point_name(row, columns, index)
         point = {
             "name": name,
             "lng": _to_float(row.get(lng_key)),

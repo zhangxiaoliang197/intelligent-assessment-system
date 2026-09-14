@@ -832,7 +832,11 @@ def _post_process_map(
     context: Dict[str, Any],
     store: EvidenceStore,
 ) -> Optional[Dict[str, Any]]:
-    """对 map_layer 做坐标校验（沿用原 _verify_map_coordinates）。"""
+    """对 map_layer 做坐标校验并收口图层有效性（地图生成链路重构 §4.4）。
+
+    唯一有效性口径：features（点+线+面+圆）≥ 1 才返回图层；
+    校验后要素为 0（如坐标证据为空清空全部要素）→ 返回 None，不再推送空图层。
+    """
     if not map_layer:
         return None
     sanitized = _sanitize_map_layer(map_layer, profile, context)
@@ -840,7 +844,11 @@ def _post_process_map(
     # 注意不能传空 list——_coordinate_evidence([]) 返回空集合会触发"无坐标证据"分支，
     # 把 points/routes/areas/circles 全部清空，导致地图图层无内容可渲染。
     bundles = [{"payload": {"rows": ev.rows}} for ev in store.list_evidences()]
-    return _verify_map_coordinates(sanitized, bundles)
+    verified = _verify_map_coordinates(sanitized, bundles)
+    if writer.map_feature_count(verified) < 1:
+        logger.info("V2 地图图层校验后要素为 0，丢弃空图层（无地图输出）")
+        return None
+    return verified
 
 
 async def real_generate_v2(
@@ -1000,7 +1008,7 @@ async def _real_generate_v2_body(
         )
         # 只在有 mapSpecs 或 evidences 含地理列时调 map
         field_labels = _build_field_labels(meta)
-        map_task = writer.write_map(effective_query, store, profile, field_labels)
+        map_task = writer.write_map(store, profile, field_labels)
 
         charts_result, map_result = await asyncio.gather(chart_task, map_task, return_exceptions=True)
 
@@ -1130,23 +1138,33 @@ async def _real_generate_v2_body(
             "mapExplanation": "",
         }
 
-    # ───── 阶段 5.5：LAYOUT（可选增强：LLM 产布局树；失败静默跳过，前端回退固定布局） ─────
+    # ───── 阶段 5.5：LAYOUT（HTML Artifact 优先；失败回退 LLM 布局树，再回退固定三段） ─────
+    artifact_html: Optional[str] = None
     layout_tree: Optional[Dict[str, Any]] = None
-    if config.SITUATION_LAYOUT_ENABLED and (charts or map_layer):
+    if (charts or map_layer) and (
+        config.SITUATION_ARTIFACT_ENABLED or config.SITUATION_LAYOUT_ENABLED
+    ):
         await sm.enter(Stage.LAYOUT)
         try:
-            layout_raw = await writer.write_layout(
-                effective_query, store, charts, map_layer, narrative,
-            )
-            layout_tree = layout_postprocess.sanitize_layout(
-                layout_raw, charts, map_layer, store.list_evidences(),
-            )
-            await sm.exit(Stage.LAYOUT, success=layout_tree is not None, meta={
+            # 优先：整页 HTML Artifact（LLM 只做排版，前端沙箱挂载真实图表/地图）
+            if config.SITUATION_ARTIFACT_ENABLED:
+                artifact_html = await writer.write_artifact(
+                    effective_query, store, charts, map_layer, narrative,
+                )
+            # 回退：布局树（artifact 关闭或生成失败时）
+            if artifact_html is None and config.SITUATION_LAYOUT_ENABLED:
+                layout_raw = await writer.write_layout(
+                    effective_query, store, charts, map_layer, narrative,
+                )
+                layout_tree = layout_postprocess.sanitize_layout(
+                    layout_raw, charts, map_layer, store.list_evidences(),
+                )
+            await sm.exit(Stage.LAYOUT, success=(artifact_html is not None or layout_tree is not None), meta={
+                "kind": "artifact" if artifact_html else "layout_tree",
                 "blocks": len((layout_tree or {}).get("root", {}).get("children", [])),
-                "skipped": layout_raw is None,
             })
         except Exception as exc:
-            logger.warning("V2 layout 阶段失败（跳过，前端回退固定布局）: %s", exc)
+            logger.warning("V2 layout 阶段失败（前端回退固定布局）: %s", exc)
             await sm.exit(Stage.LAYOUT, success=False, error=str(exc)[:200])
 
     # ───── 阶段 6：EMIT（推送产物） ─────
@@ -1158,6 +1176,12 @@ async def _real_generate_v2_body(
         partial = True
         logger.warning("V2 narrative 校验未通过: %s", narrative_check.get("summary", ""))
 
+    # 地图一致性校验（地图生成链路重构 §4.6）：证据-图层双向核对
+    map_check = verifier.verify_map(map_layer, store)
+    if not map_check["passed"] and not partial:
+        partial = True
+        logger.warning("V2 map 校验未通过: %s", map_check.get("summary", ""))
+
     # 推送 chart 事件
     for chart in charts:
         yield "chart", chart
@@ -1166,17 +1190,24 @@ async def _real_generate_v2_body(
         yield "map_layer", map_layer
     # 推送 narrative 事件
     yield "narrative", narrative
-    # 推送 layout 事件（可选增强；无 layout 时前端回退固定三段布局）
+    # 推送 artifact 事件（HTML 整页排版；前端沙箱渲染）
+    if artifact_html:
+        yield "artifact", {"html": artifact_html, "version": 1}
+    # 推送 layout 事件（回退路径；无 layout 时前端回退固定三段布局）
     if layout_tree:
         yield "layout", layout_tree
     # 推送 verify 事件（前端可选展示）
     yield "verify", {
-        "passed": verify_result["passed"] and narrative_check["passed"],
+        "passed": verify_result["passed"] and narrative_check["passed"] and map_check["passed"],
         "summary": (
             f"{verify_result.get('summary', '')} | narrative: {narrative_check.get('summary', '')}"
+            f" | map: {map_check.get('summary', '')}"
         ),
         "reflectionRounds": reflection_round,
-        "failures": verify_result.get("chart_result", {}).get("failures", []),
+        "failures": (
+            verify_result.get("chart_result", {}).get("failures", [])
+            + map_check.get("failures", [])
+        ),
     }
     # 推送 done 事件
     yield "done", {

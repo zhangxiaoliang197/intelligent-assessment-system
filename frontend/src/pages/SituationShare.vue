@@ -13,8 +13,17 @@
         @export="onExport"
       />
       <div class="situation-capture-root">
-        <!-- LLM 布局树渲染（有 layout 时） -->
-        <div v-if="store.layout" class="share-layout">
+        <!-- HTML Artifact 沙箱渲染（优先；LLM 整页排版 + situation-kit 挂载真实图表/地图） -->
+        <ArtifactSandbox
+          v-if="store.artifact"
+          :html="store.artifact.html"
+          :charts="store.charts"
+          :map-layers="store.mapLayers"
+          :datasets="store.datasets"
+          :narrative="store.narrative"
+        />
+        <!-- LLM 布局树渲染（回退路径：无 artifact 时） -->
+        <div v-else-if="store.layout" class="share-layout">
           <SituationLayoutRenderer
             :layout="store.layout"
             :charts="store.charts"
@@ -64,6 +73,7 @@ import SituationChartGrid from '@/components/situation/SituationChartGrid.vue'
 import SituationMapSlot from '@/components/situation/SituationMapSlot.vue'
 import SituationNarrative from '@/components/situation/SituationNarrative.vue'
 import SituationLayoutRenderer from '@/components/situation/SituationLayoutRenderer.vue'
+import ArtifactSandbox from '@/components/situation/ArtifactSandbox.vue'
 import { useSituationStore } from '@/stores/situation'
 import { useSituationExport } from '@/composables/useSituationExport'
 import api from '@/services/api'

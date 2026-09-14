@@ -28,6 +28,8 @@
 import logging
 from typing import Any, Dict, List, Optional, Set
 
+from agent import writer as _writer
+
 logger = logging.getLogger("situation-service")
 
 # 合法 slot kind 白名单
@@ -107,7 +109,9 @@ def sanitize_layout(
     for ev in evidences:
         dataset_columns[str(ev.id)] = {str(col) for col in (ev.columns or [])}
 
-    has_map = map_layer is not None
+    # 图层有效性唯一口径（地图生成链路重构 §4.7）：features ≥ 1 才算有地图，
+    # 与 writer/verifier 同源，杜绝空图层占布局块
+    has_map = _writer.map_feature_count(map_layer) >= 1
     map_block_seen = False
     referenced_charts: Set[str] = set()
     blocks: List[Dict[str, Any]] = []
@@ -164,7 +168,10 @@ def sanitize_layout(
 
     # ── 完整性补齐：未被引用的产物自动追加全宽块 ──
     # 1) 漏掉的图表 → 追加 chart 块（插在末尾，intro 补块之前）
-    missing_charts = [cid for cid in chart_ids if cid not in referenced_charts]
+    #    chart_order 保持 charts 参数顺序（计划顺序），避免 set 迭代乱序
+    chart_order = [str(c.get("chartId")) for c in charts if c.get("chartId")]
+    chart_index = {cid: i for i, cid in enumerate(chart_order)}
+    missing_charts = [cid for cid in chart_order if cid not in referenced_charts]
     tail_blocks: List[Dict[str, Any]] = []
     for cid in missing_charts:
         blocks.append({
@@ -191,6 +198,29 @@ def sanitize_layout(
     all_blocks = blocks + tail_blocks
     if not all_blocks:
         return None
+
+    # ── 确定性排序（地图生成链路重构 §4.7）──
+    # chart 块按 chartId 计划顺序输出（LLM 仍决定 span/分组，仅校正顺序）；
+    # intro/metrics 类块保持在前（原相对顺序），map/map_explanation 类块置后。
+    def _block_sort_key(block: Dict[str, Any], orig_index: int):
+        kinds = [s.get("kind") for s in block.get("slots", [])]
+        if "chart" in kinds:
+            refs = [s.get("ref") for s in block.get("slots", []) if s.get("kind") == "chart"]
+            first_idx = min(
+                (chart_index[r] for r in refs if r in chart_index),
+                default=len(chart_order),
+            )
+            return (1, first_idx, orig_index)
+        if "map" in kinds:
+            return (2, 0, orig_index)
+        return (0, 0, orig_index)
+
+    all_blocks = [
+        b for _, b in sorted(
+            ((_block_sort_key(b, i), b) for i, b in enumerate(all_blocks)),
+            key=lambda item: item[0],
+        )
+    ]
 
     if dropped or missing_charts:
         logger.info(

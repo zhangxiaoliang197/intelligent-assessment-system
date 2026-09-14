@@ -2,8 +2,9 @@
 
 设计目标（参见方案文档 §4.2.4）：
 - chart Writer：并行 N 个，每个 chartSpec 一个 LLM 调用，读 EvidenceStore 产出 ECharts option
-- map Writer（v1.1 冻结）：不改动 map_builder / build_map_messages / _verify_map_coordinates，
-  仅把调用从内联拆为独立 task，与 chart 并行
+- map Writer（地图生成链路重构）：确定性管线，地图内容 100% 来自 map_builder 对
+  带地理画像（GeoProfile）证据的构建；LLM 备选分支已删除（空图层的唯一来源）。
+  地图存在性由数据决定：hasGeo=False 的证据不进管线，features=0 的图层返回 None
 - narrative Writer：最后串行，读 EvidenceStore + chart 元数据，按 ADR-08 撰写"介绍 + 逐图说明"
 
 并发模型：
@@ -15,9 +16,9 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 import config
-from agent import prompts, map_builder
+from agent import prompts, map_builder, artifact_postprocess
 from agent.evidence_store import ChartMetadata, Evidence, EvidenceStore
-from llm_client import call_llm_json
+from llm_client import call_llm_json, call_llm
 
 logger = logging.getLogger("situation-service")
 
@@ -190,25 +191,48 @@ async def write_charts_parallel(
     return charts
 
 
+def map_feature_count(map_layer: Optional[Dict[str, Any]]) -> int:
+    """图层要素总数（点+线+面+圆）。
+
+    图层有效性唯一口径（地图生成链路重构 §2.3）：map_layer 有效 ⇔ features ≥ 1。
+    供 writer / verifier / layout_postprocess 共用，消灭口径漂移。
+    """
+    if not isinstance(map_layer, dict):
+        return 0
+    return sum(
+        len(map_layer.get(kind) or [])
+        for kind in ("points", "routes", "areas", "circles")
+    )
+
+
 async def write_map(
-    query: str,
     store: EvidenceStore,
     profile: Dict[str, Any],
     field_labels: Optional[Dict[str, Dict[str, str]]] = None,
 ) -> Tuple[Optional[Dict[str, Any]], str]:
-    """map Writer（v1.1 冻结）：复用现有 map_builder + LLM 地图备选链路。
+    """map Writer（确定性管线）：地图内容唯一来源是 map_builder。
 
-    field_labels: 可选 {datasetId: {英文字段名: 中文标签}}，来自数据集元数据
-                  （businessMeaning/comment），供 map_builder 生成 propLabels。
+    重构要点（地图生成链路重构 §4.4）：
+    - 只处理携带有效地理画像（geoProfile.hasGeo=True）的证据，无坐标数据不进管线；
+    - 不再走 LLM 地图备选分支（原空图层来源，已删除）；
+    - 产出即刻判有效：features ≥ 1 才返回图层，否则返回 (None, "")。
 
-    不修改 map_builder.py / build_map_messages / _verify_map_coordinates，
-    仅把调用从 orchestrator._run_llm_orchestration 内联拆出为独立 task。
+    Args:
+        store: 共享 EvidenceStore（证据 meta 已带 geoProfile）
+        profile: Skill profile（保留参数以兼容调用方）
+        field_labels: 可选 {datasetId: {英文字段名: 中文标签}}，供 map_builder 生成 propLabels
 
     Returns:
-        (map_layer_dict, dataset_ref) —— map_layer 为 None 表示无地理数据可绘
+        (map_layer_dict, evidence_id) —— map_layer 为 None 表示本次无地图（数据决定）
     """
-    # 1) 优先用 map_builder 自动标注（确定性）
     for evidence in store.list_evidences():
+        if not evidence.rows:
+            continue
+        # 地理画像门槛：hasGeo=False 的证据不进管线（口径同源，不再各自判断）
+        geo = (evidence.meta or {}).get("geoProfile") or {}
+        if not geo.get("hasGeo"):
+            continue
+
         labels = {}
         if field_labels:
             labels = field_labels.get(evidence.dataset_ref) or field_labels.get(evidence.source) or {}
@@ -224,8 +248,6 @@ async def write_map(
         routes = annotations.get("routes") or []
         areas = annotations.get("areas") or []
         circles = annotations.get("circles") or []
-        if not (points or routes or areas or circles):
-            continue
 
         map_layer = {
             "layerId": f"layer_{evidence.id}",
@@ -236,57 +258,24 @@ async def write_map(
             "circles": circles,
             "layerConfig": {
                 "name": f"数据集 {evidence.source}",
-                "type": "points",
+                "type": "routes" if routes else "points",
                 "supportedTypes": ["points", "routes", "areas", "circles"],
                 "color": "#8b5cf6",
                 "opacity": 0.85,
                 "visible": True,
             },
         }
+        # 有效性唯一口径：features ≥ 1；空图层直接无地图（不再返回"空但非 None"的层）
+        if map_feature_count(map_layer) < 1:
+            logger.info("证据 %s 坐标列存在但未产出有效要素，跳过地图", evidence.id)
+            continue
+        logger.info(
+            "map Writer 产出有效图层: evidence=%s points=%s routes=%s",
+            evidence.id, len(points), len(routes),
+        )
         return map_layer, evidence.id
 
-    # 2) map_builder 未生成 → 走 LLM 地图备选（保留现有 prompt）
-    # data_context 格式与 build_map_messages 期望一致：{datasetId: {success/columns/rows/total}}
-    data_context = {}
-    for ev in store.list_evidences():
-        if not ev.rows:
-            continue
-        data_context[ev.id] = {
-            "success": True,
-            "columns": ev.columns,
-            "rows": ev.rows,
-            "total": ev.meta.get("totalRows", len(ev.rows)),
-        }
-    if not data_context:
-        return None, ""
-
-    try:
-        raw = await asyncio.to_thread(
-            call_llm_json,
-            prompts.build_map_messages(query, data_context),
-            0.2,
-            config.LLM_MAX_TOKENS,
-            # 与图表 Writer 一致：禁用 thinking 链，避免推理耗尽 token 无内容
-            "disabled",
-        )
-    except Exception as exc:
-        logger.warning("map LLM 调用失败: %s", exc)
-        return None, ""
-
-    if not isinstance(raw, dict):
-        return None, ""
-
-    map_layer = {
-        "layerId": str(raw.get("layerId") or "main"),
-        "datasetRef": str(raw.get("datasetRef") or ""),
-        "points": raw.get("points") or [],
-        "routes": raw.get("routes") or [],
-        "areas": raw.get("areas") or [],
-        "circles": raw.get("circles") or [],
-        "fieldMapping": raw.get("fieldMapping") or {},
-        "layerConfig": raw.get("layerConfig") or {"type": "points", "color": "#e74c3c", "opacity": 0.85},
-    }
-    return map_layer, map_layer.get("datasetRef", "")
+    return None, ""
 
 
 async def write_narrative(
@@ -307,15 +296,20 @@ async def write_narrative(
 
     points = map_layer.get("points", []) if map_layer else []
     routes = map_layer.get("routes", []) if map_layer else []
-    areas = map_layer.get("areas", []) if map_layer else []
-    circles = map_layer.get("circles", []) if map_layer else []
+
+    # 地图说明确定性打底（地图生成链路重构 §4.5）：
+    # 有图层 → 真实要素统计；无图层 → 判断是否存在带坐标的证据，明确说明而非留空
     if map_layer:
-        map_summary = (
-            f"图层 {map_layer.get('layerId', '')}：{len(points)} 个标点、{len(routes)} 条路线、"
-            f"{len(areas)} 个区域、{len(circles)} 个圆形区域"
-        )
+        map_base = f"地图展示 {len(routes)} 条路线、{len(points)} 个标点。" if (routes or points) else ""
     else:
-        map_summary = "（无地图）"
+        has_geo_evidence = any(
+            ((ev.meta or {}).get("geoProfile") or {}).get("hasGeo") for ev in store.list_evidences()
+        )
+        map_base = (
+            "本数据集含地理坐标但未产出有效图层。"
+            if has_geo_evidence
+            else "本数据集无地理坐标字段，未生成地图。"
+        )
 
     messages = prompts.build_narrative_messages(
         query,
@@ -340,7 +334,7 @@ async def write_narrative(
                 {"chartId": m.chart_id, "text": m.explanation or f"该图使用 {m.dataset_ref} 的真实数据生成。"}
                 for m in chart_meta_list
             ],
-            "mapExplanation": "" if not map_layer else f"地图展示了 {len(points)} 个标点。",
+            "mapExplanation": map_base,
         }
 
     if not isinstance(raw, dict):
@@ -370,7 +364,8 @@ async def write_narrative(
     return {
         "intro": str(raw.get("intro") or f"已围绕用户问题汇聚真实数据，共生成了 {len(chart_meta_list)} 张图表。"),
         "explanations": explanations,
-        "mapExplanation": str(raw.get("mapExplanation") or ""),
+        # LLM 地图说明优先，缺省时回退确定性统计（杜绝空串占位）
+        "mapExplanation": str(raw.get("mapExplanation") or "") or map_base,
     }
 
 
@@ -438,10 +433,104 @@ async def write_layout(
     return raw
 
 
+async def write_artifact(
+    query: str,
+    store: EvidenceStore,
+    charts: List[Dict[str, Any]],
+    map_layer: Optional[Dict[str, Any]],
+    narrative: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """HTML Artifact Writer（优先于布局树，NARRATIVE 之后串行）：LLM 产整页 HTML 排版。
+
+    返回清洗校验后的完整 HTML；LLM 失败或校验整体不通过返回 None（调用方回退布局树）。
+    校验发现的引用类问题（非法 chartId 等）带错误信息 Reflection 重写一次。
+    """
+    if not charts and not map_layer:
+        return None
+
+    # 数据集元信息 + 列名映射（kpi 指标列白名单，与布局树 metrics 同口径）
+    datasets = [
+        {
+            "datasetId": ev.id,
+            "summary": ev.summary or ev.sub_question,
+            "columns": list(ev.columns or []),
+            "rowCount": int(ev.meta.get("totalRows", len(ev.rows)) or 0),
+        }
+        for ev in store.list_evidences()
+        if ev.rows
+    ]
+    dataset_columns = {d["datasetId"]: set(d["columns"]) for d in datasets}
+
+    messages = prompts.build_artifact_messages(
+        query,
+        [
+            {
+                "chartId": c.get("chartId", ""),
+                "type": c.get("type", ""),
+                "title": c.get("title", ""),
+                "explanation": c.get("explanation", ""),
+                "datasetRef": c.get("datasetRef", ""),
+            }
+            for c in charts
+        ],
+        map_layer,
+        datasets,
+        narrative,
+    )
+
+    # 整页 HTML 属于自由文本输出（非 JSON）：用 call_llm 原文返回，禁用 thinking
+    def _generate(reflect_msgs):
+        return call_llm(
+            reflect_msgs,
+            0.4,
+            min(config.LLM_MAX_TOKENS, 12000),
+            "disabled",
+        )
+
+    try:
+        raw = await asyncio.to_thread(_generate, messages)
+    except Exception as exc:
+        logger.warning("artifact LLM 调用失败: %s", exc)
+        return None
+
+    result = artifact_postprocess.sanitize_artifact(raw, charts, map_layer, dataset_columns)
+    if result is None:
+        logger.warning("artifact 清洗后为空，回退布局树")
+        return None
+
+    # Reflection：校验发现引用类问题时，带错误信息重写一次
+    if result.get("issues"):
+        logger.info("artifact 校验发现问题，Reflection 重写: %s", "; ".join(result["issues"]))
+        reflect_msgs = list(messages) + [
+            {"role": "assistant", "content": result["html"][:4000]},
+            {"role": "user", "content": (
+                "你上一次输出的 HTML 存在以下问题：\n- "
+                + "\n- ".join(result["issues"][:8])
+                + "\n\n请重新输出完整 HTML，修复上述问题（chartId/datasetId 必须逐字来自清单，"
+                  "有地图必须放恰好一个 map 占位符，每个图表至少一个 chart 占位符）。"
+                  "仍然只返回纯 HTML。"
+            )},
+        ]
+        try:
+            raw2 = await asyncio.to_thread(_generate, reflect_msgs)
+            result2 = artifact_postprocess.sanitize_artifact(
+                raw2, charts, map_layer, dataset_columns)
+            # 重写结果问题数更少才采纳；否则保留首次补齐结果（已可用）
+            if result2 is not None and len(result2.get("issues") or []) < len(result["issues"]):
+                result = result2
+        except Exception as exc:
+            logger.warning("artifact Reflection 重写失败（保留首次结果）: %s", exc)
+
+    logger.info(
+        "artifact 生成完成（剩余自动修复项 %s 个）", len(result.get("issues") or []))
+    return result["html"]
+
+
 __all__ = [
     "write_single_chart",
     "write_charts_parallel",
     "write_map",
     "write_narrative",
     "write_layout",
+    "write_artifact",
 ]

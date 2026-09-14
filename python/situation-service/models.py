@@ -151,5 +151,7 @@ class Report(BaseModel):
     narrative: Narrative = Field(default_factory=Narrative)
     # LLM 布局树（可选增强）：None = 旧版固定三段布局，前端据此分叉渲染
     layout: Optional[Dict[str, Any]] = None
+    # HTML Artifact 排版（优先于布局树）：{"html": str, "version": 1}；空 = 未生成
+    artifact: Dict[str, Any] = Field(default_factory=dict)
     datasets: List[DatasetSummary] = Field(default_factory=list)
     execution: List[Dict[str, Any]] = Field(default_factory=list)

@@ -550,6 +550,56 @@ def verify_narrative(
     return {"passed": True, "missing_chart_ids": [], "summary": "narrative 引用校验通过"}
 
 
+def verify_map(
+    map_layer: Optional[Dict[str, Any]],
+    store: EvidenceStore,
+) -> Dict[str, Any]:
+    """校验地图图层与坐标证据的一致性（地图生成链路重构 §4.6）。
+
+    规则：
+    - 证据含坐标（geoProfile.hasGeo）但图层缺失/为空 → failure（防静默丢图）；
+    - 证据无坐标却产出图层 → failure（无中生有，兜底防御）；
+    - 图层要素坐标必须命中坐标证据集合（坐标校验已在 _post_process_map 完成，
+      此处复核要素数即可）。
+
+    Returns:
+        {"passed": bool, "failures": [...], "summary": "..."}
+    """
+    geo_evidences = [
+        ev for ev in store.list_evidences()
+        if ev.rows and ((ev.meta or {}).get("geoProfile") or {}).get("hasGeo")
+    ]
+    feature_count = sum(
+        len((map_layer or {}).get(kind) or [])
+        for kind in ("points", "routes", "areas", "circles")
+    )
+
+    failures: List[Dict[str, Any]] = []
+    if geo_evidences and feature_count < 1:
+        failures.append({
+            "chartId": "",
+            "stage": "map_missing",
+            "reason": f"证据 {', '.join(ev.id for ev in geo_evidences[:3])} 含地理坐标但未产出有效图层",
+        })
+    elif not geo_evidences and map_layer is not None:
+        failures.append({
+            "chartId": "",
+            "stage": "map_unexpected",
+            "reason": "所有证据均无地理坐标，却产出了地图图层（无中生有）",
+        })
+
+    passed = not failures
+    return {
+        "passed": passed,
+        "failures": failures,
+        "summary": (
+            f"map 通过（{feature_count} 个要素，地理证据 {len(geo_evidences)} 条）"
+            if passed
+            else failures[0]["reason"][:80]
+        ),
+    }
+
+
 def verify_all(
     charts: List[Dict[str, Any]],
     narrative: Optional[Dict[str, Any]],
@@ -579,5 +629,6 @@ __all__ = [
     "check_chart_value_evidence",
     "verify_charts",
     "verify_narrative",
+    "verify_map",
     "verify_all",
 ]

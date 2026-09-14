@@ -802,6 +802,9 @@ def _apply_event(report: Report, event_type: str, data: dict) -> None:
     elif event_type == "layout":
         # 布局树（可选增强）：仅引用 chartId/layerId/datasetId，不含数据值
         report.layout = dict(data or {})
+    elif event_type == "artifact":
+        # HTML Artifact 排版（优先于布局树）：整页 HTML 随 snapshot 落库
+        report.artifact = {"html": data.get("html", ""), "version": data.get("version", 1)}
     elif event_type == "dataset":
         item = {
             "datasetId": data.get("datasetId", ""),
