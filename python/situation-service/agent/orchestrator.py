@@ -27,6 +27,7 @@ from agent import layout_postprocess
 from agent.evidence_store import EvidenceStore
 from agent.planner import Planner
 from agent.state_machine import Stage, StateMachine
+from temporal import apply_temporal_constraints, build_temporal_instruction, resolve_temporal_context
 
 logger = logging.getLogger("situation-service")
 
@@ -888,6 +889,32 @@ async def _real_generate_v2_body(
     profile = _build_profile_for_v2(skill_context, runtime_context)
     store = EvidenceStore(report_id)
     sm = StateMachine(report_id)
+    temporal_context = runtime_context.get("temporal")
+    if not isinstance(temporal_context, dict):
+        temporal_context = resolve_temporal_context(query, runtime_context)
+        runtime_context["temporal"] = temporal_context
+
+    # 识别到历史回溯意图但没有明确时间边界时，不执行跨时段取数。
+    if temporal_context.get("active") and temporal_context.get("requiresClarification"):
+        yield "plan", {
+            "datasets": [], "charts": [], "mapLayers": [],
+            "temporal": temporal_context, "status": "needs-time-range",
+        }
+        yield "narrative", {
+            "intro": (
+                "已识别为时间回溯需求，但尚未获得明确的历史时点或时间区间。"
+                "请在输入框上方选择回溯区间，或在问题中写明例如“截至 2026-08-15”"
+                "“2026-08-01 至 2026-08-31”“上周”。在边界明确前，系统不会用当前数据替代历史态势。"
+            ),
+            "explanations": [],
+            "mapExplanation": "",
+        }
+        yield "done", {
+            "reportId": report_id, "status": "ready", "partial": False,
+            "dataMode": "no-query", "orchestration": "v2", "temporal": temporal_context,
+            "stateMachine": sm.snapshot(),
+        }
+        return
 
     # ───── 阶段 1：PLAN ─────
     await sm.enter(Stage.PLAN)
@@ -899,9 +926,14 @@ async def _real_generate_v2_body(
         if parameters:
             controls = "，".join(f"{key}={value}" for key, value in parameters.items())
             effective_query = f"{query}\n必须遵循的 Skill 执行参数：{controls}"
+        temporal_instruction = build_temporal_instruction(temporal_context)
+        if temporal_instruction:
+            effective_query = f"{effective_query}\n{temporal_instruction}"
 
         planner = Planner(profile, meta)
         plan = await planner.plan(effective_query)
+        if temporal_context.get("active"):
+            plan = apply_temporal_constraints(plan, temporal_context, meta)
         await sm.exit(Stage.PLAN, success=True, meta={
             "planner_fallback": plan.get("_fallback", False),
             "planner_error": plan.get("_planner_error", ""),
@@ -914,6 +946,8 @@ async def _real_generate_v2_body(
 
     # 推送 plan SSE 事件
     safe_plan = _plan_to_legacy_safe_plan(plan, profile)
+    if temporal_context.get("active"):
+        safe_plan["temporal"] = temporal_context
     yield "plan", safe_plan
     if safe_plan.get("_fallback"):
         yield "error", {
@@ -943,6 +977,23 @@ async def _real_generate_v2_body(
         return
 
     # ───── 阶段 2：RESEARCH ─────
+    if temporal_context.get("active") and not (plan.get("subQuestions") or []):
+        yield "narrative", {
+            "intro": (
+                f"时间回溯口径：{temporal_context.get('label')}。"
+                "当前可用数据集中没有可用于历史筛选的时间字段，因此无法基于证据还原该时段态势。"
+                "系统未使用当前数据或区间外数据替代。请切换包含记录时间、发生时间或更新时间的数据源后重试。"
+            ),
+            "explanations": [],
+            "mapExplanation": "",
+        }
+        yield "done", {
+            "reportId": report_id, "status": "partial", "partial": True,
+            "dataMode": "real", "orchestration": "v2", "temporal": temporal_context,
+            "stateMachine": sm.snapshot(),
+        }
+        return
+
     await sm.enter(Stage.RESEARCH)
     try:
         sub_questions = plan.get("subQuestions") or []
@@ -956,7 +1007,7 @@ async def _real_generate_v2_body(
     # 复用 V1 的「近 N 天无匹配数据 → 放宽」语义，但 V2 不依赖参数绑定，直接剔除
     # 时间字段过滤后让 Text-to-SQL 重新生成无时间约束的 SQL。
     relaxed_notice = None
-    if not any(ev.rows for ev in store.list_evidences()):
+    if not any(ev.rows for ev in store.list_evidences()) and not temporal_context.get("strict"):
         if executor._any_sub_question_has_time_filter(sub_questions):
             logger.warning(
                 "V2 时间窗过滤无匹配数据，剔除时间过滤重试: reportId=%s", report_id,
@@ -976,7 +1027,25 @@ async def _real_generate_v2_body(
                 logger.warning("V2 时间窗放宽重试失败: %s", exc)
                 await sm.exit(Stage.RESEARCH, success=False, error=str(exc)[:200])
 
-    # 证据为空则失败
+    # 严格时间回溯无证据时不放宽过滤，更不能用当前数据替代。
+    if not any(ev.rows for ev in store.list_evidences()) and temporal_context.get("strict"):
+        yield "narrative", {
+            "intro": (
+                f"时间回溯口径：{temporal_context.get('label')}。"
+                "在该历史时间边界内未检索到可用记录，因此无法形成有证据支撑的态势快照或演化结论。"
+                "系统未放宽时间过滤，也未使用当前数据替代；可扩大回溯区间或切换数据源后重试。"
+            ),
+            "explanations": [],
+            "mapExplanation": "",
+        }
+        yield "done", {
+            "reportId": report_id, "status": "partial", "partial": True,
+            "dataMode": "real", "orchestration": "v2", "temporal": temporal_context,
+            "stateMachine": sm.snapshot(),
+        }
+        return
+
+    # 非回溯请求无证据则按原逻辑失败。
     if not any(ev.rows for ev in store.list_evidences()):
         raise RuntimeError("没有取得可用于态势分析的真实数据，请检查 Skill 数据源和相关服务")
 
@@ -1124,6 +1193,13 @@ async def _real_generate_v2_body(
     await sm.enter(Stage.NARRATIVE)
     try:
         narrative = await writer.write_narrative(effective_query, store, map_layer)
+        if temporal_context.get("active"):
+            temporal_prefix = (
+                f"时间回溯口径：{temporal_context.get('label')}。"
+                f"{temporal_context.get('evidenceBoundary', '')}。"
+            )
+            intro = str(narrative.get("intro") or "").strip()
+            narrative["intro"] = f"{temporal_prefix}\n\n{intro}" if intro else temporal_prefix
         await sm.exit(Stage.NARRATIVE, success=True, meta={
             "explanations": len(narrative.get("explanations") or []),
         })
@@ -1218,6 +1294,7 @@ async def _real_generate_v2_body(
         "skillName": profile.get("skillName", ""),
         "dataMode": "real",
         "orchestration": "v2",
+        "temporal": temporal_context if temporal_context.get("active") else {},
         "stateMachine": sm.snapshot(),
     }
     await sm.exit(Stage.EMIT, success=True)

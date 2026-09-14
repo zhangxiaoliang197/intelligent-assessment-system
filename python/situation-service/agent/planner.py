@@ -63,7 +63,7 @@ EMIT_RESEARCH_PLAN_TOOL = {
                             },
                             "filters": {
                                 "type": "object",
-                                "description": "可选：WHERE 过滤条件，key=字段名 value=匹配值或区间",
+                                "description": "可选：WHERE 过滤条件，key=字段名；区间值使用 {gte: 开始时间, lte: 结束时间}",
                             },
                             "aggregation": {
                                 "type": "string",
@@ -245,7 +245,10 @@ def _build_planner_system_prompt(profile: Dict[str, Any], meta_text: str) -> str
         "并规划 mapSpecs（含路线坐标的数据集 layerType 用 routes，仅点位数据用 points）；\n"
         "   - 无地理能力的数据集：geoMode 保持 aggregate，且禁止出现在 mapSpecs 引用中；\n"
         "   - 用户问题与地理无关时 mapSpecs 留空数组（不强求地图）；\n"
-        "6. 数据源无关：不得在 chartSpecs.title 或 narrativeOutline 中出现未在元数据中的具体字段值。\n\n"
+        "6. 数据源无关：不得在 chartSpecs.title 或 narrativeOutline 中出现未在元数据中的具体字段值。\n"
+        "7. 若用户问题含“时间回溯要求”，只能选择元数据中存在日期/时间字段的数据集；"
+        "每个 subQuestion.filters 必须使用真实时间字段和指定边界。历史时点快照需按实体取截至时点的最近记录；"
+        "历史区间分析优先规划 line 图展示演化、阶段变化与拐点，禁止把当前数据当作历史数据。\n\n"
         "直接调用 emit_research_plan 工具，不要输出额外文本。\n\n"
         f"可用数据集元数据：\n{meta_text}"
     )

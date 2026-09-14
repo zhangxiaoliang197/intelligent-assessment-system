@@ -46,6 +46,16 @@ class SkillRecommendRequest(BaseModel):
     context: Dict[str, Any] = Field(default_factory=dict)
 
 
+class TopicRecommendRequest(BaseModel):
+    """根据当前态势与用户追问推荐可一键生成的专题态势。"""
+    currentQuery: str = Field(default="", max_length=2000)
+    question: str = Field(default="", max_length=1000)
+    reportId: str = Field(default="", max_length=128)
+    currentSkillId: str = Field(default="", max_length=128)
+    limit: int = Field(default=4, ge=1, le=6)
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
 class SkillApplyRequest(BaseModel):
     """预执行 Skill，返回最终问题和可审计执行计划。"""
     query: str = Field(default="", max_length=2000)
@@ -146,6 +156,8 @@ class Report(BaseModel):
     status: str = "generating"        # generating | ready | partial | failed
     # 数据源 ID（透传到 stream 阶段供 real_generate 过滤数据集 schema；仅生成期使用，落库 snapshot 也包含）
     dataSourceId: str = ""
+    # 可持久化的生成上下文（时间回溯、地图选区、筛选和父报告谱系；不含内部身份）。
+    context: Dict[str, Any] = Field(default_factory=dict)
     charts: List[ChartSpec] = Field(default_factory=list)
     map: Dict[str, Any] = Field(default_factory=dict)         # { layers: [MapLayerSpec] }
     narrative: Narrative = Field(default_factory=Narrative)

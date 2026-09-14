@@ -161,7 +161,9 @@ def build_sql_messages(query: str, schema: dict, intent: str = "", raw_mode: boo
             "3. 明细保真模式：禁止任何聚合函数/GROUP BY/DISTINCT，必须 SELECT 表结构列出的**全部列**，"
             "逐行保留原始明细（尤其所有经纬度列、城市/名称列、JSON 途经点列的原值不得拼接/截断/计算）；\n"
             "4. 可根据查询意图与过滤条件生成 WHERE 子句精确过滤，必要时 ORDER BY；\n"
-            "5. 使用标准 SQL 语法（ANSI），避免厂商专用函数；不要添加 LIMIT，返回全部数据（行数由后端统一限制）。"
+            "5. 查询意图中的时间边界为严格证据边界：{gte: A, lte: B} 必须生成 column >= A AND column <= B；"
+            "只有 lte 时必须生成 column <= B。不得删除、扩大时间条件，不得使用当前时间替代历史时点；\n"
+            "6. 使用标准 SQL 语法（ANSI），避免厂商专用函数；不要添加 LIMIT，返回全部数据（行数由后端统一限制）。"
         )
     else:
         rules = (
@@ -173,7 +175,9 @@ def build_sql_messages(query: str, schema: dict, intent: str = "", raw_mode: boo
             "明细类查询后端会返回全量行（默认上限数千行），供前端图表/地图展示全部明细；"
             "聚合类查询必须带 GROUP BY 且结果集即为全部分组，确保聚合图表展示所有类目/时段，不得遗漏分组；\n"
             "6. 明细/轨迹/地图类问题（查询轨迹、点位、列表、目标/设备信息等）必须 SELECT 表结构里列出的**全部业务列**，不得只选经纬度或少数列，确保地图节点和图表能展示完整字段（名称、机型、高度、速度、航向、时间、状态等）；\n"
-            "7. 仅当问题明确要求统计/汇总时才使用聚合函数与 GROUP BY，聚合场景只 SELECT 聚合列和分组列，不得混入未聚合的明细列。"
+            "7. 仅当问题明确要求统计/汇总时才使用聚合函数与 GROUP BY，聚合场景只 SELECT 聚合列和分组列，不得混入未聚合的明细列；\n"
+            "8. 查询意图中的时间边界为严格证据边界：{gte: A, lte: B} 必须生成 column >= A AND column <= B；"
+            "只有 lte 时必须生成 column <= B。不得删除、扩大时间条件，不得使用当前时间替代历史时点。"
         )
     return [
         {"role": "system", "content": get_system_prompt() +

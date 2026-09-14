@@ -166,6 +166,21 @@
                     </div>
 
                     <div class="ai-response">
+                      <!-- 历史态势回溯提示（独立于布局/回退两条渲染路径） -->
+                      <div
+                        v-if="store.temporalContext?.active"
+                        :class="['temporal-answer-banner', { clarification: store.temporalContext.requiresClarification }]"
+                      >
+                        <span class="temporal-answer-icon"><el-icon><Clock /></el-icon></span>
+                        <div>
+                          <div class="temporal-answer-title">
+                            <span>历史态势回溯</span>
+                            <strong>{{ store.temporalContext.label }}</strong>
+                          </div>
+                          <p>{{ store.temporalContext.evidenceBoundary || '仅依据所选历史时间范围内的数据生成回答' }}</p>
+                        </div>
+                      </div>
+
                       <!-- HTML Artifact 沙箱渲染（优先；LLM 整页排版 + situation-kit 挂载真实图表/地图） -->
                       <ArtifactSandbox
                         v-if="store.artifact"
@@ -198,7 +213,7 @@
                       />
 
                       <!-- 固定三段布局（回退路径：旧产物/布局生成失败） -->
-                      <template v-else>
+                      <template v-if="!store.layout">
                         <!-- 图表区 -->
                         <div v-if="store.charts.length" class="tree-section">
                           <SituationChartGrid :charts="store.charts" :loading="store.isGenerating" :cols="1" :body-height="360" />
@@ -228,6 +243,18 @@
                         </div>
                       </template>
 
+                      <!-- 基于当前报告与用户追问自动推荐下一步专题态势 -->
+                      <SituationTopicExplorer
+                        v-if="canExploreTopics"
+                        :topics="topicRecommendations"
+                        :loading="topicsLoading"
+                        :question="inputText"
+                        :context-tags="topicContextTags"
+                        @select="onSelectTopic"
+                        @generate="onGenerateTopic"
+                        @refresh="refreshTopicRecommendations"
+                      />
+
                       <!-- 错误提示 -->
                       <div v-if="store.errorMsg">
                         <el-alert :title="store.errorMsg" type="error" :closable="false" show-icon />
@@ -247,6 +274,34 @@
 
             <!-- 输入区 -->
             <div class="input-area">
+              <div class="time-replay-bar">
+                <div class="time-replay-heading">
+                  <el-icon><Clock /></el-icon>
+                  <span>时间回溯</span>
+                </div>
+                <el-date-picker
+                  v-model="retrospectRange"
+                  class="time-replay-picker"
+                  type="daterange"
+                  unlink-panels
+                  range-separator="至"
+                  start-placeholder="开始日期"
+                  end-placeholder="结束日期"
+                  :shortcuts="timeReplayShortcuts"
+                  :clearable="true"
+                  @change="onTimeReplayChange"
+                />
+                <span v-if="store.selectedTimeRange" class="time-replay-boundary">
+                  严格按历史区间取证，不使用当前数据替代
+                </span>
+                <span v-else class="time-replay-help">也可直接输入“回溯到 2026-08-15”或“分析上周态势”</span>
+              </div>
+              <div v-if="canExploreTopics" class="follow-up-context">
+                <el-icon><Link /></el-icon>
+                <span>正在承接当前态势</span>
+                <strong>{{ compactText(store.query, 32) }}</strong>
+                <span class="follow-up-tip">可直接追问区域、时段、对比对象或风险点</span>
+              </div>
               <div class="input-wrapper">
                 <el-input
                   v-model="inputText"
@@ -432,7 +487,7 @@ import { ElMessage } from 'element-plus'
 import {
   Plus, Collection, Box, List, Search, MapLocation, Promotion, Loading,
   FullScreen, Share, Download, CircleClose, CircleCheck, Close, ArrowRight,
-  PieChart, TrendCharts, DataAnalysis, Setting, MagicStick, Document, Delete
+  PieChart, TrendCharts, DataAnalysis, Setting, MagicStick, Document, Delete, Link, Clock
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
 import { useToolNav } from '@/composables/useToolNav'
@@ -445,6 +500,7 @@ import SituationSkillToolbar from '@/components/situation/SituationSkillToolbar.
 import SituationSkillDrawer from '@/components/situation/SituationSkillDrawer.vue'
 import SituationSkillParametersDialog from '@/components/situation/SituationSkillParametersDialog.vue'
 import SituationSkillMarkdownDialog from '@/components/situation/SituationSkillMarkdownDialog.vue'
+import SituationTopicExplorer from '@/components/situation/SituationTopicExplorer.vue'
 import { useSituationStore, type Viewport, type ReportMeta } from '@/stores/situation'
 import { useSituationExport } from '@/composables/useSituationExport'
 import api from '@/services/api'
@@ -462,6 +518,8 @@ import type {
   SituationSkillPreflight,
   SituationSkillUsageItem,
 } from '@/types/situationSkill'
+import { recommendSituationTopics } from '@/services/situationTopics'
+import type { SituationTopicRecommendation } from '@/types/situationTopic'
 
 const router = useRouter()
 const route = useRoute()
@@ -493,8 +551,32 @@ const skillParametersVisible = ref(false)
 const skillMarkdownVisible = ref(false)
 const dataSourceDialogVisible = ref(false)
 const generatePending = ref(false)
+const topicsLoading = ref(false)
+const topicRecommendations = ref<SituationTopicRecommendation[]>([])
+const topicContextTags = ref<string[]>([])
+const retrospectRange = ref<[Date, Date] | null>(null)
 let recommendTimer: ReturnType<typeof setTimeout> | undefined
 let recommendRequest = 0
+let topicRecommendTimer: ReturnType<typeof setTimeout> | undefined
+let topicRecommendRequest = 0
+
+const timeReplayShortcuts = [
+  {
+    text: '近 7 天',
+    value: () => [new Date(Date.now() - 6 * 86400000), new Date()],
+  },
+  {
+    text: '近 30 天',
+    value: () => [new Date(Date.now() - 29 * 86400000), new Date()],
+  },
+  {
+    text: '上月',
+    value: () => {
+      const now = new Date()
+      return [new Date(now.getFullYear(), now.getMonth() - 1, 1), new Date(now.getFullYear(), now.getMonth(), 0)]
+    },
+  },
+]
 
 // ── 执行面板拖拽缩放（与指标分析保持一致）──
 function startResize(e: MouseEvent) {
@@ -534,7 +616,16 @@ const activeFullSkill = computed(() => (
   skills.value.find((skill) => skill.id === store.activeSkill?.id) || null
 ))
 
-const inputPlaceholder = '输入军事态势分析需求，如：分析战斗机巡航覆盖范围、舰艇编队部署、雷达探测范围等态势...'
+const canExploreTopics = computed(() => (
+  Boolean(store.reportId)
+  && (store.status === 'ready' || store.status === 'partial')
+  && Boolean(store.query)
+))
+
+const inputPlaceholder = computed(() => canExploreTopics.value
+  ? '承接当前态势继续提问，如：只看华北区域、对比近 30 天、找出风险最高的目标...'
+  : '输入军事态势分析需求，如：分析战斗机巡航覆盖范围、舰艇编队部署、雷达探测范围等态势...'
+)
 
 // 工具胶囊（与 Portal tools-row 一致，态势图 current）
 // 四功能切换栏（共享配置，current 由当前路由自动推导）
@@ -592,6 +683,7 @@ watch(() => store.charts.length + store.mapLayers.length + store.executionSteps.
 
 onUnmounted(() => {
   if (recommendTimer) clearTimeout(recommendTimer)
+  if (topicRecommendTimer) clearTimeout(topicRecommendTimer)
   store.closeStream()
 })
 
@@ -599,7 +691,27 @@ onUnmounted(() => {
 watch(inputText, (value) => {
   if (recommendTimer) clearTimeout(recommendTimer)
   recommendTimer = setTimeout(() => void updateSkillRecommendations(value), 320)
+  scheduleTopicRecommendations(value)
 })
+
+watch([
+  () => store.status,
+  () => store.reportId,
+  () => store.selectedRegion,
+  () => store.selectedTimeRange,
+  () => store.filters,
+], () => scheduleTopicRecommendations(inputText.value, 80), { deep: true })
+
+watch(() => store.selectedTimeRange, (range) => {
+  if (!range) {
+    retrospectRange.value = null
+    return
+  }
+  const [start, end] = range
+  if (Number.isFinite(start) && Number.isFinite(end)) {
+    retrospectRange.value = [new Date(start), new Date(end)]
+  }
+}, { immediate: true })
 
 watch(skills, (items) => {
   if (store.activeSkill?.id) {
@@ -681,6 +793,101 @@ async function updateSkillRecommendations(value: string) {
   }
 }
 
+function compactText(value: string, maximum = 36) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim()
+  return normalized.length > maximum ? `${normalized.slice(0, maximum)}…` : normalized
+}
+
+function buildTopicContext() {
+  return {
+    selectedRegion: store.selectedRegion || '',
+    selectedTimeRange: store.selectedTimeRange,
+    filters: store.filters,
+    viewport: store.viewport,
+    skillName: store.activeSkill?.name || '',
+    chartTitles: store.charts.map((chart) => chart.title).filter(Boolean).slice(0, 4),
+    layerNames: store.mapLayers.map((layer) => (
+      String(layer.layerConfig?.name || layer.layerConfig?.title || layer.layerId || '')
+    )).filter(Boolean).slice(0, 4),
+    datasetNames: store.datasets.map((dataset) => dataset.source || dataset.datasetId).slice(0, 4),
+  }
+}
+
+function fallbackTopicRecommendations(): SituationTopicRecommendation[] {
+  const subject = compactText(store.query, 80) || '当前态势'
+  const region = store.selectedRegion || '重点区域'
+  const dimensions = [
+    ['空间聚焦', `${region}热点与覆盖专题`, '下钻热点分布、覆盖空白与空间关联', `围绕“${subject}”，聚焦${region}，分析热点、覆盖空白和空间关联，生成专题态势。`],
+    ['时间演化', '时间演化与趋势专题', '识别阶段变化、拐点与趋势信号', `围绕“${subject}”，分析近期态势演化、关键拐点和驱动因素，生成专题态势。`],
+    ['对比研判', '关键力量与指标对比专题', '定位优势、差距与变化', `基于“${subject}”，对关键对象和核心指标进行对比研判，生成专题态势。`],
+    ['风险预警', '异常风险与薄弱环节专题', '聚焦异常、风险信号与处置优先级', `基于“${subject}”，识别异常、潜在风险和薄弱环节，生成专题态势。`],
+  ]
+  return dimensions.map((item, index) => ({
+    id: `fallback-topic-${index}`,
+    dimension: item[0],
+    title: item[1],
+    description: item[2],
+    query: item[3],
+    reason: '承接当前态势',
+    contextTags: [],
+    rank: index + 1,
+  }))
+}
+
+function scheduleTopicRecommendations(question = '', delay = 480) {
+  if (topicRecommendTimer) clearTimeout(topicRecommendTimer)
+  if (!canExploreTopics.value) {
+    topicRecommendations.value = []
+    topicContextTags.value = []
+    topicsLoading.value = false
+    return
+  }
+  topicRecommendTimer = setTimeout(() => void updateTopicRecommendations(question), delay)
+}
+
+async function updateTopicRecommendations(question = '') {
+  if (!canExploreTopics.value || !store.reportId) return
+  const requestId = ++topicRecommendRequest
+  const reportId = store.reportId
+  topicsLoading.value = true
+  try {
+    const result = await recommendSituationTopics({
+      currentQuery: store.query,
+      question: question.trim(),
+      reportId,
+      currentSkillId: store.activeSkill?.id || '',
+      limit: 4,
+      context: buildTopicContext(),
+    })
+    if (requestId !== topicRecommendRequest || reportId !== store.reportId) return
+    topicRecommendations.value = Array.isArray(result.items) ? result.items : []
+    topicContextTags.value = Array.isArray(result.contextTags) ? result.contextTags : []
+  } catch (error) {
+    if (requestId !== topicRecommendRequest || reportId !== store.reportId) return
+    console.warn('专题推荐加载失败，使用本地推荐', error)
+    topicRecommendations.value = fallbackTopicRecommendations()
+    topicContextTags.value = []
+  } finally {
+    if (requestId === topicRecommendRequest) topicsLoading.value = false
+  }
+}
+
+function refreshTopicRecommendations() {
+  if (topicRecommendTimer) clearTimeout(topicRecommendTimer)
+  void updateTopicRecommendations(inputText.value)
+}
+
+function onSelectTopic(topic: SituationTopicRecommendation) {
+  inputText.value = topic.query
+  ElMessage.info('已填入专题推荐，可继续修改后生成')
+}
+
+async function onGenerateTopic(topic: SituationTopicRecommendation) {
+  const matchedSkill = skills.value.find((skill) => skill.id === topic.skillId)
+  if (matchedSkill) store.setActiveSkill(matchedSkill)
+  await onGenerate(topic.query, topic)
+}
+
 function onSelectSkill(skill: SituationSkill, question?: string) {
   store.setActiveSkill(skill)
   if (question || !inputText.value.trim()) {
@@ -728,8 +935,22 @@ function onClearSkill() {
   store.setActiveSkill(null)
 }
 
+function onTimeReplayChange(value: [Date, Date] | null) {
+  if (!value || value.length !== 2) {
+    store.setSelectedTimeRange(null)
+    ElMessage.info('已切回当前态势口径')
+    return
+  }
+  const start = new Date(value[0].getTime())
+  const end = new Date(value[1].getTime())
+  start.setHours(0, 0, 0, 0)
+  end.setHours(23, 59, 59, 999)
+  store.setSelectedTimeRange([start.getTime(), end.getTime()])
+  ElMessage.success(`已启用时间回溯：${formatDate(start)} 至 ${formatDate(end)}`)
+}
+
 // ── 交互 ──
-async function onGenerate(q?: string) {
+async function onGenerate(q?: string, topic?: SituationTopicRecommendation) {
   if (generatePending.value || store.isGenerating || store.requestPending) return
   const text = (typeof q === 'string' ? q : inputText.value) || ''
   if (!text.trim()) {
@@ -760,7 +981,18 @@ async function onGenerate(q?: string) {
     }
     // 用户提问后展示系统执行过程面板（与指标分析保持一致）
     showExecPanel.value = true
-    const started = await store.generate(text)
+    const continuesCurrentSituation = canExploreTopics.value && Boolean(store.query)
+    const generationContext = continuesCurrentSituation ? {
+      parentReportId: store.reportId,
+      parentQuery: store.query,
+      followUpQuestion: text,
+      recommendedTopic: topic ? {
+        id: topic.id,
+        dimension: topic.dimension,
+        title: topic.title,
+      } : undefined,
+    } : {}
+    const started = await store.generate(text, generationContext)
     if (started) {
       void store.fetchHistory()
       void loadSkillPreferences()
@@ -781,6 +1013,8 @@ async function onStop() {
 function onNewSession() {
   store.reset()
   inputText.value = ''
+  topicRecommendations.value = []
+  topicContextTags.value = []
   showExecPanel.value = false
 }
 
@@ -867,6 +1101,10 @@ function formatTime(t?: string): string {
   if (isNaN(d.getTime())) return t
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+function formatDate(value: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`
 }
 
 async function deleteHistory(targetId: string) {
@@ -1111,6 +1349,35 @@ async function deleteHistory(targetId: string) {
 
 /* ── AI 响应 ── */
 .ai-response { display: flex; flex-direction: column; gap: 1rem; width: 100%; }
+.temporal-answer-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  color: #164e63;
+  border: 1px solid rgba(8, 145, 178, 0.22);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(236, 254, 255, 0.96), rgba(240, 249, 255, 0.96));
+}
+.temporal-answer-banner.clarification {
+  color: #92400e;
+  border-color: rgba(245, 158, 11, 0.28);
+  background: #fffbeb;
+}
+.temporal-answer-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  color: #0891b2;
+  border-radius: 9px;
+  background: rgba(8, 145, 178, 0.11);
+}
+.temporal-answer-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.temporal-answer-title span { font-weight: 700; }
+.temporal-answer-title strong { padding: 2px 7px; color: #0e7490; border-radius: 999px; background: rgba(8, 145, 178, 0.1); }
+.temporal-answer-banner p { margin: 4px 0 0; color: #64748b; font-size: 11px; line-height: 1.5; }
 .tree-section, .references-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
 .data-section { padding: 1rem 1.5rem; background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; }
 .ai-map-section { padding: 0; overflow: hidden; height: 460px; }
@@ -1230,6 +1497,43 @@ async function deleteHistory(targetId: string) {
   border: none; border-radius: 0; box-shadow: none;
   display: flex; flex-direction: column; gap: 0;
 }
+.time-replay-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  max-width: 1000px;
+  min-height: 34px;
+  margin: 0 auto 9px;
+  padding: 5px 8px;
+  border: 1px solid rgba(8, 145, 178, 0.16);
+  border-radius: 10px;
+  background: rgba(236, 254, 255, 0.46);
+}
+.time-replay-heading { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; color: #0e7490; font-size: 12px; font-weight: 700; }
+.time-replay-picker { width: 260px !important; flex: 0 0 auto; }
+.time-replay-picker :deep(.el-range-input) { font-size: 11px; }
+.time-replay-boundary { color: #0f766e; font-size: 11px; }
+.time-replay-help { color: var(--text-muted); font-size: 11px; }
+.follow-up-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: 1000px;
+  margin: 0 auto 8px;
+  color: #7c3aed;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.follow-up-context strong {
+  max-width: 42%;
+  color: #4c1d95;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.follow-up-tip { margin-left: auto; color: var(--text-muted); }
 .tools-bar { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 14px; }
 .tools-bar .tool-item { display: flex; align-items: center; gap: 6px; padding: 6px 14px; background: var(--gray-50); border-radius: 20px; cursor: pointer; transition: all 0.2s; border: 1px solid var(--border-light); }
 .tools-bar .tool-item:hover { background: white; border-color: #c4b5fd; box-shadow: 0 2px 8px rgba(139, 92, 246, 0.1); }
@@ -1247,6 +1551,13 @@ async function deleteHistory(targetId: string) {
 .input-wrapper :deep(.el-textarea__inner:focus) { border-color: #8b5cf6 !important; background: white !important; box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.1) !important; }
 .input-actions { position: absolute; bottom: 14px; right: 16px; display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 .input-actions .el-button { height: 38px; padding: 0 22px; border-radius: 10px; font-weight: 500; font-size: 14px; }
+
+@media (max-width: 760px) {
+  .time-replay-bar { align-items: flex-start; flex-wrap: wrap; }
+  .time-replay-picker { width: 100% !important; order: 3; }
+  .time-replay-help, .time-replay-boundary { flex: 1; }
+  .follow-up-tip { display: none; }
+}
 
 /* ── 通用 ── */
 .rotating { animation: rotating 1.2s linear infinite; }

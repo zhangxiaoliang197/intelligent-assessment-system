@@ -10,6 +10,7 @@
   POST /situation/generate                发起生成（立即返回 reportId + streamUrl）
   GET  /situation/skills                  态势图 Skill 目录（搜索/分类）
   POST /situation/skills/recommend        根据问题推荐 Skill
+  POST /situation/topics/recommend        根据当前报告和追问推荐专题态势
   POST /situation/skills/{skillId}/apply  预执行并返回编排计划
   GET  /situation/stream/{reportId}       SSE 流式接收（agent 中间结果）
   POST /situation/refresh/{reportId}      主动刷新一次 tick
@@ -54,6 +55,7 @@ from models import (
     SkillRecommendRequest,
     SkillRollbackRequest,
     SkillUpsertRequest,
+    TopicRecommendRequest,
 )
 from stream.sse import format_event, sse_response
 from agent.orchestrator import generate
@@ -83,6 +85,8 @@ from skills.store import (
 )
 from skills.markdown import get_skill_markdown, update_skill_markdown
 from store import admin_client, draft as draft_store
+from topic_recommender import build_contextual_generation_query, recommend_topic_situations
+from temporal import resolve_temporal_context
 
 app = FastAPI(
     title="态势图服务",
@@ -258,6 +262,39 @@ def recommend_situation_skills(req: SkillRecommendRequest, request: Request):
         context=req.context,
     )
     return _ok({"items": items, "total": len(items), "query": req.query})
+
+
+@app.post("/situation/topics/recommend")
+def recommend_situation_topics(req: TopicRecommendRequest, request: Request):
+    """推荐承接当前报告的专题态势，供结果区和上下文追问实时使用。"""
+    user_id, _ = _read_headers(request)
+    try:
+        favorite_ids = list_favorite_ids(user_id)
+        recent_usage = usage_stats(user_id)
+    except SkillStoreError as exc:
+        logger.warning("专题推荐个性化信息读取失败，回退内容匹配: %s", exc)
+        favorite_ids, recent_usage = [], {}
+
+    def resolve_skill(query: str) -> Optional[dict]:
+        matches = recommend_skills(
+            query,
+            1,
+            user_id=user_id,
+            favorite_ids=favorite_ids,
+            usage=recent_usage,
+            context={**req.context, "currentSkillId": req.currentSkillId},
+        )
+        return matches[0] if matches else None
+
+    result = recommend_topic_situations(
+        req.currentQuery,
+        req.question,
+        req.context,
+        req.limit,
+        resolve_skill,
+    )
+    result["reportId"] = req.reportId
+    return _ok(result, "专题态势推荐已生成")
 
 
 @app.post("/situation/skills/{skill_id}/apply")
@@ -487,7 +524,10 @@ async def _run_generation(report_id: str, session: _GenerationSession) -> None:
         async with _GENERATION_SEMAPHORE:
             async with asyncio.timeout(config.SITUATION_GENERATION_TIMEOUT):
                 async for event_type, data in generate(
-                    report.query, report_id, session.skill_context, session.context,
+                    session.context.get("_generationQuery") or report.query,
+                    report_id,
+                    session.skill_context,
+                    session.context,
                 ):
                     if event_type == "done":
                         report.status = str(data.get("status") or "ready")
@@ -625,8 +665,22 @@ async def generate_report(req: GenerateRequest, request: Request):
             req.source = d.get("source", "manual")
     if skill_context:
         context["skill"] = skill_context
+    temporal_context = resolve_temporal_context(req.query, context)
+    if temporal_context.get("active"):
+        context["temporal"] = temporal_context
+    contextual_query = build_contextual_generation_query(
+        normalized_query,
+        context.get("parentQuery") or "",
+    )
+    if contextual_query:
+        # 报告仍记录用户本轮问题；编排器收到完整上下文，才能理解“再看该区域”之类省略追问。
+        context["_generationQuery"] = contextual_query
     context["_actor"] = actor
     context["dataSourceId"] = req.dataSourceId
+    report_context = {
+        key: value for key, value in context.items()
+        if not str(key).startswith("_") and key != "skill"
+    }
 
     report = Report(
         reportId=report_id,
@@ -644,6 +698,7 @@ async def generate_report(req: GenerateRequest, request: Request):
         teamIds=req.teamIds,
         status="generating",
         dataSourceId=req.dataSourceId,
+        context=report_context,
     )
     # 先持久化 generating 状态再启动后台任务。进程异常退出时仍能审计和恢复，
     # 而不是给客户端一个只存在于当前进程内存中的 reportId。
@@ -675,6 +730,8 @@ async def generate_report(req: GenerateRequest, request: Request):
         "status": "generating",
         "streamUrl": f"/situation/stream/{report_id}",
     }
+    if temporal_context.get("active"):
+        response["temporal"] = temporal_context
     if skill_context:
         response["skill"] = {
             "id": skill_context["skillId"],
