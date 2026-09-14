@@ -112,6 +112,19 @@ export interface Viewport {
   zoom: number
 }
 
+export interface TemporalContext {
+  active: boolean
+  mode: 'current' | 'range' | 'as_of' | 'unspecified' | string
+  start?: string
+  end?: string
+  asOf?: string
+  label: string
+  source?: string
+  strict?: boolean
+  requiresClarification?: boolean
+  evidenceBoundary?: string
+}
+
 // ── 执行步骤（SSE 事件转步骤，供 execution-panel 展示）──
 export interface ExecStep {
   phase: 'plan' | 'step' | 'dataset' | 'chart' | 'map_layer' | 'narrative' | 'layout' | 'done' | 'error'
@@ -352,6 +365,7 @@ export const useSituationStore = defineStore('situation', () => {
   const layout = ref<LayoutTree | null>(null)
   const evidence = ref<ResultEvidence>({})
   const mapExplanation = ref('')
+  const temporalContext = ref<TemporalContext | null>(null)
 
   // ── 联动共享状态（图表 ↔ 地图，ADR-04/13）──
   const selectedRegion = ref<string | null>(null)
@@ -429,6 +443,7 @@ export const useSituationStore = defineStore('situation', () => {
     layout.value = null
     evidence.value = {}
     mapExplanation.value = ''
+    temporalContext.value = null
     selectedRegion.value = null
     selectedTimeRange.value = null
     filters.value = {}
@@ -511,6 +526,7 @@ export const useSituationStore = defineStore('situation', () => {
       ? snapshot.layout as LayoutTree
       : null
     mapExplanation.value = snapshot.map?.explanation || snapshot.mapExplanation || snapshot.narrative?.mapExplanation || ''
+    temporalContext.value = snapshot.temporal || snapshot.context?.temporal || null
     // 兜底：历史产物若 chart.explanation 缺失，用 narrative.explanations 回填逐图说明
     const expMap = new Map<string, string>(
       (narrative.value.explanations || []).map((e: any) => [e.chartId as string, e.text as string])
@@ -520,6 +536,11 @@ export const useSituationStore = defineStore('situation', () => {
     })
     selectedRegion.value = snapshot.selectedRegion || snapshot.context?.selectedRegion || null
     selectedTimeRange.value = snapshot.selectedTimeRange || snapshot.context?.selectedTimeRange || null
+    if (!selectedTimeRange.value && temporalContext.value?.mode === 'range') {
+      const start = Date.parse(temporalContext.value.start || '')
+      const end = Date.parse(temporalContext.value.end || '')
+      if (Number.isFinite(start) && Number.isFinite(end)) selectedTimeRange.value = [start, end]
+    }
     filters.value = snapshot.filters || snapshot.context?.filters || {}
     if (snapshot.viewport?.center?.length === 2) viewport.value = snapshot.viewport
     evidence.value = {
@@ -593,6 +614,7 @@ export const useSituationStore = defineStore('situation', () => {
   function applyEvent(eventType: string, data: any) {
     switch (eventType) {
       case 'plan': {
+        if (data?.temporal?.active) temporalContext.value = data.temporal
         // 规划阶段：记录生成方案
         const chartCount = data?.plan?.charts?.length ?? data?.chartCount
         const mapCount = data?.plan?.mapLayers?.length ?? data?.mapCount
@@ -770,6 +792,7 @@ export const useSituationStore = defineStore('situation', () => {
         break
       }
       case 'done':
+        if (data?.temporal?.active) temporalContext.value = data.temporal
         evidence.value = {
           evidenceHash: data.evidenceHash || evidence.value.evidenceHash,
           provenance: data.provenance || evidence.value.provenance,
@@ -789,7 +812,7 @@ export const useSituationStore = defineStore('situation', () => {
   }
 
   // ── 发起生成 ──
-  async function generate(q?: string) {
+  async function generate(q?: string, generationContext: Record<string, unknown> = {}) {
     if (requestPending.value || isGenerating.value) return false
     if (q) query.value = q
     if (!query.value.trim()) return
@@ -823,6 +846,7 @@ export const useSituationStore = defineStore('situation', () => {
         skillParameters: skillParameters.value,
         dataSourceId: dataSourceId.value,
         context: {
+          ...generationContext,
           selectedRegion: selectedRegion.value,
           selectedTimeRange: selectedTimeRange.value,
           filters: filters.value,
@@ -834,6 +858,12 @@ export const useSituationStore = defineStore('situation', () => {
       const data = resp.data || resp
       if (!data.reportId) throw new Error('生成服务未返回 reportId')
       reportId.value = data.reportId
+      temporalContext.value = data.temporal?.active ? data.temporal : null
+      if (!selectedTimeRange.value && temporalContext.value?.mode === 'range') {
+        const start = Date.parse(temporalContext.value.start || '')
+        const end = Date.parse(temporalContext.value.end || '')
+        if (Number.isFinite(start) && Number.isFinite(end)) selectedTimeRange.value = [start, end]
+      }
       if (data.skill) {
         activeSkill.value = {
           id: data.skill.id,
@@ -999,7 +1029,7 @@ export const useSituationStore = defineStore('situation', () => {
   return {
     // state
     reportId, status, query, source, title, activeSkill, skillParameters,
-    datasets, activeDatasetId, charts, mapLayers, narrative, layout, evidence, mapExplanation,
+    datasets, activeDatasetId, charts, mapLayers, narrative, layout, evidence, mapExplanation, temporalContext,
     selectedRegion, selectedTimeRange, filters, viewport,
     eventSource, errorMsg, requestPending,
     history, executionSteps,
