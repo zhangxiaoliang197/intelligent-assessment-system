@@ -56,6 +56,12 @@ docker run --rm --entrypoint python assessment-situation:latest \
     -m unittest discover -s tests -p 'test_*.py' -v
 save_image "situation"
 
+build_image "ipage" "ipage"
+echo "[校验] assessment-ipage:latest 单元测试 ..."
+docker run --rm --entrypoint python assessment-ipage:latest \
+    -m unittest discover -s tests -p 'test_*.py' -v
+save_image "ipage"
+
 echo ""
 echo "=== 第3步: 构建 Java 服务 ==="
 build_image "admin" "admin"

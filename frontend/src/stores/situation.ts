@@ -39,6 +39,8 @@ export interface MapLayer {
   coverages?: any[]
   layerConfig: Record<string, any>
   datasetRef?: string
+  /** 后端密度分级标（sparse/normal/cluster/heavy），GeoMap 据此启用点位聚合 */
+  density?: string
   fieldMapping?: {
     lngField?: string
     latField?: string
@@ -179,15 +181,19 @@ function rebuildChartOption(
   const opt = JSON.parse(JSON.stringify(chart.option || {}))
   const type = chart.type
 
+  // yFields 条目是否为虚拟计数列（按 xField 分组计数，数据集无数值列时的契约）
+  const isCountField = (yf: string) => String(yf || '').trim().toLowerCase() === 'count'
+
   // long 格式透视：{分类, 分组字段, 数值} → 每个分组一个 series
   if (groupField && yFields.length) {
     const yf = yFields[0]
+    const yfCount = isCountField(yf)
     let categories = Array.from(new Set(rows.map((r) => String(r[xField] ?? ''))))
     const groups = Array.from(new Set(rows.map((r) => String(r[groupField] ?? ''))))
     const valueMap = new Map<string, number>()
     rows.forEach((r) => {
       const key = `${String(r[xField] ?? '')}\u0000${String(r[groupField] ?? '')}`
-      valueMap.set(key, (valueMap.get(key) || 0) + toNum(r[yf]))
+      valueMap.set(key, (valueMap.get(key) || 0) + (yfCount ? 1 : toNum(r[yf])))
     })
     // 分类数 > 30 时按各分类合计降序取 top-29，其余合并为「其他」
     const MAX_CAT = 30
@@ -212,18 +218,62 @@ function rebuildChartOption(
 
   if (type === 'pie') {
     const yf = yFields[0]
-    if (yf) {
-      let items = rows.map((r) => ({ name: String(r[xField] ?? ''), value: toNum(r[yf]) }))
-      // 分类数 > 8 时合并为 top7 + 其他（与后端校验「其他 = 总 sum − 其余分片之和」对齐）
-      if (items.length > 8) {
-        items.sort((a, b) => b.value - a.value)
-        const top = items.slice(0, 7)
-        const restSum = items.slice(7).reduce((s, it) => s + it.value, 0)
-        top.push({ name: '其他', value: restSum })
-        items = top
-      }
-      opt.series = [{ type: 'pie', data: items }]
+    const yfCount = !yf || isCountField(yf)
+    // 先按分类聚合（count 计数 / sum 求和），避免明细行同分类产生重复分片
+    const agg = new Map<string, number>()
+    rows.forEach((r) => {
+      const cat = String(r[xField] ?? '')
+      agg.set(cat, (agg.get(cat) || 0) + (yfCount ? 1 : toNum(r[yf])))
+    })
+    let items = Array.from(agg.entries()).map(([name, value]) => ({ name, value }))
+    // 分类数 > 8 时合并为 top7 + 其他（与后端校验「其他 = 总 sum − 其余分片之和」对齐）
+    if (items.length > 8) {
+      items.sort((a, b) => b.value - a.value)
+      const top = items.slice(0, 7)
+      const restSum = items.slice(7).reduce((s, it) => s + it.value, 0)
+      top.push({ name: '其他', value: restSum })
+      items = top
     }
+    opt.series = [{ type: 'pie', data: items }]
+    return opt
+  }
+  if (type === 'radar') {
+    // 雷达图明细重建：按 xField（类别列）分组，各 yField 维度求均值；
+    // indicator.name 优先沿用 LLM 内联的中文名（按 yFields 顺序对应），max 按重建数据重算
+    const cats = Array.from(new Set(rows.map((r) => String(r[xField] ?? ''))))
+    const sums = new Map<string, Record<string, { sum: number; n: number }>>()
+    rows.forEach((r) => {
+      const cat = String(r[xField] ?? '')
+      const entry = sums.get(cat) || {}
+      yFields.forEach((yf: string) => {
+        const e = entry[yf] || { sum: 0, n: 0 }
+        e.sum += toNum(r[yf])
+        e.n += 1
+        entry[yf] = e
+      })
+      sums.set(cat, entry)
+    })
+    const prevIndicator: any[] = Array.isArray(opt.radar?.indicator) ? opt.radar.indicator : []
+    const dimensionMax = yFields.map((yf: string) =>
+      Math.max(...cats.map((c) => (sums.get(c)?.[yf]?.n ? sums.get(c)![yf].sum / sums.get(c)![yf].n : 0)), 0),
+    )
+    opt.radar = {
+      ...opt.radar,
+      indicator: yFields.map((yf: string, i: number) => ({
+        name: prevIndicator[i]?.name || yf,
+        max: Math.max(Math.ceil(dimensionMax[i] * 1.2), 1),  // 留 20% 余量；防全 0 塌缩
+      })),
+    }
+    opt.series = [{
+      type: 'radar',
+      data: cats.map((c) => ({
+        name: c,
+        value: yFields.map((yf: string) => {
+          const e = sums.get(c)?.[yf]
+          return e?.n ? Math.round((e.sum / e.n) * 100) / 100 : 0
+        }),
+      })),
+    }]
     return opt
   }
   if (type === 'scatter') {
@@ -238,12 +288,14 @@ function rebuildChartOption(
   }
   // bar / line / 其它分类轴图表
   if (yFields.length) {
-    // 先按 xField 聚合（去重 + 求和），避免明细行产生重复分类
+    // 先按 xField 聚合（去重 + 求和/计数），避免明细行产生重复分类
     const agg = new Map<string, Record<string, number>>()
     rows.forEach((r) => {
       const cat = String(r[xField] ?? '')
       const entry = agg.get(cat) || {}
-      yFields.forEach((yf: string) => { entry[yf] = (entry[yf] || 0) + toNum(r[yf]) })
+      yFields.forEach((yf: string) => {
+        entry[yf] = (entry[yf] || 0) + (isCountField(yf) ? 1 : toNum(r[yf]))
+      })
       agg.set(cat, entry)
     })
     let categories = Array.from(agg.keys())
@@ -262,7 +314,7 @@ function rebuildChartOption(
     if (opt.xAxis && typeof opt.xAxis === 'object') opt.xAxis.data = categories
     else opt.xAxis = { type: 'category', data: categories }
     opt.series = yFields.map((yf: string) => ({
-      name: yf,
+      name: isCountField(yf) ? '记录数' : yf,
       type: type === 'line' ? 'line' : 'bar',
       data: categories.map((c) => agg.get(c)?.[yf] ?? 0),
     }))

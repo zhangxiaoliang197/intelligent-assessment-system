@@ -48,11 +48,12 @@ mkdir -p "$DATA_DIR/qa"
 mkdir -p "$DATA_DIR/ontology"
 mkdir -p "$DATA_DIR/evaluation"
 mkdir -p "$DATA_DIR/situation"
+mkdir -p "$DATA_DIR/ipage"
 mkdir -p "$DATA_DIR/config"
 
 # ─── 日志目录（统一日志持久化）───
 LOG_DIR_HOST="$BASE_DIR/logs"
-mkdir -p "$LOG_DIR_HOST"/{knowledge,qa,indicator,evaluation,ontology,situation,admin}
+mkdir -p "$LOG_DIR_HOST"/{knowledge,qa,indicator,evaluation,ontology,situation,ipage,admin}
 
 # ─── 日志环境变量（可被外部环境变量覆盖）───
 LOG_ENV="${LOG_ENV:-prod}"
@@ -63,6 +64,7 @@ INTERNAL_SERVICE_TOKEN="${INTERNAL_SERVICE_TOKEN:-}"
 ADMIN_API_TOKEN="${ADMIN_API_TOKEN:-}"
 ADMIN_UI_PASSWORD="${ADMIN_UI_PASSWORD:-}"
 SITUATION_LLM_ALLOWED_HOSTS="${SITUATION_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}"
+IPAGE_LLM_ALLOWED_HOSTS="${IPAGE_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}"
 if [ ${#INTERNAL_SERVICE_TOKEN} -lt 24 ] || [ "$INTERNAL_SERVICE_TOKEN" = "local-development-token" ]; then
     echo "ERROR: INTERNAL_SERVICE_TOKEN 必须显式配置为至少 24 位随机值"
     exit 1
@@ -131,6 +133,7 @@ SERVICE_CONTAINERS=(
     assessment-frontend
     assessment-admin
     assessment-situation
+    assessment-ipage
     assessment-ontology
     assessment-evaluation
     assessment-indicator
@@ -210,6 +213,7 @@ docker run -d --name assessment-admin \
     -e SPRING_PROFILES_ACTIVE="$LOG_ENV" \
     -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
     -e ADMIN_API_TOKEN="$ADMIN_API_TOKEN" \
+    -e IPAGE_SERVICE_URL="http://assessment-ipage:10259" \
     -e LOG_PATH="/app/logs" \
     -e LOG_LEVEL="$LOG_LEVEL" \
     -v "$LOG_DIR_HOST/admin:/app/logs" \
@@ -372,6 +376,35 @@ docker run -d --name assessment-situation \
     --log-opt max-file=5 \
     --restart always \
     assessment-situation:latest
+
+echo "[启动] 智能交互页面服务 (10259)..."
+docker run -d --name assessment-ipage \
+    --network "$NET_NAME" \
+    -p 127.0.0.1:10259:10259 \
+    -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
+    -e IPAGE_DB="/app/data/ipage_pages.sqlite3" \
+    -e IPAGE_MAX_INFLIGHT="${IPAGE_MAX_INFLIGHT:-8}" \
+    -e IPAGE_MAX_CONCURRENT="${IPAGE_MAX_CONCURRENT:-2}" \
+    -e IPAGE_MAX_PER_USER="${IPAGE_MAX_PER_USER:-2}" \
+    -e IPAGE_GENERATION_TIMEOUT="${IPAGE_GENERATION_TIMEOUT:-480}" \
+    -e IPAGE_STREAM_REPLAY_TTL="300" \
+    -e IPAGE_TEMPLATE_FALLBACK="${IPAGE_TEMPLATE_FALLBACK:-true}" \
+    -e IPAGE_LLM_ALLOWED_HOSTS="$IPAGE_LLM_ALLOWED_HOSTS" \
+    -e IPAGE_CORS_ORIGINS="${IPAGE_CORS_ORIGINS:-http://localhost:10086,http://127.0.0.1:10086}" \
+    -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
+    -e LLM_MAX_TOKENS="24000" \
+    -e LOG_ENV="$LOG_ENV" \
+    -e LOG_LEVEL="$LOG_LEVEL" \
+    -e LOG_DIR="/app/logs" \
+    -e LOG_RETENTION_DAYS="$LOG_RETENTION_DAYS" \
+    -e LOG_MAX_SIZE_MB="$LOG_MAX_SIZE_MB" \
+    -v "$DATA_DIR/ipage:/app/data" \
+    -v "$LOG_DIR_HOST/ipage:/app/logs" \
+    --log-driver json-file \
+    --log-opt max-size=50m \
+    --log-opt max-file=5 \
+    --restart always \
+    assessment-ipage:latest
 
 # ─── 4. 启动前端 ───
 echo ""

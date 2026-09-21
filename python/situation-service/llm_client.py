@@ -168,6 +168,45 @@ def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000,
         raise RuntimeError(f"大模型调用失败: {str(e)[:500]}")
 
 
+def call_llm_vision(system_prompt: str, user_text: str, images_b64: list,
+                    temperature: float = 0.2, max_tokens: int = 2000,
+                    thinking_type: str = "disabled") -> str:
+    """多模态调用：文本 + 图片（base64）混合输入，返回纯文本响应。
+
+    复用 call_llm 的配置加载、主机白名单、HTTPS 校验与请求通道（其 messages
+    为透传 JSON 序列化，OpenAI 视觉格式的 content 数组可直接通过）。
+    供视觉评审器（visual_judge）对排版截图做 rubric 评分与诊断。
+
+    Args:
+        system_prompt: 系统提示词
+        user_text: 用户文本（评审任务说明、rubric 与产物清单）
+        images_b64: PNG 截图的 base64 字符串列表（不含 data: 前缀）
+        temperature: 温度参数，评审任务建议 0.2
+        max_tokens: 最大输出 token 数
+        thinking_type: 推理开关；评审任务默认禁用以降低延迟
+
+    Returns:
+        LLM 返回的文本内容
+
+    Raises:
+        RuntimeError: LLM 调用失败或配置缺失
+    """
+    content = [{"type": "text", "text": user_text}]
+    for b64 in images_b64 or []:
+        b64 = str(b64 or "").strip()
+        if not b64:
+            continue
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{b64}"},
+        })
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": content},
+    ]
+    return call_llm(messages, temperature, max_tokens, thinking_type)
+
+
 def _extract_json_block(text: str):
     """从可能包含 markdown 代码块或多余文本的响应中提取 JSON。
 
@@ -452,19 +491,17 @@ def call_llm_with_tools(
         except json.JSONDecodeError as e:
             parse_errors.append({"id": tc.get("id", ""), "name": name, "error": str(e)})
             args = None
-        if args is None:
-            continue
+        # 解析失败也保留该 tool_call（arguments=None + parse_error），
+        # 让调用方能拿到 id 构造 tool 反馈消息进行有针对性的重试，而不是原样重发
         parsed_tool_calls.append({
             "id": tc.get("id", ""),
             "name": name,
             "arguments": args,
+            "parse_error": None if args is not None else (parse_errors[-1] if parse_errors else {}),
         })
 
     if not parsed_tool_calls:
-        # 未返回 tool_calls：可能模型不支持 tools 协议或思考耗尽
-        detail = ""
-        if parse_errors:
-            detail = f"；tool_call.arguments 解析失败: {parse_errors}"
+        # 完全没有 tool_calls：可能模型不支持 tools 协议
         if finish_reason == "length":
             usage = data.get("usage", {}) or {}
             raise RuntimeError(
@@ -474,7 +511,7 @@ def call_llm_with_tools(
             )
         raise RuntimeError(
             f"大模型未返回 tool_calls（finish_reason={finish_reason}）。"
-            f"原始 content 前 200 字: {content[:200]}{detail}"
+            f"原始 content 前 200 字: {content[:200]}"
         )
 
     return {
@@ -482,4 +519,5 @@ def call_llm_with_tools(
         "tool_calls": parsed_tool_calls,
         "finish_reason": finish_reason,
         "raw_usage": data.get("usage", {}) or {},
+        "parse_errors": parse_errors,
     }

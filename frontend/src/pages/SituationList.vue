@@ -69,7 +69,8 @@ async function load() {
 }
 
 function open(reportId: string) {
-  router.push(`/situation/view/${reportId}`)
+  // from=list：详情页返回时确定性回到列表页
+  router.push({ path: `/situation/view/${reportId}`, query: { from: 'list' } })
 }
 
 async function remove(reportId: string) {

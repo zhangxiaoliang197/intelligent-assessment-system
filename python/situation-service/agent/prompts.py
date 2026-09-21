@@ -20,9 +20,12 @@ from agent.map_skill_loader import load_map_skill_guide
 # ──────────────────────────────────────────────────────────
 # 基础 system prompt（含地图 Skill 指南）
 # ──────────────────────────────────────────────────────────
-def _build_system_prompt() -> str:
-    """构建 SYSTEM_PROMPT，动态注入地图 Skill 指南。"""
-    map_guide = load_map_skill_guide()
+def _build_system_prompt(include_map_guide: bool = True) -> str:
+    """构建 SYSTEM_PROMPT，可选择是否注入地图 Skill 指南。
+
+    Planner 阶段只需判断地理能力、不需要产图格式示例，传 include_map_guide=False 可显著减小 prompt。
+    """
+    map_guide = load_map_skill_guide() if include_map_guide else ""
     map_section = f"\n{map_guide}\n" if map_guide else ""
     return f"""你是态势分析编排器。根据用户问题与可用数据，分阶段产出态势图。
 
@@ -45,14 +48,28 @@ def _build_system_prompt() -> str:
 
 
 _system_prompt_cache: str | None = None
+_system_prompt_no_guide_cache: str | None = None
 
 
-def get_system_prompt() -> str:
-    """获取动态 SYSTEM_PROMPT（含地图 Skill 指南）。首次调用构建并缓存。"""
-    global _system_prompt_cache
-    if _system_prompt_cache is None:
-        _system_prompt_cache = _build_system_prompt()
-    return _system_prompt_cache
+def get_system_prompt(with_map_guide: bool = True) -> str:
+    """获取动态 SYSTEM_PROMPT。
+
+    Args:
+        with_map_guide: 是否注入地图 Skill 指南（产图格式示例）。
+            Planner 阶段只需判断「数据集有无地理能力」，不需要产图格式，
+            传 False 可减少约 5k 字符的 prompt 体积、降低推理成本与思考链耗尽概率；
+            writer/map/narrative 等阶段保留 True（默认）。
+
+    首次调用构建并缓存（两个版本分别缓存）。
+    """
+    global _system_prompt_cache, _system_prompt_no_guide_cache
+    if with_map_guide:
+        if _system_prompt_cache is None:
+            _system_prompt_cache = _build_system_prompt()
+        return _system_prompt_cache
+    if _system_prompt_no_guide_cache is None:
+        _system_prompt_no_guide_cache = _build_system_prompt(include_map_guide=False)
+    return _system_prompt_no_guide_cache
 
 
 # 向后兼容（Phase 1 遗留）
@@ -190,6 +207,88 @@ def build_sql_messages(query: str, schema: dict, intent: str = "", raw_mode: boo
     ]
 
 
+def build_sql_correction_messages(
+    query: str, schema: dict, intent: str, failed_sql: str, value_hint: str = "", raw_mode: bool = False
+) -> list:
+    """阶段2（取数纠错）：上一条 SQL 执行成功但返回 0 行，而物理表实测有数据。
+
+    典型成因：WHERE 引用了不存在的枚举值/字段名拼写错误、时间字面值格式不匹配、
+    JOIN 条件错误、GROUP BY 与 SELECT 不一致等。要求 LLM 基于真实样本值修正导致
+    空集的条件，只返回修正后的一条 SELECT。
+    """
+    hint_text = f"\n真实数据样本（列值分布，过滤条件必须取自这些真实值）：\n{value_hint}\n" if value_hint else ""
+    if raw_mode:
+        rules = (
+            "1. 只能生成一条 SELECT 语句，禁止写操作与多语句；\n"
+            "2. 明细保真模式：禁止聚合/GROUP BY/DISTINCT，SELECT 表结构全部列；\n"
+            "3. 重点修正导致 0 行的 WHERE：字段名必须与表结构完全一致，枚举值必须与样本值完全一致，"
+            "时间字面值格式必须与样本一致；删除任何样本中不存在的取值条件；\n"
+            "4. 保留查询意图中仍然合理的过滤，不要为凑数据而删除全部条件；\n"
+            "5. 不要添加 LIMIT。"
+        )
+    else:
+        rules = (
+            "1. 只能生成一条 SELECT 语句，禁止写操作与多语句；\n"
+            "2. 保留原 SQL 中正确的 SELECT 聚合列与 GROUP BY 结构，重点修正导致 0 行的子句：\n"
+            "   - WHERE 字段名必须与表结构完全一致，枚举/分类值必须与样本值完全一致（注意中文与大小写）；\n"
+            "   - 时间字面值格式必须与样本一致（如样本为 2026-07-15T08:19:02 就不得写成 2026/7/15）；\n"
+            "   - 若有 JOIN，检查连接字段与表名；\n"
+            "3. 不得通过删除时间边界等意图性条件来凑数据，只修正语义错误；\n"
+            "4. 聚合列与非聚合列必须满足 GROUP BY 规则；必须带 GROUP BY 且覆盖全部分组；\n"
+            "5. 不要添加 LIMIT。"
+        )
+    return [
+        {"role": "system", "content": get_system_prompt() +
+            "\n\n【当前阶段：取数纠错】\n"
+            "你是 SQL 纠错专家。系统执行了一条 SELECT，数据库未报错但结果为 0 行；"
+            "经存活探针确认该物理表中确实存在数据。请只修正导致空结果集的语义错误。\n"
+            "返回 JSON（仅 JSON，无其它文字）：\n"
+            '{"sql": "SELECT ..."}\n'
+            "纠错规则：\n" + rules},
+        {"role": "user", "content": (
+            f"用户问题：{query}\n查询意图：{intent or '（无）'}\n\n"
+            f"表结构：\n{_format_schema_for_sql(schema)}\n"
+            f"{hint_text}\n"
+            f"返回 0 行的原 SQL：\n{failed_sql}\n\n"
+            "请输出修正后的 SQL。"
+        )},
+    ]
+
+
+def build_agg_spec_messages(query: str, schema: dict, intent: str = "") -> list:
+    """阶段2（确定性聚合兜底）：SQL 纠错后仍为空时，让 LLM 只声明聚合语义规格。
+
+    服务端拿到规格后在白名单内用标准库本地完成分组聚合，LLM 不再接触 SQL 语法，
+    彻底规避语义错误 SQL 返回空集。规格 JSON：
+        {"groupBy": ["分类列"],
+         "measures": [{"func": "count|sum|avg|max|min", "column": "*或列名", "alias": "英文别名"}],
+         "filters": [{"column": "列名", "op": "eq|ne|gt|gte|lt|lte|in", "value": 值}]}
+    """
+    return [
+        {"role": "system", "content": get_system_prompt() +
+            "\n\n【当前阶段：取数兜底聚合规格】\n"
+            "你是数据分析专家。前序自动生成的 SQL 两次都未取到数据。现在不要输出 SQL，"
+            "只根据问题意图与表结构，声明一份分组聚合规格，由系统在服务端确定性执行。\n"
+            "返回 JSON（仅 JSON，无其它文字）：\n"
+            '{"groupBy": ["..."], "measures": [{"func": "count", "column": "*", "alias": "total"}],'
+            ' "filters": [{"column": "...", "op": "eq", "value": "..."}]}\n'
+            "规格规则：\n"
+            "1. groupBy：1-2 个分类列，列名必须严格来自表结构；只选语义合适的离散分类列"
+            "（如阶段、类型、级别、名称、序号），不要对自由文本/唯一ID/高精度时间原值分组；\n"
+            "2. measures：1-4 个度量；func 仅允许 count/sum/avg/max/min；count 的 column 用 \"*\" 或具体列，"
+            "其余 func 的 column 必须是表结构中的数值列；alias 用英文蛇形命名（如 point_count、avg_altitude_m）；\n"
+            "3. filters：仅保留问题意图中明确要求的过滤；op 仅允许 eq/ne/gt/gte/lt/lte/in，"
+            "in 的 value 必须是数组；value 类型要与列匹配，不得臆造枚举值；\n"
+            "4. 查询意图中的时间边界为严格证据边界，不得删除或扩大；时间字面值按表结构中的格式书写；\n"
+            "5. 必须保证分组结果可直接用于图表：分组列即类目轴，度量列即数值序列。"},
+        {"role": "user", "content": (
+            f"用户问题：{query}\n查询意图：{intent or '（无）'}\n\n"
+            f"表结构：\n{_format_schema_for_sql(schema)}\n\n"
+            "请输出分组聚合规格 JSON。"
+        )},
+    ]
+
+
 def build_plan_messages(query: str, meta: dict) -> list:
     """阶段1：规划。LLM 据可用数据集元数据决定查什么、画什么。"""
     return [
@@ -242,7 +341,8 @@ def build_chart_messages(query: str, data_context: dict, plan: dict) -> list:
             "- scatter：点数 ≥ 5；\n"
             "数据只能来自上方聚合证据，不得编造；series 中每个数值必须逐字等于证据中出现的 sum/avg/count 值，"
             "禁止估算、取整或跨字段换算；datasetRef 必须使用所列数据集 ID；若无合适数据可降级为说明性图表；"
-            "若图表基于数据集明细行直接可视化（bar/line/scatter/pie），必须在 fieldMapping 给出 xField（分类/X轴字段）与 yFields（数值/Y轴字段列表），供前端用全量数据重建；"
+            "若图表基于数据集明细行直接可视化（bar/line/scatter/pie/radar），必须在 fieldMapping 给出 xField（分类/X轴字段）与 yFields（数值/Y轴字段列表），供前端用全量数据重建；"
+            "yFields 有两种合法取值：数据集真实数值列名，或虚拟计数列 \"count\"（数据集没有可聚合数值列、按分类计数时使用，如「各类型占比」按 type 计数则 yFields=[\"count\"]）；"
             "前端会用数据集全量行 + fieldMapping 重新生成 series.data，LLM 内联的样本数值仅作校验参考，因此 fieldMapping 必须准确指向真实列名；\n"
             "若图表是聚合汇总结果（option 已内联全部聚合值且涵盖所有分组），fieldMapping 可省略，但必须确保内联了全部分类的聚合值，不得遗漏分组。"},
         {"role": "user", "content": f"用户问题：{query}\n\n图表规划：\n{plans_text}\n\n真实数据：\n{data_text}"},
@@ -283,6 +383,8 @@ def build_single_chart_messages(
             "  · scatter：点数 ≥ 5；\n"
             "- 数据只能来自下方证据，不得编造；series 中每个数值必须逐字等于证据中的 sum/avg/count；\n"
             "- fieldMapping 必填 xField（分类/X轴字段）和 yFields（数值/Y轴字段列表），字段名必须逐字来自证据 columns 中的真实列名；"
+            "yFields 也可填虚拟计数列 \"count\"（数据集无可聚合数值列、按分类计数时使用，前端会按 xField 分组计数）；"
+            "radar 的 fieldMapping：xField 填类别列（如 category），yFields 依次填各维度数值列（3-12 个），前端按类别分组求均值重建；\n"
             "前端会用数据集全量行 + fieldMapping 重建 series.data，LLM 内联的样本数值仅作校验参考；\n"
             "- 若数据是「分类 + 分组字段 + 数值」的 long 格式（如 city × metric × value），必须额外给出 groupField（分组字段名，如 metric），"
             "yFields 填数值列（如 value）；严禁把分组字段的取值（如 delivery_order_count）当作 yFields；\n"
@@ -478,6 +580,8 @@ def build_artifact_messages(
     map_layer: Optional[dict],
     datasets: list,
     narrative: Optional[dict],
+    tokens: Optional[dict] = None,
+    semantic: Optional[dict] = None,
 ) -> list:
     """阶段5.6：HTML Artifact 排版（优先于布局树）。
 
@@ -490,6 +594,8 @@ def build_artifact_messages(
         map_layer: 已产出地图图层 dict（可为 None）
         datasets: 数据集元信息 [{datasetId, summary, columns, rowCount}]
         narrative: 文本产物 {"intro": ..., "mapExplanation": ...}
+        tokens: 主题令牌 dict（style_tokens.sanitize 产物；None=不注入主题约束）
+        semantic: ABT 叙事标签 {"polarity", "focus"}；None=不注入叙事指导
     """
     charts_text = "\n".join(
         f"- chartId={c.get('chartId','')} [{c.get('type','')}] {c.get('title','')}"
@@ -522,6 +628,46 @@ def build_artifact_messages(
     has_intro = bool((narrative or {}).get("intro", "").strip())
     has_explanations = bool((narrative or {}).get("explanations"))
     has_map_explanation = bool((narrative or {}).get("mapExplanation", "").strip())
+
+    # ── 主题令牌注入（StylistAgent 借鉴）：值来自 style_tokens 白名单钳制，直接内插安全 ──
+    style_block = ""
+    if isinstance(tokens, dict) and tokens:
+        style_block = (
+            "\n\n【主题令牌（必须遵守）】\n"
+            f"- 风格基调：{tokens.get('mood', '专业克制的商务数据看板')}；\n"
+            f"- 主色 {tokens.get('primary', '#2563eb')}、强调色 {tokens.get('accent', '#d97706')}、"
+            f"页面底 {tokens.get('bg', '#f5f7fa')}、卡片底 {tokens.get('card', '#ffffff')}、"
+            f"正文 {tokens.get('text', '#1f2d3d')}、次要文字 {tokens.get('muted', '#606266')}；\n"
+            f"- 圆角 {tokens.get('radius', 12)}px、间距 {tokens.get('gap', 16)}px、"
+            f"内边距 {tokens.get('pad', 16)}px、标题字重 {tokens.get('title_weight', 700)}；\n"
+            "- 请在 <style> 开头用 :root{--sit-primary:...;--sit-accent:...;...} 定义同名 CSS 变量"
+            "并全程引用（而非散落硬编码色值），保持全局视觉一致；主色只一种、强调色只一种。"
+        )
+
+    # ── 叙事指导注入（ABT 借鉴）：仅影响排版重心，不改变内容 ──
+    semantic_block = ""
+    if isinstance(semantic, dict):
+        polarity = str(semantic.get("polarity") or "").strip().lower()
+        focus = str(semantic.get("focus") or "").strip()[:20]
+        if polarity or focus:
+            _polarity_labels = {
+                "and": "现状罗列", "but": "问题聚焦", "therefore": "结论成果",
+                "compare": "对比分析", "alert": "预警升级", "neutral": "中性概述",
+            }
+            focus_guide = {
+                "alert": "把预警/异常相关的 KPI 与图表放在更靠前位置并给更大跨度",
+                "but": "把问题/转折相关图表作为视觉重心，说明文字就近摆放",
+                "therefore": "结论性图表给最大跨度并置于收尾区域",
+                "compare": "参与对比的图表等宽并排，便于横向对照",
+                "and": "按现状罗列的次序均匀分栏，权重均衡",
+            }.get(polarity, "核心图表给更大跨度与更靠前位置")
+            semantic_block = (
+                "\n\n【叙事指导（排版重心，不改变内容）】\n"
+                f"- 本次叙事结构：{_polarity_labels.get(polarity, '中性概述')}"
+                + (f"，焦点：{focus}" if focus else "")
+                + f"；排版上{focus_guide}。"
+            )
+
     narrative_text = (
         f"态势介绍：{'有（可放 narrative 占位符）' if has_intro else '无'}；"
         f"逐图说明：{'有（可放 narrative_chart 占位符）' if has_explanations else '无'}；"
@@ -545,19 +691,27 @@ def build_artifact_messages(
         '   地图说明：<div data-sit="map_explanation"></div>；\n'
         "4. 占位符之外的内容（标题、分栏、卡片框、配色、留白、图例说明文字）由你自由设计；\n"
         "5. 每个图表至少被一个 chart 占位符引用一次；map 占位符最多一个（有地图时必须放）；\n"
-        "6. 引用的 chartId / datasetId 必须逐字来自下方清单，禁止发明。\n\n"
-        "【排版要求】\n"
+        "6. 引用的 chartId / datasetId 必须逐字来自下方清单，禁止发明。\n"
+        "7. 栅格一致性硬约束（违反将被系统自动回收重排）：\n"
+        "   a. 只能为下方清单中实际存在的图表放置 chart 卡片，禁止为不存在的图表预留空卡片；\n"
+        "   b. 每个 class=\"grid\" 内卡片的 span 必须逐行恰好凑满 12 列（如 span 8 必须配 span 4，"
+        "span 4×3、span 6×2、span 12 单独成行），禁止留下没有卡片的空白列；\n"
+        "   c. 下方清单没有任何图表时，地图卡片必须 grid-column:span 12 独占整行；\n"
+        "   d. 不允许出现不含占位符且没有正文内容的空卡片。\n"
+        + style_block
+        + semantic_block +
+        "\n\n【排版要求】\n"
         "- 使用 CSS Grid/Flex 设计高质量仪表盘版式：页头（问题主题）→ KPI 指标带 → "
         "核心图表大卡 → 辅助图表小卡 → 地图大块 → 态势介绍收尾（可按产物特征调整）；\n"
         "- 配色专业克制（白底卡片 + 浅灰页面底 + 一个主色调），卡片圆角、阴影、留白得当；\n"
         "- 图表说明（narrative_chart）紧跟对应图表就近摆放；地图全宽大块；\n"
-        "- 页面自适应宽度（max-width: 1400px 居中），块间距一致。\n\n"
+        "- 页面全宽铺开（.wrap 宽度 100%、左右各 24px 内边距即可，不要写死 max-width 限宽），块间距一致。\n\n"
         "【完整示例】（结构示意，实际按产物清单自由发挥）\n"
         "<!DOCTYPE html>\n"
         "<html lang=\"zh\">\n<head><meta charset=\"utf-8\"><style>\n"
         "*{box-sizing:border-box} body{margin:0;padding:24px;background:#f5f7fa;"
         "font-family:'Microsoft YaHei',sans-serif}\n"
-        ".wrap{max-width:1400px;margin:0 auto}\n"
+        ".wrap{width:100%;padding:0 24px}\n"
         ".grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}\n"
         ".card{background:#fff;border-radius:12px;padding:16px;"
         "box-shadow:0 1px 4px rgba(0,0,0,.06)}\n"

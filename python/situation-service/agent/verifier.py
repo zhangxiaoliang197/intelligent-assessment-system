@@ -403,6 +403,8 @@ def check_chart_field_mapping(chart: Dict[str, Any], store: EvidenceStore) -> Op
 
     - 无 fieldMapping（聚合汇总路径）时跳过（返回 None）；
     - xField / yFields / groupField 必须存在于证据 columns 中；
+    - yFields 条目为 "count"（虚拟计数列，按 xField 分组计数）时放行——
+      pie/bar 按分类计数的数据集往往没有数值列，count 是前端重建契约的一部分；
     - 拿不到列信息时跳过（避免误杀旧数据）。
 
     Returns: 失败原因字符串（None 表示通过或跳过）
@@ -429,6 +431,9 @@ def check_chart_field_mapping(chart: Dict[str, Any], store: EvidenceStore) -> Op
     if x_field not in columns:
         return f"fieldMapping.xField={x_field!r} 不在数据集列 {columns} 中"
     for yf in y_fields:
+        # "count" 为虚拟计数列（前端按 xField 分组计数重建），不是数据集真实列
+        if str(yf).strip().lower() == "count":
+            continue
         if str(yf) not in columns:
             return f"fieldMapping.yFields={yf!r} 不在数据集列 {columns} 中"
     if group_field and group_field not in columns:
@@ -456,7 +461,7 @@ def verify_charts(
         failures.append({
             "chartId": "",
             "stage": "count",
-            "reason": f"图表数量 {len(charts)} < 最少要求 {min_charts}",
+            "reason": f"图表数量 {len(charts)} < 最少要求 {min_charts}（可能因产图失败或引用子问题无有效数据）",
         })
 
     evidence_numbers = _evidence_all_numbers(store)
@@ -615,11 +620,16 @@ def verify_all(
     narrative_result = verify_narrative(narrative, store)
 
     passed = chart_result["passed"] and narrative_result["passed"]
+    # 对外 summary 只汇报真实失败：narrative 尚未生成时（WRITE/VERIFY 阶段）
+    # 的「校验跳过」提示保留在其返回值内供日志排查，不进入对外消息误导用户
+    summary = f"charts: {chart_result['summary']}"
+    if not narrative_result["passed"]:
+        summary += f" | narrative: {narrative_result['summary']}"
     return {
         "passed": passed,
         "chart_result": chart_result,
         "narrative_result": narrative_result,
-        "summary": f"charts: {chart_result['summary']} | narrative: {narrative_result['summary']}",
+        "summary": summary,
     }
 
 

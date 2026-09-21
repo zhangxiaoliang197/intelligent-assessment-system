@@ -42,9 +42,19 @@ public class Dataset {
 
     @Column(name = "schema_version")
     private Integer schemaVersion;
-    /** Table join JSON: [{"left":"orders.order_id","right":"order_items.order_id"}] */
+    /** Table join JSON: [{"left":"orders.order_id","right":"orders.order_id"}] */
     @Column(name = "key_mappings", columnDefinition = "json")
     private String keyMappings;
+
+    /**
+     * 数据集级领域语义（JSON 文本）。
+     *
+     * 格式见 resources/semantic-schema.json 的 datasetSemantic；
+     * 承载"这张表是什么实体"（entityKind）、航迹拆分键、事件时间列、几何列等
+     * 字段级注解无法表达的表级语义。空串或 NULL 表示未配置。
+     */
+    @Column(name = "semantic_json", columnDefinition = "text")
+    private String semanticJson;
 
     private Integer records;
 
@@ -96,6 +106,8 @@ public class Dataset {
     public void setSchemaVersion(Integer schemaVersion) { this.schemaVersion = schemaVersion; }
     public String getKeyMappings() { return keyMappings; }
     public void setKeyMappings(String keyMappings) { this.keyMappings = keyMappings; }
+    public String getSemanticJson() { return semanticJson; }
+    public void setSemanticJson(String semanticJson) { this.semanticJson = semanticJson; }
     public Integer getRecords() { return records; }
     public void setRecords(Integer records) { this.records = records; }
     public LocalDateTime getLastExecuted() { return lastExecuted; }

@@ -118,12 +118,333 @@ def _query_dataset_with_sql(
         )
         return tools.query_admin_dataset({"id": ds_id, "name": "", "tableName": ""}, limit)
 
+    # 质量门控：SQL 执行成功但 0 行时不能静默返回空集——
+    # 常见成因是 LLM 聚合 SQL 语义错误（错误 WHERE/JOIN），数据库不报错但结果为空。
+    # 进入三级恢复：存活探针 → LLM SQL 纠错重试 → 确定性本地聚合兜底。
+    if not _extract_rows(data):
+        logger.info(
+            "SQL 执行成功但结果 0 行，进入空结果质量门控: datasetId=%s sql=%s",
+            ds_id, sql[:200],
+        )
+        return _recover_empty_sql_result(ds_id, query, intent, raw_mode, limit, schema, sql, data)
+
     # 统一字段：execute-sql 返回 rowCount，/dataset/{id}/query 返回 total，
     # 补齐 total 供下游（dataset 事件 / _format_data）统一读取。
     if "total" not in data and "rowCount" in data:
         data["total"] = data["rowCount"]
     data["_via_sql"] = True
     return data
+
+
+# ── 空结果质量门控：确定性恢复链 ──────────────────────────────────────────
+# 设计背景：Text-to-SQL 存在"执行成功但语义错误返回 0 行"的失败模式（如 WHERE
+# 枚举值写错、时间字面量格式不符、JOIN 条件错），旧逻辑对此完全无感知，导致
+# 聚合证据静默为空、最终产物 0 图表。恢复链三级：
+#   1) 存活探针（整表取样）：物理表确为空 → 确认 table_empty，不再折腾；
+#   2) LLM SQL 纠错重试 1 次：回喂真实列值分布，只修导致空集的子句；
+#   3) 确定性兜底：raw 模式回整表明细；aggregate 模式由 LLM 声明聚合规格
+#      （groupBy/measures/filters 白名单），服务端用标准库本地聚合，LLM 不再
+#      接触 SQL 语法，从机制上杜绝"语义错 SQL 空集"。
+_AGG_FUNCS = {"count", "sum", "avg", "max", "min"}
+_FILTER_OPS = {"eq", "ne", "gt", "gte", "lt", "lte", "in"}
+_ALIAS_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,30}$")
+
+
+def _to_number(value: Any) -> Optional[float]:
+    """宽松数值解析（整表接口数值常以字符串返回）；无法解析返回 None。"""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip().replace(",", "").rstrip("%"))
+        except ValueError:
+            return None
+    return None
+
+
+def _build_value_hint(rows: List[Dict[str, Any]], max_values: int = 6) -> str:
+    """从整表样本构造列值分布提示，供 SQL 纠错时选取真实枚举值。
+
+    数值列给 min/max；分类列给 top-N 取值与计数。
+    """
+    if not rows:
+        return ""
+    lines: List[str] = []
+    for col in list(rows[0].keys())[:20]:
+        values = [r.get(col) for r in rows]
+        non_empty = [v for v in values if v not in (None, "")]
+        if not non_empty:
+            continue
+        numbers = [n for n in (_to_number(v) for v in non_empty) if n is not None]
+        if len(numbers) >= max(1, len(non_empty) * 0.8):
+            lines.append(f"{col}: 数值，min={min(numbers):g}，max={max(numbers):g}")
+        else:
+            counts: Dict[str, int] = {}
+            for value in non_empty:
+                label = str(value)[:40]
+                counts[label] = counts.get(label, 0) + 1
+            top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:max_values]
+            lines.append(f"{col}: " + "，".join(f"{k}({v}条)" for k, v in top))
+        if len(lines) >= 12:
+            break
+    return "\n".join(lines)
+
+
+def _validate_filter_spec(spec: Dict[str, Any], columns_set: set) -> bool:
+    """校验单个过滤规格是否合法（列存在、操作符在白名单、in 为数组）。"""
+    if str(spec.get("column") or "") not in columns_set:
+        return False
+    op = str(spec.get("op") or "eq").lower()
+    if op not in _FILTER_OPS:
+        return False
+    if op == "in" and not isinstance(spec.get("value"), list):
+        return False
+    return True
+
+
+def _row_passes_filter(row: Dict[str, Any], spec: Dict[str, Any]) -> bool:
+    """对单行应用白名单过滤；数值优先按数值比较，退化到字符串比较。"""
+    col = str(spec.get("column") or "")
+    op = str(spec.get("op") or "eq").lower()
+    actual = row.get(col)
+    expected = spec.get("value")
+    if op == "in":
+        return actual in (expected or [])
+    actual_num = _to_number(actual)
+    expected_num = _to_number(expected)
+    if actual_num is not None and expected_num is not None:
+        left: Any = actual_num
+        right: Any = expected_num
+    else:
+        left = "" if actual is None else str(actual)
+        right = "" if expected is None else str(expected)
+    if op == "eq":
+        return left == right
+    if op == "ne":
+        return left != right
+    if op == "gt":
+        return left > right
+    if op == "gte":
+        return left >= right
+    if op == "lt":
+        return left < right
+    if op == "lte":
+        return left <= right
+    return False
+
+
+def _local_aggregate(
+    rows: List[Dict[str, Any]], spec: Dict[str, Any], row_limit: int
+) -> Optional[Tuple[List[str], List[Dict[str, Any]]]]:
+    """按 LLM 声明的聚合规格在服务端白名单内执行确定性分组聚合。
+
+    规格不合法（引用不存在的列/非法函数/非法别名）一律返回 None，由调用方放弃兜底。
+    返回 (columns, rows)；rows 中分组列为字符串、度量列为数值。
+    """
+    if not isinstance(spec, dict) or not rows:
+        return None
+    group_cols = spec.get("groupBy")
+    measures = spec.get("measures")
+    filters_spec = spec.get("filters") or []
+    if not isinstance(group_cols, list) or not group_cols:
+        return None
+    if not isinstance(measures, list) or not measures:
+        return None
+    if not isinstance(filters_spec, list):
+        return None
+
+    columns_set: set = set()
+    for row in rows:
+        columns_set.update(row.keys())
+
+    group_cols = [str(c) for c in group_cols][:2]
+    if any(c not in columns_set for c in group_cols):
+        return None
+
+    norm_measures: List[Tuple[str, str, str]] = []
+    seen_aliases: set = set()
+    for measure in measures[:4]:
+        if not isinstance(measure, dict):
+            return None
+        func = str(measure.get("func") or "").lower()
+        col = str(measure.get("column") or "")
+        alias = str(measure.get("alias") or "")
+        if func not in _AGG_FUNCS:
+            return None
+        if col != "*" and col not in columns_set:
+            return None
+        if not _ALIAS_PATTERN.match(alias) or alias in seen_aliases:
+            return None
+        seen_aliases.add(alias)
+        norm_measures.append((func, col, alias))
+
+    if any(not _validate_filter_spec(f, columns_set) for f in filters_spec):
+        return None
+
+    filtered = [
+        row for row in rows
+        if all(_row_passes_filter(row, f) for f in filters_spec)
+    ]
+    if not filtered:
+        return [], []
+
+    # 分组（键统一字符串化，None 归为空串），保留首次出现顺序
+    groups: Dict[Tuple[str, ...], List[Dict[str, Any]]] = {}
+    group_order: List[Tuple[str, ...]] = []
+    for row in filtered:
+        key = tuple("" if row.get(col) is None else str(row.get(col)) for col in group_cols)
+        if key not in groups:
+            groups[key] = []
+            group_order.append(key)
+        groups[key].append(row)
+
+    out_rows: List[Dict[str, Any]] = []
+    for key in group_order:
+        group_rows = groups[key]
+        out: Dict[str, Any] = {col: key[i] for i, col in enumerate(group_cols)}
+        for func, col, alias in norm_measures:
+            if func == "count":
+                if col == "*":
+                    value: Any = len(group_rows)
+                else:
+                    value = sum(1 for r in group_rows if r.get(col) not in (None, ""))
+            else:
+                numbers = [n for n in (_to_number(r.get(col)) for r in group_rows) if n is not None]
+                if not numbers:
+                    value = None
+                elif func == "sum":
+                    value = round(sum(numbers), 4)
+                elif func == "avg":
+                    value = round(sum(numbers) / len(numbers), 4)
+                elif func == "max":
+                    value = max(numbers)
+                else:  # min
+                    value = min(numbers)
+            out[alias] = value
+        out_rows.append(out)
+
+    # 按第一个度量降序（None 排末尾），输出稳定且利于图表展示
+    first_alias = norm_measures[0][2]
+
+    def _sort_key(row: Dict[str, Any]) -> Tuple[int, float]:
+        value = row.get(first_alias)
+        return (1, 0.0) if value is None else (0, -float(value))
+
+    out_rows.sort(key=_sort_key)
+    if len(out_rows) > row_limit:
+        out_rows = out_rows[:row_limit]
+    return group_cols + [alias for _, _, alias in norm_measures], out_rows
+
+
+def _recover_empty_sql_result(
+    ds_id: str,
+    query: str,
+    intent: str,
+    raw_mode: bool,
+    limit: int,
+    schema: Dict[str, Any],
+    original_sql: str,
+    original_payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """SQL 成功但 0 行的确定性恢复链，返回带诊断标记的 payload。
+
+    诊断字段（下划线前缀，不透出前端）：
+        _empty_reason: table_empty / unrecovered / probe_failed
+        _sql_corrected: LLM 纠错重试后取到数据
+        _aggregation_fallback: 服务端本地聚合兜底取到数据
+        _fallback_sampled_rows: 本地聚合所依据的整表样本行数
+    """
+    # 第 1 级：存活探针（同时作为后续兜底的样本数据，整表接口硬上限 1000 行）
+    try:
+        sample_payload = tools.query_admin_dataset(
+            {"id": ds_id, "name": "", "tableName": ""}, min(limit, 1000)
+        )
+    except Exception as exc:
+        logger.warning("空结果恢复-存活探针异常 datasetId=%s err=%s", ds_id, exc)
+        original_payload["_empty_reason"] = "probe_failed"
+        return original_payload
+
+    sample_rows = _extract_rows(sample_payload) if isinstance(sample_payload, dict) else []
+    if not sample_rows:
+        logger.info("空结果恢复-物理表确认无数据 datasetId=%s", ds_id)
+        original_payload["_empty_reason"] = "table_empty"
+        return original_payload
+
+    # 第 2 级：LLM SQL 纠错重试 1 次（回喂真实列值分布，低温避免发散）
+    try:
+        value_hint = _build_value_hint(sample_rows)
+        corrected_resp = call_llm_json(
+            prompts.build_sql_correction_messages(
+                query, schema, intent, original_sql, value_hint, raw_mode=raw_mode
+            ),
+            0.1,
+            config.LLM_MAX_TOKENS,
+        )
+        corrected_sql = ""
+        if isinstance(corrected_resp, dict):
+            corrected_sql = str(corrected_resp.get("sql") or "").strip()
+        if corrected_sql and corrected_sql != original_sql:
+            fixed = tools.execute_dataset_sql(ds_id, corrected_sql)
+            if isinstance(fixed, dict) and fixed.get("success") and _extract_rows(fixed):
+                logger.info(
+                    "空结果恢复-SQL 纠错成功 datasetId=%s rows=%s",
+                    ds_id, len(_extract_rows(fixed)),
+                )
+                fixed["_via_sql"] = True
+                fixed["_sql_corrected"] = True
+                if "total" not in fixed and "rowCount" in fixed:
+                    fixed["total"] = fixed["rowCount"]
+                return fixed
+    except Exception as exc:
+        logger.warning("空结果恢复-SQL 纠错异常 datasetId=%s err=%s", ds_id, exc)
+
+    # 第 3 级 a：明细保真模式直接回整表明细（坐标列天然保留）
+    if raw_mode:
+        if isinstance(sample_payload, dict) and sample_payload.get("success"):
+            logger.info("空结果恢复-明细模式回退整表 datasetId=%s rows=%s", ds_id, len(sample_rows))
+            sample_payload["_fallback_table"] = True
+            sample_payload["_recovery"] = "raw_full_table"
+            return sample_payload
+        original_payload["_empty_reason"] = "unrecovered_raw"
+        return original_payload
+
+    # 第 3 级 b：聚合模式由 LLM 声明聚合规格，服务端白名单本地聚合
+    try:
+        spec_resp = call_llm_json(
+            prompts.build_agg_spec_messages(query, schema, intent),
+            0.1,
+            config.LLM_MAX_TOKENS,
+        )
+        aggregated = _local_aggregate(sample_rows, spec_resp if isinstance(spec_resp, dict) else {}, limit)
+    except Exception as exc:
+        logger.warning("空结果恢复-本地聚合异常 datasetId=%s err=%s", ds_id, exc)
+        aggregated = None
+
+    if aggregated:
+        out_columns, out_rows = aggregated
+        if out_rows:
+            logger.info(
+                "空结果恢复-本地聚合兜底成功 datasetId=%s groups=%s sampleRows=%s",
+                ds_id, len(out_rows), len(sample_rows),
+            )
+            return {
+                "success": True,
+                "columns": out_columns,
+                "rows": out_rows,
+                "rowCount": len(out_rows),
+                "total": len(out_rows),
+                "_via_sql": False,
+                "_aggregation_fallback": True,
+                "_fallback_sampled_rows": len(sample_rows),
+            }
+
+    original_payload["_empty_reason"] = "unrecovered"
+    logger.warning(
+        "空结果恢复-三级恢复均未取到数据 datasetId=%s sql=%s", ds_id, original_sql[:200]
+    )
+    return original_payload
 
 
 def _extract_columns(payload: Dict[str, Any]) -> List[str]:
@@ -356,6 +677,16 @@ async def execute_sub_question(
 
     # 摘要基于全量行计算（min/max/sum/top3 更准确），仍只输出聚合统计，不外发原始行。
     summary = _build_summary(rows, columns, question)
+    # 空结果质量门控：把恢复链结论写入摘要，供 verifier/writer 区分"真无数据"与"取数失败"
+    empty_reason = payload.get("_empty_reason") if isinstance(payload, dict) else None
+    if not rows and empty_reason:
+        reason_text = {
+            "table_empty": "数据集当前无匹配记录",
+            "probe_failed": "存活探针执行失败，无法确认数据是否存在",
+            "unrecovered": "精确取数返回空集且自动纠错、本地聚合均未恢复",
+            "unrecovered_raw": "明细取数返回空集且整表兜底未恢复",
+        }.get(empty_reason, empty_reason)
+        summary = f"（证据为空：子问题「{question}」{reason_text}）"
     total_rows = payload.get("total") or payload.get("rowCount") or len(rows)
 
     # 地理能力画像：取数后立即测定（地图生成链路重构 §4.1），
@@ -380,6 +711,11 @@ async def execute_sub_question(
             "intent": sub_question.get("intent", ""),
             "viaSql": bool(payload.get("_via_sql")) if isinstance(payload, dict) else False,
             "relaxedTime": bool(sub_question.get("_relaxed_time")),
+            # 空结果质量门控诊断标记（供 orchestrator 子问题级重试/verifier 口径使用）
+            "emptyReason": empty_reason or "",
+            "sqlCorrected": bool(payload.get("_sql_corrected")) if isinstance(payload, dict) else False,
+            "aggregationFallback": bool(payload.get("_aggregation_fallback")) if isinstance(payload, dict) else False,
+            "fallbackSampledRows": int(payload.get("_fallback_sampled_rows") or 0) if isinstance(payload, dict) else 0,
             "geoProfile": geo,
         },
     )

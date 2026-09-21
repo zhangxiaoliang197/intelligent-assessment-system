@@ -1,0 +1,99 @@
+{
+  "_comment": "领域语义注解 golden 用例：Java（SemanticSchemaValidatorTest）与 Python（test_semantic_validator.py）各读本文件一遍，断言同一份通过/拒绝结论，用于证明两端校验实现不漂移。新增键或改 schema 时必须同步补用例。",
+  "dataset": [
+    {
+      "name": "合法：完整数据集级语义",
+      "valid": true,
+      "value": {
+        "entityKind": "air",
+        "symbolDefault": "fighter",
+        "trackGroupKey": ["aircraft_id", "mission_id"],
+        "eventTimeColumn": "record_time",
+        "geometry": { "lngColumn": "track_lng", "latColumn": "track_lat" }
+      }
+    },
+    {
+      "name": "合法：仅几何语义（带半径列）",
+      "valid": true,
+      "value": {
+        "geometry": { "lngColumn": "lng", "latColumn": "lat", "radiusColumn": "radius_km" }
+      }
+    },
+    {
+      "name": "合法：空对象（表示未配置语义）",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "name": "非法：entityKind 不在枚举内",
+      "valid": false,
+      "value": { "entityKind": "aircraft" }
+    },
+    {
+      "name": "非法：symbolDefault 不在符号注册表内",
+      "valid": false,
+      "value": { "symbolDefault": "transformer" }
+    },
+    {
+      "name": "非法：geometry 缺 latColumn",
+      "valid": false,
+      "value": { "geometry": { "lngColumn": "lng" } }
+    },
+    {
+      "name": "非法：未知键（additionalProperties=false）",
+      "valid": false,
+      "value": { "entityKind": "air", "unknownKey": "x" }
+    },
+    {
+      "name": "非法：trackGroupKey 为空数组",
+      "valid": false,
+      "value": { "trackGroupKey": [] }
+    }
+  ],
+  "field": [
+    {
+      "name": "合法：维度列带值映射与同义词",
+      "valid": true,
+      "value": {
+        "role": "dimension",
+        "values": { "蓝方": "blue", "红方": "red" },
+        "synonyms": { "我方": "blue", "敌方": "red" }
+      }
+    },
+    {
+      "name": "合法：显式指定符号",
+      "valid": true,
+      "value": { "role": "name", "symbol": "radar", "unit": "km" }
+    },
+    {
+      "name": "合法：空对象（表示未配置语义）",
+      "valid": true,
+      "value": {}
+    },
+    {
+      "name": "非法：role 不在枚举内",
+      "valid": false,
+      "value": { "role": "geometry" }
+    },
+    {
+      "name": "非法：symbol 不在符号注册表内",
+      "valid": false,
+      "value": { "symbol": "substation" }
+    },
+    {
+      "name": "非法：values 为空对象",
+      "valid": false,
+      "value": { "values": {} }
+    },
+    {
+      "name": "非法：values 的值为空串",
+      "valid": false,
+      "value": { "values": { "蓝方": "" } }
+    },
+    {
+      "name": "非法：unit 超长",
+      "valid": false,
+      "value": { "unit": "这是一个明显超过三十二个字符上限的非法单位说明文本内容用于触发长度校验" }
+    }
+  ]
+}

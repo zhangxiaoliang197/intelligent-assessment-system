@@ -75,6 +75,12 @@ public class AdminController {
     @Autowired
     private com.assessment.admin.service.SemanticCatalogService semanticCatalogService;
 
+    @Autowired
+    private com.assessment.admin.service.SemanticSchemaValidator semanticSchemaValidator;
+
+    @Autowired
+    private com.assessment.admin.service.IpPageCacheInvalidator ipPageCacheInvalidator;
+
     @Value("${db.type:mysql}")
     private String dbType;
 
@@ -502,6 +508,8 @@ public class AdminController {
             m.put("sql", ds.getSqlText());
             m.put("schemaVersion", ds.getSchemaVersion() != null ? ds.getSchemaVersion() : 1);
             m.put("sensitiveColumns", splitCsv(ds.getSensitiveColumns()));
+            // 数据集级领域语义（前端据此回填语义编辑对话框）
+            m.put("semanticJson", ds.getSemanticJson());
             m.put("records", ds.getRecords());
             m.put("lastExecuted", ds.getLastExecuted() != null ? ds.getLastExecuted().toString() : "");
             m.put("createTime", ds.getCreateTime() != null ? ds.getCreateTime().toString() : "");
@@ -534,6 +542,8 @@ public class AdminController {
         ds.setSensitiveColumns((String) body.getOrDefault("sensitiveColumns", ""));
         ds.setSchemaVersion(1);
         datasetRepo.save(ds);
+        // 注册闭环：无注解时按物理表结构预生成字段注解初稿（失败不阻塞注册）
+        prefillFieldAnnotations(ds);
         return ResponseEntity.ok(Map.of("success", true, "message", "数据集已保存", "id", ds.getId()));
     }
 
@@ -1204,6 +1214,29 @@ public class AdminController {
         }
         Dataset ds = optDs.get();
 
+        // 语义格式校验前置：不合格直接拒绝，避免"保存成功但消费侧解析不出"的静默降级
+        List<String> errors = new ArrayList<>();
+        if (!semanticSchemaValidator.isAvailable()) {
+            errors.add("语义格式校验不可用（" + semanticSchemaValidator.getUnavailableReason()
+                    + "），已拒绝保存以免写入无法校验的注解");
+        } else {
+            for (Map<String, Object> item : body) {
+                String column = Objects.toString(item.get("columnName"), "");
+                List<String> fieldErrors = semanticSchemaValidator.validateField(
+                        Objects.toString(item.get("semanticJson"), null));
+                for (String err : fieldErrors) {
+                    errors.add("字段 " + column + "：" + err);
+                }
+            }
+        }
+        if (!errors.isEmpty()) {
+            Map<String, Object> fail = new LinkedHashMap<>();
+            fail.put("success", false);
+            fail.put("message", "语义注解格式校验未通过，已拒绝保存（共 " + errors.size() + " 处）");
+            fail.put("errors", errors);
+            return ResponseEntity.badRequest().body(fail);
+        }
+
         // Delete existing annotations for this dataset
         fieldAnnotationRepo.deleteByDatasetId(datasetId);
 
@@ -1221,10 +1254,73 @@ public class AdminController {
             fa.setAnnotation((String) item.get("annotation"));
             fa.setBusinessMeaning((String) item.get("businessMeaning"));
             fa.setDataCategory((String) item.get("dataCategory"));
+            fa.setSemanticJson(Objects.toString(item.get("semanticJson"), null));
             fieldAnnotationRepo.save(fa);
         }
 
-        return ResponseEntity.ok(Map.of("success", true, "message", "标注已保存", "total", body.size()));
+        // 注解已落库，通知 ipage 失效其进程内缓存（未配置 ipage 时跳过）
+        List<String> warnings = new ArrayList<>();
+        String invalidateError = ipPageCacheInvalidator.invalidate(
+                ds.getDatabaseId(), Collections.singletonList(ds.getTableName()));
+        if (invalidateError != null) {
+            warnings.add(invalidateError);
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("message", "标注已保存");
+        result.put("total", body.size());
+        result.put("warnings", warnings);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 保存数据集级领域语义（entityKind / 航迹拆分键 / 事件时间列 / 几何列）。
+     *
+     * 请求体：{@code {"semanticJson": "{...}"}}，空串表示清除语义。
+     * 校验不通过直接拒绝；保存成功后同样触发 ipage 缓存失效。
+     */
+    @PutMapping("/dataset/{datasetId}/semantic")
+    public ResponseEntity<Map<String, Object>> saveDatasetSemantic(
+            @PathVariable String datasetId,
+            @RequestBody Map<String, Object> body) {
+        Optional<Dataset> optDs = datasetRepo.findById(datasetId);
+        if (optDs.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "数据集不存在"));
+        }
+        Dataset ds = optDs.get();
+        String semantic = Objects.toString(body.get("semanticJson"), null);
+
+        if (!semanticSchemaValidator.isAvailable()) {
+            Map<String, Object> fail = new LinkedHashMap<>();
+            fail.put("success", false);
+            fail.put("message", "语义格式校验不可用（" + semanticSchemaValidator.getUnavailableReason()
+                    + "），已拒绝保存以免写入无法校验的注解");
+            return ResponseEntity.badRequest().body(fail);
+        }
+        List<String> errors = semanticSchemaValidator.validateDataset(semantic);
+        if (!errors.isEmpty()) {
+            Map<String, Object> fail = new LinkedHashMap<>();
+            fail.put("success", false);
+            fail.put("message", "数据集级语义格式校验未通过，已拒绝保存（共 " + errors.size() + " 处）");
+            fail.put("errors", errors);
+            return ResponseEntity.badRequest().body(fail);
+        }
+
+        ds.setSemanticJson(semantic == null || semantic.isBlank() ? null : semantic);
+        datasetRepo.save(ds);
+
+        List<String> warnings = new ArrayList<>();
+        String invalidateError = ipPageCacheInvalidator.invalidate(
+                ds.getDatabaseId(), Collections.singletonList(ds.getTableName()));
+        if (invalidateError != null) {
+            warnings.add(invalidateError);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("message", "数据集级语义已保存");
+        result.put("warnings", warnings);
+        return ResponseEntity.ok(result);
     }
 
     @PutMapping("/dataset/{datasetId}/fields/{fieldId}")
@@ -1240,8 +1336,38 @@ public class AdminController {
         if (body.containsKey("annotation")) fa.setAnnotation((String) body.get("annotation"));
         if (body.containsKey("businessMeaning")) fa.setBusinessMeaning((String) body.get("businessMeaning"));
         if (body.containsKey("dataCategory")) fa.setDataCategory((String) body.get("dataCategory"));
+        if (body.containsKey("semanticJson")) {
+            String semantic = Objects.toString(body.get("semanticJson"), null);
+            if (!semanticSchemaValidator.isAvailable()) {
+                return ResponseEntity.badRequest().body(Map.of("success", false,
+                        "message", "语义格式校验不可用（" + semanticSchemaValidator.getUnavailableReason()
+                                + "），已拒绝保存"));
+            }
+            List<String> errors = semanticSchemaValidator.validateField(semantic);
+            if (!errors.isEmpty()) {
+                Map<String, Object> fail = new LinkedHashMap<>();
+                fail.put("success", false);
+                fail.put("message", "语义注解格式校验未通过，已拒绝保存");
+                fail.put("errors", errors);
+                return ResponseEntity.badRequest().body(fail);
+            }
+            fa.setSemanticJson(semantic);
+        }
         fieldAnnotationRepo.save(fa);
-        return ResponseEntity.ok(Map.of("success", true, "message", "标注已更新"));
+
+        List<String> warnings = new ArrayList<>();
+        String databaseId = datasetRepo.findById(fa.getDatasetId())
+                .map(Dataset::getDatabaseId).orElse(null);
+        String invalidateError = ipPageCacheInvalidator.invalidate(databaseId,
+                Collections.singletonList(fa.getTableName()));
+        if (invalidateError != null) {
+            warnings.add(invalidateError);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("message", "标注已更新");
+        result.put("warnings", warnings);
+        return ResponseEntity.ok(result);
     }
 
     // ==================== 指标关联 ====================
@@ -1418,8 +1544,9 @@ public class AdminController {
         List<Map<String, Object>> schemas = new ArrayList<>();
         for (Dataset ds : datasets) {
             if (ds.getTableName() == null) continue;
-            List<FieldAnnotation> fields = fieldAnnotationRepo.findByDatasetId(ds.getId());
-            if (fields.isEmpty()) continue;
+            // 字段列表：人工注解优先，未标注时降级读物理表结构，保证"注册即可见"
+            List<Map<String, Object>> fieldList = buildExportFields(ds);
+            if (fieldList.isEmpty()) continue;
 
             Map<String, Object> schema = new LinkedHashMap<>();
             schema.put("datasetId", ds.getId());
@@ -1427,18 +1554,8 @@ public class AdminController {
             schema.put("tableName", ds.getTableName());
             schema.put("description", ds.getDescription());
             schema.put("databaseId", ds.getDatabaseId());
-            List<Map<String, Object>> fieldList = new ArrayList<>();
-            for (FieldAnnotation f : fields) {
-                Map<String, Object> fd = new LinkedHashMap<>();
-                fd.put("column", f.getColumnName());
-                fd.put("type", f.getColumnType());
-                fd.put("comment", f.getColumnComment());
-                fd.put("annotation", f.getAnnotation());
-                fd.put("businessMeaning", f.getBusinessMeaning());
-                fd.put("category", f.getDataCategory());
-                fd.put("isPrimaryKey", f.getIsPrimaryKey());
-                fieldList.add(fd);
-            }
+            // 数据集级领域语义（原样透传，解析错误由消费侧按实体大类兜底）
+            schema.put("semanticJson", ds.getSemanticJson());
             schema.put("fields", fieldList);
             schemas.add(schema);
         }
@@ -1472,9 +1589,159 @@ public class AdminController {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("schemas", schemas);
         result.put("indicators", indicatorConfigs);
+        // 语义注解格式规范随元数据下发：Python 侧据此复用同一份 schema 校验，避免两端各存一份漂移
+        result.put("semanticSchema", semanticSchemaValidator.rawSchema());
         result.put("exportTime", java.time.LocalDateTime.now().toString());
 
         return ResponseEntity.ok(Map.of("success", true, "data", result));
+    }
+
+    /**
+     * 构建 LLM 元数据导出的字段列表（注解优先，物理结构降级）。
+     *
+     * 设计口径：
+     * 1. 字段注解是管理员人工校准的语义层，存在时直接使用（不做列过滤，标注即授权可见）；
+     * 2. 未标注的数据集降级读取物理表结构（列 COMMENT 兜底语义），保证"注册即可见"，
+     *    避免因漏配注解导致 LLM 侧数据集元数据为空（历史缺陷：无注解即静默跳过）；
+     * 3. 降级路径按 allowedColumns 白名单过滤、排除 sensitiveColumns（口径对齐
+     *    SqlExecutionService.queryDataset 的取数投影），白名单未配置时导出全部列并排除敏感列；
+     * 4. 注解与物理结构均不可得时返回空列表，由调用方跳过该数据集并留有告警日志；
+     * 5. 字段级领域语义（semantic_json）随字段一并导出，消费侧优先使用；降级路径该列为空串。
+     */
+    private List<Map<String, Object>> buildExportFields(Dataset ds) {
+        // 1) 人工注解优先
+        List<FieldAnnotation> annotated = fieldAnnotationRepo.findByDatasetId(ds.getId());
+        if (!annotated.isEmpty()) {
+            List<Map<String, Object>> fieldList = new ArrayList<>();
+            for (FieldAnnotation f : annotated) {
+                Map<String, Object> fd = new LinkedHashMap<>();
+                fd.put("column", f.getColumnName());
+                fd.put("type", f.getColumnType());
+                fd.put("comment", f.getColumnComment());
+                fd.put("annotation", f.getAnnotation());
+                fd.put("businessMeaning", f.getBusinessMeaning());
+                fd.put("category", f.getDataCategory());
+                fd.put("isPrimaryKey", f.getIsPrimaryKey());
+                // 字段级领域语义（结构化，消费侧优先使用；空表示回退到 businessMeaning 解析）
+                fd.put("semanticJson", f.getSemanticJson());
+                fieldList.add(fd);
+            }
+            return fieldList;
+        }
+
+        // 2) 降级：读物理表结构
+        if (ds.getDatabaseId() == null || ds.getDatabaseId().isBlank()) {
+            logger.warn("导出 LLM 元数据：数据集 {}（{}）既无字段注解也未关联数据库，已跳过",
+                    ds.getId(), ds.getTableName());
+            return List.of();
+        }
+        Optional<DatabaseConfig> optDb = dbConfigRepo.findById(ds.getDatabaseId());
+        if (optDb.isEmpty()) {
+            logger.warn("导出 LLM 元数据：数据集 {}（{}）关联的数据库配置 {} 不存在，已跳过",
+                    ds.getId(), ds.getTableName(), ds.getDatabaseId());
+            return List.of();
+        }
+        ResponseEntity<Map<String, Object>> resp = readTableColumns(optDb.get(), ds.getTableName());
+        Map<String, Object> body = resp.getBody();
+        if (body == null || !Boolean.TRUE.equals(body.get("success"))) {
+            logger.warn("导出 LLM 元数据：数据集 {}（{}）读取物理表结构失败: {}，已跳过",
+                    ds.getId(), ds.getTableName(), body == null ? "无响应" : body.get("message"));
+            return List.of();
+        }
+
+        // 白名单/敏感列过滤（大小写不敏感；白名单未配置时不设列级限制）
+        Set<String> allowed = new HashSet<>();
+        for (String item : splitCsv(ds.getAllowedColumns())) {
+            allowed.add(item.toLowerCase(Locale.ROOT));
+        }
+        Set<String> sensitive = new HashSet<>();
+        for (String item : splitCsv(ds.getSensitiveColumns())) {
+            sensitive.add(item.toLowerCase(Locale.ROOT));
+        }
+
+        List<Map<String, Object>> columns = body.get("columns") instanceof List<?> raw
+                ? raw.stream().filter(Objects::nonNull).map(item -> (Map<String, Object>) item).toList()
+                : List.of();
+        List<Map<String, Object>> fieldList = new ArrayList<>();
+        for (Map<String, Object> c : columns) {
+            String columnName = Objects.toString(c.get("columnName"), "");
+            if (columnName.isEmpty()) continue;
+            String lower = columnName.toLowerCase(Locale.ROOT);
+            if (!allowed.isEmpty() && !allowed.contains(lower)) continue;
+            if (sensitive.contains(lower)) continue;
+            String comment = Objects.toString(c.get("comment"), "");
+            Map<String, Object> fd = new LinkedHashMap<>();
+            fd.put("column", columnName);
+            fd.put("type", Objects.toString(c.get("dataType"), ""));
+            fd.put("comment", comment);
+            fd.put("annotation", "");
+            fd.put("businessMeaning", comment);
+            fd.put("category", "");
+            fd.put("isPrimaryKey", Boolean.TRUE.equals(c.get("isPrimaryKey")));
+            fd.put("semanticJson", "");
+            fieldList.add(fd);
+        }
+        if (fieldList.isEmpty()) {
+            logger.warn("导出 LLM 元数据：数据集 {}（{}）按 allowedColumns/sensitiveColumns 过滤后无可见字段，已跳过",
+                    ds.getId(), ds.getTableName());
+            return List.of();
+        }
+        logger.info("导出 LLM 元数据：数据集 {}（{}）无字段注解，降级导出物理表结构 {} 个字段",
+                ds.getId(), ds.getTableName(), fieldList.size());
+        return fieldList;
+    }
+
+    /**
+     * 数据集注册闭环：未标注的数据集自动从物理表结构预生成字段注解初稿
+     * （列名/类型/主键/可空/COMMENT），管理员后续在字段标注页校准业务含义。
+     * 已有注解时不覆盖（保护人工标注）；读取失败仅告警，不阻塞注册流程。
+     */
+    private void prefillFieldAnnotations(Dataset ds) {
+        if (ds.getTableName() == null || ds.getTableName().isBlank()
+                || ds.getDatabaseId() == null || ds.getDatabaseId().isBlank()) {
+            return;
+        }
+        if (!fieldAnnotationRepo.findByDatasetId(ds.getId()).isEmpty()) {
+            return;
+        }
+        try {
+            Optional<DatabaseConfig> optDb = dbConfigRepo.findById(ds.getDatabaseId());
+            if (optDb.isEmpty()) {
+                logger.warn("数据集 {} 预生成字段注解失败：数据库配置 {} 不存在", ds.getId(), ds.getDatabaseId());
+                return;
+            }
+            ResponseEntity<Map<String, Object>> resp = readTableColumns(optDb.get(), ds.getTableName());
+            Map<String, Object> body = resp.getBody();
+            if (body == null || !Boolean.TRUE.equals(body.get("success"))) {
+                logger.warn("数据集 {}（{}）预生成字段注解失败: {}",
+                        ds.getId(), ds.getTableName(), body == null ? "无响应" : body.get("message"));
+                return;
+            }
+            List<Map<String, Object>> columns = body.get("columns") instanceof List<?> raw
+                    ? raw.stream().filter(Objects::nonNull).map(item -> (Map<String, Object>) item).toList()
+                    : List.of();
+            for (Map<String, Object> c : columns) {
+                String columnName = Objects.toString(c.get("columnName"), "");
+                if (columnName.isEmpty()) continue;
+                FieldAnnotation fa = new FieldAnnotation();
+                fa.setId("fa_" + UUID.randomUUID().toString().substring(0, 8));
+                fa.setDatasetId(ds.getId());
+                fa.setTableName(ds.getTableName());
+                fa.setColumnName(columnName);
+                fa.setColumnType(Objects.toString(c.get("dataType"), ""));
+                fa.setIsPrimaryKey(Boolean.TRUE.equals(c.get("isPrimaryKey")));
+                fa.setIsNullable(Boolean.TRUE.equals(c.get("isNullable")));
+                String comment = Objects.toString(c.get("comment"), "");
+                fa.setColumnComment(comment);
+                fa.setBusinessMeaning(comment);
+                fieldAnnotationRepo.save(fa);
+            }
+            logger.info("数据集 {}（{}）已按物理表结构预生成 {} 个字段注解初稿，可在管理后台校准业务含义",
+                    ds.getId(), ds.getTableName(), columns.size());
+        } catch (Exception e) {
+            // 预生成是增强步骤，失败不阻塞注册
+            logger.warn("数据集 {}（{}）预生成字段注解异常: {}", ds.getId(), ds.getTableName(), e.getMessage());
+        }
     }
 
     // ==================== 地图服务配置管理 ====================

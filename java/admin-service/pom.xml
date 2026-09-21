@@ -94,6 +94,15 @@
             <artifactId>logstash-logback-encoder</artifactId>
             <version>7.4</version>
         </dependency>
+
+        <!-- JSON Schema 校验：语义注解格式规范。
+             与 Python 侧 jsonschema 库共用同一份 resources/semantic-schema.json，
+             两端校验结论由 tests/fixtures/semantic_cases.json 断言一致。 -->
+        <dependency>
+            <groupId>com.networknt</groupId>
+            <artifactId>json-schema-validator</artifactId>
+            <version>1.5.9</version>
+        </dependency>
     </dependencies>
 
     <build>

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:assessment:semantic-schema",
+  "title": "数据源领域语义注解",
+  "description": "领域语义注解的格式规范：admin-service 保存时校验，interactive-page-service 解析前校验；两端共用本文件（由 /api/admin/export/for-llm 随元数据下发给 Python 侧），保证判定一致。",
+  "$defs": {
+    "entityKind": {
+      "description": "实体大类，决定地图符号与生命周期口径",
+      "enum": ["air", "ground_facility", "base", "other"]
+    },
+    "symbol": {
+      "description": "象形符号键，必须落在 page-kit.js 的 SIT_SHAPES 注册表内（未命中的键会导致静默回退成圆点）",
+      "enum": [
+        "fighter", "awacs", "recon", "bomber", "base", "sam", "radar",
+        "coastal", "flag", "depot", "fuel", "anchor", "runway", "tower",
+        "boom", "cross", "magnifier", "ring", "dot"
+      ]
+    },
+    "valueMap": {
+      "description": "值映射：原始值 → 规范值（规范值可继续作为阵营色等下游判定的键）",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    },
+    "datasetSemantic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "entityKind": { "$ref": "#/$defs/entityKind" },
+        "symbolDefault": { "$ref": "#/$defs/symbol" },
+        "trackGroupKey": {
+          "description": "航迹拆分键（如 [\"aircraft_id\",\"mission_id\"]），同一组内按序号/时间排序串线",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "eventTimeColumn": {
+          "description": "事件时间列（timeline 与回放只认事件时间，不认档案日期列）",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "geometry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["lngColumn", "latColumn"],
+          "properties": {
+            "lngColumn": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "latColumn": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "radiusColumn": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        }
+      }
+    },
+    "fieldSemantic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "description": "字段角色，决定该列在取数/整形中的用途",
+          "enum": ["id", "name", "time", "lng", "lat", "radius", "seq", "measure", "dimension"]
+        },
+        "symbol": { "$ref": "#/$defs/symbol" },
+        "unit": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "values": { "$ref": "#/$defs/valueMap" },
+        "synonyms": { "$ref": "#/$defs/valueMap" }
+      }
+    }
+  }
+}

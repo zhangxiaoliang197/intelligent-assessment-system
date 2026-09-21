@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>航迹绘制器（态势图 mock 数据用）</title>
+<!-- Leaflet / gcoord 复用前端已有的静态 vendor 资源，不引入新依赖 -->
+<link rel="stylesheet" href="/vendor/leaflet.css">
+<style>
+  :root {
+    --bg: #0f1720;
+    --panel: #17212b;
+    --panel-2: #1e2a36;
+    --line: #2c3b49;
+    --text: #dbe4ec;
+    --muted: #8b9aa8;
+    --accent: #4aa3ff;
+    --blue: #3498db;
+    --red: #e74c3c;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; font: 13px/1.5 "Microsoft YaHei", system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  /* ── 侧栏 ── */
+  #panel {
+    width: 360px; flex: none; height: 100%; overflow-y: auto;
+    background: var(--panel); border-right: 1px solid var(--line); padding: 12px;
+  }
+  #panel h1 { font-size: 15px; margin: 0 0 8px; }
+  #panel h2 { font-size: 12px; color: var(--muted); margin: 16px 0 6px; font-weight: 600; letter-spacing: .5px; }
+  .tip { color: var(--muted); font-size: 12px; line-height: 1.7; }
+  .tip b { color: var(--text); }
+  .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .row > label { flex: none; width: 62px; color: var(--muted); font-size: 12px; }
+  input, select, button {
+    font: inherit; color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px;
+  }
+  input, select { flex: 1; min-width: 0; }
+  button { cursor: pointer; padding: 4px 9px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: #1d4f7c; border-color: #2b6ea8; }
+  button.danger:hover { border-color: var(--red); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .btns { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  /* 航迹列表 */
+  #trackList { max-height: 150px; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; }
+  .track-item {
+    display: flex; align-items: center; gap: 6px; padding: 4px 6px;
+    border-bottom: 1px solid var(--line); cursor: pointer;
+  }
+  .track-item:last-child { border-bottom: none; }
+  .track-item.active { background: #24435f; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .track-item span.name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .track-item span.cnt { color: var(--muted); font-size: 11px; }
+  /* 顶点表 */
+  #pointTable { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #pointTable th { color: var(--muted); font-weight: 500; text-align: left; padding: 2px 3px; }
+  #pointTable td { padding: 1px 3px; border-top: 1px solid var(--line); }
+  #pointTable tr.sel { background: #24435f; }
+  #pointTable tr:hover { background: #20303e; }
+  #pointTable td.num { color: var(--muted); width: 22px; }
+  #pointTable td.coord { font-family: Consolas, monospace; font-size: 11px; white-space: nowrap; }
+  #pointTable select, #pointTable button { padding: 1px 4px; font-size: 11px; }
+  .stat { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .stat b { color: var(--text); }
+  /* ── 地图与状态栏 ── */
+  #main { flex: 1; position: relative; min-width: 0; }
+  #map { position: absolute; inset: 0; background: #eef2f6; }
+  #status {
+    position: absolute; left: 8px; bottom: 8px; z-index: 500;
+    background: rgba(15,23,32,.85); color: var(--text);
+    padding: 3px 8px; border-radius: 4px; font-family: Consolas, monospace; font-size: 12px;
+  }
+  /* 顶点符号（divIcon） */
+  .vtx {
+    width: 16px; height: 16px; border-radius: 50%; border: 2px solid #fff;
+    box-shadow: 0 0 3px rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center;
+    font-size: 9px; color: #fff; font-weight: 700;
+  }
+  .vtx.sel { width: 20px; height: 20px; border-color: #ffd24a; font-size: 11px; }
+  /* 参考点用 divIcon 渲染，锚点固定在图标中心，需自行偏移半个自身尺寸 */
+  .ref {
+    font-size: 11px; white-space: nowrap; padding: 1px 4px; border-radius: 3px;
+    background: rgba(15,23,32,.72); border: 1px solid rgba(255,255,255,.25);
+    transform: translate(-50%, -50%);
+  }
+  .leaflet-popup-content { margin: 6px 8px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div id="panel">
+  <h1>航迹绘制器</h1>
+  <div class="tip">
+    <b>用法：</b>在地图上<b>左键点击</b>逐点画出一次架次的完整航路
+    （起飞 → 转场 → 盘旋 → 转场 → 返航）。<br>
+    顶点可<b>拖动</b>微调；点击顶点<b>选中</b>；按 <b>Delete</b> 删除选中点。<br>
+    <b>删单个顶点</b>：顶点表格行末的 ✕；<b>删整条航迹</b>：左侧「删除当前航迹」。<br>
+    每点可标记阶段（盘旋段的点请标 <b>盘旋</b>）。<br>
+    绘制内容会自动存到<b>本机浏览器草稿</b>，刷新或误删后仍可恢复。<br>
+    画完点<b>导出 JSON</b> 发给我，我按你画的航路生成时间序列数据。
+  </div>
+
+  <h2>航迹（一次架次一条）</h2>
+  <div id="trackList"></div>
+  <div class="btns">
+    <button class="primary" id="btnNewTrack">＋ 新建航迹</button>
+    <button id="btnCloneTrack">复制当前</button>
+    <button class="danger" id="btnDelTrack">删除当前航迹</button>
+  </div>
+
+  <h2>当前航迹属性</h2>
+  <div class="row"><label>飞机</label><select id="selAircraft"></select></div>
+  <div class="row"><label>架次日期</label><input type="date" id="inpDate"></div>
+  <div class="row"><label>任务类型</label><select id="selMissionType"></select></div>
+  <div class="row"><label>目标/阵位</label><input id="inpTarget" placeholder="如 TG-01 / 红北打击阵位"></div>
+
+  <h2>加点阶段</h2>
+  <div class="row">
+    <label>当前阶段</label>
+    <select id="selPhase"></select>
+  </div>
+  <div class="btns">
+    <button id="btnSetFromSel">从选中点起全部设为当前阶段</button>
+  </div>
+
+  <h2>顶点</h2>
+  <div id="pointTableWrap">
+    <table id="pointTable">
+      <thead><tr><th></th><th>经度</th><th>纬度</th><th>阶段</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="stat" id="stat"></div>
+
+  <h2>图层</h2>
+  <div class="row">
+    <label style="width:auto"><input type="checkbox" id="chkRef" checked> 参考点（基地/目标/阵地）</label>
+  </div>
+  <div class="row">
+    <label style="width:auto"><input type="checkbox" id="chkTiles" checked> 底图瓦片</label>
+  </div>
+  <div class="row">
+    <label style="width:auto"><input type="checkbox" id="chkGrid" checked> 经纬网格</label>
+  </div>
+
+  <h2>导入 / 导出</h2>
+  <div class="btns">
+    <button class="primary" id="btnExport">导出 JSON</button>
+    <button id="btnCopy">复制到剪贴板</button>
+    <button id="btnUndo">撤销 (Ctrl+Z)</button>
+  </div>
+  <div class="btns">
+    <label class="btn-file" style="display:inline-flex">
+      <input type="file" id="inpImport" accept=".json" style="display:none">
+      <button id="btnImport">导入 JSON</button>
+    </label>
+  </div>
+  <div class="tip" id="ioMsg"></div>
+</div>
+
+<div id="main">
+  <div id="map"></div>
+  <div id="status">经度 -- / 纬度 --</div>
+</div>
+
+<script src="/vendor/leaflet.js"></script>
+<script src="/vendor/gcoord.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ════════════════ 常量（与 sql/mock-situation/generate_mock_data.py 同步的快照）════════════════
+  // 数据侧统一存 WGS84；显示侧转 GCJ02，与 GeoMap.vue 的显示口径保持一致。
+  const PHASES = ['爬升', '巡航', '盘旋', '突防', '打击', '拦截', '巡逻', '返航'];
+
+  const AIRCRAFTS = [
+    { id: 'AC-BL-R1', name: '海燕01', faction: '红方' },
+    { id: 'AC-BL-R2', name: '海燕02', faction: '红方' },
+    { id: 'AC-BL-B1', name: '鲲鹏01', faction: '红方' },
+    { id: 'AC-BL-B2', name: '鲲鹏02', faction: '红方' },
+    { id: 'AC-BL-W1', name: '天眼01', faction: '红方' },
+    { id: 'AC-BL-W2', name: '天眼02', faction: '红方' },
+    { id: 'AC-RD-01', name: '猎鹰01', faction: '蓝方' },
+    { id: 'AC-RD-02', name: '猎鹰02', faction: '蓝方' },
+    { id: 'AC-RD-03', name: '毒蛇01', faction: '蓝方' },
+    { id: 'AC-RD-04', name: '毒蛇02', faction: '蓝方' },
+  ];
+
+  const MISSION_TYPES = ['侦察', '预警', '打击', '巡逻', '拦截'];
+
+  // 参考点：[类型, 名称, 经度, 纬度, 阵营]（WGS84；红方=大陆方我方，蓝方=敌方）
+  const REF_POINTS = [
+    ['基地', '福州基地', 119.297, 26.082, '红方'],
+    ['基地', '厦门基地', 118.104, 24.480, '红方'],
+    ['基地', '汕头基地', 116.723, 23.362, '红方'],
+    ['基地', '敌北部基地', 121.232, 25.062, '蓝方'],
+    ['基地', '敌西部基地', 120.623, 24.262, '蓝方'],
+    ['目标', '敌北部预警雷达站', 121.620, 25.150, '蓝方'],
+    ['目标', '敌西部作战指挥所', 121.100, 24.900, '蓝方'],
+    ['目标', '敌中部港口设施', 120.450, 24.300, '蓝方'],
+    ['目标', '敌中部弹药库', 120.550, 23.900, '蓝方'],
+    ['目标', '敌西南机场跑道', 120.200, 23.550, '蓝方'],
+    ['目标', '敌中南部防空阵地', 120.450, 23.300, '蓝方'],
+    ['阵地', '敌岸舰导弹阵地F', 119.500, 23.600, '蓝方'],
+    ['阵位', '红北打击阵位', 119.850, 25.200, '红方'],
+    ['阵位', '红南打击阵位', 119.550, 23.550, '红方'],
+    ['阵位', '红中预警阵位', 119.200, 24.300, '红方'],
+    ['阵位', '红南预警阵位', 118.900, 23.800, '红方'],
+    ['阵位', '敌北阵位1', 120.550, 25.900, '蓝方'],
+    ['阵位', '敌北阵位2', 121.450, 25.400, '蓝方'],
+    ['阵位', '敌西阵位1', 120.550, 24.000, '蓝方'],
+    ['阵位', '敌南阵位1', 120.100, 23.150, '蓝方'],
+  ];
+
+  const PHASE_COLOR = {
+    '爬升': '#8e44ad', '巡航': '#3498db', '盘旋': '#2ecc71', '突防': '#e67e22',
+    '打击': '#e74c3c', '拦截': '#c0392b', '巡逻': '#1abc9c', '返航': '#95a5a6',
+  };
+  const FACTION_COLOR = { '蓝方': '#3498db', '红方': '#e74c3c' };
+
+  const TILE_LAYERS = [
+    ['省级行政边界', '/geowebcache/gwc/service/tms/1.0.0/china:china_provinces_3857@EPSG:900913@png/{z}/{x}/{y}.png', 0.9],
+    ['城市区县边界', '/geowebcache/gwc/service/tms/1.0.0/china:china_cities_3857@EPSG:900913@png/{z}/{x}/{y}.png', 0.3],
+    ['湖泊水库', '/geowebcache/gwc/service/tms/1.0.0/china:china_osm_waterareas_3857@EPSG:900913@png/{z}/{x}/{y}.png', 0.4],
+    ['河流水系', '/geowebcache/gwc/service/tms/1.0.0/china:china_osm_waterways_3857@EPSG:900913@png/{z}/{x}/{y}.png', 0.3],
+    ['道路网络', '/geowebcache/gwc/service/tms/1.0.0/china:china_osm_roads_3857@EPSG:900913@png/{z}/{x}/{y}.png', 0.2],
+    ['铁路地铁', '/geowebcache/gwc/service/tms/1.0.0/china:china_osm_railways_3857@EPSG:900913@png/{z}/{x}/{y}.png', 0.1],
+  ];
+
+  // ════════════════ 坐标转换（WGS84 存储 ↔ GCJ02 显示）════════════════
+  function toDisplay(lng, lat) {
+    const r = gcoord.transform([lng, lat], gcoord.WGS84, gcoord.GCJ02);
+    return [r[1], r[0]];
+  }
+  function toStore(lat, lng) {
+    const r = gcoord.transform([lng, lat], gcoord.GCJ02, gcoord.WGS84);
+    return [r[0], r[1]];
+  }
+  function haversineKm(lng1, lat1, lng2, lat2) {
+    const R = 6371.0088;
+    const p1 = lat1 * Math.PI / 180, p2 = lat2 * Math.PI / 180;
+    const dp = p2 - p1, dl = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  // ════════════════ 状态 ════════════════
+  let seq = 0;
+  const state = { tracks: [], activeId: null, sel: null };
+  const history = [];               // 撤销快照
+
+  function uid() { return 'T' + (++seq); }
+  function activeTrack() { return state.tracks.find(t => t.id === state.activeId) || null; }
+  function snapshot() {
+    history.push(JSON.stringify(state.tracks));
+    if (history.length > 40) history.shift();
+  }
+  function undo() {
+    const last = history.pop();
+    if (last === undefined) return;
+    state.tracks = JSON.parse(last);
+    if (!activeTrack()) state.activeId = state.tracks[0] ? state.tracks[0].id : null;
+    state.sel = null;
+    refresh();
+  }
+  function newTrack(aircraft) {
+    const ac = aircraft || AIRCRAFTS[0];
+    const t = {
+      id: uid(), aircraftId: ac.id, callsign: ac.name,
+      date: '', missionType: '侦察', target: '', points: [],
+    };
+    state.tracks.push(t);
+    state.activeId = t.id;
+    state.sel = null;
+    return t;
+  }
+
+  // ════════════════ 地图初始化 ════════════════
+  const map = L.map('map', { center: [24.8, 119.6], zoom: 7, zoomControl: true });
+  const tileGroup = L.layerGroup().addTo(map);
+  const gridGroup = L.layerGroup().addTo(map);
+  const refGroup = L.layerGroup().addTo(map);
+  const trackGroup = L.layerGroup().addTo(map);
+  const vertexGroup = L.layerGroup().addTo(map);
+  let polyMap = {};                 // 航迹 id → polyline
+  let vertexLayers = [];            // 当前航迹的顶点 marker
+
+  const tileLayers = TILE_LAYERS.map(function (cfg) {
+    return L.tileLayer(cfg[1], { tms: true, minZoom: 3, maxZoom: 18, opacity: cfg[2], attribution: 'GeoWebCache' })
+      .addTo(tileGroup);
+  });
+
+  /** 经纬网格（瓦片不可用时也能定位，1° 一条线） */
+  function drawGraticule() {
+    gridGroup.clearLayers();
+    if (!document.getElementById('chkGrid').checked) return;
+    const b = map.getBounds().pad(0.2);
+    const style = { color: '#5b6b7a', weight: 1, opacity: 0.25, interactive: false };
+    for (let lng = Math.floor(b.getWest()); lng <= Math.ceil(b.getEast()); lng++) {
+      L.polyline([[b.getSouth(), lng], [b.getNorth(), lng]], style).addTo(gridGroup);
+    }
+    for (let lat = Math.floor(b.getSouth()); lat <= Math.ceil(b.getNorth()); lat++) {
+      L.polyline([[lat, b.getWest()], [lat, b.getEast()]], style).addTo(gridGroup);
+    }
+  }
+
+  /** 参考点（基地/目标/阵地/阵位） */
+  function drawRefs() {
+    refGroup.clearLayers();
+    if (!document.getElementById('chkRef').checked) return;
+    REF_POINTS.forEach(function (p) {
+      const kind = p[0], name = p[1], lng = p[2], lat = p[3], faction = p[4];
+      const color = FACTION_COLOR[faction] || '#9b59b6';
+      const icon = L.divIcon({
+        className: '', iconSize: [0, 0],
+        html: '<div class="ref" style="border-color:' + color + ';color:' + color + '">'
+          + kind + '·' + name + '</div>',
+      });
+      const m = L.marker(toDisplay(lng, lat), { icon: icon, interactive: true });
+      m.bindTooltip(name + '（' + kind + '，' + faction + '）<br>经度 ' + lng + ' / 纬度 ' + lat);
+      m.addTo(refGroup);
+    });
+  }
+
+  /** 画全部航迹线（非当前航迹用细虚线，当前航迹加粗） */
+  function drawTracks() {
+    trackGroup.clearLayers();
+    polyMap = {};
+    state.tracks.forEach(function (t) {
+      if (t.points.length < 2) return;
+      const isActive = t.id === state.activeId;
+      const color = FACTION_COLOR[t.aircraftId.indexOf('AC-RD') === 0 ? '蓝方' : '红方'];
+      const line = L.polyline(
+        t.points.map(p => toDisplay(p.lng, p.lat)),
+        {
+          color: color, weight: isActive ? 3.5 : 2, opacity: isActive ? 0.95 : 0.45,
+          dashArray: isActive ? null : '6 5', interactive: true,
+        }
+      );
+      line.bindTooltip(t.callsign + (t.date ? '·' + t.date : '') + '（' + t.points.length + ' 点）');
+      line.on('click', function () { selectTrack(t.id); });
+      line.addTo(trackGroup);
+      polyMap[t.id] = line;
+    });
+  }
+
+  /** 画当前航迹的顶点符号（可拖动 / 选中 / 删除） */
+  function drawVertices() {
+    vertexGroup.clearLayers();
+    vertexLayers = [];
+    const t = activeTrack();
+    if (!t) return;
+    t.points.forEach(function (p, i) {
+      const sel = state.sel && state.sel.trackId === t.id && state.sel.index === i;
+      const color = PHASE_COLOR[p.phase] || '#7f8c8d';
+      const icon = L.divIcon({
+        className: '',
+        iconSize: sel ? [20, 20] : [16, 16],
+        html: '<div class="vtx' + (sel ? ' sel' : '') + '" style="background:' + color + '">' + (i + 1) + '</div>',
+      });
+      const m = L.marker(toDisplay(p.lng, p.lat), { icon: icon, draggable: true, autoPan: true });
+      m.on('click', function (e) {
+        L.DomEvent.stopPropagation(e);
+        state.sel = { trackId: t.id, index: i };
+        refresh();
+      });
+      m.on('contextmenu', function (e) {
+        L.DomEvent.stopPropagation(e);
+        snapshot();
+        t.points.splice(i, 1);
+        state.sel = null;
+        refresh();
+      });
+      m.on('dragend', function (e) {
+        const ll = e.target.getLatLng();
+        const wgs = toStore(ll.lat, ll.lng);
+        snapshot();
+        p.lng = wgs[0];
+        p.lat = wgs[1];
+        refresh();
+      });
+      m.addTo(vertexGroup);
+      vertexLayers.push(m);
+    });
+  }
+
+  // ════════════════ 交互 ════════════════
+  map.on('click', function (e) {
+    let t = activeTrack();
+    if (!t) t = newTrack(currentAircraft());
+    const wgs = toStore(e.latlng.lat, e.latlng.lng);
+    snapshot();
+    t.points.push({
+      lng: Number(wgs[0].toFixed(6)), lat: Number(wgs[1].toFixed(6)),
+      phase: document.getElementById('selPhase').value,
+    });
+    state.sel = { trackId: t.id, index: t.points.length - 1 };
+    refresh();
+  });
+
+  map.on('mousemove', function (e) {
+    const wgs = toStore(e.latlng.lat, e.latlng.lng);
+    document.getElementById('status').textContent =
+      '经度 ' + wgs[0].toFixed(5) + ' / 纬度 ' + wgs[1].toFixed(5);
+  });
+  map.on('moveend zoomend', drawGraticule);
+
+  document.addEventListener('keydown', function (e) {
+    if (['INPUT', 'SELECT', 'TEXTAREA'].indexOf(e.target.tagName) >= 0) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); return; }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && state.sel) {
+      e.preventDefault();
+      const t = state.tracks.find(x => x.id === state.sel.trackId);
+      if (!t) return;
+      snapshot();
+      t.points.splice(state.sel.index, 1);
+      state.sel = null;
+      refresh();
+    }
+  });
+
+  // ════════════════ 侧栏渲染 ════════════════
+  function currentAircraft() {
+    const id = document.getElementById('selAircraft').value;
+    return AIRCRAFTS.find(a => a.id === id) || AIRCRAFTS[0];
+  }
+
+  function selectTrack(id) {
+    state.activeId = id;
+    state.sel = null;
+    syncProps();
+    refresh();
+  }
+
+  function syncProps() {
+    const t = activeTrack();
+    document.getElementById('selAircraft').value = t ? t.aircraftId : AIRCRAFTS[0].id;
+    document.getElementById('inpDate').value = t ? t.date : '';
+    document.getElementById('selMissionType').value = t ? t.missionType : MISSION_TYPES[0];
+    document.getElementById('inpTarget').value = t ? (t.target || '') : '';
+  }
+
+  function renderList() {
+    const box = document.getElementById('trackList');
+    box.innerHTML = '';
+    if (!state.tracks.length) {
+      box.innerHTML = '<div style="padding:6px;color:#8b9aa8">还没有航迹，点「＋ 新建航迹」或直接在地图上点第一个点</div>';
+      return;
+    }
+    state.tracks.forEach(function (t) {
+      const color = t.aircraftId.indexOf('AC-RD') === 0 ? FACTION_COLOR['蓝方'] : FACTION_COLOR['红方'];
+      const div = document.createElement('div');
+      div.className = 'track-item' + (t.id === state.activeId ? ' active' : '');
+      div.innerHTML = '<span class="dot" style="background:' + color + '"></span>'
+        + '<span class="name">' + esc(t.callsign + '·' + (t.date || '未定日期') + '·' + t.missionType) + '</span>'
+        + '<span class="cnt">' + t.points.length + '点</span>';
+      div.onclick = function () { selectTrack(t.id); };
+      box.appendChild(div);
+    });
+  }
+
+  function renderTable() {
+    const tbody = document.querySelector('#pointTable tbody');
+    tbody.innerHTML = '';
+    const t = activeTrack();
+    if (!t) return;
+    t.points.forEach(function (p, i) {
+      const tr = document.createElement('tr');
+      if (state.sel && state.sel.trackId === t.id && state.sel.index === i) tr.className = 'sel';
+
+      const tdNum = document.createElement('td'); tdNum.className = 'num'; tdNum.textContent = (i + 1);
+      const tdC = document.createElement('td');
+      tdC.className = 'coord';
+      tdC.textContent = p.lng.toFixed(4) + ', ' + p.lat.toFixed(4);
+      tdC.title = '点击定位到该点';
+      tdC.style.cursor = 'pointer';
+      tdC.onclick = function () {
+        state.sel = { trackId: t.id, index: i };
+        map.panTo(toDisplay(p.lng, p.lat));
+        refresh();
+      };
+
+      const tdPhase = document.createElement('td');
+      const sel = document.createElement('select');
+      PHASES.forEach(function (ph) {
+        const o = document.createElement('option');
+        o.value = ph; o.textContent = ph;
+        if (ph === p.phase) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.onchange = function () { snapshot(); p.phase = sel.value; refresh(); };
+      tdPhase.appendChild(sel);
+
+      const tdOp = document.createElement('td');
+      const btnIns = document.createElement('button');
+      btnIns.textContent = '＋'; btnIns.title = '在该点之后插入中点';
+      btnIns.onclick = function () {
+        snapshot();
+        const nxt = t.points[i + 1];
+        const ins = nxt
+          ? { lng: (p.lng + nxt.lng) / 2, lat: (p.lat + nxt.lat) / 2, phase: p.phase }
+          : { lng: p.lng, lat: p.lat, phase: p.phase };
+        t.points.splice(i + 1, 0, ins);
+        state.sel = { trackId: t.id, index: i + 1 };
+        refresh();
+      };
+      const btnDel = document.createElement('button');
+      btnDel.textContent = '✕'; btnDel.title = '删除该点';
+      btnDel.onclick = function () { snapshot(); t.points.splice(i, 1); state.sel = null; refresh(); };
+      tdOp.appendChild(btnIns); tdOp.appendChild(btnDel);
+
+      tr.appendChild(tdNum); tr.appendChild(tdC); tr.appendChild(tdPhase); tr.appendChild(tdOp);
+      tbody.appendChild(tr);
+    });
+  }
+
+  function renderStat() {
+    const t = activeTrack();
+    const box = document.getElementById('stat');
+    if (!t) { box.innerHTML = ''; return; }
+    let km = 0, orbitKm = 0;
+    for (let i = 1; i < t.points.length; i++) {
+      const d = haversineKm(t.points[i - 1].lng, t.points[i - 1].lat, t.points[i].lng, t.points[i].lat);
+      km += d;
+      if (t.points[i].phase === '盘旋') orbitKm += d;
+    }
+    box.innerHTML = '当前航迹：<b>' + t.points.length + '</b> 点，总长 <b>' + km.toFixed(0) + '</b> km'
+      + '，盘旋段 <b>' + orbitKm.toFixed(0) + '</b> km'
+      + '<br>全部航迹：<b>' + state.tracks.length + '</b> 条';
+  }
+
+  // ── 草稿自动保存（本机浏览器 localStorage）──
+  // 手绘成果只存在内存里，误删、误刷新、误关标签页都会丢，故每次改动落一份草稿。
+  const DRAFT_KEY = 'track-editor:draft:v1';
+
+  function saveDraft() {
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(state.tracks)); }
+    catch (e) { /* 隐私模式或超配额时忽略，不影响绘制 */ }
+  }
+
+  /** 读取本机草稿；返回是否恢复成功 */
+  function loadDraft() {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (!raw) return false;
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr) || !arr.length) return false;
+      state.tracks = arr.filter(t => t && t.id && Array.isArray(t.points));
+      if (!state.tracks.length) return false;
+      // 续接航迹编号，避免新建航迹与恢复出来的 id 撞号
+      seq = state.tracks.reduce(function (m, t) {
+        const n = parseInt(String(t.id).slice(1), 10);
+        return isNaN(n) ? m : Math.max(m, n);
+      }, 0);
+      state.activeId = state.tracks[0].id;
+      state.sel = null;
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function refresh() {
+    renderList();
+    syncProps();
+    renderTable();
+    renderStat();
+    drawTracks();
+    drawVertices();
+    saveDraft();
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  // ════════════════ 导入 / 导出 ════════════════
+  function buildExport() {
+    return {
+      version: 1,
+      generated_by: 'frontend/public/tools/track-editor.html',
+      coord: 'WGS84',
+      tracks: state.tracks.map(function (t) {
+        return {
+          aircraft_id: t.aircraftId, callsign: t.callsign, mission_date: t.date,
+          mission_type: t.missionType, target: t.target || '',
+          points: t.points.map(function (p) {
+            return { lng: Number(p.lng.toFixed(6)), lat: Number(p.lat.toFixed(6)), phase: p.phase };
+          }),
+        };
+      }),
+    };
+  }
+
+  function loadData(obj) {
+    const arr = Array.isArray(obj) ? obj : (obj && obj.tracks) || [];
+    if (!arr.length) { msg('导入失败：没有 tracks 数组', true); return; }
+    snapshot();
+    const loaded = arr.map(function (t) {
+      const ac = AIRCRAFTS.find(a => a.id === t.aircraft_id || a.name === t.callsign);
+      return {
+        id: uid(),
+        aircraftId: ac ? ac.id : (t.aircraft_id || ''),
+        callsign: ac ? ac.name : (t.callsign || t.aircraft_id || '未知'),
+        date: t.mission_date || t.date || '',
+        missionType: t.mission_type || t.missionType || '侦察',
+        target: t.target || t.target_id || '',
+        points: (t.points || []).map(function (p) {
+          return { lng: Number(p.lng), lat: Number(p.lat), phase: p.phase || '巡航' };
+        }),
+      };
+    }).filter(t => t.points.length);
+    state.tracks = state.tracks.concat(loaded);
+    state.activeId = loaded[0].id;
+    state.sel = null;
+    refresh();
+    msg('已导入 ' + loaded.length + ' 条航迹（' + loaded.reduce((s, t) => s + t.points.length, 0) + ' 点）');
+  }
+
+  function msg(text, isErr) {
+    const box = document.getElementById('ioMsg');
+    box.textContent = text;
+    box.style.color = isErr ? '#e74c3c' : '#8b9aa8';
+  }
+
+  document.getElementById('btnExport').onclick = function () {
+    const data = JSON.stringify(buildExport(), null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'manual_tracks.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    msg('已导出 manual_tracks.json');
+  };
+  document.getElementById('btnCopy').onclick = function () {
+    const data = JSON.stringify(buildExport(), null, 2);
+    navigator.clipboard.writeText(data).then(
+      function () { msg('已复制 JSON 到剪贴板（' + data.length + ' 字符）'); },
+      function () { msg('复制失败，请用「导出 JSON」', true); }
+    );
+  };
+  document.getElementById('btnImport').onclick = function () { document.getElementById('inpImport').click(); };
+  document.getElementById('inpImport').onchange = function (e) {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = function () {
+      try { loadData(JSON.parse(reader.result)); }
+      catch (err) { msg('导入失败：' + err.message, true); }
+    };
+    reader.readAsText(f);
+    e.target.value = '';
+  };
+  document.getElementById('btnUndo').onclick = undo;
+
+  document.getElementById('btnNewTrack').onclick = function () {
+    snapshot();
+    newTrack(currentAircraft());
+    refresh();
+  };
+  document.getElementById('btnCloneTrack').onclick = function () {
+    const t = activeTrack();
+    if (!t) return;
+    snapshot();
+    const copy = JSON.parse(JSON.stringify(t));
+    copy.id = uid();
+    copy.date = '';
+    state.tracks.push(copy);
+    state.activeId = copy.id;
+    state.sel = null;
+    refresh();
+  };
+  document.getElementById('btnDelTrack').onclick = function () {
+    const i = state.tracks.findIndex(t => t.id === state.activeId);
+    if (i < 0) return;
+    const t = state.tracks[i];
+    // 注意：本按钮删除的是整条航迹（含全部顶点），不是单个顶点；单个顶点请在下方表格行点 ✕
+    if (!window.confirm('删除整条航迹「' + t.callsign + '·' + (t.date || '未定日期') + '」（含 '
+      + t.points.length + ' 个顶点）？\n删错了可以点「撤销 (Ctrl+Z)」恢复。')) return;
+    snapshot();
+    state.tracks.splice(i, 1);
+    state.activeId = state.tracks.length ? state.tracks[Math.max(0, i - 1)].id : null;
+    state.sel = null;
+    refresh();
+    msg('已删除航迹「' + t.callsign + '·' + (t.date || '未定日期') + '」，可用「撤销」恢复');
+  };
+  document.getElementById('btnSetFromSel').onclick = function () {
+    const t = activeTrack();
+    if (!t || !state.sel) { msg('请先在地图上点选一个顶点', true); return; }
+    snapshot();
+    const ph = document.getElementById('selPhase').value;
+    for (let i = state.sel.index; i < t.points.length; i++) t.points[i].phase = ph;
+    refresh();
+  };
+
+  document.getElementById('selAircraft').onchange = function () {
+    const t = activeTrack();
+    if (!t) return;
+    const ac = currentAircraft();
+    t.aircraftId = ac.id;
+    t.callsign = ac.name;
+    refresh();
+  };
+  document.getElementById('inpDate').onchange = function () {
+    const t = activeTrack(); if (t) { t.date = this.value; refreshListOnly(); }
+  };
+  document.getElementById('selMissionType').onchange = function () {
+    const t = activeTrack(); if (t) { t.missionType = this.value; refreshListOnly(); }
+  };
+  document.getElementById('inpTarget').onchange = function () {
+    const t = activeTrack(); if (t) { t.target = this.value; }
+  };
+  function refreshListOnly() { renderList(); }
+
+  document.getElementById('chkRef').onchange = drawRefs;
+  document.getElementById('chkGrid').onchange = drawGraticule;
+  document.getElementById('chkTiles').onchange = function () {
+    if (this.checked) tileLayers.forEach(l => l.addTo(tileGroup));
+    else tileGroup.clearLayers();
+  };
+
+  // ════════════════ 初始化 ════════════════
+  (function init() {
+    const selAc = document.getElementById('selAircraft');
+    AIRCRAFTS.forEach(function (a) {
+      const o = document.createElement('option');
+      o.value = a.id; o.textContent = a.name + '（' + a.faction + '）';
+      selAc.appendChild(o);
+    });
+    const selMt = document.getElementById('selMissionType');
+    MISSION_TYPES.forEach(function (m) {
+      const o = document.createElement('option');
+      o.value = m; o.textContent = m;
+      selMt.appendChild(o);
+    });
+    const selPh = document.getElementById('selPhase');
+    PHASES.forEach(function (p) {
+      const o = document.createElement('option');
+      o.value = p; o.textContent = p;
+      selPh.appendChild(o);
+    });
+    selPh.value = '巡航';
+
+    drawRefs();
+    drawGraticule();
+    // 优先恢复本机草稿；没有草稿才给一条空航迹，避免用户点第一个点时还要先新建
+    if (loadDraft()) {
+      refresh();
+      const n = state.tracks.reduce((s, t) => s + t.points.length, 0);
+      msg('已恢复本机草稿：' + state.tracks.length + ' 条航迹 / ' + n + ' 个顶点');
+    } else {
+      newTrack(AIRCRAFTS[0]);
+      refresh();
+      msg('提示：底图瓦片来自本机 9090 服务，需前端 dev 代理在运行；瓦片不可用时用经纬网格定位。');
+    }
+  })();
+})();
+</script>
+</body>
+</html>

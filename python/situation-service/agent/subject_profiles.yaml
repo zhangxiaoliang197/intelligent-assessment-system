@@ -1,0 +1,66 @@
+# 主体主题契约（subject_profiles.yaml）
+#
+# 作用：让 map_builder 按主题数据契约通用识别航迹表 + 主体档案表，
+#       动态生成航迹线 + 能力圈（一架主体一个圈，圆心随主体当前位置移动）。
+#
+# 新增主题（船舰/车辆/卫星等）只需在本文件加 profile + 对应 mock 表，
+# 不改 map_builder 代码。
+#
+# 参见 .trae/documents/situation-map-capability-refactor.md
+
+# ── 飞机主题（mock_situation）──
+aircraft:
+  display_name: "战机"
+  track_table: mock_track_point          # 航迹表（按时间序列记录主体位置）
+  enemy_track_table: mock_enemy_track_point  # 敌方航迹表（同上结构，阵营区分）
+  subject_table: mock_aircraft           # 主体档案表（飞机档案）
+  join_key: aircraft_id                  # 我方航迹表 ↔ 主体档案表的外键字段名
+  enemy_join_key: enemy_aircraft_id      # 敌方航迹表 ↔ 主体档案表的外键字段名（命名差异需配置）
+  time_field: record_time                # 航迹表时间字段（按 as_of 切片用）
+  track_lng: track_lng                   # 航迹经度字段
+  track_lat: track_lat                   # 航迹纬度字段
+  seq_field: seq                         # 航迹序号字段（按此排序保证时序）
+  subject_name: callsign                 # 主体档案表中的名称字段
+  faction_field: faction                  # 阵营字段（蓝方/红方）
+  # 能力半径来源：从主体档案表关联到机型档案表，取 radius 字段
+  radius_source:
+    table: mock_aircraft_type            # 机型档案表
+    join: type_id                        # 主体档案表 → 机型档案表的外键
+    # 多种半径字段（每种生成一个能力圈，每个主体每种半径一圈）
+    fields:
+      - field: recon_radius_km
+        range_type: 侦察范围
+        color_hint: cyan                 # 颜色提示（前端可覆盖）
+      - field: strike_radius_km
+        range_type: 打击范围
+        color_hint: orange
+
+# ── 占位示例：船舰主题（未实现 mock 数据，仅供通用化演示）──
+# ship:
+#   display_name: "船舰"
+#   track_table: mock_vessel_track
+#   enemy_track_table: mock_enemy_vessel_track
+#   subject_table: mock_vessel
+#   join_key: vessel_id
+#   time_field: record_time
+#   track_lng: track_lng
+#   track_lat: track_lat
+#   seq_field: seq
+#   subject_name: vessel_name
+#   faction_field: faction
+#   radius_source:
+#     table: mock_vessel_type
+#     join: type_id
+#     fields:
+#       - field: detect_radius_km
+#         range_type: 探测范围
+#         color_hint: cyan
+#       - field: weapon_radius_km
+#         range_type: 武器范围
+#         color_hint: orange
+
+# ── 占位示例：车辆主题（未实现 mock 数据）──
+# vehicle:
+#   display_name: "车辆"
+#   track_table: mock_vehicle_track
+#   ...

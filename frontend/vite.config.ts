@@ -92,6 +92,11 @@ export default defineConfig(({ mode }) => {
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')
       },
+      '/api/ipage': {
+        target: 'http://localhost:10259',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      },
       '/api/admin': {
         ...adminProxy
       },

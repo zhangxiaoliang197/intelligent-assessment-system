@@ -10,6 +10,7 @@ SERVICES=(
     assessment-frontend
     assessment-admin
     assessment-situation
+    assessment-ipage
     assessment-ontology
     assessment-evaluation
     assessment-indicator

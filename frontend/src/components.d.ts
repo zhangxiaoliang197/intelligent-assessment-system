@@ -59,6 +59,7 @@ declare module 'vue' {
     FloatingSidebar: typeof import('./components/FloatingSidebar.vue')['default']
     GeoMap: typeof import('./components/GeoMap.vue')['default']
     Layout: typeof import('./components/Layout.vue')['default']
+    PageSandbox: typeof import('./components/interactive/PageSandbox.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     SituationChartCard: typeof import('./components/situation/SituationChartCard.vue')['default']

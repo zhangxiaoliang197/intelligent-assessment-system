@@ -1,0 +1,7 @@
+fastapi==0.109.0
+uvicorn==0.27.0
+python-multipart==0.0.6
+python-dotenv>=1.0.0
+python-json-logger>=2.0.8
+# 语义注解格式校验：与 admin-service 共用同一份 schema（由元数据接口下发）
+jsonschema>=4.21

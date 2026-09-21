@@ -60,12 +60,46 @@ SITUATION_MIN_CHARTS = max(1, int(os.getenv("SITUATION_MIN_CHARTS", "2")))
 SITUATION_REFLECTION_MAX_ROUNDS = max(0, min(int(os.getenv("SITUATION_REFLECTION_MAX_ROUNDS", "2")), 4))
 # Verifier LLM 通道开关（默认关闭，仅用规则通道；启用后增加 LLM 成本）
 SITUATION_VERIFIER_LLM = os.getenv("SITUATION_VERIFIER_LLM", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+# ── VERIFY 阶段 Critic 视觉反思决策（review_artifact 工具）──
+# 总开关：默认开启。Critic 看单图 PNG 截图后输出定性编辑指令（add_chart /
+# replace_type / drop_chart / replace_map_layer / accept），由确定性翻译器
+# 改写 chartSpecs，复用 planner.validate_plan_against_meta 校验后回写重渲染。
+# LLM / playwright 不可用时优雅降级到原 rewrite_ids 重写路径，行为与现状兼容。
+SITUATION_CRITIC_ENABLED = os.getenv("SITUATION_CRITIC_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+# Critic 迭代上限：与 SITUATION_REFLECTION_MAX_ROUNDS 串联但独立计数
+# （Critic 用 increment_reflection(Stage.VERIFY)，WRITE reflection 用 Stage.WRITE）
+SITUATION_CRITIC_MAX_ROUNDS = max(0, min(int(os.getenv("SITUATION_CRITIC_MAX_ROUNDS", "1")), 2))
 # 布局增强开关：NARRATIVE 之后由 LLM 生成布局树（layout 事件 + 前端动态排版）。
 # 关闭或生成失败时前端回退固定三段布局，不影响其它产物。
 SITUATION_LAYOUT_ENABLED = os.getenv("SITUATION_LAYOUT_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 # HTML Artifact 排版增强开关（优先于布局树）：LLM 生成整页 HTML 排版，
 # 前端 iframe 沙箱渲染；失败回退布局树，再回退固定三段布局。
 SITUATION_ARTIFACT_ENABLED = os.getenv("SITUATION_ARTIFACT_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+# ── 版式骨架与视觉反馈循环（态势图-版式骨架与视觉反馈循环方案）──
+# 总开关：关闭后阶段 5.5 完全回到现状（artifact → 布局树 → 固定三段）。
+SITUATION_VISUAL_LOOP_ENABLED = os.getenv("SITUATION_VISUAL_LOOP_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+# 增量反馈循环轮数预算（0 表示只评分择优、不做修订循环）
+SITUATION_VISUAL_LOOP_MAX_ROUNDS = max(0, min(int(os.getenv("SITUATION_VISUAL_LOOP_MAX_ROUNDS", "1")), 3))
+# 骨架直接采纳阈值：骨架 rubric 总分 ≥ 该值时短路采用，不再触发 LLM 自定义
+SITUATION_LAYOUT_SCORE_THRESHOLD = max(0.0, min(float(os.getenv("SITUATION_LAYOUT_SCORE_THRESHOLD", "8.5")), 10.0))
+# 强制择优裕量：自定义分须超过骨架分至少该值才替换骨架（评审噪声缓冲）
+SITUATION_LAYOUT_MARGIN = max(0.0, float(os.getenv("SITUATION_LAYOUT_MARGIN", "0.5")))
+# 单次截图渲染超时（秒）
+SITUATION_JUDGE_TIMEOUT = max(10, int(os.getenv("SITUATION_JUDGE_TIMEOUT", "30")))
+# 评审截图视口宽度（px）；默认 1920，与全宽版式对齐，避免"1440 看着好、宽屏两侧空"
+SITUATION_JUDGE_VIEWPORT_WIDTH = max(800, int(os.getenv("SITUATION_JUDGE_VIEWPORT_WIDTH", "1920")))
+# 主题令牌层（StylistAgent 借鉴）：关闭后骨架一律使用静态默认主题（=现状）
+SITUATION_STYLE_TOKENS_ENABLED = os.getenv("SITUATION_STYLE_TOKENS_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+# ── 排版多样性与产物质量校验（态势图-排版多样性与产物质量校验方案）──
+# 图表 option 规范化管线开关（纯规则零 LLM：防标签重叠/图例补全/大数据采样/配色补齐）
+SITUATION_CHART_POLISH_ENABLED = os.getenv("SITUATION_CHART_POLISH_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+# 地图密度分级开关（密度打标 + 航迹抽稀；前端按 density 字段决定是否聚合）
+SITUATION_MAP_DENSITY_ENABLED = os.getenv("SITUATION_MAP_DENSITY_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+# 页面版心最大宽度（CSS 长度值；none=全宽铺开。默认全宽，态势图按大屏页处理）
+SITUATION_LAYOUT_MAX_WIDTH = os.getenv("SITUATION_LAYOUT_MAX_WIDTH", "none").strip() or "none"
 # Planner 失败重试上限（共 attempts+1 次机会；2 表示 3 次）
 SITUATION_PLANNER_MAX_RETRIES = max(0, min(int(os.getenv("SITUATION_PLANNER_MAX_RETRIES", "2")), 5))
 

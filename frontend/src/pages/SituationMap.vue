@@ -181,14 +181,24 @@
                         </div>
                       </div>
 
-                      <!-- HTML Artifact 沙箱渲染（优先；LLM 整页排版 + situation-kit 挂载真实图表/地图） -->
+                      <!-- partial 报告：部分子问题取数失败时明确提示产物不完整 -->
+                      <el-alert
+                        v-if="partialHint"
+                        :title="partialHint"
+                        type="warning"
+                        show-icon
+                        :closable="false"
+                      />
+
+                      <!-- HTML Artifact 沙箱渲染（优先；槽位对账残缺或沙箱自检失败时自动降级到下方版式） -->
                       <ArtifactSandbox
-                        v-if="store.artifact"
-                        :html="store.artifact.html"
+                        v-if="store.artifact && reconciledArtifact && !sandboxFailed && !reconciledArtifact.degraded"
+                        :html="reconciledArtifact.html"
                         :charts="store.charts"
                         :map-layers="store.mapLayers"
                         :datasets="store.datasets"
                         :narrative="store.narrative"
+                        @render-failed="sandboxFailed = true"
                       />
 
                       <!-- 布局树渲染（回退路径：无 artifact 时；无布局再回退固定三段） -->
@@ -212,8 +222,8 @@
                         @viewport-change="onViewportChange"
                       />
 
-                      <!-- 固定三段布局（回退路径：旧产物/布局生成失败） -->
-                      <template v-if="!store.layout">
+                      <!-- 固定三段布局（第三级回退：artifact 与布局树均缺失时才渲染，避免与沙箱排版重复展示） -->
+                      <template v-else>
                         <!-- 图表区 -->
                         <div v-if="store.charts.length" class="tree-section">
                           <SituationChartGrid :charts="store.charts" :loading="store.isGenerating" :cols="1" :body-height="360" />
@@ -260,8 +270,8 @@
                         <el-alert :title="store.errorMsg" type="error" :closable="false" show-icon />
                       </div>
 
-                      <!-- 操作按钮 -->
-                      <div v-if="store.status === 'ready' && store.reportId" class="confirm-actions">
+                      <!-- 操作按钮（partial=有校验告警但产物已生成，仍应保留查看入口） -->
+                      <div v-if="(store.status === 'ready' || store.status === 'partial') && store.reportId" class="confirm-actions">
                         <el-button type="primary" @click="openView"><el-icon><FullScreen /></el-icon> 打开态势图</el-button>
                         <el-button @click="onShare"><el-icon><Share /></el-icon> 分享</el-button>
                         <el-button @click="onExport('image')"><el-icon><Download /></el-icon> 导出图片</el-button>
@@ -481,7 +491,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onActivated, nextTick, watch, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -520,6 +530,10 @@ import type {
 } from '@/types/situationSkill'
 import { recommendSituationTopics } from '@/services/situationTopics'
 import type { SituationTopicRecommendation } from '@/types/situationTopic'
+import { reconcileArtifactHtml } from '@/utils/artifactSlots'
+
+// keep-alive 按组件名缓存本页（App.vue include="SituationMap"），返回时保留问答/面板/滚动状态
+defineOptions({ name: 'SituationMap' })
 
 const router = useRouter()
 const route = useRoute()
@@ -533,6 +547,8 @@ const chatAreaRef = ref<HTMLElement | null>(null)
 const aiMsgRef = ref<HTMLElement | null>(null)
 const showExecPanel = ref(false)
 const execPanelWidth = ref(460)
+// 沙箱自检连续失败后置 true，自动降级到布局树/固定三段版式
+const sandboxFailed = ref(false)
 const isResizing = ref(false)
 const shareVisible = ref(false)
 const shareUrl = ref('')
@@ -651,6 +667,33 @@ const filteredHistory = computed(() => {
   )
 })
 
+/**
+ * Artifact 槽位对账（历史报告兜底）：剔除引用空数据的图表槽并回收栅格，
+ * 残缺度高时 degraded，模板自动降级到 SituationLayoutRenderer / 固定三段。
+ */
+const reconciledArtifact = computed(() => {
+  if (!store.artifact) return null
+  return reconcileArtifactHtml(
+    store.artifact.html,
+    store.charts.map((c) => c.chartId),
+    store.mapLayers.length > 0,
+  )
+})
+
+// partial 报告中文提示：部分子问题取数/生成失败，产物只含可生成部分
+const partialHint = computed(() => {
+  if (store.status !== 'partial') return ''
+  return '本次分析中部分数据取数失败，态势产物可能不完整（图表或图层缺失），以下为可生成的部分内容。'
+})
+
+// 切换报告/新一轮生成/新建会话时复位沙箱失败标记，让新产物重新获得沙箱渲染机会
+watch(
+  [() => store.reportId, () => store.status],
+  ([, status]) => {
+    if (status === 'generating' || status === 'idle') sandboxFailed.value = false
+  },
+)
+
 // ── 生命周期 ──
 onMounted(async () => {
   store.fetchHistory()
@@ -673,6 +716,18 @@ onMounted(async () => {
   }
   const reportId = route.query.reportId as string
   if (reportId) await loadReportById(reportId)
+})
+
+// keep-alive 再次激活（从态势图详情页返回）：不重拉当前报告（DOM/store 状态完整保留），
+// 仅静默刷新历史列表，并触发 resize 让隐藏期间的地图/图表重新校准尺寸
+let firstActivation = true
+onActivated(() => {
+  if (firstActivation) {
+    firstActivation = false
+    return
+  }
+  void store.fetchHistory()
+  nextTick(() => window.dispatchEvent(new Event('resize')))
 })
 
 // 生成时自动滚动到底部
@@ -1038,7 +1093,9 @@ function onSuggest(s: string) {
 }
 
 function openView() {
-  if (store.reportId) router.push(`/situation/view/${store.reportId}`)
+  if (!store.reportId) return
+  // from=situation：态势页返回路径的确定性来源标记（SituationView 统一 replace 回本页）
+  router.push({ path: `/situation/view/${store.reportId}`, query: { from: 'situation' } })
 }
 
 function go(path: string) {

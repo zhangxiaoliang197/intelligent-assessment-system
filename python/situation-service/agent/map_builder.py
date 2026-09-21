@@ -261,11 +261,211 @@ def discover_coordinate_columns(columns):
     return pairs
 
 
-def build_map_annotations(rows, field_labels=None):
+# ────────────────────────────────────────────────────────────────
+# 主体主题契约（subject_profiles）通用化层
+# ────────────────────────────────────────────────────────────────
+# 让 map_builder 按主题数据契约通用识别"航迹表 + 主体档案表 + 能力半径字段"，
+# 在运行时按 as_of 时间动态生成能力圈（一架主体一个圈，圆心随主体当前位置移动）。
+# 新增主题（船舰/车辆）只需在 subject_profiles.yaml 加 profile + mock 表，不改本文件。
+
+_SUBJECT_PROFILES_CACHE = None
+
+
+def load_subject_profiles():
+    """加载 subject_profiles.yaml 缓存（首次调用读取，后续返回缓存）。"""
+    global _SUBJECT_PROFILES_CACHE
+    if _SUBJECT_PROFILES_CACHE is not None:
+        return _SUBJECT_PROFILES_CACHE
+    import os
+    import yaml  # type: ignore
+    yaml_path = os.path.join(os.path.dirname(__file__), "subject_profiles.yaml")
+    if not os.path.exists(yaml_path):
+        _SUBJECT_PROFILES_CACHE = {}
+        return _SUBJECT_PROFILES_CACHE
+    try:
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            profiles = yaml.safe_load(f) or {}
+        _SUBJECT_PROFILES_CACHE = profiles if isinstance(profiles, dict) else {}
+    except Exception as e:
+        logger.warning(f"加载 subject_profiles.yaml 失败: {e}")
+        _SUBJECT_PROFILES_CACHE = {}
+    return _SUBJECT_PROFILES_CACHE
+
+
+def resolve_profile(rows, dataset_meta=None):
+    """按 dataset 元数据匹配 subject profile。
+
+    dataset_meta 期望含 table_name 字段；与 profile 中 track_table 或
+    enemy_track_table 对比。未匹配返回 None（走旧通用识别兜底）。
+    """
+    if not dataset_meta:
+        return None
+    table_name = ""
+    if isinstance(dataset_meta, dict):
+        table_name = (dataset_meta.get("table_name")
+                      or dataset_meta.get("tableName")
+                      or dataset_meta.get("name")
+                      or "")
+    table_name = str(table_name).lower()
+    if not table_name:
+        return None
+    profiles = load_subject_profiles()
+    for key, profile in profiles.items():
+        if not isinstance(profile, dict):
+            continue
+        track_table = str(profile.get("track_table") or "").lower()
+        enemy_table = str(profile.get("enemy_track_table") or "").lower()
+        if table_name == track_table or table_name == enemy_table:
+            return {**profile, "_profile_key": key}
+    return None
+
+
+def _interpolate_track_position(track_pts, target_time):
+    """在按时间排序的航迹点中，二分定位 target_time 的位置线性插值。
+
+    track_pts: [{time, lng, lat}, ...] 已按 time 升序排序
+    target_time: datetime
+    返回: (lng, lat) 或 None（target_time 早于航迹开始或晚于结束）
+    """
+    if not track_pts:
+        return None
+    import bisect
+    from datetime import datetime as _dt
+    if not isinstance(target_time, _dt):
+        return None
+    times = [p["time"] for p in track_pts]
+    idx = bisect.bisect_right(times, target_time) - 1
+    if idx < 0:
+        return None  # 未出动
+    if idx >= len(track_pts) - 1:
+        return None  # 已返航/已结束
+    p1 = track_pts[idx]
+    p2 = track_pts[idx + 1]
+    if p2["time"] == p1["time"]:
+        return (p1["lng"], p1["lat"])
+    frac = ((target_time - p1["time"]).total_seconds()
+            / (p2["time"] - p1["time"]).total_seconds())
+    frac = max(0.0, min(1.0, frac))
+    return (p1["lng"] + (p2["lng"] - p1["lng"]) * frac,
+            p1["lat"] + (p2["lat"] - p1["lat"]) * frac)
+
+
+def _color_for_subject(faction):
+    """按阵营取能力圈颜色（红/蓝差异化，通用主题也能用）。"""
+    faction = (faction or "").strip()
+    if faction == "蓝方":
+        return "#3498db"
+    if faction == "红方":
+        return "#e74c3c"
+    return "#9b59b6"  # 默认紫色（未知阵营）
+
+
+def build_dynamic_capability_circles(rows, profile, as_of=None):
+    """按 profile 识别航迹表 + 档案字段，按 as_of 时间动态生成能力圈。
+
+    一架主体一个圈（每种 radius 字段一圈），圆心 = 主体在 as_of 时间的位置
+    （航迹线性插值）；半径来自档案表的 radius 字段值。
+    主体在 as_of 时点未出动或已返航则不画圈。
+    输出严格等于"当时在空主体数 × radius 字段数"。
+
+    前置条件：上游负责按 profile 把航迹表 JOIN 主体档案表 JOIN 机型档案表
+    的合并数据传给本函数；如果 rows 没含档案字段则返回 []（兜底跳过）。
+    """
+    if not rows or not profile or not as_of:
+        return []
+
+    join_key = profile.get("join_key", "aircraft_id")
+    time_field = profile.get("time_field", "record_time")
+    lng_field = profile.get("track_lng", "track_lng")
+    lat_field = profile.get("track_lat", "track_lat")
+    subject_name_field = profile.get("subject_name", "callsign")
+    faction_field = profile.get("faction_field", "faction")
+    radius_source = profile.get("radius_source") or {}
+    radius_fields = radius_source.get("fields") or []
+
+    if not rows or not isinstance(rows[0], dict):
+        return []
+    if join_key not in rows[0]:
+        return []
+    # 仅当 rows 同时含档案表的 radius 字段时启用（上游负责 JOIN）
+    available_radius_fields = [rf for rf in radius_fields if rf["field"] in rows[0]]
+    if not available_radius_fields:
+        return []
+
+    from collections import defaultdict
+    from datetime import datetime as _dt
+
+    groups = defaultdict(list)
+    subject_meta = {}
+    for row in rows:
+        sid = str(row.get(join_key, ""))
+        if not sid:
+            continue
+        t_raw = row.get(time_field)
+        if isinstance(t_raw, _dt):
+            t_val = t_raw
+        elif t_raw:
+            try:
+                t_val = _dt.strptime(str(t_raw), "%Y-%m-%d %H:%M:%S")
+            except (ValueError, TypeError):
+                continue
+        else:
+            continue
+        lng = _to_float(row.get(lng_field))
+        lat = _to_float(row.get(lat_field))
+        if lng is None or lat is None:
+            continue
+        groups[sid].append({"time": t_val, "lng": lng, "lat": lat})
+        if sid not in subject_meta:
+            radii = {}
+            for rf in available_radius_fields:
+                v = _to_float(row.get(rf["field"]))
+                if v and v > 0:
+                    radii[rf["field"]] = v
+            subject_meta[sid] = {
+                "name": str(row.get(subject_name_field, sid)),
+                "faction": str(row.get(faction_field, "")),
+                "radii": radii,
+            }
+
+    circles = []
+    for sid, track_pts in groups.items():
+        track_pts.sort(key=lambda p: p["time"])
+        pos = _interpolate_track_position(track_pts, as_of)
+        if pos is None:
+            continue
+        meta = subject_meta.get(sid, {})
+        for rf in available_radius_fields:
+            r = meta["radii"].get(rf["field"])
+            if not r or r <= 0:
+                continue
+            circles.append({
+                "name": f"{meta.get('name', sid)}·{rf.get('range_type', '能力范围')}",
+                "center": {"lng": pos[0], "lat": pos[1]},
+                "radiusKm": r,
+                "subjectId": sid,
+                "timestamp": as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of),
+                "color": _color_for_subject(meta.get("faction", "")),
+                "props": {
+                    "faction": meta.get("faction", ""),
+                    "range_type": rf.get("range_type", ""),
+                    "subject_id": sid,
+                    "subject_name": meta.get("name", sid),
+                },
+            })
+    return circles
+
+
+def build_map_annotations(rows, field_labels=None, profile=None, as_of=None):
     """扫描数据行，自动构建地图标注 dict。
 
     field_labels: 可选 {英文字段名: 中文标签}，来自数据集元数据（businessMeaning/comment）。
                  提供后每个 point/circle 会附带 propLabels，前端据此直接显示中文字段名。
+
+    profile: 可选 subject_profile（来自 subject_profiles.yaml，由 resolve_profile 匹配）。
+             命中且 rows 含档案 radius 字段时，按 as_of 时间动态生成能力圈
+             （一架主体一个圈，圆心随主体当前位置移动）。
+    as_of: datetime，时间轴切片点。profile 命中时用于航迹位置插值。
 
     返回 {"points": [...], "routes": [...], "areas": [...], "circles": [...]}；
     无地理列时返回空 dict。
@@ -332,48 +532,66 @@ def build_map_annotations(rows, field_labels=None):
     if has_seq and has_aid:
         id_key = "aircraft_id" if "aircraft_id" in cols_lower else "aircraft_name"
         name_key = "aircraft_name" if "aircraft_name" in cols_lower else id_key
+        # 按 (飞机, 架次) 分组：同一架飞机多个架次必须拆成独立航迹，否则跨架次的
+        # 航迹点会按 seq 交错连线，两条几乎重合的航线被连成一条"辫子"
+        has_mid = "mission_id" in cols_lower
+        time_key = cols_lower.get("record_time")
         groups = {}
         for row in rows:
             gid = str(row.get(id_key, ""))
-            if gid not in groups:
-                groups[gid] = {"name": str(row.get(name_key, gid)), "points": []}
-            groups[gid]["points"].append({
+            sortie = str(row.get("mission_id") or "") if has_mid else ""
+            key = (gid, sortie)
+            if key not in groups:
+                groups[key] = {
+                    "aircraft": gid,
+                    "name": str(row.get(name_key, gid)),
+                    "sortie": str(row.get(time_key) or sortie or "") if time_key else sortie,
+                    "points": [],
+                }
+            groups[key]["points"].append({
                 "seq": _to_int(row.get("seq")),
                 "lng": _to_float(row.get(lng_key)),
                 "lat": _to_float(row.get(lat_key)),
                 "row": row,
             })
 
-        for gid, group in groups.items():
+        # 同一架飞机存在多个架次时，航迹名后缀架次时间，便于地图上区分
+        sortie_count = {}
+        for (gid, _sortie) in groups:
+            sortie_count[gid] = sortie_count.get(gid, 0) + 1
+
+        for (gid, _sortie), group in groups.items():
             points = sorted(group["points"], key=lambda p: p["seq"])
             color = _color_for(len(result["routes"]))
+            route_name = group["name"]
+            if sortie_count[gid] > 1:
+                route_name = f"{group['name']}·{group['sortie'][:16] or '架次'}"
             result["routes"].append({
-                "name": group["name"],
+                "name": route_name,
                 "color": color,
                 "points": [{"lng": p["lng"], "lat": p["lat"]} for p in points],
             })
             for index, pt in enumerate(points):
                 if index == 0:
-                    label = group["name"] + "-起点"
+                    label = route_name + "-起点"
                 elif index == len(points) - 1:
-                    label = group["name"] + "-终点"
+                    label = route_name + "-终点"
                 else:
-                    label = group["name"] + f"-途经{index}"
+                    label = route_name + f"-途经{index}"
                 point = {
                     "name": label,
                     "lng": pt["lng"],
                     "lat": pt["lat"],
-                    "routeName": group["name"],
+                    "routeName": route_name,
                     "color": color,
                 }
                 props = _make_props(pt["row"], columns)
                 if props:
                     point["props"] = props
                 labels = _prop_labels(props, field_labels)
-                if labels:
-                    point["propLabels"] = labels
-                result["points"].append(point)
-        return result
+        if labels:
+            point["propLabels"] = labels
+        result["points"].append(point)
 
     # 检查是否存在 origin+dest 配对（常用于物流/运输数据）
     origin_prefixes = {"origin", "起点", "from", "start", "src"}
@@ -511,5 +729,12 @@ def build_map_annotations(rows, field_labels=None):
         if labels:
             point["propLabels"] = labels
         result["points"].append(point)
+
+    # 主体主题契约命中时，按 as_of 时间动态生成能力圈
+    # （一架主体一个圈，圆心随主体当前位置移动；上游需 JOIN 档案表数据）
+    if profile and as_of:
+        dynamic_circles = build_dynamic_capability_circles(rows, profile, as_of)
+        if dynamic_circles:
+            result["circles"].extend(dynamic_circles)
 
     return result

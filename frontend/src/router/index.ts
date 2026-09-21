@@ -14,6 +14,9 @@ import SituationMap from '@/pages/SituationMap.vue'
 import SituationView from '@/pages/SituationView.vue'
 import SituationList from '@/pages/SituationList.vue'
 import SituationShare from '@/pages/SituationShare.vue'
+import InteractivePage from '@/pages/InteractivePage.vue'
+import InteractiveView from '@/pages/InteractiveView.vue'
+import SituationPageDialog from '@/pages/SituationPageDialog.vue'
 
 const routes: Array<RouteRecordRaw> = [
   {
@@ -107,6 +110,26 @@ const routes: Array<RouteRecordRaw> = [
     name: 'SituationShare',
     component: SituationShare,
     meta: { title: '态势图分享' }
+  },
+  {
+    // 态势页面主对话框（原"智能交互页面"门户入口）
+    path: '/situation-page',
+    name: 'SituationPageDialog',
+    component: SituationPageDialog,
+    meta: { title: '态势页面' }
+  },
+  {
+    // 态势页工作台（从主对话框"打开态势页面"进入；支持 ?pageId= 直达）
+    path: '/interactive',
+    name: 'InteractivePage',
+    component: InteractivePage,
+    meta: { title: '态势页面' }
+  },
+  {
+    path: '/interactive/view/:pageId',
+    name: 'InteractiveView',
+    component: InteractiveView,
+    meta: { title: '态势页面查看' }
   }
 ]
 

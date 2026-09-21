@@ -41,6 +41,16 @@ public class FieldAnnotation {
     @Column(name = "data_category", length = 100)
     private String dataCategory;
 
+    /**
+     * 字段级领域语义（JSON 文本）。
+     *
+     * 格式见 resources/semantic-schema.json 的 fieldSemantic；
+     * 与 businessMeaning（自由文本，给人/LLM 读）分离，本列只放机器可读的确定性语义。
+     * 空串或 NULL 表示未配置，消费侧回退到 businessMeaning 的正则解析。
+     */
+    @Column(name = "semantic_json", columnDefinition = "text")
+    private String semanticJson;
+
     @Column(name = "create_time")
     private LocalDateTime createTime;
 
@@ -81,6 +91,8 @@ public class FieldAnnotation {
     public void setBusinessMeaning(String businessMeaning) { this.businessMeaning = businessMeaning; }
     public String getDataCategory() { return dataCategory; }
     public void setDataCategory(String dataCategory) { this.dataCategory = dataCategory; }
+    public String getSemanticJson() { return semanticJson; }
+    public void setSemanticJson(String semanticJson) { this.semanticJson = semanticJson; }
     public LocalDateTime getCreateTime() { return createTime; }
     public void setCreateTime(LocalDateTime createTime) { this.createTime = createTime; }
     public LocalDateTime getUpdateTime() { return updateTime; }

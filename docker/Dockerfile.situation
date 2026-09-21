@@ -3,6 +3,9 @@ WORKDIR /app
 RUN pip config set global.index-url https://pypi.org/simple
 COPY python/situation-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# 可选：视觉反馈循环评审渲染（启用需取消下行注释，镜像约增大 400MB；
+# 不启用时 situation 服务在运行时自动探测并降级为 artifact → 布局树 → 固定三段）
+# RUN playwright install --with-deps chromium
 COPY python/situation-service/ .
 ENV LOG_DIR=/app/logs \
     LOG_ENV=prod \

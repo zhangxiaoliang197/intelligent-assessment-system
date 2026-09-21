@@ -84,12 +84,16 @@ import { ref, onMounted, watch, onUnmounted, computed, nextTick } from 'vue'
 import L from 'leaflet'
 import 'leaflet-draw'
 import 'leaflet-draw/dist/leaflet.draw.css'
+// 点位聚合插件（态势图-排版多样性与产物质量校验方案 §三.②）：
+// 图层 density=cluster/heavy 时标点走 markerClusterGroup，避免密集平铺
+import 'leaflet.markercluster'
+import 'leaflet.markercluster/dist/MarkerCluster.css'
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css'
 import gcoord from 'gcoord'
 import { type GeoPoint } from '@/utils/geoParser'
 import { type GeoRoute, type GeoArea } from '@/utils/geoAnnotation'
 import { type CircleArea } from '@/utils/mapAnnotationParser'
 import { cnLabel } from '@/utils/mapAnnotationParser'
-import api from '@/services/api'
 import { type MapLayerConfig, loadActiveTileLayers } from '@/utils/mapTileConfig'
 
 const props = withDefaults(defineProps<{
@@ -103,6 +107,8 @@ const props = withDefaults(defineProps<{
   compact?: boolean  // 紧凑模式：隐藏标题栏和坐标表，适用于嵌入其他面板
   showHeader?: boolean   // 隐藏“坐标可视化”头部
   showTable?: boolean    // 隐藏坐标点表格
+  /** 后端密度分级标（sparse/normal/cluster/heavy）；cluster/heavy 时标点启用聚合 */
+  density?: string
 }>(), {
   showHeader: true,
   showTable: true,
@@ -117,6 +123,9 @@ const emit = defineEmits<{
 
 const mapContainer = ref<HTMLElement | null>(null)
 let map: L.Map | null = null
+// 用户是否已手动交互（拖动/缩放/双击）。一旦交互，数据变化不再自动 fitBounds，
+// 避免时间轴播放等高频数据更新时地图反复缩放。
+let mapUserInteracted = false
 let markers: L.Marker[] = []
 let circleMarkers: L.CircleMarker[] = []
 let spiderLineLayer: L.FeatureGroup | null = null
@@ -527,6 +536,8 @@ async function initMap() {
 
   map.on('zoomend', updateLayerOpacity)
   map.on('moveend', onViewportChange)
+  // 用户一旦手动交互，锁定视图，后续数据更新不再自动适配
+  map.on('mousedown wheel dblclick', () => { mapUserInteracted = true })
   updateLayerOpacity()
 
   addMarkers()
@@ -610,13 +621,33 @@ function updateLayerOpacity() {
 
 // 大量标点时跳过 DOM 标签和螺旋线的阈值（circleMarker 走 canvas 仍可承受数千点）
 const LABEL_SKIP_THRESHOLD = 500
+// 点位聚合分组（density=cluster/heavy 时创建；普通模式为 null）
+let clusterGroup: L.MarkerClusterGroup | null = null
+
+/** 是否启用点位聚合：后端 density 打标优先，未打标时按数量兜底 */
+function clusterEnabled(pointCount: number): boolean {
+  if (props.density === 'cluster' || props.density === 'heavy') return true
+  if (props.density) return false // sparse/normal 显式不聚合
+  return pointCount > LABEL_SKIP_THRESHOLD // 兼容旧产物（无 density 字段）
+}
 
 function addMarkers(fit = true) {
   if (!map) return
   clearMarkers()
 
   const visiblePoints = props.points.filter((p) => !hiddenGroups.value.has(pointGroupKey(p)))
-  const skipLabels = visiblePoints.length > LABEL_SKIP_THRESHOLD
+  const useCluster = clusterEnabled(visiblePoints.length)
+  const skipLabels = visiblePoints.length > LABEL_SKIP_THRESHOLD || useCluster
+
+  // 聚合模式：创建 markerClusterGroup（chunkedLoading 防卡顿；点击聚合点自动缩放展开）
+  if (useCluster) {
+    clusterGroup = L.markerClusterGroup({
+      chunkedLoading: true,
+      maxClusterRadius: 60,
+      showCoverageOnHover: false,
+      zoomToBoundsOnClick: true,
+    }).addTo(map!)
+  }
 
   // ── 按坐标分组，相同坐标的点做螺旋偏移避免重叠 ──
   const coordKey = (lat: number, lng: number) => `${lat.toFixed(6)},${lng.toFixed(6)}`
@@ -633,7 +664,7 @@ function addMarkers(fit = true) {
 
   // 大量标点时跳过螺旋偏移线（减少图层），但仍保留坐标分组用于弹窗计数
   if (spiderLineLayer) { map!.removeLayer(spiderLineLayer) }
-  const currentSpiderLineLayer = skipLabels ? null : L.featureGroup().addTo(map!)
+  const currentSpiderLineLayer = (skipLabels || useCluster) ? null : L.featureGroup().addTo(map!)
   if (currentSpiderLineLayer) spiderLineLayer = currentSpiderLineLayer
 
   groups.forEach(({ lat, lng, points: group }) => {
@@ -670,7 +701,13 @@ function addMarkers(fit = true) {
         weight: 2,
         opacity: 1,
         fillOpacity: safeNumber((p as any).fillOpacity, 0.9, 0.05, 1),
-      }).addTo(map!)
+      })
+      // 聚合模式：标点交给 clusterGroup 管理；否则直接加图
+      if (clusterGroup) {
+        clusterGroup.addLayer(circle)
+      } else {
+        circle.addTo(map!)
+      }
 
       // 构建弹窗内容：基础信息 + 动态属性（中文化）
       let tooltip = `<strong>${escapeHtml(p.name)}</strong>`
@@ -707,7 +744,7 @@ function addMarkers(fit = true) {
     })
   })
 
-  if (fit && props.points.length > 0 && !props.viewport) {
+  if (fit && props.points.length > 0 && !props.viewport && !mapUserInteracted) {
     const bounds = props.points.map(p => {
       const [lat, lng] = transformCoord(p.lng, p.lat)
       return [lat, lng] as L.LatLngTuple
@@ -721,6 +758,11 @@ function clearMarkers() {
   markers = []
   circleMarkers.forEach(m => { if (map) map.removeLayer(m) })
   circleMarkers = []
+  // 聚合分组整体移除（内含的 circleMarker 随组清除，无需逐个 removeLayer）
+  if (clusterGroup) {
+    if (map) map.removeLayer(clusterGroup)
+    clusterGroup = null
+  }
   if (spiderLineLayer && map) {
     map.removeLayer(spiderLineLayer)
     spiderLineLayer = null

@@ -22,8 +22,9 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 
 from stream.sse import SSEEvent
 import config
-from agent import map_builder, tools, executor, writer, verifier
-from agent import layout_postprocess
+from agent import map_builder, tools, executor, writer, verifier, visual_judge
+from agent import chart_screenshot, critic, critic_translator
+from agent import layout_postprocess, artifact_postprocess
 from agent.evidence_store import EvidenceStore
 from agent.planner import Planner
 from agent.state_machine import Stage, StateMachine
@@ -849,6 +850,15 @@ def _post_process_map(
     if writer.map_feature_count(verified) < 1:
         logger.info("V2 地图图层校验后要素为 0，丢弃空图层（无地图输出）")
         return None
+    # 密度分级 + 航迹抽稀（纯规则）：给图层打 density 标供前端聚合决策，
+    # 超长航迹按 Douglas-Peucker 抽稀。放在校验之后：抽稀点是原点集的子集，
+    # 坐标证据仍然命中；sanitize 白名单会丢弃未知字段，故必须在 sanitize 之后执行。
+    if config.SITUATION_MAP_DENSITY_ENABLED:
+        try:
+            from agent import map_density
+            verified = map_density.grade_layer_density(verified)
+        except Exception as exc:
+            logger.warning("地图密度分级异常（按未分级图层输出）: %s", exc)
     return verified
 
 
@@ -1003,28 +1013,43 @@ async def _real_generate_v2_body(
         await sm.exit(Stage.RESEARCH, success=False, error=str(exc)[:200])
         raise
 
-    # 时间窗放宽：所有证据为空且 sub_questions 含时间过滤时，剔除时间过滤重试一次。
-    # 复用 V1 的「近 N 天无匹配数据 → 放宽」语义，但 V2 不依赖参数绑定，直接剔除
-    # 时间字段过滤后让 Text-to-SQL 重新生成无时间约束的 SQL。
+    # 时间窗放宽（子问题级）：仅对"空证据 + 非物理表真空（emptyReason!=table_empty）
+    # + 自身带时间过滤"的子问题剔除时间过滤后单独重试，不推翻其他已成功的证据。
+    # 旧逻辑要求全部证据为空才整批重跑，q1 明细有数据、q2-q4 聚合为空时无法触发。
     relaxed_notice = None
-    if not any(ev.rows for ev in store.list_evidences()) and not temporal_context.get("strict"):
-        if executor._any_sub_question_has_time_filter(sub_questions):
+    if not temporal_context.get("strict"):
+        evidence_by_id = {ev.id: ev for ev in store.list_evidences()}
+        retry_sub_questions = []
+        for sq in sub_questions:
+            sq_id = str(sq.get("id") or "")
+            ev = evidence_by_id.get(sq_id)
+            if ev is None or ev.rows:
+                continue
+            # 存活探针已确认物理表无数据的子问题不再重试
+            if (ev.meta or {}).get("emptyReason") == "table_empty":
+                continue
+            if executor._has_time_filter(sq.get("filters")):
+                retry_sub_questions.append(executor._strip_time_filter(sq))
+        if retry_sub_questions:
             logger.warning(
-                "V2 时间窗过滤无匹配数据，剔除时间过滤重试: reportId=%s", report_id,
+                "V2 子问题级时间窗放宽重试: reportId=%s retryIds=%s",
+                report_id, [sq.get("id") for sq in retry_sub_questions],
             )
-            await sm.enter(Stage.RESEARCH, meta={"relax": "time-window"})
+            await sm.enter(Stage.RESEARCH, meta={"relax": "time-window", "scope": "sub-question"})
             try:
-                relaxed_sub_questions = executor._strip_time_filters(sub_questions)
-                # EvidenceStore.add_evidence 同 id 视为更新，重试会覆盖之前的空证据
-                evidences = await executor.execute_all(relaxed_sub_questions, store)
+                # EvidenceStore.add_evidence 同 id 视为更新，重试只覆盖这些空证据
+                await executor.execute_all(retry_sub_questions, store)
+                evidences = store.list_evidences()
                 await sm.exit(Stage.RESEARCH, success=True, meta={
                     "evidences": len(evidences),
                     "relaxed": "time-window",
+                    "scope": "sub-question",
+                    "retried": [sq.get("id") for sq in retry_sub_questions],
                 })
                 if any(ev.rows for ev in store.list_evidences()):
-                    relaxed_notice = "所选时间范围无匹配数据，已自动放宽时间过滤"
+                    relaxed_notice = "所选时间范围部分数据无匹配，已自动放宽时间过滤补充取数"
             except Exception as exc:
-                logger.warning("V2 时间窗放宽重试失败: %s", exc)
+                logger.warning("V2 子问题级时间窗放宽重试失败: %s", exc)
                 await sm.exit(Stage.RESEARCH, success=False, error=str(exc)[:200])
 
     # 严格时间回溯无证据时不放宽过滤，更不能用当前数据替代。
@@ -1077,7 +1102,11 @@ async def _real_generate_v2_body(
         )
         # 只在有 mapSpecs 或 evidences 含地理列时调 map
         field_labels = _build_field_labels(meta)
-        map_task = writer.write_map(store, profile, field_labels)
+        # 把 temporal_context 传给 write_map，供动态能力圈按 as_of 时间切片
+        # （一架主体一个圈，圆心随主体在 as_of 时点的位置移动）
+        map_task = writer.write_map(
+            store, profile, field_labels, temporal_context=temporal_context,
+        )
 
         charts_result, map_result = await asyncio.gather(chart_task, map_task, return_exceptions=True)
 
@@ -1123,45 +1152,124 @@ async def _real_generate_v2_body(
         await sm.exit(Stage.VERIFY, success=False, error=str(exc)[:200])
         verify_result = {"passed": False, "summary": f"校验异常: {exc}"}
 
-    # Reflection：chart 数值/适配校验失败时重写，上限 SITUATION_REFLECTION_MAX_ROUNDS
+    # Reflection：重写范围为「待修复规格集合」= 缺失补产 + 失败重写，
+    # 统一覆盖 0 图全缺、N 图缺员、单图校验失败三类场景；
+    # 轮数受 SITUATION_REFLECTION_MAX_ROUNDS 预算约束，避免死循环
+    # v1.2 新增：Critic 视觉反思决策路径（默认开启）
+    #   - Critic 看单图 PNG 截图 + verify 失败原因，输出定性编辑指令
+    #   - 翻译器改写 chartSpecs/mapSpecs，复用 planner.validate_plan_against_meta 校验
+    #   - 失败/降级时回退到原 rewrite_ids 重写路径，行为与现状兼容
+    #   - 独立计数：increment_reflection(Stage.VERIFY)，不消耗 WRITE reflection 预算
     reflection_round = 0
-    while (
-        not verify_result["passed"]
-        and reflection_round < config.SITUATION_REFLECTION_MAX_ROUNDS
-        and any(
-            f["stage"] in ("type_fit", "value_evidence", "field_mapping")
-            for f in verify_result.get("chart_result", {}).get("failures", [])
+    while True:
+        chart_failures = (
+            verify_result.get("chart_result", {}).get("failures", [])
+            if isinstance(verify_result, dict) else []
         )
-    ):
+        produced_ids = {str(c.get("chartId") or "") for c in charts}
+        # 缺失补产：规划了但未产出的规格（含 0 图全缺；排除空 chartId 占位）
+        missing_ids = {
+            str(cs.get("id") or "") for cs in chart_specs
+        } - produced_ids - {""}
+        # 失败重写：类型适配 / 数值证据 / 字段映射校验失败的规格
+        failed_ids = {
+            f.get("chartId") for f in chart_failures
+            if f.get("stage") in ("type_fit", "value_evidence", "field_mapping")
+        }
+        rewrite_ids = missing_ids | failed_ids
+        rewrite_specs = [
+            cs for cs in chart_specs
+            if str(cs.get("id") or "") in rewrite_ids
+        ]
+
+        # 退出条件：verify 通过 / Reflection 预算耗尽 / 无可重写规格
+        # Critic 路径下：还须 Critic 自己的预算未耗尽，否则走 rewrite_ids 兜底
+        critic_budget_remaining = (
+            config.SITUATION_CRITIC_ENABLED
+            and reflection_round < config.SITUATION_CRITIC_MAX_ROUNDS
+        )
+        if (
+            verify_result.get("passed")
+            or (
+                reflection_round >= config.SITUATION_REFLECTION_MAX_ROUNDS
+                and not critic_budget_remaining
+            )
+            or not rewrite_specs
+        ):
+            break
+
         reflection_round += 1
         sm.increment_reflection(Stage.WRITE)
         logger.info(
-            "V2 Reflection 第 %s 轮重写失败图表: %s",
-            reflection_round,
-            [f["chartId"] for f in verify_result["chart_result"]["failures"]],
+            "V2 Reflection 第 %s 轮（critic_enabled=%s, rewrite_ids=%s）",
+            reflection_round, config.SITUATION_CRITIC_ENABLED,
+            sorted(rewrite_ids),
         )
 
-        # 找出失败的 chartSpec（按 chartId 匹配），只重写这部分
-        failed_chart_ids = {
-            f["chartId"] for f in verify_result["chart_result"]["failures"]
-            if f["stage"] in ("type_fit", "value_evidence")
-        }
-        rewrite_specs = [
-            cs for cs in chart_specs
-            if str(cs.get("id")) in failed_chart_ids
-        ]
-        if not rewrite_specs:
-            break
+        # ── Critic 决策路径（v1.2 新增）──
+        # 成功 → chart_specs/map_specs 被改写（全量重写包含 add/drop 的 spec）
+        # 失败 → critic_used=False，自然走下方原 rewrite_ids 重写逻辑
+        critic_used = False
+        drop_ids: set = set()  # Critic drop_chart 时记录要剔除的 chartId
+
+        if critic_budget_remaining:
+            try:
+                screenshots = await chart_screenshot.render_chart_pngs(charts)
+                critic_inst = critic.Critic(profile, meta)
+                review = await critic_inst.review(
+                    charts=charts,
+                    screenshots=screenshots,
+                    verify_failures=chart_failures,
+                    sub_questions=plan.get("subQuestions") or [],
+                )
+                if not review.get("_fallback"):
+                    nc, nm, errs = critic_translator.apply_actions(
+                        chart_specs, map_specs,
+                        plan.get("subQuestions") or [],
+                        review.get("actions") or [],
+                        profile, meta,
+                    )
+                    if errs:
+                        logger.warning(
+                            "Critic 翻译失败，回退 rewrite_ids: %s", errs
+                        )
+                    elif nc is not None:
+                        # 检测 drop_chart 指令，从 charts 中剔除对应项
+                        for action in review.get("actions") or []:
+                            if (
+                                isinstance(action, dict)
+                                and action.get("type") == "drop_chart"
+                            ):
+                                drop_ids.add(str(action.get("targetChartId") or ""))
+                        chart_specs = nc
+                        map_specs = nm
+                        # Critic 修订后的全量重写（含 add_chart 新增 spec、drop_chart 移除 spec）
+                        rewrite_specs = nc
+                        critic_used = True
+                        sm.increment_reflection(Stage.VERIFY)
+                        logger.info(
+                            "Critic 修订成功，新 chart_specs 数=%s map_specs 数=%s",
+                            len(nc), len(nm),
+                        )
+            except Exception as exc:
+                logger.warning("Critic 调用失败，回退 rewrite_ids: %s", exc)
 
         try:
-            await sm.enter(Stage.WRITE, meta={"reflection": reflection_round})
+            await sm.enter(Stage.WRITE, meta={
+                "reflection": reflection_round, "critic": critic_used,
+            })
             rewritten = await writer.write_charts_parallel(
                 effective_query, rewrite_specs, store, profile,
             )
             await sm.exit(Stage.WRITE, success=True, meta={"rewritten": len(rewritten)})
 
-            # 用重写结果替换原 charts 中对应的项
-            charts_by_id = {c.get("chartId"): c for c in charts}
+            # 用重写结果替换原 charts 中对应的项；
+            # 缺失补产的图以 spec.id 为 chartId，在此自然合并进结果集
+            # Critic drop_chart 指令的 chartId 在合并前剔除
+            charts_by_id = {
+                c.get("chartId"): c for c in charts
+                if str(c.get("chartId") or "") not in drop_ids
+            }
             for new_chart in rewritten:
                 cid = new_chart.get("chartId")
                 if cid:
@@ -1169,7 +1277,9 @@ async def _real_generate_v2_body(
             charts = list(charts_by_id.values())
 
             # 重新校验
-            await sm.enter(Stage.VERIFY, meta={"reflection": reflection_round})
+            await sm.enter(Stage.VERIFY, meta={
+                "reflection": reflection_round, "critic": critic_used,
+            })
             verify_result = verifier.verify_all(
                 charts,
                 None,
@@ -1214,20 +1324,66 @@ async def _real_generate_v2_body(
             "mapExplanation": "",
         }
 
-    # ───── 阶段 5.5：LAYOUT（HTML Artifact 优先；失败回退 LLM 布局树，再回退固定三段） ─────
+    # ───── 阶段 5.5：LAYOUT（自适应排版管线：骨架+视觉反馈循环 → artifact → 布局树 → 固定三段） ─────
+    # 详见《态势图-版式骨架与视觉反馈循环方案》：
+    # - 第一优先：adaptive_layout（5 骨架拟合渲染 + VLM rubric 评审 + 强制择优 + 增量修订）；
+    #   playwright/chromium 不可用或管线整体失败时返回 None，静默走现有降级链；
+    # - 第二优先：write_artifact（LLM 完全自定义整页 HTML）；
+    # - 第三优先：布局树；全失败时前端回退固定三段。
     artifact_html: Optional[str] = None
     layout_tree: Optional[Dict[str, Any]] = None
+    layout_meta: Dict[str, Any] = {}
     if (charts or map_layer) and (
         config.SITUATION_ARTIFACT_ENABLED or config.SITUATION_LAYOUT_ENABLED
+        or config.SITUATION_VISUAL_LOOP_ENABLED
     ):
         await sm.enter(Stage.LAYOUT)
         try:
-            # 优先：整页 HTML Artifact（LLM 只做排版，前端沙箱挂载真实图表/地图）
-            if config.SITUATION_ARTIFACT_ENABLED:
+            # 第一优先：骨架库 + 视觉反馈循环自适应排版（playwright 可用时）
+            if config.SITUATION_VISUAL_LOOP_ENABLED and await visual_judge.is_available_async():
+                loop_result = await visual_judge.adaptive_layout(
+                    effective_query, store, charts, map_layer, narrative,
+                    semantic=plan.get("narrative"),
+                )
+                if loop_result:
+                    artifact_html = loop_result.get("html") or None
+                    layout_meta = loop_result.get("meta") or {}
+            # 回退：整页 HTML Artifact（LLM 自定义排版；视觉循环关闭/不可用/整体失败时）
+            if artifact_html is None and config.SITUATION_ARTIFACT_ENABLED:
                 artifact_html = await writer.write_artifact(
                     effective_query, store, charts, map_layer, narrative,
+                    semantic=plan.get("narrative"),
                 )
-            # 回退：布局树（artifact 关闭或生成失败时）
+            # 产物-排版一致性统一收口：无论骨架循环还是 LLM artifact，都再过一遍
+            # 纯规则清洗 + 栅格回收 + 覆盖率门禁；不合格则弃用 artifact 降级布局树，
+            # 杜绝"有图表 0 槽位""地图 span8 右侧空白"等残缺产物直达前端。
+            if artifact_html is not None:
+                try:
+                    dataset_columns = {
+                        ev.id: set(ev.columns or [])
+                        for ev in store.list_evidences() if ev.rows
+                    }
+                    cleaned = artifact_postprocess.sanitize_artifact(
+                        artifact_html, charts, map_layer, dataset_columns
+                    )
+                except Exception as exc:
+                    logger.warning("artifact 收口异常，降级布局树: %s", exc)
+                    cleaned = None
+                if cleaned is None:
+                    logger.warning("artifact 收口后为空或残缺，降级布局树")
+                    artifact_html = None
+                elif charts and cleaned.get("validChartSlots", 0) == 0:
+                    logger.warning(
+                        "artifact 覆盖率不合格：%d 个图表但 0 个有效图表槽位，降级布局树",
+                        len(charts),
+                    )
+                    artifact_html = None
+                elif not charts and map_layer and not cleaned.get("hasMapSlot"):
+                    logger.warning("artifact 覆盖率不合格：仅有地图产物但无有效 map 槽位，降级布局树")
+                    artifact_html = None
+                else:
+                    artifact_html = cleaned["html"]
+            # 回退：布局树（artifact 关闭、生成失败或收口不合格时）
             if artifact_html is None and config.SITUATION_LAYOUT_ENABLED:
                 layout_raw = await writer.write_layout(
                     effective_query, store, charts, map_layer, narrative,
@@ -1235,9 +1391,16 @@ async def _real_generate_v2_body(
                 layout_tree = layout_postprocess.sanitize_layout(
                     layout_raw, charts, map_layer, store.list_evidences(),
                 )
-            await sm.exit(Stage.LAYOUT, success=(artifact_html is not None or layout_tree is not None), meta={
-                "kind": "artifact" if artifact_html else "layout_tree",
+            if artifact_html is not None:
+                kind = "adaptive" if layout_meta else "artifact"
+            elif layout_tree is not None:
+                kind = "layout_tree"
+            else:
+                kind = "none"
+            await sm.exit(Stage.LAYOUT, success=(kind != "none"), meta={
+                "kind": kind,
                 "blocks": len((layout_tree or {}).get("root", {}).get("children", [])),
+                **layout_meta,
             })
         except Exception as exc:
             logger.warning("V2 layout 阶段失败（前端回退固定布局）: %s", exc)

@@ -76,6 +76,12 @@ internal:
   # local-development-token value is deliberately rejected.
   service-token: ${INTERNAL_SERVICE_TOKEN:}
 
+# ─── 下游服务回调：注解变更后失效其进程内缓存 ───
+# 留空表示本地开发无 ipage（跳过回调，不产生告警）；Docker 由 -e IPAGE_SERVICE_URL 注入容器名。
+ipage:
+  service-url: ${IPAGE_SERVICE_URL:}
+  invalidate-timeout-ms: ${IPAGE_INVALIDATE_TIMEOUT_MS:5000}
+
 admin:
   # Required in X-Admin-Token for every management API. Keep this separate from
   # INTERNAL_SERVICE_TOKEN so a runtime service cannot mutate administration state.

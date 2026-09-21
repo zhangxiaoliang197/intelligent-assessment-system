@@ -4,3 +4,7 @@ python-multipart==0.0.6
 python-dotenv>=1.0.0
 python-json-logger>=2.0.8
 PyYAML>=6.0.1
+# 可选依赖：视觉反馈循环（版式评审渲染截图）。未安装或未下载 chromium 时
+# 服务自动降级为 artifact → 布局树 → 固定三段链路；启用需另行执行
+# `playwright install chromium`（Docker 镜像默认不下载浏览器以控制体积）
+playwright>=1.40.0

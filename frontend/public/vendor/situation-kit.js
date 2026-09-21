@@ -14,6 +14,7 @@
   var state = null;           // 父页注入的数据
   var chartsRendered = {};    // chartId → echarts 实例（防重复挂载）
   var mapRendered = false;
+  var mapInstance = null;     // Leaflet 地图实例（供二次 invalidateSize）
   var echartsInstances = [];
 
   // ── 工具 ──
@@ -117,6 +118,60 @@
   }
 
   // ── 图表（ECharts；option 为父页用全量数据重建后的完整配置）──
+  // 图表槽最小高度：LLM 常用 200px 固定高，双轴/多类目图被压扁、轴标签侵入绘图区
+  var CHART_MIN_H = 300;          // 常规图保底
+  var CHART_MIN_H_DENSE = 360;    // 多类目（轴标签旋转）保底，给底部标签留足空间
+
+  function categoryCount(option) {
+    var xa = option && option.xAxis;
+    if (Array.isArray(xa)) {
+      for (var i = 0; i < xa.length; i++) {
+        if (xa[i] && xa[i].type === 'category' && Array.isArray(xa[i].data)) return xa[i].data.length;
+      }
+      return 0;
+    }
+    return (xa && xa.type === 'category' && Array.isArray(xa.data)) ? xa.data.length : 0;
+  }
+
+  function ensureChartHeight(el, option) {
+    var need = categoryCount(option) > 10 ? CHART_MIN_H_DENSE : CHART_MIN_H;
+    if (el.clientHeight < need) el.style.height = need + 'px';
+  }
+
+  // 绘图区边距运行时兜底（与后端 chart_polish._polish_grid 同构，改动需同步）：
+  // 历史报告的 option 未经后端 grid 规范化，top:100/bottom:'12%' 在矮容器内压扁
+  // 绘图区、旋转日期标签侵入折线区，这里在 setOption 前做幂等钳制。
+  function normalizeGridOption(option) {
+    if (!option || typeof option !== 'object') return;
+    var title = option.title;
+    var titleItems = Array.isArray(title) ? title : (title && typeof title === 'object' ? [title] : []);
+    var hasTitle = titleItems.some(function (t) { return t && t.text; });
+    var legend = option.legend;
+    var hasLegend = Array.isArray(legend)
+      ? legend.some(function (x) { return x && typeof x === 'object'; })
+      : (legend && typeof legend === 'object');
+    var rotated = false;
+    var xa = option.xAxis;
+    var axes = Array.isArray(xa) ? xa : (xa && typeof xa === 'object' ? [xa] : []);
+    axes.forEach(function (item) {
+      if (item && (item.type === 'category' || item.type === undefined)
+          && item.axisLabel && item.axisLabel.rotate) rotated = true;
+    });
+    var topCap = (hasTitle && hasLegend) ? 72 : (hasTitle ? 48 : 24);
+    var bottomFloor = rotated ? 56 : 32;
+    var grids;
+    if (option.grid == null) { option.grid = {}; grids = [option.grid]; }
+    else if (Array.isArray(option.grid)) grids = option.grid.filter(function (g) { return g && typeof g === 'object'; });
+    else if (typeof option.grid === 'object') grids = [option.grid];
+    else return;
+    grids.forEach(function (g) {
+      if (!g.containLabel) g.containLabel = true;
+      if (typeof g.top !== 'number' || g.top > topCap) g.top = topCap;
+      if (rotated && (typeof g.bottom !== 'number' || g.bottom < bottomFloor)) g.bottom = bottomFloor;
+      else if (g.bottom == null) g.bottom = bottomFloor;
+    });
+  }
+
   function renderCharts() {
     if (!window.echarts) return;
     var nodes = document.querySelectorAll('[data-sit="chart"]');
@@ -127,6 +182,8 @@
       var chart = (state.charts || {})[ref];
       if (!chart || !chart.option) continue;
       try {
+        ensureChartHeight(el, chart.option);
+        normalizeGridOption(chart.option);
         var inst = window.echarts.init(el);
         inst.setOption(chart.option);
         chartsRendered[ref] = inst;
@@ -164,26 +221,40 @@
     if (!layer) return;
 
     var map = window.L.map(el, { zoomControl: true }).setView([35, 105], 4);
+    mapInstance = map;
     addTiles(map);
     var bounds = [];
 
-    // 标点
+    // 标点（density=cluster/heavy 时走 markercluster 聚合，避免密集平铺）
     var points = layer.points || [];
+    var useCluster = window.L.markerClusterGroup
+      && (layer.density === 'cluster' || layer.density === 'heavy');
+    var clusterGroup = useCluster ? window.L.markerClusterGroup({
+      chunkedLoading: true, maxClusterRadius: 60,
+      showCoverageOnHover: false, zoomToBoundsOnClick: true,
+    }) : null;
     for (var i = 0; i < points.length; i++) {
       var p = points[i];
       if (p.lng == null || p.lat == null) continue;
       var ll = toLatLng(p.lng, p.lat);
       bounds.push(ll);
       var color = colorByName(p.name || p.city || p.label);
-      window.L.circleMarker(ll, {
+      var marker = window.L.circleMarker(ll, {
         radius: 4, color: color, weight: 1, fillColor: color, fillOpacity: 0.75,
-      }).addTo(map).bindPopup(esc(p.name || p.city || p.label || ''));
+      }).bindPopup(esc(p.name || p.city || p.label || ''));
+      if (clusterGroup) {
+        clusterGroup.addLayer(marker);
+      } else {
+        marker.addTo(map);
+      }
     }
-    // 路线
+    if (clusterGroup) map.addLayer(clusterGroup);
+    // 路线（后端 GeoRoute 契约字段为 points：[{lng,lat,name,...}]；
+    // 兼容 coordinates/coords/waypoints 及数组元组写法）
     var routes = layer.routes || [];
     for (var r = 0; r < routes.length; r++) {
       var route = routes[r];
-      var coords = (route.coordinates || route.coords || route.waypoints || [])
+      var coords = (route.points || route.coordinates || route.coords || route.waypoints || [])
         .map(function (c) {
           var lng = c.lng != null ? c.lng : c[0];
           var lat = c.lat != null ? c.lat : c[1];
@@ -238,12 +309,69 @@
     setTimeout(function () { map.invalidateSize(); }, 200);
   }
 
+  // ── 布局自检：上报 body 尺寸与槽位 0×0 计数，供父页识别"零布局白屏"并自愈 ──
+  function postLayout() {
+    try {
+      var slots = document.querySelectorAll('[data-sit]');
+      var zeroSlots = 0;
+      for (var i = 0; i < slots.length; i++) {
+        var r = slots[i].getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) zeroSlots++;
+      }
+      var body = document.body;
+      window.parent.postMessage({
+        type: 'sit:layout',
+        bodyW: body ? body.scrollWidth : 0,
+        bodyH: body ? body.scrollHeight : 0,
+        slotCount: slots.length,
+        zeroSlots: zeroSlots,
+        renderedCharts: echartsInstances.length,
+        mapRendered: mapRendered,
+      }, '*');
+    } catch (e) { }
+  }
+
   function render() {
     if (!state) return;
     try { renderTexts(); } catch (e) { }
     try { renderKpis(); } catch (e) { }
     try { renderCharts(); } catch (e) { }
     try { renderMap(); } catch (e) { }
+    // 内容注入后高度变化，主动上报一次（ResizeObserver 也会兜底）
+    requestPostHeight();
+    // 数据注入后的二次自适应：部分渲染器在容器首帧尺寸未定时初始化会塌缩，
+    // 延迟重排一次图表与地图，规避零布局/瓦片灰块
+    setTimeout(function () {
+      for (var i = 0; i < echartsInstances.length; i++) {
+        try { echartsInstances[i].resize(); } catch (e) { }
+      }
+      try { if (mapInstance) mapInstance.invalidateSize(); } catch (e) { }
+    }, 350);
+    // 布局自检三拍：覆盖同步注入、ECharts/Leaflet 异步绘制两个时点
+    setTimeout(postLayout, 0);
+    setTimeout(postLayout, 300);
+    setTimeout(postLayout, 800);
+  }
+
+  // ── 高度自适应：量高 → postMessage 父页调整 iframe 高度 ──
+  // 沙箱无同源权限，父页无法读 contentDocument，只能由 kit 主动上报
+  var heightTimer = null;
+  function postHeight() {
+    try {
+      var h = Math.max(
+        document.body ? document.body.scrollHeight : 0,
+        document.documentElement ? document.documentElement.scrollHeight : 0
+      );
+      if (h > 0) window.parent.postMessage({ type: 'sit:height', height: h }, '*');
+    } catch (e) { }
+  }
+  function requestPostHeight() {
+    clearTimeout(heightTimer);
+    heightTimer = setTimeout(postHeight, 120);
+  }
+  // body 尺寸变化（文本/KPI 注入、图片加载、字体就绪）→ 防抖上报
+  if (window.ResizeObserver && document.body) {
+    new ResizeObserver(requestPostHeight).observe(document.body);
   }
 
   // 窗口尺寸变化时重排图表

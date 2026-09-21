@@ -23,14 +23,23 @@
 
       <!-- 纯展示内容：HTML Artifact 沙箱（回退：布局树动态排版 → 左图表 + 右地图 + 底部态势分析） -->
       <div class="view-content custom-scroll" ref="captureRef">
-        <!-- HTML Artifact 沙箱渲染（优先；LLM 整页排版 + situation-kit 挂载真实图表/地图） -->
+        <!-- partial 报告：明确告知产物可能不完整，避免用户误判为系统故障 -->
+        <el-alert
+          v-if="partialHint"
+          :title="partialHint"
+          type="warning"
+          show-icon
+          :closable="false"
+        />
+        <!-- HTML Artifact 沙箱渲染（优先；槽位对账残缺或沙箱自检失败时自动降级到下方版式） -->
         <ArtifactSandbox
-          v-if="store.artifact"
-          :html="store.artifact.html"
+          v-if="store.artifact && reconciledArtifact && !sandboxFailed && !reconciledArtifact.degraded"
+          :html="reconciledArtifact.html"
           :charts="store.charts"
           :map-layers="store.mapLayers"
           :datasets="store.datasets"
           :narrative="store.narrative"
+          @render-failed="sandboxFailed = true"
         />
 
         <!-- LLM 布局树渲染（回退路径：无 artifact 时） -->
@@ -123,6 +132,7 @@ import SituationNarrative from '@/components/situation/SituationNarrative.vue'
 import SituationLayoutRenderer from '@/components/situation/SituationLayoutRenderer.vue'
 import ArtifactSandbox from '@/components/situation/ArtifactSandbox.vue'
 import { useSituationStore, type Viewport } from '@/stores/situation'
+import { reconcileArtifactHtml } from '@/utils/artifactSlots'
 import { useSituationExport } from '@/composables/useSituationExport'
 import api from '@/services/api'
 
@@ -135,6 +145,27 @@ const loading = ref(false)
 const captureRef = ref<HTMLElement | null>(null)
 const shareVisible = ref(false)
 const shareUrl = ref('')
+// 沙箱自检连续失败后置为 true，改走布局树/固定三段版式，永不无提示空白
+const sandboxFailed = ref(false)
+
+/**
+ * Artifact 槽位对账（历史报告兜底）：剔除引用空数据的图表槽并回收栅格，
+ * 残缺度高时 degraded，模板自动降级到 SituationLayoutRenderer / 固定三段。
+ */
+const reconciledArtifact = computed(() => {
+  if (!store.artifact) return null
+  return reconcileArtifactHtml(
+    store.artifact.html,
+    store.charts.map((c) => c.chartId),
+    store.mapLayers.length > 0,
+  )
+})
+
+// partial 报告中文提示：部分子问题取数/生成失败，产物只含可生成部分
+const partialHint = computed(() => {
+  if (store.status !== 'partial') return ''
+  return '本次分析中部分数据取数失败，态势产物可能不完整（图表或图层缺失），以下为可生成的部分内容。'
+})
 
 const sourceLabel = computed(() => {
   const map: Record<string, string> = { manual: '手动提问', qa: '智能问答', indicator: '指标分析', evaluation: '评估分析' }
@@ -191,9 +222,11 @@ onMounted(async () => {
 })
 
 function goBack() {
-  // 优先返回上一页，否则回对话页
-  if (window.history.length > 1) router.back()
-  else router.push('/situation')
+  // 确定性返回（修复"地图操作后要按多次返回"）：沙箱 iframe 的 Blob 导航与
+  // 两级路由会向 history 压入多条记录，router.back() 次数不可控；
+  // 按来源标记回到对应页面，无标记（外链/分享直达）默认回态势对话页，一次点击必达。
+  if (route.query.from === 'list') router.replace('/situation/list')
+  else router.replace('/situation')
 }
 
 async function onShare() {

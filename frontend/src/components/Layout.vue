@@ -56,6 +56,9 @@ const pageTitle = computed(() => {
         'OntologyBuild': 'AI 构建',
         'SituationMap': '态势图',
         'SituationView': '态势图查看',
+        'SituationPageDialog': '态势页面',
+        'InteractivePage': '态势页面',
+        'InteractiveView': '态势页面查看',
         'AdminSystem': '基础管理系统'
   }
   return titles[route.name as string] || ''

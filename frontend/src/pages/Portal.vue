@@ -149,7 +149,8 @@ import {
   Aim,
   Box,
   Loading,
-  MapLocation
+  MapLocation,
+  MagicStick
 } from '@element-plus/icons-vue'
 import FloatingSidebar from '@/components/FloatingSidebar.vue'
 import { ElMessage } from 'element-plus'
@@ -193,6 +194,13 @@ const tools = [
     icon: MapLocation,
     color: '#8b5cf6',
     path: '/situation'
+  },
+  {
+    id: 5,
+    name: '态势页面',
+    icon: MagicStick,
+    color: '#0ea5e9',
+    path: '/situation-page'
   }
 ]
 

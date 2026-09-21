@@ -7,6 +7,7 @@
       :areas="mergedAreas"
       :circles="mergedCircles"
       :viewport="viewport"
+      :density="mergedDensity"
       @marker-click="(p: any) => emit('marker-click', p)"
       @region-select="(p: any) => emit('region-select', p)"
       @draw-end="(p: any) => emit('draw-end', p)"
@@ -199,6 +200,9 @@ const mergedAreas = computed<GeoArea[]>(() => {
 
 const mergedCircles = computed<CircleArea[]>(() => {
   const all: CircleArea[] = []
+  // 主体去重映射：每个 subjectId 仅保留 timeRange 内 timestamp 最新的一条
+  // 用于动态能力圈（一架主体一个圈，圆心随主体当前位置移动）
+  const subjectLatest = new Map<string, { idx: number; ts: number }>()
   for (const layer of props.layers) {
     if (layer.layerConfig?.visible === false) continue
     const sourceCircles = [
@@ -209,6 +213,7 @@ const mergedCircles = computed<CircleArea[]>(() => {
     if (!sourceCircles.length) continue
     for (const c of sourceCircles) {
       if (!featurePassesContext(c)) continue
+      const idx = all.length
       all.push({
         name: c.name || '',
         center: { lng: c.center?.lng ?? 0, lat: c.center?.lat ?? 0 },
@@ -221,10 +226,39 @@ const mergedCircles = computed<CircleArea[]>(() => {
         fillOpacity: layer.layerConfig?.fillOpacity,
         _layerId: layer.layerId,
         _datasetRef: c.datasetRef || props.dataset?.datasetId || '',
+        subjectId: (c as any).subjectId,
+        timestamp: (c as any).timestamp,
       } as any)
+      // 按 subjectId 去重：保留最新 timestamp 的圈（动态能力圈一架一圈语义）
+      const sid = (c as any).subjectId
+      const ts = (c as any).timestamp
+      if (sid) {
+        const tsNum = ts ? Date.parse(String(ts)) : 0
+        const prev = subjectLatest.get(sid)
+        if (!prev || tsNum > prev.ts) {
+          subjectLatest.set(sid, { idx, ts: tsNum })
+        }
+      }
     }
   }
+  // 如果有动态主体标记，仅保留每个 subjectId 最新的一个圈
+  if (subjectLatest.size > 0) {
+    const keepSet = new Set<number>()
+    for (const v of subjectLatest.values()) keepSet.add(v.idx)
+    return all.filter((_, idx) => keepSet.has(idx))
+  }
   return all
+})
+
+/** 聚合密度标：任一路层被后端标为 cluster/heavy 即启用点位聚合（多图层取最高档） */
+const mergedDensity = computed<string>(() => {
+  const order: Record<string, number> = { sparse: 0, normal: 1, cluster: 2, heavy: 3 }
+  let best = ''
+  for (const layer of props.layers) {
+    const d = String((layer as any).density || '')
+    if (d && (order[d] ?? 1) > (order[best] ?? -1)) best = d
+  }
+  return best
 })
 </script>
 

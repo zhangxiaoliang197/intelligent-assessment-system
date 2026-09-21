@@ -9,6 +9,7 @@
 阶段 1 仅提供独立 Planner 类，不动 orchestrator.real_generate；
 阶段 2 集成时由新 Orchestrator 调用 Planner.plan()。
 """
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -179,6 +180,26 @@ EMIT_RESEARCH_PLAN_TOOL = {
                         },
                     },
                 },
+                "narrative": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "description": "可选：ABT 叙事结构标签，用于版式语义匹配（不影响研究内容本身）",
+                    "properties": {
+                        "polarity": {
+                            "type": "string",
+                            "enum": ["and", "but", "therefore", "compare", "alert", "neutral"],
+                            "description": (
+                                "叙事极性：and=现状罗列、but=问题聚焦/转折、therefore=结论成果、"
+                                "compare=对比分析、alert=预警升级、neutral=中性概述"
+                            ),
+                        },
+                        "focus": {
+                            "type": "string",
+                            "maxLength": 20,
+                            "description": "叙事焦点关键词，如：geo 分布 / 趋势 / 构成 / 异常项",
+                        },
+                    },
+                },
             },
         },
     },
@@ -205,7 +226,7 @@ def _build_planner_system_prompt(profile: Dict[str, Any], meta_text: str) -> str
     3. 强调图表类型-数据适配规则（避免 pie 塞 30 分类）
     4. 未选 Skill 时不约束图表类型/数量/地图，由 LLM 自由决策
     """
-    base = prompts.get_system_prompt()
+    base = prompts.get_system_prompt(with_map_guide=False)
     allowed_types = sorted(_allowed_chart_types(profile))
     # 未选 Skill 时给"自由规划"提示，避免 LLM 套用固定模板
     if not profile.get("skillId"):
@@ -252,6 +273,30 @@ def _build_planner_system_prompt(profile: Dict[str, Any], meta_text: str) -> str
         "直接调用 emit_research_plan 工具，不要输出额外文本。\n\n"
         f"可用数据集元数据：\n{meta_text}"
     )
+
+
+def validate_plan_against_meta(
+    plan: Dict[str, Any],
+    profile: Dict[str, Any],
+    meta: Dict[str, Any],
+) -> Optional[str]:
+    """校验 ResearchPlan 与 meta/profile 的一致性（公共入口）。
+
+    Planner 与 Critic 翻译器共用此函数，保证：
+    - chartSpecs 数量 ∈ [2, 4]
+    - chartSpecs[*].type 在 allowed_types 内
+    - chartSpecs[*].subQuestionRef 命中 subQuestions[*].id
+    - mapSpecs[*].subQuestionRef 命中 subQuestions[*].id 且对应子问题 geoMode=raw
+
+    Args:
+        plan: ResearchPlan dict（subQuestions / chartSpecs / mapSpecs / intent / ...）
+        profile: Skill profile（用于推断 allowed_types）
+        meta: 数据集元数据（含 geo_profile.annotate_meta 标注）
+
+    Returns:
+        失败原因字符串（None 表示通过）
+    """
+    return _validate_plan(plan, profile, meta)
 
 
 def _validate_plan(plan: Dict[str, Any], profile: Dict[str, Any], meta: Dict[str, Any]) -> Optional[str]:
@@ -479,61 +524,115 @@ class Planner:
             {"role": "user", "content": f"用户问题：{query}"},
         ]
 
+    @staticmethod
+    def _append_tool_feedback(
+        messages: List[Dict[str, Any]],
+        call_id: str,
+        assistant_content: str,
+        plan_args: Any,
+        feedback_text: str,
+    ) -> List[Dict[str, Any]]:
+        """追加上一轮 assistant 的 tool_call + tool 反馈消息，实现针对性重试。
+
+        相比「原样重发 messages」，让模型看到自己上次的调用与失败原因，
+        能显著提高下一轮补全 arguments / 修正校验错误的概率。
+        """
+        args_str = json.dumps(plan_args, ensure_ascii=False) if isinstance(plan_args, dict) else (plan_args or "")
+        return messages + [
+            {
+                "role": "assistant",
+                "content": assistant_content or "",
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": "emit_research_plan", "arguments": args_str},
+                }],
+            },
+            {"role": "tool", "tool_call_id": call_id, "content": feedback_text},
+        ]
+
     async def plan(self, query: str) -> Dict[str, Any]:
         """调用 LLM 产出 ResearchPlan。
 
-        失败重试最多 2 次（共 3 次）；3 次均失败则返回 Skill 模板降级计划（_fallback=True）。
+        失败重试最多 2 次（共 3 次）。与旧版的区别：
+        - 失败后不原样重发，而是追加「assistant tool_call + tool 反馈」消息，
+          让模型看到上次的失败原因（arguments 为空 / 校验失败），针对性修正；
+        - 网络异常或完全无 tool_calls 时用 user 消息反馈；
+        - 3 次均失败则回退 Skill 模板降级计划。
         """
         messages = self._build_messages(query)
         max_attempts = 3  # 1 + 2 retries
         last_error = ""
+        working_messages: List[Dict[str, Any]] = list(messages)
 
         for attempt in range(1, max_attempts + 1):
             try:
                 result = call_llm_with_tools(
-                    messages=messages,
+                    messages=working_messages,
                     tools=[EMIT_RESEARCH_PLAN_TOOL],
                     tool_choice={"type": "function", "function": {"name": "emit_research_plan"}},
                     temperature=0.2,
                     max_tokens=min(config.LLM_MAX_TOKENS, 6000),
                 )
-                tool_calls = result.get("tool_calls") or []
-                if not tool_calls:
-                    last_error = "LLM 未返回 tool_calls"
-                    logger.warning("Planner 第 %s 次未返回 tool_calls: %s", attempt, last_error)
-                    continue
-
-                # 取第一个 emit_research_plan 调用
-                plan_args = None
-                for tc in tool_calls:
-                    if tc.get("name") == "emit_research_plan":
-                        plan_args = tc.get("arguments")
-                        break
-                if not isinstance(plan_args, dict):
-                    last_error = "emit_research_plan.arguments 解析为空"
-                    logger.warning("Planner 第 %s 次 arguments 为空", attempt)
-                    continue
-
-                # 校验：失败时进入下一轮重试
-                err = _validate_plan(plan_args, self.profile, self.meta)
-                if err:
-                    last_error = err
-                    logger.warning("Planner 第 %s 次校验失败: %s", attempt, err)
-                    continue
-
-                plan_args.pop("_fallback", None)
-                logger.info(
-                    "Planner 成功（第 %s 次）：subQuestions=%s chartSpecs=%s",
-                    attempt,
-                    len(plan_args.get("subQuestions") or []),
-                    len(plan_args.get("chartSpecs") or []),
-                )
-                return plan_args
-
             except Exception as exc:
+                # 网络异常 / 思考链耗尽 / 完全无 tool_calls
                 last_error = str(exc)[:200]
                 logger.warning("Planner 第 %s 次异常: %s", attempt, last_error)
+                if attempt < max_attempts:
+                    working_messages = working_messages + [{
+                        "role": "user",
+                        "content": f"上一次调用失败：{last_error}。请重新调用 emit_research_plan 工具提交研究计划，务必填写完整 arguments。",
+                    }]
                 continue
+
+            tool_calls = result.get("tool_calls") or []
+            tc = next((t for t in tool_calls if t.get("name") == "emit_research_plan"), None)
+            content = result.get("content") or ""
+
+            if tc is None:
+                last_error = "未调用 emit_research_plan 工具"
+                logger.warning("Planner 第 %s 次: %s", attempt, last_error)
+                if attempt < max_attempts:
+                    working_messages = working_messages + [{
+                        "role": "user",
+                        "content": "请必须调用 emit_research_plan 工具提交研究计划，不要输出其他内容。",
+                    }]
+                continue
+
+            plan_args = tc.get("arguments")
+            call_id = tc.get("id", "")
+
+            if not isinstance(plan_args, dict):
+                # arguments 为空或 JSON 解析失败（思考链耗尽的典型症状）
+                last_error = "emit_research_plan.arguments 为空或解析失败"
+                logger.warning("Planner 第 %s 次 arguments 无效", attempt)
+                if attempt < max_attempts:
+                    working_messages = self._append_tool_feedback(
+                        working_messages, call_id, content, plan_args,
+                        "本次调用未提供有效参数（arguments 为空或 JSON 解析失败）。"
+                        "请重新调用 emit_research_plan 工具并填写完整的 arguments JSON。",
+                    )
+                continue
+
+            err = _validate_plan(plan_args, self.profile, self.meta)
+            if err:
+                last_error = err
+                logger.warning("Planner 第 %s 次校验失败: %s", attempt, err)
+                if attempt < max_attempts:
+                    working_messages = self._append_tool_feedback(
+                        working_messages, call_id, content, plan_args,
+                        f"本次计划校验失败：{err}。请修正后重新调用 emit_research_plan 工具。",
+                    )
+                continue
+
+            plan_args.pop("_fallback", None)
+            logger.info(
+                "Planner 成功（第 %s 次）：subQuestions=%s chartSpecs=%s",
+                attempt,
+                len(plan_args.get("subQuestions") or []),
+                len(plan_args.get("chartSpecs") or []),
+            )
+            return plan_args
 
         # 3 次失败 → Skill 模板降级
         logger.warning("Planner 3 次均失败，回退 Skill 模板。最后错误: %s", last_error)
@@ -542,4 +641,4 @@ class Planner:
         return fallback
 
 
-__all__ = ["Planner", "EMIT_RESEARCH_PLAN_TOOL"]
+__all__ = ["Planner", "EMIT_RESEARCH_PLAN_TOOL", "validate_plan_against_meta"]

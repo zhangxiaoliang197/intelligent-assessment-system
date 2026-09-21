@@ -111,9 +111,10 @@
               </el-table-column>
               <el-table-column prop="tableName" label="数据表" width="150" />
               <el-table-column prop="records" label="记录数" width="85" />
-              <el-table-column label="操作" min-width="260">
+              <el-table-column label="操作" min-width="330">
                 <template #default="scope">
                   <el-button size="small" @click="openTableStructure(scope.row)">表结构</el-button>
+                  <el-button size="small" @click="openDatasetSemantic(scope.row)">语义注解</el-button>
                   <el-button size="small" @click="editDataset(scope.row)">编辑</el-button>
                   <el-button size="small" type="danger" @click="deleteDataset(scope.row)">删除</el-button>
                 </template>
@@ -444,14 +445,22 @@
       </el-dialog>
 
       <!-- 表结构 / 字段标注 对话框 -->
-      <el-dialog v-model="showStructDialog" title="数据表结构" width="900px" top="3vh">
+      <el-dialog v-model="showStructDialog" title="数据表结构" width="96%" top="3vh">
         <div v-if="structColumns.length > 0">
           <div style="margin-bottom:12px;color:#606266">
             <span>数据表：<strong>{{ currentStructTable }}</strong></span>
             <span style="margin-left:20px">共 {{ structColumns.length }} 个字段</span>
           </div>
           <el-table :data="structColumns" stripe max-height="400">
-            <el-table-column prop="columnName" label="字段名" width="160" />
+            <el-table-column prop="columnName" label="字段名" width="160">
+              <template #default="scope">
+                <div>{{ scope.row.columnName }}</div>
+                <el-tooltip v-if="scope.row.semanticInvalid"
+                  content="原 semanticJson 不是合法 JSON，已按空处理；保存后将以本次填写的内容覆盖">
+                  <div style="color:#e6a23c;font-size:12px">原注解不是合法 JSON</div>
+                </el-tooltip>
+              </template>
+            </el-table-column>
             <el-table-column prop="dataType" label="类型" width="120" />
             <el-table-column label="主键" width="70">
               <template #default="scope">
@@ -480,6 +489,39 @@
                 </el-select>
               </template>
             </el-table-column>
+            <el-table-column label="字段角色" width="150">
+              <template #default="scope">
+                <el-select v-model="scope.row.role" placeholder="未设置" size="small" style="width:100%">
+                  <el-option label="未设置" value="" />
+                  <el-option v-for="r in SEMANTIC_ROLE_OPTIONS" :key="r.value" :label="r.label" :value="r.value" />
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="象形符号" width="130">
+              <template #default="scope">
+                <el-select v-model="scope.row.symbol" placeholder="未设置" size="small" style="width:100%">
+                  <el-option label="未设置" value="" />
+                  <el-option v-for="s in SEMANTIC_SYMBOL_OPTIONS" :key="s" :label="s" :value="s" />
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="单位" width="90">
+              <template #default="scope">
+                <el-input v-model="scope.row.unit" placeholder="如 km" size="small" maxlength="32" />
+              </template>
+            </el-table-column>
+            <el-table-column label="值映射" min-width="170">
+              <template #default="scope">
+                <el-input v-model="scope.row.valuesText" type="textarea" :rows="2" size="small"
+                  placeholder="每行一条，如 蓝方=blue" />
+              </template>
+            </el-table-column>
+            <el-table-column label="同义词" min-width="170">
+              <template #default="scope">
+                <el-input v-model="scope.row.synonymsText" type="textarea" :rows="2" size="small"
+                  placeholder="每行一条，如 飞机=aircraft" />
+              </template>
+            </el-table-column>
           </el-table>
         </div>
         <div v-else style="text-align:center;padding:40px;color:#999">
@@ -488,6 +530,44 @@
         <template #footer>
           <el-button @click="showStructDialog = false">取消</el-button>
           <el-button type="primary" @click="saveFieldAnnotations">保存标注</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- 数据集语义注解 对话框 -->
+      <el-dialog v-model="showDsSemanticDialog" :title="`数据集语义注解：${dsSemanticDsName}`" width="640px">
+        <div v-if="dsSemanticInvalid" style="margin-bottom:12px;color:#e6a23c;font-size:12px">
+          原语义注解不是合法 JSON，已按空处理；保存后将以本次填写的内容覆盖。
+        </div>
+        <el-form label-width="120px">
+          <el-form-item label="实体大类">
+            <el-select v-model="dsSemanticForm.entityKind" placeholder="未设置" style="width:100%">
+              <el-option label="未设置" value="" />
+              <el-option v-for="k in SEMANTIC_ENTITY_KIND_OPTIONS" :key="k.value" :label="k.label" :value="k.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="默认符号">
+            <el-select v-model="dsSemanticForm.symbolDefault" placeholder="未设置" style="width:100%">
+              <el-option label="未设置" value="" />
+              <el-option v-for="s in SEMANTIC_SYMBOL_OPTIONS" :key="s" :label="s" :value="s" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="航迹拆分键">
+            <el-input v-model="dsSemanticForm.trackGroupKey" placeholder="逗号分隔的列名，如 aircraft_id,mission_id" />
+          </el-form-item>
+          <el-form-item label="事件时间列">
+            <el-input v-model="dsSemanticForm.eventTimeColumn" placeholder="事件时间列名，如 event_time" />
+          </el-form-item>
+          <el-form-item label="几何列">
+            <div style="display:flex;gap:8px;width:100%">
+              <el-input v-model="dsSemanticForm.lngColumn" placeholder="经度列" />
+              <el-input v-model="dsSemanticForm.latColumn" placeholder="纬度列" />
+              <el-input v-model="dsSemanticForm.radiusColumn" placeholder="半径列（可选）" />
+            </div>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showDsSemanticDialog = false">取消</el-button>
+          <el-button type="primary" @click="saveDatasetSemantic">保存</el-button>
         </template>
       </el-dialog>
 
@@ -631,7 +711,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, h } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import Layout from '@/components/Layout.vue'
 import api from '@/services/api'
@@ -984,11 +1064,239 @@ async function deleteDataset(row: any) {
   }
 }
 
+// ==================== 领域语义注解（semantic_json） ====================
+// 以下白名单与后端 resources/semantic-schema.json 保持一致，只能选择不允许自由输入
+const SEMANTIC_ROLE_OPTIONS = [
+  { label: '标识 (id)', value: 'id' },
+  { label: '名称 (name)', value: 'name' },
+  { label: '时间 (time)', value: 'time' },
+  { label: '经度 (lng)', value: 'lng' },
+  { label: '纬度 (lat)', value: 'lat' },
+  { label: '半径 (radius)', value: 'radius' },
+  { label: '序号 (seq)', value: 'seq' },
+  { label: '度量 (measure)', value: 'measure' },
+  { label: '维度 (dimension)', value: 'dimension' }
+]
+
+const SEMANTIC_SYMBOL_OPTIONS = [
+  'fighter', 'awacs', 'recon', 'bomber', 'base', 'sam', 'radar',
+  'coastal', 'flag', 'depot', 'fuel', 'anchor', 'runway', 'tower',
+  'boom', 'cross', 'magnifier', 'ring', 'dot'
+]
+
+const SEMANTIC_ENTITY_KIND_OPTIONS = [
+  { label: '空中目标 (air)', value: 'air' },
+  { label: '地面设施 (ground_facility)', value: 'ground_facility' },
+  { label: '基地 (base)', value: 'base' },
+  { label: '其他 (other)', value: 'other' }
+]
+
+/**
+ * 解析 semanticJson 字符串。
+ * 返回解析结果与"原值不是合法 JSON"标记，解析失败时按空处理但不阻断界面。
+ */
+function parseSemanticJson(raw: any): { data: Record<string, any>; invalid: boolean } {
+  if (raw === null || raw === undefined || String(raw).trim() === '') {
+    return { data: {}, invalid: false }
+  }
+  try {
+    const parsed = JSON.parse(String(raw))
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { data: {}, invalid: true }
+    }
+    return { data: parsed, invalid: false }
+  } catch {
+    return { data: {}, invalid: true }
+  }
+}
+
+/**
+ * 「原始值=规范值」多行文本 → 键值对象。
+ * 按行拆分，跳过空行，按第一个 = 拆分，两侧都有值才保留。
+ */
+function parseMappingText(text: any): Record<string, string> {
+  const mapping: Record<string, string> = {}
+  String(text ?? '').split('\n').forEach(line => {
+    const trimmed = line.trim()
+    if (!trimmed) return
+    const index = trimmed.indexOf('=')
+    if (index < 0) return
+    const key = trimmed.slice(0, index).trim()
+    const value = trimmed.slice(index + 1).trim()
+    if (key && value) mapping[key] = value
+  })
+  return mapping
+}
+
+/** 键值对象 → 「原始值=规范值」多行文本 */
+function formatMappingText(mapping: any): string {
+  if (!mapping || typeof mapping !== 'object') return ''
+  return Object.entries(mapping).map(([key, value]) => `${key}=${value}`).join('\n')
+}
+
+/** 从异常对象中取出后端返回的校验明细（兼容响应拦截器的两种 reject 形态） */
+function extractServerErrors(e: any): string[] {
+  const errors = e?.response?.data?.errors ?? e?.data?.errors ?? e?.errors
+  return Array.isArray(errors) ? errors.map((item: any) => String(item)) : []
+}
+
+/** 语义注解保存失败提示：展示后端 message 与逐条校验明细，不提示保存成功 */
+async function showSemanticSaveError(e: any, actionLabel: string) {
+  const errors = extractServerErrors(e)
+  const message = e?.serverMessage || e?.response?.data?.message || e?.message || '请求失败'
+  if (errors.length === 0) {
+    ElMessage.error(`${actionLabel}失败：${message}`)
+    return
+  }
+  await ElMessageBox.alert(
+    h('div', { style: 'white-space: pre-line; max-height: 50vh; overflow: auto;' },
+      [message, ...errors].join('\n')),
+    '语义注解格式校验未通过',
+    { confirmButtonText: '知道了', type: 'error' }
+  ).catch(() => { /* 关闭提示弹窗不算异常 */ })
+}
+
+/** 保存成功但后端返回警告（如页面服务缓存失效失败）时提示用户 */
+function showSemanticWarnings(warnings: any) {
+  if (!Array.isArray(warnings) || warnings.length === 0) return
+  ElMessage({
+    type: 'warning',
+    message: h('div', { style: 'white-space: pre-line;' }, warnings.join('\n'))
+  })
+}
+
+// ==================== 数据集级语义注解 ====================
+const showDsSemanticDialog = ref(false)
+const dsSemanticDsId = ref('')
+const dsSemanticDsName = ref('')
+// 原 semanticJson 不是合法 JSON 时给出行内提示
+const dsSemanticInvalid = ref(false)
+const dsSemanticForm = ref({
+  entityKind: '',
+  symbolDefault: '',
+  trackGroupKey: '',
+  eventTimeColumn: '',
+  lngColumn: '',
+  latColumn: '',
+  radiusColumn: ''
+})
+
+/** 打开数据集语义注解对话框，从列表行的 semanticJson 解析回填 */
+function openDatasetSemantic(row: any) {
+  const parsed = parseSemanticJson(row.semanticJson)
+  const data = parsed.data
+  const geometry = data.geometry && typeof data.geometry === 'object' ? data.geometry : {}
+  const groupKey = data.trackGroupKey
+  dsSemanticDsId.value = row.id
+  dsSemanticDsName.value = row.name || ''
+  dsSemanticInvalid.value = parsed.invalid
+  dsSemanticForm.value = {
+    entityKind: data.entityKind || '',
+    symbolDefault: data.symbolDefault || '',
+    trackGroupKey: Array.isArray(groupKey) ? groupKey.join(',') : (typeof groupKey === 'string' ? groupKey : ''),
+    eventTimeColumn: data.eventTimeColumn || '',
+    lngColumn: geometry.lngColumn || '',
+    latColumn: geometry.latColumn || '',
+    radiusColumn: geometry.radiusColumn || ''
+  }
+  showDsSemanticDialog.value = true
+}
+
+/** 组装数据集级语义 JSON；全部为空时返回空串（表示清除语义） */
+function buildDatasetSemantic(): string {
+  const form = dsSemanticForm.value
+  const semantic: Record<string, any> = {}
+  if (form.entityKind) semantic.entityKind = form.entityKind
+  if (form.symbolDefault) semantic.symbolDefault = form.symbolDefault
+  const groupKeys = Array.from(new Set(form.trackGroupKey.split(',').map(key => key.trim()).filter(Boolean)))
+  if (groupKeys.length > 0) semantic.trackGroupKey = groupKeys
+  const eventTimeColumn = form.eventTimeColumn.trim()
+  if (eventTimeColumn) semantic.eventTimeColumn = eventTimeColumn
+  const lngColumn = form.lngColumn.trim()
+  const latColumn = form.latColumn.trim()
+  // 经度列与纬度列必须成对配置，否则不写入 geometry（避免后端校验失败）
+  if (lngColumn && latColumn) {
+    const geometry: Record<string, string> = { lngColumn, latColumn }
+    const radiusColumn = form.radiusColumn.trim()
+    if (radiusColumn) geometry.radiusColumn = radiusColumn
+    semantic.geometry = geometry
+  }
+  return Object.keys(semantic).length > 0 ? JSON.stringify(semantic) : ''
+}
+
+async function saveDatasetSemantic() {
+  if (!dsSemanticDsId.value) return
+  try {
+    const res = await api.put(`/admin/dataset/${dsSemanticDsId.value}/semantic`, {
+      semanticJson: buildDatasetSemantic()
+    })
+    if (res && res.success) {
+      ElMessage.success(res.message || '语义注解已保存')
+      loadDatasets()
+      // 存在警告说明缓存未失效，保留对话框便于按提示重试保存
+      if (!Array.isArray(res.warnings) || res.warnings.length === 0) {
+        showDsSemanticDialog.value = false
+      }
+      showSemanticWarnings(res.warnings)
+    }
+  } catch (e: any) {
+    await showSemanticSaveError(e, '语义注解保存')
+  }
+}
+
 // ==================== 数据表结构 & 字段标注 ====================
 const showStructDialog = ref(false)
 const structColumns = ref<any[]>([])
 const currentStructDs = ref<string>('')
 const currentStructTable = ref('')
+
+/** 为表结构行补充编辑态：字段语义是嵌套 JSON，先转成表格可编辑的扁平字段 */
+function decorateStructColumns(columns: any[]): any[] {
+  return columns.map((c: any) => ({
+    ...c,
+    annotation: c.annotation || '',
+    businessMeaning: c.businessMeaning || '',
+    dataCategory: c.dataCategory || '',
+    role: '',
+    symbol: '',
+    unit: '',
+    valuesText: '',
+    synonymsText: '',
+    semanticInvalid: false
+  }))
+}
+
+/** 把已保存的字段标注（含 semanticJson）回填到表结构行 */
+function applyFieldAnnotations(fields: any[]) {
+  fields.forEach((fa: any) => {
+    const col = structColumns.value.find((c: any) => c.columnName === fa.columnName)
+    if (!col) return
+    col.annotation = fa.annotation || ''
+    col.businessMeaning = fa.businessMeaning || ''
+    col.dataCategory = fa.dataCategory || ''
+    const parsed = parseSemanticJson(fa.semanticJson)
+    col.semanticInvalid = parsed.invalid
+    col.role = parsed.data.role || ''
+    col.symbol = parsed.data.symbol || ''
+    col.unit = parsed.data.unit || ''
+    col.valuesText = formatMappingText(parsed.data.values)
+    col.synonymsText = formatMappingText(parsed.data.synonyms)
+  })
+}
+
+/** 组装单行的字段级语义 JSON；没有填写任何语义时返回空串 */
+function buildFieldSemantic(row: any): string {
+  const semantic: Record<string, any> = {}
+  if (row.role) semantic.role = row.role
+  if (row.symbol) semantic.symbol = row.symbol
+  const unit = String(row.unit || '').trim()
+  if (unit) semantic.unit = unit
+  const values = parseMappingText(row.valuesText)
+  if (Object.keys(values).length > 0) semantic.values = values
+  const synonyms = parseMappingText(row.synonymsText)
+  if (Object.keys(synonyms).length > 0) semantic.synonyms = synonyms
+  return Object.keys(semantic).length > 0 ? JSON.stringify(semantic) : ''
+}
 
 async function openTableStructure(row: any) {
   currentStructDs.value = row.id
@@ -1015,24 +1323,12 @@ async function openTableStructure(row: any) {
     const res = await api.get(`/admin/dataset/${row.id}/structure`)
     if (res && res.success && res.columns && res.columns.length > 0) {
       currentStructTable.value = res.tableName || row.tableName || ''
-      structColumns.value = res.columns.map((c: any) => ({
-        ...c,
-        annotation: c.annotation || '',
-        businessMeaning: c.businessMeaning || '',
-        dataCategory: c.dataCategory || ''
-      }))
-      // 合并已有的标注信息
+      structColumns.value = decorateStructColumns(res.columns)
+      // 合并已有的标注信息（含领域语义注解）
       try {
         const faRes = await api.get(`/admin/dataset/${row.id}/fields`)
         if (faRes && faRes.success && faRes.fields) {
-          faRes.fields.forEach((fa: any) => {
-            const col = structColumns.value.find((c: any) => c.columnName === fa.columnName)
-            if (col) {
-              col.annotation = fa.annotation || ''
-              col.businessMeaning = fa.businessMeaning || ''
-              col.dataCategory = fa.dataCategory || ''
-            }
-          })
+          applyFieldAnnotations(faRes.fields)
         }
       } catch {}
       showStructDialog.value = true
@@ -1056,12 +1352,7 @@ async function openTableStructure(row: any) {
     const res = await api.post(`/admin/dataset/${row.id}/read-structure`, { tableName })
     if (res && res.success) {
       currentStructTable.value = res.tableName
-      structColumns.value = res.columns.map((c: any) => ({
-        ...c,
-        annotation: '',
-        businessMeaning: '',
-        dataCategory: ''
-      }))
+      structColumns.value = decorateStructColumns(res.columns)
       // 更新本地数据集信息
       const ds = datasets.value.find((d: any) => d.id === row.id)
       if (ds) ds.tableName = res.tableName
@@ -1088,15 +1379,17 @@ async function saveFieldAnnotations() {
     columnComment: c.comment || '',
     annotation: c.annotation || '',
     businessMeaning: c.businessMeaning || '',
-    dataCategory: c.dataCategory || ''
+    dataCategory: c.dataCategory || '',
+    semanticJson: buildFieldSemantic(c)
   }))
   try {
     const res = await api.post(`/admin/dataset/${currentStructDs.value}/fields`, fields)
     if (res && res.success) {
       ElMessage.success(`标注已保存（${res.total} 个字段）`)
+      showSemanticWarnings(res.warnings)
     }
   } catch (e: any) {
-    ElMessage.error('标注保存失败: ' + (e.message || ''))
+    await showSemanticSaveError(e, '标注保存')
   }
 }
 
