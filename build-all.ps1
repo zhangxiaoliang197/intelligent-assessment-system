@@ -40,7 +40,7 @@ Write-Host ""
 
 # ---- 同步公共日志配置到各 Python 服务目录 ----
 Write-Host ">>> 同步 logging_config.py 到各 Python 服务..." -ForegroundColor Yellow
-$services = @("knowledge-service","qa-service","indicator-service","evaluation-service","ontology-service","situation-service")
+$services = @("knowledge-service","qa-service","indicator-service","evaluation-service","ontology-service")
 $srcLogConfig = "$PROJECT\python\common\logging_config.py"
 foreach ($svc in $services) {
     $dst = "$PROJECT\python\$svc\logging_config.py"
@@ -91,11 +91,11 @@ from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert le
             exit 1
         }
     }
-    if ($ImageName -eq "situation") {
-        Write-Host ">>> 运行态势 Skill 测试与目录校验..." -ForegroundColor Yellow
-        docker run --rm --entrypoint python "assessment-${ImageName}:latest" -m unittest discover -s tests -v
+    if ($ImageName -eq "ipage") {
+        Write-Host ">>> 运行 ipage 单元测试..." -ForegroundColor Yellow
+        docker run --rm --entrypoint python "assessment-${ImageName}:latest" -m unittest discover -s tests -p 'test_*.py' -v
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "  ERROR: 态势 Skill 测试失败，停止导出!" -ForegroundColor Red
+            Write-Host "  ERROR: ipage 单元测试失败，停止导出!" -ForegroundColor Red
             exit 1
         }
     }
@@ -118,7 +118,7 @@ Build-And-Save "qa"                    "qa"                    "10253" "智能�
 Build-And-Save "indicator"             "indicator"             "10254" "指标分析服务"
 Build-And-Save "evaluation"            "evaluation"            "10255" "评估分析服务"
 Build-And-Save "ontology"              "ontology"              "10256" "本体模型服务"
-Build-And-Save "situation"             "situation"             "10257" "态势图服务"
+Build-And-Save "ipage"                 "ipage"                 "10257" "态势页面服务"
 
 # ---- 阶段2: Java 服务 (1个) ----
 Write-Host ""

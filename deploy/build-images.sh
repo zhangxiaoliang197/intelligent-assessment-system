@@ -50,12 +50,6 @@ save_image "evaluation"
 build_image "ontology" "ontology"
 save_image "ontology"
 
-build_image "situation" "situation"
-echo "[校验] assessment-situation:latest 内置 Skill 与安全执行测试 ..."
-docker run --rm --entrypoint python assessment-situation:latest \
-    -m unittest discover -s tests -p 'test_*.py' -v
-save_image "situation"
-
 build_image "ipage" "ipage"
 echo "[校验] assessment-ipage:latest 单元测试 ..."
 docker run --rm --entrypoint python assessment-ipage:latest \

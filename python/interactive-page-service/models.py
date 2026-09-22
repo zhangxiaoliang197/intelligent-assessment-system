@@ -12,6 +12,8 @@ class GenerateRequest(BaseModel):
     dataSourceId: str = Field("", description="可选：限定数据源（databaseId）")
     parentPageId: str = Field("", description="可选：基于历史页面带修改意见重新设计（复用其数据包）")
     sessionId: str = Field("", description="可选：归属会话；为空时自动新建或沿用父页面会话")
+    skillId: str = Field("", description="可选：显式指定技能（生成剧本）；非空即视为手动指定，忽略 skillMode")
+    skillMode: str = Field("auto", description="技能套用方式：auto=按问题语义自动匹配；off=关闭技能走自由规划")
     context: Dict[str, Any] = Field(default_factory=dict, description="附加上下文（parentQuery 等）")
 
 
@@ -19,6 +21,13 @@ class SessionCreate(BaseModel):
     """POST /ipage/sessions 请求体。"""
 
     title: str = Field("", description="会话标题（默认空，由首个问题命名）")
+
+
+class SkillMatchRequest(BaseModel):
+    """POST /ipage/skills/match 请求体（阈值标定与前端预判用）。"""
+
+    query: str = Field("", description="待匹配的用户问题")
+    topK: int = Field(3, description="返回候选数量上限")
 
 
 class PageRecord(BaseModel):

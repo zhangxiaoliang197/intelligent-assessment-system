@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS `ass_dataset` (
     `sensitive_columns` TEXT      DEFAULT NULL,
     `schema_version` INT          DEFAULT 1,
     `semantic_json` TEXT          DEFAULT NULL,
+    `annotation_validated_at`        DATETIME     DEFAULT NULL,
+    `annotation_structure_fingerprint` VARCHAR(64) DEFAULT NULL,
     `records`       INT           DEFAULT 0,
     `last_executed` DATETIME      DEFAULT NULL,
     `create_time`   DATETIME      DEFAULT NULL,
@@ -83,7 +85,36 @@ CREATE TABLE IF NOT EXISTS `ass_field_annotation` (
     INDEX `idx_fa_dataset` (`dataset_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 2.4 指标
+-- 2.4 语义注解草稿（LLM 生成 + 人工审核；未通过审核前对运行期不可见）
+CREATE TABLE IF NOT EXISTS `ass_annotation_draft` (
+    `id`              VARCHAR(32)   NOT NULL,
+    `dataset_id`      VARCHAR(32)   NOT NULL,
+    `table_name`      VARCHAR(200)  DEFAULT NULL,
+    `batch_id`        VARCHAR(32)   DEFAULT NULL,
+    `scope`           VARCHAR(16)   DEFAULT 'field',
+    `column_name`     VARCHAR(200)  DEFAULT NULL,
+    `draft_json`      TEXT          DEFAULT NULL,
+    `status`          VARCHAR(16)   DEFAULT 'draft',
+    `source`          VARCHAR(16)   DEFAULT 'llm',
+    `model`           VARCHAR(100)  DEFAULT NULL,
+    `prompt_hash`     VARCHAR(64)   DEFAULT NULL,
+    `tokens`          INT           DEFAULT NULL,
+    `issues_json`     TEXT          DEFAULT NULL,
+    `warnings_json`   TEXT          DEFAULT NULL,
+    `sampled_json`    TEXT          DEFAULT NULL,
+    `created_by`      VARCHAR(64)   DEFAULT NULL,
+    `create_time`     DATETIME      DEFAULT NULL,
+    `update_time`     DATETIME      DEFAULT NULL,
+    `reviewed_by`     VARCHAR(64)   DEFAULT NULL,
+    `reviewed_at`     DATETIME      DEFAULT NULL,
+    `review_remark`   VARCHAR(500)  DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    INDEX `idx_ad_dataset` (`dataset_id`),
+    INDEX `idx_ad_batch` (`batch_id`),
+    INDEX `idx_ad_status` (`dataset_id`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 2.5 指标
 CREATE TABLE IF NOT EXISTS `ass_indicator` (
     `id`                 VARCHAR(32)   NOT NULL,
     `name`               VARCHAR(200)  NOT NULL,
@@ -142,7 +173,7 @@ CREATE TABLE IF NOT EXISTS `ass_map_service_config` (
     PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 2.8 态势图产物（situation-service 经 admin-service CRUD，ADR-11；表结构见 docs/situation-map/07 §2.1）
+-- 2.8 历史态势图产物表（留底保留，已无服务读写；原由 situation-service 经 admin-service CRUD）
 CREATE TABLE IF NOT EXISTS `situation_report` (
     `id`            VARCHAR(40)   NOT NULL,
     `title`         VARCHAR(200)  NOT NULL,

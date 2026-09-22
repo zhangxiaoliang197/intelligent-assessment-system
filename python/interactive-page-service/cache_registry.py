@@ -78,7 +78,7 @@ def _ensure_registered() -> None:
         return
     _bootstrapped = True
     try:
-        from agent import dimension_graph, researcher  # noqa: F401  触发注册
+        from agent import dimension_graph, researcher, skill_catalog  # noqa: F401  触发注册
     except Exception as exc:  # 测试或裁剪部署下允许缺模块
         logger.warning("初始化缓存注册表时加载模块失败: %s", exc)
 

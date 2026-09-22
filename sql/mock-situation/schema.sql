@@ -2,7 +2,7 @@
 -- 态势图模块 mock 数据库：战机侦察打击（台海场景，虚构数据）
 -- 数据库：mock_situation，共 12 张表
 -- 阵营设定（全库统一）：红方 = 大陆方（我方）；蓝方 = 敌方
--- 设计约定（与 situation-service map_builder 自动识别规则对齐）：
+-- 设计约定（与 ipage 的 researcher 地理整形规则对齐）：
 --   1. 航迹表使用 seq + aircraft_id/aircraft_name + xxx_lng/xxx_lat → 自动连线成航线
 --   2. 范围圈表使用 name + lng/lat + radius_km → 自动生成圆形范围圈
 --   3. 事件表携带 event_lng/event_lat → 自动落点标注
@@ -105,10 +105,9 @@ CREATE TABLE mock_enemy_track_point (
 -- ------------------------------------------------------------
 -- 5. 作战能力范围表（LEGACY：保留作手动覆盖路径，新数据不再写入）
 -- ------------------------------------------------------------
--- 注：能力圈改由 situation-service 的 map_builder.py 按"当前时间 t + 飞机当前位置
---     + 机型档案半径"在运行时动态生成（一架飞机一个圈，圆心随飞机走）。
+-- 注：能力圈由 ipage 在运行时按"当前时间 t + 飞机当前位置 + 机型档案半径"动态生成
+--     （一架飞机一个圈，圆心随飞机走），不依赖本表预计算。
 --     本表仅保留作向后兼容：用户手动指定能力圈时（range_type='manual'）可写入。
---     参见 .trae/documents/situation-map-capability-refactor.md
 DROP TABLE IF EXISTS mock_capability_range;
 CREATE TABLE mock_capability_range (
     range_id      VARCHAR(32)   NOT NULL COMMENT '范围编号',

@@ -6,6 +6,11 @@
         <el-divider direction="vertical" />
         <h2 class="view-title">{{ store.title || '态势页面' }}</h2>
         <el-tag v-if="store.usedTemplate" size="small" type="warning" effect="plain">标准模板渲染</el-tag>
+        <!-- 本页生成时套用的技能（生成剧本） -->
+        <el-tag
+          v-if="store.matchedSkill && store.matchedSkill.applied"
+          size="small" type="success" effect="plain"
+        >已套用技能：{{ store.matchedSkill.name }}</el-tag>
       </div>
       <div class="head-right">
         <span class="head-question">{{ store.query }}</span>

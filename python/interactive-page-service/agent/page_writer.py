@@ -105,10 +105,11 @@ class PageWriter:
     """页面生成器。"""
 
     def generate(self, query: str, plan: Dict[str, Any],
-                 bundle: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+                 bundle: Dict[str, Any],
+                 skill_context: Dict[str, Any] = None) -> Tuple[str, Dict[str, Any]]:
         """首次生成；返回 (html, 元信息)。"""
         sample_rows = _fit_sample_rows(bundle)
-        messages = prompts.build_page_messages(query, plan, bundle, sample_rows)
+        messages = prompts.build_page_messages(query, plan, bundle, sample_rows, skill_context)
         issues: List[str] = []
         html = ""
         try:
@@ -150,14 +151,15 @@ class PageWriter:
         raise RuntimeError("页面生成未通过校验且模板兜底已关闭：" + "；".join(issues[:5]))
 
     def redesign(self, query: str, plan: Dict[str, Any], bundle: Dict[str, Any],
-                 previous_html: str, feedback: str) -> Tuple[str, Dict[str, Any]]:
+                 previous_html: str, feedback: str,
+                 skill_context: Dict[str, Any] = None) -> Tuple[str, Dict[str, Any]]:
         """带修改意见的重新设计；失败时保留旧页面。
 
         与首次生成同源：数据包与规划复用父页面，旧页面 HTML 不回灌模型
         （只用于重设计失败时回退），避免模型照抄半截历史页面。
         """
         sample_rows = _fit_sample_rows(bundle)
-        base = prompts.build_page_messages(query, plan, bundle, sample_rows)
+        base = prompts.build_page_messages(query, plan, bundle, sample_rows, skill_context)
         messages = base + prompts.build_redesign_messages(feedback)
         issues: List[str] = []
         try:

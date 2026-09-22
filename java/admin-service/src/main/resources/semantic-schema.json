@@ -61,8 +61,9 @@
       "additionalProperties": false,
       "properties": {
         "role": {
-          "description": "字段角色，决定该列在取数/整形中的用途",
-          "enum": ["id", "name", "time", "lng", "lat", "radius", "seq", "measure", "dimension"]
+          "description": "字段角色，决定该列在取数/整形中的用途；status/altitude/speed/heading 为态势整形专用角色",
+          "enum": ["id", "name", "time", "lng", "lat", "radius", "seq", "measure", "dimension",
+                   "status", "altitude", "speed", "heading"]
         },
         "symbol": { "$ref": "#/$defs/symbol" },
         "unit": { "type": "string", "minLength": 1, "maxLength": 32 },

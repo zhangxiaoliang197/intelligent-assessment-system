@@ -76,8 +76,8 @@ log_info "共加载 $IMAGE_COUNT 个镜像"
 log_info "校验 assessment-qa:latest 内置 Skill 目录..."
 docker run --rm --entrypoint python assessment-qa:latest \
     -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 30; print('Skill catalog OK:', len(catalog['skills']))"
-log_info "校验 assessment-situation:latest 内置 Skill 测试..."
-docker run --rm --entrypoint python assessment-situation:latest \
+log_info "校验 assessment-ipage:latest 单元测试..."
+docker run --rm --entrypoint python assessment-ipage:latest \
     -m unittest discover -s tests -p 'test_*.py' -v
 
 # ---------- 部署项目 ----------
@@ -94,7 +94,7 @@ DB_TYPE="${DB_TYPE:-mysql}"
 INTERNAL_SERVICE_TOKEN="${INTERNAL_SERVICE_TOKEN:-}"
 ADMIN_API_TOKEN="${ADMIN_API_TOKEN:-}"
 ADMIN_UI_PASSWORD="${ADMIN_UI_PASSWORD:-}"
-SITUATION_LLM_ALLOWED_HOSTS="${SITUATION_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}"
+IPAGE_LLM_ALLOWED_HOSTS="${IPAGE_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}"
 
 # ─── 日志环境变量（可被外部环境变量覆盖）───
 LOG_ENV="${LOG_ENV:-prod}"
@@ -286,36 +286,42 @@ services:
         max-size: "50m"
         max-file: "5"
 
-  situation-service:
-    image: assessment-situation:latest
-    container_name: assessment-situation
+  ipage-service:
+    image: assessment-ipage:latest
+    container_name: assessment-ipage
     ports:
       - "127.0.0.1:10257:10257"
     restart: always
     environment:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
-      - SITUATION_ALLOW_DATA_FALLBACK=true
-      - SITUATION_MAX_INFLIGHT=8
-      - SITUATION_MAX_CONCURRENT=2
-      - SITUATION_MAX_PER_USER=2
-      - SITUATION_GENERATION_TIMEOUT=240
-      - SITUATION_LLM_EVIDENCE_ROWS=0
-      - SITUATION_LLM_ALLOWED_HOSTS=$SITUATION_LLM_ALLOWED_HOSTS
-      - SITUATION_CORS_ORIGINS=${SITUATION_CORS_ORIGINS:-http://localhost:10086,http://127.0.0.1:10086}
+      - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
+      - IPAGE_SERVICE_PORT=10257
+      - IPAGE_DB=/app/data/ipage_pages.sqlite3
+      - IPAGE_MAX_INFLIGHT=8
+      - IPAGE_MAX_CONCURRENT=2
+      - IPAGE_MAX_PER_USER=2
+      - IPAGE_GENERATION_TIMEOUT=480
+      - IPAGE_STREAM_REPLAY_TTL=300
+      - IPAGE_TEMPLATE_FALLBACK=true
+      - IPAGE_CORS_ORIGINS=${IPAGE_CORS_ORIGINS:-http://localhost:10086,http://127.0.0.1:10086}
+      - IPAGE_LLM_ALLOWED_HOSTS=$IPAGE_LLM_ALLOWED_HOSTS
       - INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN
-      - SITUATION_SKILL_DB=/app/data/situation_skills.sqlite3
-      - SITUATION_SKILL_MD_OVERRIDE_DIR=/app/data/situation-skill-markdown-overrides
+      - LLM_MAX_TOKENS=24000
       - LOG_ENV=prod
+      - LOG_LEVEL=$LOG_LEVEL
       - LOG_DIR=/app/logs
+      - LOG_RETENTION_DAYS=$LOG_RETENTION_DAYS
+      - LOG_MAX_SIZE_MB=$LOG_MAX_SIZE_MB
     volumes:
-      - "$DEPLOY_TARGET/data/situation:/app/data"
-      - "$DEPLOY_TARGET/logs/situation:/app/logs"
+      - "$DEPLOY_TARGET/data/ipage:/app/data"
+      - "$DEPLOY_TARGET/logs/ipage:/app/logs"
     networks:
       - assessment-net
     depends_on:
       - admin-service
+      - knowledge-service
     healthcheck:
-      test: ["CMD", "python", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:10257/situation/health',timeout=3)); h=d.get('data',{}); assert d.get('success') and h.get('skills',0)>=30 and h.get('skillStorage')=='healthy'"]
+      test: ["CMD", "python", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:10257/ipage/health',timeout=3)); h=d.get('data',{}); assert d.get('success') and h.get('skills',0)>=9"]
       interval: 30s
       timeout: 5s
       start_period: 20s
@@ -341,6 +347,7 @@ services:
       - DB_TYPE=$DB_TYPE
       - INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN
       - ADMIN_API_TOKEN=$ADMIN_API_TOKEN
+      - IPAGE_SERVICE_URL=http://assessment-ipage:10257
       - SPRING_PROFILES_ACTIVE=\${LOG_ENV:-prod}
       - LOG_PATH=/app/logs
       - LOG_LEVEL=\${LOG_LEVEL:-INFO}
@@ -369,8 +376,8 @@ volumes:
   drivers-data:
 DOCKERCOMPOSE
 
-mkdir -p "$DEPLOY_TARGET/data"/{knowledge,qa,ontology,evaluation,indicator,situation,qdrant,config}
-mkdir -p "$DEPLOY_TARGET/logs"/{knowledge,qa,indicator,evaluation,ontology,situation,admin}
+mkdir -p "$DEPLOY_TARGET/data"/{knowledge,qa,ontology,evaluation,indicator,ipage,qdrant,config}
+mkdir -p "$DEPLOY_TARGET/logs"/{knowledge,qa,indicator,evaluation,ontology,ipage,admin}
 
 # drivers 使用命名卷 drivers-data，首次启动时自动从镜像内 /app/drivers 复制驱动。
 # 如需补充 Oracle/达梦等驱动，请通过管理后台「驱动管理」页面上传，或重新构建镜像。
@@ -426,7 +433,7 @@ fi
 SERVICE_CONTAINERS=(
     assessment-frontend
     assessment-admin
-    assessment-situation
+    assessment-ipage
     assessment-ontology
     assessment-evaluation
     assessment-indicator
@@ -477,26 +484,27 @@ if ! echo "$SKILL_RESPONSE" | grep -Eq '"builtInTotal"[[:space:]]*:[[:space:]]*3
 fi
 echo "Skill 目录接口校验通过: 30 个内置 Skill"
 
-SITUATION_READY=0
+IPAGE_READY=0
 for i in $(seq 1 60); do
-    if curl -fsS http://127.0.0.1:10257/situation/health >/dev/null 2>&1; then
-        SITUATION_READY=1
-        echo "态势服务健康检查通过 (${i}s)"
+    if curl -fsS http://127.0.0.1:10257/ipage/health >/dev/null 2>&1; then
+        IPAGE_READY=1
+        echo "态势页面服务健康检查通过 (${i}s)"
         break
     fi
     sleep 1
 done
-if [[ "$SITUATION_READY" -ne 1 ]]; then
-    echo "ERROR: 态势服务未通过健康检查"
-    docker logs --tail 100 assessment-situation
+if [[ "$IPAGE_READY" -ne 1 ]]; then
+    echo "ERROR: 态势页面服务未通过健康检查"
+    docker logs --tail 100 assessment-ipage
     exit 1
 fi
-SITUATION_SKILLS="$(curl -fsS http://127.0.0.1:10257/situation/skills?limit=100)"
-if ! echo "$SITUATION_SKILLS" | grep -Eq '"catalogTotal"[[:space:]]*:[[:space:]]*30'; then
-    echo "ERROR: 态势 Skill 目录未返回 30 个 Skill"
+IPAGE_HEALTH="$(curl -fsS http://127.0.0.1:10257/ipage/health)"
+if ! echo "$IPAGE_HEALTH" | grep -Eq '"skills"[[:space:]]*:[[:space:]]*9'; then
+    echo "ERROR: 技能目录未加载到 9 个技能"
+    echo "$IPAGE_HEALTH"
     exit 1
 fi
-echo "态势服务校验通过: 30 个内置 Skill"
+echo "态势页面服务校验通过: 9 个技能"
 
 echo ""
 echo "服务状态:"

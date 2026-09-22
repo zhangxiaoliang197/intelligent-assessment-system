@@ -30,9 +30,23 @@
   var PALETTE = ['#1d4ed8', '#dc2626', '#d97706', '#059669', '#7c3aed', '#0891b2', '#be185d', '#65a30d'];
   var KIND_COLORS = {
     target: '#1d4ed8', threat: '#dc2626', base: '#059669', event: '#d97706', other: '#64748b',
-    strike: '#dc2626', recon: '#d97706',
+    strike: '#dc2626', recon: '#d97706', facility: '#7c3aed',
   };
-  var FACTION_COLORS = { '蓝方': '#1d4ed8', '红方': '#dc2626' };
+  var FACTION_COLORS = {
+    '蓝方': '#1d4ed8', '红方': '#dc2626',
+    // 数据源注解把阵营值规范化为英文键时同样吃语义色（与后端 field_resolver 口径一致）
+    blue: '#1d4ed8', red: '#dc2626',
+  };
+
+  // 状态规范键 → 视觉（与后端 field_resolver.STATUS_KEYS 一一对应）。
+  // 数据源注解把原始状态值映射到这些键时优先生效；未提供 statusKey 时走下方中文词匹配。
+  var STATUS_STYLES = {
+    destroyed: { color: '#94a3b8', overlayCross: true, dim: true },
+    miss: { color: '#94a3b8', kinds: ['event_strike'] },
+    critical: { badge: '#ef4444' },
+    heavy: { badge: '#ea580c' },
+    light: { badge: '#f59e0b' },
+  };
 
   // 按系列名称取色：命中阵营名则用语义色（红方红、蓝方蓝），否则回退到 PALETTE 按序取色，
   // 保证无论 LLM 输出的 series 顺序如何，阵营颜色都正确。
@@ -505,58 +519,78 @@
     if (k) return k;
     k = String(u.kind || '').trim();
     if (k === 'event') return 'event_strike';
-    if (['aircraft', 'base', 'threat', 'target',
+    if (['aircraft', 'base', 'threat', 'target', 'facility',
          'event_strike', 'event_damage', 'event_recon'].indexOf(k) >= 0) return k;
     return 'other';
   }
 
   // 解析单位视觉：shape / color / 中文类别名 / 状态叠加
   // forLegend=true 时忽略状态变色/角标（图例按类别合并，状态差异只在地图符号上体现）
+  // 数据源注解优先：units[].symbol 直驱符号注册表、units[].factionColor 直驱配色、
+  // units[].statusKey 直驱状态视觉；三者缺失时一律回落原有推断逻辑（存量页面零变化）。
   function resolveUnitVisual(u, forLegend) {
     var kind = normalizeUnitKind(u);
     var type = String(u.type || '');
     var faction = String(u.faction || '').trim();
     var status = String(u.status || '').trim();
+    var customColor = String(u.factionColor || '').trim();
     var shape, color, label;
 
     if (kind === 'aircraft') {
       shape = aircraftShapeOf(type);
       label = type || '战机';
-      color = FACTION_COLORS[faction] || KIND_COLORS.threat;
+      color = customColor || FACTION_COLORS[faction] || KIND_COLORS.threat;
     } else if (kind === 'base') {
       shape = 'base'; label = '基地';
-      color = FACTION_COLORS[faction] || '#059669';
+      color = customColor || FACTION_COLORS[faction] || '#059669';
     } else if (kind === 'threat') {
       if (hasText(type, '雷达')) shape = 'radar';
       else if (hasText(type, '岸舰')) shape = 'coastal';
       else shape = 'sam';
       label = type || '防空单位';
-      color = FACTION_COLORS[faction] || '#dc2626';
+      color = customColor || FACTION_COLORS[faction] || '#dc2626';
+    } else if (kind === 'facility') {
+      // 注解 entityKind=ground_facility 的默认视觉：地面设施用环+紫，区分于防空单位/打击目标
+      shape = 'ring'; label = type || '地面设施';
+      color = customColor || FACTION_COLORS[faction] || KIND_COLORS.facility;
     } else if (kind === 'target') {
       shape = targetShapeOf(type);
       label = type || '打击目标';
-      color = '#d97706';
+      color = customColor || '#d97706';
     } else if (kind === 'event_strike') {
-      shape = 'boom'; label = '打击事件'; color = EVENT_COLORS.event_strike;
+      shape = 'boom'; label = '打击事件'; color = customColor || EVENT_COLORS.event_strike;
     } else if (kind === 'event_damage') {
       if (hasText(status, '坠毁') || hasText(type, '击落') || hasText(type, '坠毁')) {
         shape = 'cross'; label = '坠毁';
       } else {
         shape = aircraftShapeOf(type); label = status ? status + '战损' : '战损事件';
       }
-      color = FACTION_COLORS[faction] || EVENT_COLORS.event_damage;
+      color = customColor || FACTION_COLORS[faction] || EVENT_COLORS.event_damage;
     } else if (kind === 'event_recon') {
-      shape = 'magnifier'; label = '侦察发现'; color = EVENT_COLORS.event_recon;
+      shape = 'magnifier'; label = '侦察发现'; color = customColor || EVENT_COLORS.event_recon;
     } else {
-      shape = 'dot'; label = type || '其它单位'; color = '#64748b';
+      shape = 'dot'; label = type || '其它单位'; color = customColor || '#64748b';
     }
+
+    // 注解指定的象形符号直驱（须在注册表内，否则继续用上面的推断结果）
+    var customShape = String(u.symbol || '').trim();
+    if (customShape && SIT_SHAPES[customShape]) shape = customShape;
 
     // 状态叠加：摧毁 → 灰底+叉；受损/压制/维修 → 角标
     // 图例按类别合并，不应用状态变色
     var badge = null, overlayCross = false, dim = false;
+    var statusStyle = u.statusKey ? STATUS_STYLES[String(u.statusKey).trim()] : null;
+    var styleApplies = !!statusStyle
+      && (!statusStyle.kinds || statusStyle.kinds.indexOf(kind) >= 0);
     if (forLegend) {
       // 坠毁是独立图义，保留叉形；其余状态一律按类别本色出图例
       if (kind === 'event_damage' && shape === 'cross') { overlayCross = true; }
+    } else if (styleApplies) {
+      // 注解状态键优先
+      if (statusStyle.color) color = statusStyle.color;
+      badge = statusStyle.badge || null;
+      overlayCross = !!statusStyle.overlayCross;
+      dim = !!statusStyle.dim;
     } else if (hasText(status, '摧毁')) { overlayCross = true; dim = true; color = '#94a3b8'; }
     else if (kind === 'event_strike' && hasText(status, '未命中')) { color = '#94a3b8'; }
     else if (hasText(status, '重损')) badge = BADGE_COLORS.critical;
@@ -613,11 +647,12 @@
       // 航迹终点即当前机位，纳入符号图例
       var last = (t.points || [])[(t.points || []).length - 1];
       if (last) addUnit({ unitKind: 'aircraft', type: t.category, faction: t.faction,
+                          factionColor: t.factionColor, symbol: t.symbol,
                           name: t.name, heading: last.heading });
     });
     var trackColors = {};
     (spec.tracks || []).forEach(function (t) {
-      var c = FACTION_COLORS[t.faction] || hashColor(t.name);
+      var c = t.factionColor || FACTION_COLORS[t.faction] || hashColor(t.name);
       trackColors[t.faction || '其它'] = c;
     });
     var rangeItems = [];
@@ -633,7 +668,8 @@
     }
     (spec.circles || []).forEach(function (c) {
       var isRecon = c.kind === 'recon' || (c.rangeType || '').indexOf('侦察') >= 0;
-      addRange(c.rangeType || (c.kind === 'strike' ? '打击范围' : '侦察范围'), c.faction, isRecon);
+      addRange(c.rangeType || (c.kind === 'strike' ? '打击范围' : '侦察范围'),
+               c.faction, isRecon, c.factionColor);
     });
     // 动态能力圈（随飞机运动）单独出图例，与静态范围圈区分
     if (spec.playback) {
@@ -642,10 +678,10 @@
       (spec.tracks || []).forEach(function (t) {
         var sv = toNum(t.strikeRadiusKm), rv = toNum(t.reconRadiusKm);
         if (mode !== 'recon' && sv !== null && sv > 0) {
-          addRange('打击范围（动态）', t.faction, false);
+          addRange('打击范围（动态）', t.faction, false, t.factionColor);
         }
         if (mode !== 'strike' && rv !== null && rv > 0) {
-          addRange('侦察范围（动态）', t.faction, true);
+          addRange('侦察范围（动态）', t.faction, true, t.factionColor);
         }
       });
     }
@@ -997,13 +1033,14 @@
       }
     }
 
-    function rangeColor(faction, kind) {
-      return FACTION_COLORS[faction] || (kind === 'recon' ? KIND_COLORS.recon : KIND_COLORS.strike);
+    function rangeColor(track, kind) {
+      return track.factionColor || FACTION_COLORS[track.faction]
+        || (kind === 'recon' ? KIND_COLORS.recon : KIND_COLORS.strike);
     }
 
     // 航迹线颜色：与静态航迹口径一致（阵营色，缺省按名称哈希兜底）
     function trackColorOf(track) {
-      return FACTION_COLORS[track.faction] || hashColor(track.name);
+      return track.factionColor || FACTION_COLORS[track.faction] || hashColor(track.name);
     }
 
     // 已飞航段的 Leaflet 坐标：起点 → 当前索引点，并补上插值位置使线尾贴住机头
@@ -1043,6 +1080,7 @@
         vis.plane = L.marker(ll, {
           icon: createUnitIcon(L, {
             unitKind: 'aircraft', name: it.track.name, faction: it.track.faction,
+            factionColor: it.track.factionColor, symbol: it.track.symbol,
             type: it.track.category, heading: pos.heading,
           }, { size: 30, heading: pos.heading }),
           zIndexOffset: 600, keyboard: false,
@@ -1150,7 +1188,7 @@
         it.defs.forEach(function (def, i) {
           var slot = it.slots[i];
           if (!slot) slot = it.slots[i] = { circle: null, trail: null };
-          var color = rangeColor(it.track.faction, def.kind);
+          var color = rangeColor(it.track, def.kind);
 
           // 动态能力圈：圆心=飞机当前位置；侦察虚线、打击实线
           if (!slot.circle) {
@@ -1471,7 +1509,7 @@
         }).filter(function (c) { return c; });
         if (coords.length < 2) return;
         if (playbackOn) return;
-        var color = FACTION_COLORS[track.faction] || hashColor(track.name);
+        var color = track.factionColor || FACTION_COLORS[track.faction] || hashColor(track.name);
         // round 线帽/拐点，避免硬边折线
         var line = L.polyline(coords, {
           color: color, weight: trackWeight(map.getZoom()), opacity: 0.85,
@@ -1510,6 +1548,7 @@
         // 终点（最新位置）：机型象形符号，机头朝向最后一点的航向
         var endUnit = {
           unitKind: 'aircraft', name: track.name, faction: track.faction,
+          factionColor: track.factionColor, symbol: track.symbol,
           type: track.category, heading: lastPoint.heading,
         };
         var endMarker = L.marker(coords[coords.length - 1], {
@@ -1543,7 +1582,7 @@
         var ll = toLatLng(c.lng, c.lat);
         pushBounds(ll);
         var isRecon = c.kind === 'recon' || String(c.rangeType || '').indexOf('侦察') >= 0;
-        var color = FACTION_COLORS[c.faction]
+        var color = c.factionColor || FACTION_COLORS[c.faction]
           || (isRecon ? KIND_COLORS.recon : KIND_COLORS.strike);
         var circle = L.circle(ll, {
           pane: 'sitRangePane',

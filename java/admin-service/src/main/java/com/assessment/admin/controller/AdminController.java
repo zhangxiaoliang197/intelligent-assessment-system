@@ -81,6 +81,12 @@ public class AdminController {
     @Autowired
     private com.assessment.admin.service.IpPageCacheInvalidator ipPageCacheInvalidator;
 
+    @Autowired
+    private com.assessment.admin.service.AnnotationValidator annotationValidator;
+
+    @Autowired
+    private com.assessment.admin.service.AnnotationDraftService annotationDraftService;
+
     @Value("${db.type:mysql}")
     private String dbType;
 
@@ -183,8 +189,29 @@ public class AdminController {
         return ResponseEntity.ok(Map.of("success", true, "message", "数据库配置已更新"));
     }
 
+    /**
+     * 删除数据库配置。
+     *
+     * 若仍有数据集引用该数据源则拒绝删除：数据集只保存 databaseId，数据源被删后这些数据集
+     * 会变成"数据源缺失"（无法取数、无法校验注解），只能靠人工改指回来。
+     */
     @DeleteMapping("/database/{dbId}")
     public ResponseEntity<Map<String, Object>> deleteDatabase(@PathVariable String dbId) {
+        List<Dataset> referencing = datasetRepo.findByDatabaseId(dbId);
+        if (!referencing.isEmpty()) {
+            Map<String, Object> fail = new LinkedHashMap<>();
+            fail.put("success", false);
+            fail.put("message", "该数据源仍被 " + referencing.size()
+                    + " 个数据集引用，请先删除这些数据集或改指到其它数据源后再删除");
+            fail.put("datasetCount", referencing.size());
+            fail.put("datasets", referencing.stream()
+                    .map(ds -> ds.getName() != null && !ds.getName().isBlank()
+                            ? ds.getName() : ds.getTableName())
+                    .filter(Objects::nonNull)
+                    .limit(10)
+                    .toList());
+            return ResponseEntity.badRequest().body(fail);
+        }
         dbConfigRepo.deleteById(dbId);
         return ResponseEntity.ok(Map.of("success", true, "message", "数据库配置已删除"));
     }
@@ -510,6 +537,12 @@ public class AdminController {
             m.put("sensitiveColumns", splitCsv(ds.getSensitiveColumns()));
             // 数据集级领域语义（前端据此回填语义编辑对话框）
             m.put("semanticJson", ds.getSemanticJson());
+            // 注解校验状态（前端据此显示"未校验/已校验时间"，并提供手动校验入口）
+            m.put("annotationValidatedAt",
+                    ds.getAnnotationValidatedAt() != null ? ds.getAnnotationValidatedAt().toString() : "");
+            m.put("annotationStructureFingerprint",
+                    ds.getAnnotationStructureFingerprint() != null
+                            ? ds.getAnnotationStructureFingerprint() : "");
             m.put("records", ds.getRecords());
             m.put("lastExecuted", ds.getLastExecuted() != null ? ds.getLastExecuted().toString() : "");
             m.put("createTime", ds.getCreateTime() != null ? ds.getCreateTime().toString() : "");
@@ -1204,6 +1237,70 @@ public class AdminController {
         return ResponseEntity.ok(Map.of("success", true, "fields", fields, "total", fields.size()));
     }
 
+    /**
+     * 读取数据集物理表结构的列（best-effort）。
+     *
+     * 注解结构校验需要真实列清单；读不到（未关联数据库/库不可达）时返回空列表，
+     * 由校验器降级为"跳过结构校验"，绝不因读结构失败而拒绝保存注解。
+     */
+    private List<Map<String, Object>> readStructureColumns(Dataset ds) {
+        if (ds.getTableName() == null || ds.getTableName().isBlank() || ds.getDatabaseId() == null) {
+            return List.of();
+        }
+        Optional<DatabaseConfig> optDb = dbConfigRepo.findById(ds.getDatabaseId());
+        if (optDb.isEmpty()) {
+            return List.of();
+        }
+        try {
+            ResponseEntity<Map<String, Object>> resp = readTableColumns(optDb.get(), ds.getTableName());
+            Map<String, Object> body = resp.getBody();
+            if (body == null || !Boolean.TRUE.equals(body.get("success"))) {
+                return List.of();
+            }
+            if (!(body.get("columns") instanceof List<?> list)) {
+                return List.of();
+            }
+            List<Map<String, Object>> columns = new ArrayList<>();
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> cast = (Map<String, Object>) map;
+                    columns.add(cast);
+                }
+            }
+            return columns;
+        } catch (Exception e) {
+            logger.warn("读取表结构失败 dataset={}: {}", ds.getId(), e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** 已落库的字段注解 → 校验器入参。 */
+    private List<com.assessment.admin.service.AnnotationValidator.FieldSemantic> toFieldSemantics(
+            List<FieldAnnotation> fields) {
+        List<com.assessment.admin.service.AnnotationValidator.FieldSemantic> out = new ArrayList<>();
+        if (fields == null) {
+            return out;
+        }
+        for (FieldAnnotation fa : fields) {
+            out.add(new com.assessment.admin.service.AnnotationValidator.FieldSemantic(
+                    fa.getColumnName(), fa.getSemanticJson()));
+        }
+        return out;
+    }
+
+    /** 注解校验失败时的统一拒绝响应。 */
+    private ResponseEntity<Map<String, Object>> rejectByAnnotations(
+            com.assessment.admin.service.AnnotationValidator.Result check) {
+        Map<String, Object> fail = new LinkedHashMap<>();
+        fail.put("success", false);
+        fail.put("message", "语义注解结构校验未通过，已拒绝保存（共 "
+                + check.getErrors().size() + " 处）");
+        fail.put("errors", check.getErrors());
+        fail.put("warnings", check.getWarnings());
+        return ResponseEntity.badRequest().body(fail);
+    }
+
     @PostMapping("/dataset/{datasetId}/fields")
     public ResponseEntity<Map<String, Object>> saveFieldAnnotations(
             @PathVariable String datasetId,
@@ -1237,6 +1334,20 @@ public class AdminController {
             return ResponseEntity.badRequest().body(fail);
         }
 
+        // 结构一致性校验（拒绝保存）+ 值域采样（仅告警）：把重量级校验从页面生成期左移到保存期
+        List<com.assessment.admin.service.AnnotationValidator.FieldSemantic> fieldSemantics = new ArrayList<>();
+        for (Map<String, Object> item : body) {
+            fieldSemantics.add(new com.assessment.admin.service.AnnotationValidator.FieldSemantic(
+                    Objects.toString(item.get("columnName"), ""),
+                    Objects.toString(item.get("semanticJson"), null)));
+        }
+        com.assessment.admin.service.AnnotationValidator.Result check = annotationValidator.validate(
+                ds.getTableName(), readStructureColumns(ds), ds.getSemanticJson(),
+                fieldSemantics, ds.getId());
+        if (check.isRejected()) {
+            return rejectByAnnotations(check);
+        }
+
         // Delete existing annotations for this dataset
         fieldAnnotationRepo.deleteByDatasetId(datasetId);
 
@@ -1260,10 +1371,18 @@ public class AdminController {
 
         // 注解已落库，通知 ipage 失效其进程内缓存（未配置 ipage 时跳过）
         List<String> warnings = new ArrayList<>();
+        warnings.addAll(check.getWarnings());
         String invalidateError = ipPageCacheInvalidator.invalidate(
                 ds.getDatabaseId(), Collections.singletonList(ds.getTableName()));
         if (invalidateError != null) {
             warnings.add(invalidateError);
+        }
+
+        // 记录校验通过的时间与结构指纹（供"注解是否过期"判定与页面提示）
+        if (check.isStructureChecked()) {
+            ds.setAnnotationValidatedAt(java.time.LocalDateTime.now());
+            ds.setAnnotationStructureFingerprint(check.getStructureFingerprint());
+            datasetRepo.save(ds);
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -1271,6 +1390,7 @@ public class AdminController {
         result.put("message", "标注已保存");
         result.put("total", body.size());
         result.put("warnings", warnings);
+        result.put("sampled", check.isSampled());
         return ResponseEntity.ok(result);
     }
 
@@ -1307,10 +1427,24 @@ public class AdminController {
             return ResponseEntity.badRequest().body(fail);
         }
 
+        // 结构一致性校验：数据集级语义引用的列必须真实存在（值域采样在此不做，
+        // 采样只发生在"整表字段注解保存"与"手动校验"两个入口，避免重复查库）
+        com.assessment.admin.service.AnnotationValidator.Result check = annotationValidator.validate(
+                ds.getTableName(), readStructureColumns(ds), semantic,
+                toFieldSemantics(fieldAnnotationRepo.findByDatasetId(datasetId)), null);
+        if (check.isRejected()) {
+            return rejectByAnnotations(check);
+        }
+
         ds.setSemanticJson(semantic == null || semantic.isBlank() ? null : semantic);
+        if (check.isStructureChecked()) {
+            ds.setAnnotationValidatedAt(java.time.LocalDateTime.now());
+            ds.setAnnotationStructureFingerprint(check.getStructureFingerprint());
+        }
         datasetRepo.save(ds);
 
         List<String> warnings = new ArrayList<>();
+        warnings.addAll(check.getWarnings());
         String invalidateError = ipPageCacheInvalidator.invalidate(
                 ds.getDatabaseId(), Collections.singletonList(ds.getTableName()));
         if (invalidateError != null) {
@@ -1321,6 +1455,216 @@ public class AdminController {
         result.put("message", "数据集级语义已保存");
         result.put("warnings", warnings);
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 手动校验注解（不落库）：返回结构错误、值域告警、结构指纹与"注解是否过期"。
+     *
+     * 用于管理端"校验注解"按钮：改过表结构后可随时复核，无需重新保存注解。
+     */
+    @PostMapping("/dataset/{datasetId}/annotations/validate")
+    public ResponseEntity<Map<String, Object>> validateAnnotations(@PathVariable String datasetId) {
+        Optional<Dataset> optDs = datasetRepo.findById(datasetId);
+        if (optDs.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "数据集不存在"));
+        }
+        Dataset ds = optDs.get();
+        com.assessment.admin.service.AnnotationValidator.Result check = annotationValidator.validate(
+                ds.getTableName(), readStructureColumns(ds), ds.getSemanticJson(),
+                toFieldSemantics(fieldAnnotationRepo.findByDatasetId(datasetId)), ds.getId());
+
+        java.time.LocalDateTime validatedAt = ds.getAnnotationValidatedAt();
+        String stored = ds.getAnnotationStructureFingerprint();
+        boolean expired = check.isStructureChecked() && stored != null && !stored.isBlank()
+                && !stored.equals(check.getStructureFingerprint());
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", true);
+        body.put("errors", check.getErrors());
+        body.put("warnings", check.getWarnings());
+        body.put("structureChecked", check.isStructureChecked());
+        body.put("sampled", check.isSampled());
+        body.put("structureFingerprint", check.getStructureFingerprint());
+        body.put("validatedAt", validatedAt == null ? "" : validatedAt.toString());
+        body.put("expired", expired);
+        if (check.isRejected()) {
+            body.put("message", "注解存在 " + check.getErrors().size() + " 处结构问题，请修正后重新保存");
+        } else if (expired) {
+            body.put("message", "注解结构校验通过，但表结构自上次校验后已变化，建议复核注解");
+        } else if (check.getWarnings().isEmpty()) {
+            body.put("message", "注解校验通过");
+        } else {
+            body.put("message", "注解校验通过，存在 " + check.getWarnings().size() + " 条提示");
+        }
+        return ResponseEntity.ok(body);
+    }
+
+    // ==================== 语义注解草稿（LLM 生成 + 人工审核） ====================
+
+    /**
+     * 生成注解草稿（不落正式注解）。
+     *
+     * 需要 {@code annotation.draft.enabled=true}；草稿经格式/结构/值域三层校验后入审核队列，
+     * 未通过审核前对页面生成完全不可见。
+     */
+    @PostMapping("/dataset/{datasetId}/annotations/draft/generate")
+    public ResponseEntity<Map<String, Object>> generateAnnotationDraft(
+            @PathVariable String datasetId,
+            @RequestHeader(value = "X-User-Id", required = false) String userId) {
+        try {
+            Map<String, Object> data = annotationDraftService.generate(datasetId, actorOf(userId));
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("success", true);
+            body.put("message", "已生成 " + data.get("total") + " 条注解草稿，请审核后生效");
+            body.putAll(data);
+            return ResponseEntity.ok(body);
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(errorMap(e.getMessage()));
+        } catch (Exception e) {
+            logger.error("生成注解草稿失败 dataset={}: {}", datasetId, e.getMessage(), e);
+            return ResponseEntity.badRequest().body(errorMap("生成注解草稿失败：" + e.getMessage()));
+        }
+    }
+
+    /** 草稿列表（默认只返回待审 draft）。 */
+    @GetMapping("/dataset/{datasetId}/annotations/drafts")
+    public ResponseEntity<Map<String, Object>> listAnnotationDrafts(
+            @PathVariable String datasetId,
+            @RequestParam(value = "status", required = false, defaultValue = "draft") String status) {
+        List<com.assessment.admin.model.AnnotationDraft> drafts =
+                annotationDraftService.list(datasetId, status);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", true);
+        body.put("total", drafts.size());
+        body.put("items", drafts);
+        return ResponseEntity.ok(body);
+    }
+
+    /** 草稿统计（列表页角标用）。 */
+    @GetMapping("/dataset/{datasetId}/annotations/drafts/summary")
+    public ResponseEntity<Map<String, Object>> annotationDraftSummary(@PathVariable String datasetId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", true);
+        body.putAll(annotationDraftService.summary(datasetId));
+        return ResponseEntity.ok(body);
+    }
+
+    /** 人工修改草稿内容（改完重新跑三层校验）。 */
+    @PutMapping("/annotations/draft/{draftId}")
+    public ResponseEntity<Map<String, Object>> updateAnnotationDraft(
+            @PathVariable String draftId,
+            @RequestBody Map<String, Object> body,
+            @RequestHeader(value = "X-User-Id", required = false) String userId) {
+        try {
+            String draftJson = Objects.toString(body.get("draftJson"), "");
+            com.assessment.admin.model.AnnotationDraft saved =
+                    annotationDraftService.updateDraft(draftId, draftJson, actorOf(userId));
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", true);
+            result.put("message", "草稿已更新并重新校验");
+            result.put("item", saved);
+            return ResponseEntity.ok(result);
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(errorMap(e.getMessage()));
+        }
+    }
+
+    /**
+     * 通过单条草稿（写入正式注解并触发缓存失效）。
+     *
+     * 请求体可选 {@code {"force": true, "remark": "理由"}}：当草稿存在硬错误（如值域未覆盖）
+     * 但人工确认取值合法时，可带理由强制通过；整批通过不接受带硬错误的条目。
+     */
+    @PostMapping("/annotations/draft/{draftId}/approve")
+    public ResponseEntity<Map<String, Object>> approveAnnotationDraft(
+            @PathVariable String draftId,
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestHeader(value = "X-User-Id", required = false) String userId) {
+        try {
+            boolean force = body != null && Boolean.TRUE.equals(body.get("force"));
+            String remark = body == null ? "" : Objects.toString(body.get("remark"), "");
+            return ResponseEntity.ok(annotationDraftService.approve(draftId, actorOf(userId), force, remark));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(errorMap(e.getMessage()));
+        } catch (Exception e) {
+            logger.error("草稿生效失败 draft={}: {}", draftId, e.getMessage(), e);
+            return ResponseEntity.badRequest().body(errorMap("草稿生效失败：" + e.getMessage()));
+        }
+    }
+
+    /** 驳回单条草稿（可附意见，供"按意见重生成"使用）。 */
+    @PostMapping("/annotations/draft/{draftId}/reject")
+    public ResponseEntity<Map<String, Object>> rejectAnnotationDraft(
+            @PathVariable String draftId,
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestHeader(value = "X-User-Id", required = false) String userId) {
+        try {
+            String remark = body == null ? "" : Objects.toString(body.get("remark"), "");
+            return ResponseEntity.ok(annotationDraftService.reject(draftId, remark, actorOf(userId)));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(errorMap(e.getMessage()));
+        }
+    }
+
+    /** 按驳回意见重生成单条草稿。 */
+    @PostMapping("/annotations/draft/{draftId}/regenerate")
+    public ResponseEntity<Map<String, Object>> regenerateAnnotationDraft(
+            @PathVariable String draftId,
+            @RequestHeader(value = "X-User-Id", required = false) String userId) {
+        try {
+            com.assessment.admin.model.AnnotationDraft created =
+                    annotationDraftService.regenerate(draftId, actorOf(userId));
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", true);
+            result.put("message", "已按驳回意见重新生成草稿");
+            result.put("item", created);
+            return ResponseEntity.ok(result);
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(errorMap(e.getMessage()));
+        } catch (Exception e) {
+            logger.error("草稿重生成失败 draft={}: {}", draftId, e.getMessage(), e);
+            return ResponseEntity.badRequest().body(errorMap("草稿重生成失败：" + e.getMessage()));
+        }
+    }
+
+    /** 整批通过（跳过带硬错误的条目，例如值域编造）。 */
+    @PostMapping("/annotations/drafts/batch/{batchId}/approve")
+    public ResponseEntity<Map<String, Object>> approveAnnotationDraftBatch(
+            @PathVariable String batchId,
+            @RequestHeader(value = "X-User-Id", required = false) String userId) {
+        try {
+            return ResponseEntity.ok(annotationDraftService.approveBatch(batchId, actorOf(userId)));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(errorMap("整批通过失败：" + e.getMessage()));
+        }
+    }
+
+    /** 整批驳回。 */
+    @PostMapping("/annotations/drafts/batch/{batchId}/reject")
+    public ResponseEntity<Map<String, Object>> rejectAnnotationDraftBatch(
+            @PathVariable String batchId,
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestHeader(value = "X-User-Id", required = false) String userId) {
+        try {
+            String remark = body == null ? "" : Objects.toString(body.get("remark"), "");
+            return ResponseEntity.ok(annotationDraftService.rejectBatch(batchId, remark, actorOf(userId)));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(errorMap("整批驳回失败：" + e.getMessage()));
+        }
+    }
+
+    /** 丢弃整批草稿。 */
+    @DeleteMapping("/annotations/drafts/batch/{batchId}")
+    public ResponseEntity<Map<String, Object>> discardAnnotationDraftBatch(@PathVariable String batchId) {
+        int removed = annotationDraftService.discardBatch(batchId);
+        return ResponseEntity.ok(Map.of("success", true, "removed", removed,
+                "message", "已丢弃 " + removed + " 条草稿"));
+    }
+
+    /** 审核人标识：优先取网关注入的用户 ID，缺省记为 admin。 */
+    private String actorOf(String userId) {
+        String actor = Objects.toString(userId, "").trim();
+        return actor.isEmpty() ? "admin" : actor;
     }
 
     @PutMapping("/dataset/{datasetId}/fields/{fieldId}")
@@ -1353,13 +1697,31 @@ public class AdminController {
             }
             fa.setSemanticJson(semantic);
         }
+
+        // 结构一致性校验：以"更新该字段后的全表注解"为准（重复 role 等冲突必须整体判定）
+        Optional<Dataset> optDs = datasetRepo.findById(datasetId);
+        if (optDs.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "数据集不存在"));
+        }
+        Dataset ds = optDs.get();
+        List<com.assessment.admin.service.AnnotationValidator.FieldSemantic> merged = new ArrayList<>();
+        for (FieldAnnotation item : fieldAnnotationRepo.findByDatasetId(datasetId)) {
+            String semanticJson = item.getId().equals(fieldId)
+                    ? fa.getSemanticJson() : item.getSemanticJson();
+            merged.add(new com.assessment.admin.service.AnnotationValidator.FieldSemantic(
+                    item.getColumnName(), semanticJson));
+        }
+        com.assessment.admin.service.AnnotationValidator.Result check = annotationValidator.validate(
+                ds.getTableName(), readStructureColumns(ds), ds.getSemanticJson(), merged, null);
+        if (check.isRejected()) {
+            return rejectByAnnotations(check);
+        }
         fieldAnnotationRepo.save(fa);
 
         List<String> warnings = new ArrayList<>();
-        String databaseId = datasetRepo.findById(fa.getDatasetId())
-                .map(Dataset::getDatabaseId).orElse(null);
-        String invalidateError = ipPageCacheInvalidator.invalidate(databaseId,
-                Collections.singletonList(fa.getTableName()));
+        warnings.addAll(check.getWarnings());
+        String invalidateError = ipPageCacheInvalidator.invalidate(
+                ds.getDatabaseId(), Collections.singletonList(ds.getTableName()));
         if (invalidateError != null) {
             warnings.add(invalidateError);
         }
@@ -1556,6 +1918,12 @@ public class AdminController {
             schema.put("databaseId", ds.getDatabaseId());
             // 数据集级领域语义（原样透传，解析错误由消费侧按实体大类兜底）
             schema.put("semanticJson", ds.getSemanticJson());
+            // 注解校验状态（只读信息：生成期不做指纹比对，页面提示用）
+            schema.put("annotationValidatedAt",
+                    ds.getAnnotationValidatedAt() != null ? ds.getAnnotationValidatedAt().toString() : "");
+            schema.put("annotationStructureFingerprint",
+                    ds.getAnnotationStructureFingerprint() != null
+                            ? ds.getAnnotationStructureFingerprint() : "");
             schema.put("fields", fieldList);
             schemas.add(schema);
         }
@@ -1734,6 +2102,8 @@ public class AdminController {
                 String comment = Objects.toString(c.get("comment"), "");
                 fa.setColumnComment(comment);
                 fa.setBusinessMeaning(comment);
+                // 结构化语义草稿：按列名猜"有明确消费者的角色"，只填空不覆盖（人工可改）
+                fa.setSemanticJson(draftFieldSemantic(columnName));
                 fieldAnnotationRepo.save(fa);
             }
             logger.info("数据集 {}（{}）已按物理表结构预生成 {} 个字段注解初稿，可在管理后台校准业务含义",
@@ -1742,6 +2112,71 @@ public class AdminController {
             // 预生成是增强步骤，失败不阻塞注册
             logger.warn("数据集 {}（{}）预生成字段注解异常: {}", ds.getId(), ds.getTableName(), e.getMessage());
         }
+    }
+
+    /**
+     * 按列名猜测字段角色，产出 {@code semanticJson} 草稿（人工可改，仅填空不覆盖）。
+     *
+     * 口径与 ipage 运行期的列名启发式**完全一致**（同样的优先级、同样的档案日期排除词），
+     * 目的是把"隐式命中"显式化为可编辑注解：猜中的列从此走结构化路径，猜不中仍由启发式兜底。
+     * 只产出**有确定性消费者**的角色，不猜 {@code values}（值域必须人工确认，编造枚举有害）。
+     *
+     * @param columnName 物理列名
+     * @return 形如 {@code {"role":"lng"}} 的 JSON；无法判定时返回 null
+     */
+    private String draftFieldSemantic(String columnName) {
+        String low = Objects.toString(columnName, "").toLowerCase(Locale.ROOT);
+        if (low.isEmpty()) {
+            return null;
+        }
+        String role = null;
+        // 坐标
+        if (low.endsWith("_lng") || low.endsWith("_lon")
+                || low.equals("lng") || low.equals("lon") || low.equals("longitude")) {
+            role = "lng";
+        } else if (low.endsWith("_lat") || low.equals("lat") || low.equals("latitude")) {
+            role = "lat";
+        } else if (low.contains("seq")) {
+            role = "seq";
+        } else if (isEventTimeColumn(low)) {
+            role = "time";
+        } else if (low.contains("radius")) {
+            role = "radius";
+        } else if (low.contains("hit_result") || low.contains("status") || low.contains("severity")) {
+            role = "status";
+        } else if (low.contains("altitude") || low.contains("alt_")) {
+            role = "altitude";
+        } else if (low.contains("speed")) {
+            role = "speed";
+        } else if (low.contains("heading")) {
+            role = "heading";
+        }
+        return role == null ? null : "{\"role\":\"" + role + "\"}";
+    }
+
+    /**
+     * 是否像"态势事件时间"列（与 ipage 的 {@code find_time_field} 口径一致）。
+     *
+     * 服役/成立/创建等档案日期列**必须排除**：它们若被当作事件时间，会把地图时间轴拉到数年前。
+     */
+    private boolean isEventTimeColumn(String lowColumn) {
+        // 档案/管理类日期关键词（与 Python 侧 NON_EVENT_TIME_KEYS 对齐）
+        for (String archive : List.of("commission", "found", "establish", "birth",
+                "create", "update", "valid")) {
+            if (lowColumn.contains(archive)) {
+                return false;
+            }
+        }
+        if (lowColumn.equals("time") || lowColumn.endsWith("_time")) {
+            return true;
+        }
+        for (String candidate : List.of("record_time", "event_time", "recon_time",
+                "destroyed_time", "occur_time", "detect_time", "strike_time", "damage_time")) {
+            if (lowColumn.contains(candidate)) {
+                return true;
+            }
+        }
+        return lowColumn.contains("date");
     }
 
     // ==================== 地图服务配置管理 ====================

@@ -31,7 +31,7 @@
             有什么可以帮您评估？
           </h1>
           <p class="hero-subtitle">
-            基于知识库与本体，为您提供智能问答、指标分析、评估分析、态势图等专业能力
+            基于知识库与本体，为您提供智能问答、指标分析、评估分析、态势页面等专业能力
           </p>
         </section>
 
@@ -149,7 +149,6 @@ import {
   Aim,
   Box,
   Loading,
-  MapLocation,
   MagicStick
 } from '@element-plus/icons-vue'
 import FloatingSidebar from '@/components/FloatingSidebar.vue'
@@ -190,13 +189,6 @@ const tools = [
   },
   {
     id: 4,
-    name: '态势图',
-    icon: MapLocation,
-    color: '#8b5cf6',
-    path: '/situation'
-  },
-  {
-    id: 5,
     name: '态势页面',
     icon: MagicStick,
     color: '#0ea5e9',

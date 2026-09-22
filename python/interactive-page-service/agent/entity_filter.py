@@ -18,6 +18,7 @@ from agent.dimension_graph import (
     parse_alias_map,
     parse_enum_tokens,
 )
+from agent.field_resolver import FieldResolver
 
 logger = logging.getLogger("ipage-service")
 
@@ -71,9 +72,19 @@ def _is_generic_short_value(query: str, value: str) -> bool:
 def _build_column_vocabulary(graph: DimensionGraph, dc) -> Tuple[Set[str], Dict[str, str]]:
     """构建单个维度列的匹配词典：标准值集合 + {别名: 标准值}。
 
-    标准值来源：真实采样值 ∪ 注解枚举词；
-    别名来源：注解中的 A=B 映射，且右侧 B 必须是标准值（防止误解析）。
+    标准值来源（注解优先）：
+    1. 字段级语义注解 ``values``/``synonyms``（结构化、确定性）——命中即直接采用，
+       不再做正则猜测；映射方向是"原始值 → 规范值"，因此**SQL 过滤用原始值**，
+       可匹配词同时包含原始值、规范值与同义词；
+    2. 无注解时回落历史口径：真实采样值 ∪ 注解枚举词（businessMeaning 括号区），
+       别名取 businessMeaning 中的 ``A=B`` 映射且右侧必须落在标准值内。
     """
+    spec = graph.tables.get(dc.table)
+    if spec is not None:
+        standards, aliases = FieldResolver(spec, [dc.column], dc.table).value_term_map(dc.column)
+        if standards:
+            return standards, aliases
+
     standards: Set[str] = set()
     sampled = graph.sample_values(dc.table, dc.column)
     if sampled:

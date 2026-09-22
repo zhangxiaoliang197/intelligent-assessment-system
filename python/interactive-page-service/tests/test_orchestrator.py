@@ -6,6 +6,7 @@ intent=''、dataBundle={} —— 离开当前会话后重新加载时前端走�
 """
 import asyncio
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -14,7 +15,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
-from agent import orchestrator
+from agent import orchestrator, skill_catalog, skill_matcher
 from models import PageRecord
 from store import page_store
 
@@ -24,7 +25,7 @@ PARENT_HTML = "<!DOCTYPE html><html lang=\"zh-CN\"><body>父页面</body></html>
 class _FakeWriter:
     """替身：跳过真实 LLM 调用，直接返回校验通过的重设计结果。"""
 
-    def redesign(self, query, plan, bundle, previous_html, feedback):
+    def redesign(self, query, plan, bundle, previous_html, feedback, skill_context=None):
         return "<!DOCTYPE html><html><body>重新设计</body></html>", {
             "usedTemplate": False, "revised": True, "issues": [],
         }
@@ -172,7 +173,7 @@ class IncrementalRevisionTest(unittest.TestCase):
         })
 
         class _FakePlanner:
-            def __init__(self, meta):
+            def __init__(self, meta, skill_context=None):
                 pass
 
             def plan(self, query, parent_query="", parent_plan=None):
@@ -216,6 +217,104 @@ class IncrementalRevisionTest(unittest.TestCase):
         stored = page_store.get_page("child3")
         self.assertEqual([d["id"] for d in stored["dataBundle"]["datasets"]], ["q1", "q6"])
         self.assertEqual([s["qid"] for s in stored["sqlLog"]], ["q1", "q6"])
+
+
+class SkillResolutionTest(unittest.TestCase):
+    """技能决策顺序：显式指定 > 关闭 > 修订继承父页面 > 按问题自动匹配。
+
+    自动匹配依赖向量服务，本用例统一注入「向量不可用」以保证离线可跑。
+    """
+
+    SKILL_MD = """---
+id: demo-skill
+name: 演示技能
+description: 用于测试的技能
+triggers:
+  - 演示问题一
+  - 演示问题二
+  - 演示问题三
+---
+
+## 取数剧本
+- need: mode=aggregate, question=统计数量
+
+## 区块剧本
+kpi → chart → text
+
+## 呈现偏好
+- 克制配色
+
+## 叙事要点
+- 先给总量
+"""
+
+    def setUp(self):
+        self._saved_dir = config.IPAGE_SKILLS_DIR
+        self._saved_embed = skill_matcher.embed_texts
+        self.tmpdir = tempfile.mkdtemp(prefix="ipage-orch-skill-")
+        config.IPAGE_SKILLS_DIR = self.tmpdir
+        os.makedirs(os.path.join(self.tmpdir, "demo-skill"), exist_ok=True)
+        with open(os.path.join(self.tmpdir, "demo-skill", "SKILL.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(self.SKILL_MD)
+        skill_catalog.clear_cache()
+        skill_matcher.embed_texts = lambda texts, timeout=0: None
+        skill_matcher.clear_cache()
+
+    def tearDown(self):
+        skill_matcher.embed_texts = self._saved_embed
+        config.IPAGE_SKILLS_DIR = self._saved_dir
+        skill_catalog.clear_cache()
+        skill_matcher.clear_cache()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_manual_skill_selected(self):
+        ctx = orchestrator._resolve_skill("任意问题", {}, None, "demo-skill", "auto")
+        self.assertIsNotNone(ctx)
+        self.assertEqual("demo-skill", ctx["id"])
+        self.assertEqual("manual", ctx["matchedBy"])
+        self.assertTrue(ctx["applied"])
+
+    def test_unknown_skill_falls_back_to_auto_match(self):
+        """指定了不存在的技能不报错，退回自动匹配；向量不可用则不套用。"""
+        self.assertIsNone(orchestrator._resolve_skill("任意问题", {}, None, "not-exist", "auto"))
+
+    def test_off_mode_never_applies_skill(self):
+        self.assertIsNone(orchestrator._resolve_skill("问题", {}, None, "", "off"))
+        # 显式指定优先于关闭：用户点了具体技能就按技能走
+        self.assertIsNotNone(
+            orchestrator._resolve_skill("问题", {}, None, "demo-skill", "off"))
+
+    def test_revision_inherits_parent_skill(self):
+        parent_plan = {"skill": {"id": "demo-skill"}}
+        ctx = orchestrator._resolve_skill("把结论换成表格", {}, parent_plan, "", "auto")
+        self.assertIsNotNone(ctx)
+        self.assertEqual("inherited", ctx["matchedBy"])
+        self.assertEqual("demo-skill", ctx["id"])
+
+    def test_finalize_writes_skill_meta(self):
+        plan = {}
+        orchestrator._finalize_skill(plan, {
+            "id": "demo-skill", "skill": None, "applied": True, "matchedBy": "manual",
+            "reason": "手动指定", "candidates": [], "unresolvedNeeds": [], "score": None,
+        })
+        self.assertEqual("demo-skill", plan["skill"]["id"])
+        self.assertTrue(plan["skill"]["applied"])
+
+    def test_finalize_clears_skill_when_not_applied(self):
+        """本轮关闭技能时，不得把父页面继承来的技能标签带到新页面。"""
+        plan = {"skill": {"id": "demo-skill", "applied": True}}
+        orchestrator._finalize_skill(plan, None)
+        self.assertNotIn("skill", plan)
+
+    def test_finalize_marks_not_applied_on_planner_fallback(self):
+        plan = {"_planner_error": "规划 3 次均失败"}
+        orchestrator._finalize_skill(plan, {
+            "id": "demo-skill", "skill": None, "applied": True, "matchedBy": "auto",
+            "reason": "自动套用", "candidates": [], "unresolvedNeeds": [], "score": 0.9,
+        })
+        self.assertFalse(plan["skill"]["applied"])
+        self.assertIn("兜底", plan["skill"]["reason"])
 
 
 if __name__ == "__main__":

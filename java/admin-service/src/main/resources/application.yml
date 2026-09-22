@@ -82,6 +82,23 @@ ipage:
   service-url: ${IPAGE_SERVICE_URL:}
   invalidate-timeout-ms: ${IPAGE_INVALIDATE_TIMEOUT_MS:5000}
 
+# 语义注解草稿（LLM 生成 + 人工审核）：默认关闭，联调通过后再开启
+annotation:
+  draft:
+    enabled: ${ANNOTATION_DRAFT_ENABLED:false}
+    # 单次生成最多覆盖的字段数（超出按批切分）
+    max-columns: ${ANNOTATION_DRAFT_MAX_COLUMNS:40}
+    # 最多调用模型的批次数（防止字段极多时 token 失控）
+    max-batches: ${ANNOTATION_DRAFT_MAX_BATCHES:3}
+    # 采样：最多采样列数与单列取值个数（值域校验的基准）
+    sample-columns: ${ANNOTATION_DRAFT_SAMPLE_COLUMNS:20}
+    sample-values: ${ANNOTATION_DRAFT_SAMPLE_VALUES:30}
+    # few-shot：同库已生效注解样例的数据集条数
+    fewshot-datasets: ${ANNOTATION_DRAFT_FEWSHOT:3}
+    temperature: ${ANNOTATION_DRAFT_TEMPERATURE:0.1}
+    max-tokens: ${ANNOTATION_DRAFT_MAX_TOKENS:6000}
+    timeout-ms: ${ANNOTATION_DRAFT_TIMEOUT_MS:90000}
+
 admin:
   # Required in X-Admin-Token for every management API. Keep this separate from
   # INTERNAL_SERVICE_TOKEN so a runtime service cannot mutate administration state.

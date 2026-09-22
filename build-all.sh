@@ -41,10 +41,10 @@ build_and_save() {
         docker run --rm --entrypoint python "assessment-$IMAGE_NAME:latest" \
             -c "from agents.skill_catalog import load_catalog; catalog=load_catalog(); assert len(catalog['skills']) == 30; print('Skill catalog OK:', len(catalog['skills']))"
     fi
-    if [[ "$IMAGE_NAME" == "situation" ]]; then
-        echo ">>> 运行态势 Skill 测试与目录校验..."
+    if [[ "$IMAGE_NAME" == "ipage" ]]; then
+        echo ">>> 运行 ipage 单元测试..."
         docker run --rm --entrypoint python "assessment-$IMAGE_NAME:latest" \
-            -m unittest discover -s tests -v
+            -m unittest discover -s tests -p 'test_*.py' -v
     fi
 
     echo -e "${GREEN}>>> 导出 assessment-$IMAGE_NAME.tar${NC}"
@@ -62,7 +62,7 @@ build_and_save "qa"                    "qa"                    "10253" "智能�
 build_and_save "indicator"             "indicator"             "10254" "指标分析服务"
 build_and_save "evaluation"            "evaluation"            "10255" "评估分析服务"
 build_and_save "ontology"              "ontology"              "10256" "本体模型服务"
-build_and_save "situation"             "situation"             "10257" "态势图服务"
+build_and_save "ipage"                 "ipage"                 "10257" "态势页面服务"
 
 echo "========================================="
 echo "阶段 2/4: 构建 Java 服务 (1个)"

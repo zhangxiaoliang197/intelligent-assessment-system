@@ -5,3 +5,5 @@ python-dotenv>=1.0.0
 python-json-logger>=2.0.8
 # 语义注解格式校验：与 admin-service 共用同一份 schema（由元数据接口下发）
 jsonschema>=4.21
+# 技能 SKILL.md 的 YAML front matter 解析（与 situation/qa 同款依赖）
+PyYAML>=6.0.1

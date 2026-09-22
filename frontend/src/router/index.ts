@@ -10,10 +10,6 @@ import OntologyBuild from '@/pages/OntologyBuild.vue'
 import OntologyManualBuild from '@/pages/OntologyManualBuild.vue'
 import OntologyMetaModelEdit from '@/pages/OntologyMetaModelEdit.vue'
 import AdminSystem from '@/pages/AdminSystem.vue'
-import SituationMap from '@/pages/SituationMap.vue'
-import SituationView from '@/pages/SituationView.vue'
-import SituationList from '@/pages/SituationList.vue'
-import SituationShare from '@/pages/SituationShare.vue'
 import InteractivePage from '@/pages/InteractivePage.vue'
 import InteractiveView from '@/pages/InteractiveView.vue'
 import SituationPageDialog from '@/pages/SituationPageDialog.vue'
@@ -86,30 +82,6 @@ const routes: Array<RouteRecordRaw> = [
     path: '/admin',
     name: 'AdminSystem',
     component: AdminSystem
-  },
-  {
-    path: '/situation',
-    name: 'SituationMap',
-    component: SituationMap,
-    meta: { title: '态势图' }
-  },
-  {
-    path: '/situation/view/:reportId',
-    name: 'SituationView',
-    component: SituationView,
-    meta: { title: '态势图查看' }
-  },
-  {
-    path: '/situation/list',
-    name: 'SituationList',
-    component: SituationList,
-    meta: { title: '态势图历史' }
-  },
-  {
-    path: '/situation/share/:token',
-    name: 'SituationShare',
-    component: SituationShare,
-    meta: { title: '态势图分享' }
   },
   {
     // 态势页面主对话框（原"智能交互页面"门户入口）

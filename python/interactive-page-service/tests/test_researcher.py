@@ -7,6 +7,162 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 from agent import researcher
+from agent.dimension_graph import TableSpec
+from agent.field_resolver import FieldResolver
+
+
+def _spec(table: str, columns: dict, semantic: dict = None) -> TableSpec:
+    """构造带字段语义的表结构（columns: {列名: (类型, 业务含义, 字段语义)}）。"""
+    spec = TableSpec(table=table, dataset_id="ds_1")
+    spec.semantic = dict(semantic or {})
+    for name, triple in columns.items():
+        ctype, meaning, col_semantic = (list(triple) + [None, None, None])[:3]
+        spec.columns[name] = {
+            "type": ctype or "varchar",
+            "meaning": meaning or "",
+            "pk": False,
+            "semantic": col_semantic or {},
+        }
+    return spec
+
+
+class AnnotatedGeoTest(unittest.TestCase):
+    """注解驱动的取数整形：字段完全不一致（全中文列名）也能出航迹/圈/符号/阵营色。"""
+
+    TRACK_COLUMNS = ["实体编号", "架次", "观测时刻", "经度", "纬度", "高度", "速度",
+                     "航向", "归属", "状态"]
+
+    def _track_spec(self) -> TableSpec:
+        return _spec("flight_log", {
+            "实体编号": ("varchar", "平台编号", {"role": "id"}),
+            "架次": ("int", "架次号", {"role": "seq"}),
+            "观测时刻": ("datetime", "观测时间", {"role": "time"}),
+            "经度": ("decimal", "经度", {"role": "lng"}),
+            "纬度": ("decimal", "纬度", {"role": "lat"}),
+            "高度": ("int", "高度", {"role": "altitude"}),
+            "速度": ("int", "速度", {"role": "speed"}),
+            "航向": ("int", "航向", {"role": "heading"}),
+            "归属": ("varchar", "阵营", {
+                "role": "dimension",
+                "values": {"本方": "blue", "对方": "red"},
+                "synonyms": {"我军": "blue"},
+            }),
+            "状态": ("varchar", "毁伤状态", {
+                "role": "status", "values": {"重度受损": "critical"}}),
+        }, {"entityKind": "air", "trackGroupKey": ["实体编号", "架次"],
+            "eventTimeColumn": "观测时刻",
+            "geometry": {"lngColumn": "经度", "latColumn": "纬度"}})
+
+    def _track_rows(self):
+        return [
+            {"实体编号": "F-01", "架次": 1, "观测时刻": "2026-07-15 08:00:00",
+             "经度": 120.1, "纬度": 30.1, "高度": 8000, "速度": 900, "航向": 45,
+             "归属": "本方", "状态": "正常"},
+            {"实体编号": "F-01", "架次": 1, "观测时刻": "2026-07-15 08:30:00",
+             "经度": 120.5, "纬度": 30.4, "高度": 8200, "速度": 910, "航向": 50,
+             "归属": "本方", "状态": "重度受损"},
+            {"实体编号": "F-02", "架次": 2, "观测时刻": "2026-07-15 09:00:00",
+             "经度": 121.0, "纬度": 31.0, "高度": 7000, "速度": 880, "航向": 200,
+             "归属": "对方", "状态": "正常"},
+            {"实体编号": "F-02", "架次": 2, "观测时刻": "2026-07-15 09:20:00",
+             "经度": 121.3, "纬度": 31.2, "高度": 6800, "速度": 870, "航向": 205,
+             "归属": "对方", "状态": "正常"},
+        ]
+
+    def test_tracks_from_annotation_only(self):
+        """所有字段都不符合英文命名习惯，仍能给出航迹、时间、排序、坐标与阵营。"""
+        resolver = FieldResolver(self._track_spec(), self.TRACK_COLUMNS, "flight_log")
+        result = researcher.build_geo_features(
+            self._track_rows(), self.TRACK_COLUMNS, "tracks",
+            table_name="flight_log", resolver=resolver)
+        self.assertEqual(result["kind"], "tracks")
+        by_id = {t["id"]: t for t in result["tracks"]}
+        self.assertEqual(sorted(by_id), ["F-01", "F-02"])
+        first = by_id["F-01"]
+        self.assertEqual(first["missionId"], "1")
+        self.assertEqual(first["faction"], "blue")
+        self.assertEqual(first["factionColor"], "#1d4ed8")
+        self.assertEqual(len(first["points"]), 2)
+        point = first["points"][0]
+        self.assertEqual(point["time"], "2026-07-15 08:00:00")
+        self.assertEqual(point["alt"], 8000)
+        self.assertEqual(point["speed"], 900)
+        self.assertEqual(point["heading"], 45)
+        # 状态规范键只在映射命中时出现（首行状态为"正常"，未映射 → 不出现该字段）
+        self.assertNotIn("statusKey", first)
+        self.assertEqual(by_id["F-02"]["faction"], "red")
+        self.assertEqual(by_id["F-02"]["factionColor"], "#dc2626")
+
+    def test_circles_from_annotated_radius_column(self):
+        """中文半径列（列名不含 radius）由注解声明后照样成圈。"""
+        columns = ["阵地名", "lon", "lat", "覆盖距离", "归属"]
+        spec = _spec("air_defense", {
+            "阵地名": ("varchar", "名称", {"role": "name"}),
+            "lon": ("decimal", "经度", {"role": "lng"}),
+            "lat": ("decimal", "纬度", {"role": "lat"}),
+            "覆盖距离": ("decimal", "打击半径（公里）", {"role": "radius"}),
+            "归属": ("varchar", "阵营", {"role": "dimension",
+                                       "values": {"我方": "blue", "敌方": "red"}}),
+        }, {"entityKind": "ground_facility",
+            "geometry": {"lngColumn": "lon", "latColumn": "lat",
+                         "radiusColumn": "覆盖距离"}})
+        resolver = FieldResolver(spec, columns, "air_defense")
+        rows = [{"阵地名": "雷达站A", "lon": 119.5, "lat": 23.6,
+                 "覆盖距离": 150, "归属": "我方"}]
+        result = researcher.build_geo_features(rows, columns, "circles",
+                                              table_name="air_defense", resolver=resolver)
+        self.assertEqual(result["kind"], "circles")
+        circle = result["circles"][0]
+        self.assertEqual(circle["kind"], "strike")
+        self.assertEqual(circle["rangeType"], "打击范围")
+        self.assertEqual(circle["radiusKm"], 150)
+        self.assertEqual(circle["faction"], "blue")
+        self.assertEqual(circle["factionColor"], "#1d4ed8")
+        unit = result["units"][0]
+        self.assertEqual(unit["unitKind"], "facility")
+        self.assertEqual(unit["faction"], "blue")
+
+    def test_units_symbol_and_status_key_from_annotation(self):
+        columns = ["目标名", "lon", "lat", "种类", "状态"]
+        spec = _spec("facilities", {
+            "目标名": ("varchar", "名称", {"role": "name"}),
+            "lon": ("decimal", "经度", {"role": "lng"}),
+            "lat": ("decimal", "纬度", {"role": "lat"}),
+            "种类": ("varchar", "类别", {"role": "dimension", "symbol": "radar"}),
+            "状态": ("varchar", "状态", {"role": "status",
+                                       "values": {"轻度受损": "light"}}),
+        }, {"entityKind": "ground_facility",
+            "geometry": {"lngColumn": "lon", "latColumn": "lat"}})
+        resolver = FieldResolver(spec, columns, "facilities")
+        rows = [{"目标名": "站A", "lon": 120.0, "lat": 30.0, "种类": "雷达",
+                 "状态": "轻度受损"}]
+        result = researcher.build_geo_features(rows, columns, "points",
+                                              table_name="facilities", resolver=resolver)
+        unit = result["units"][0]
+        self.assertEqual(unit["unitKind"], "facility")
+        self.assertEqual(unit["symbol"], "radar")
+        self.assertEqual(unit["statusKey"], "light")
+
+    def test_no_annotation_output_identical(self):
+        """双跑等价：不传 resolver 与传"无注解 resolver"输出完全相等（零回归）。"""
+        for hint, columns, rows in (
+            ("tracks", ["id", "aircraft_id", "seq", "record_time", "track_lng", "track_lat", "faction"],
+             [{"id": 1, "aircraft_id": "AC-BL-01", "seq": 0, "record_time": "2026-07-15 08:00:00",
+               "track_lng": 120.1, "track_lat": 30.1, "faction": "蓝方"},
+              {"id": 2, "aircraft_id": "AC-BL-01", "seq": 1, "record_time": "2026-07-15 08:30:00",
+               "track_lng": 120.5, "track_lat": 30.4, "faction": "蓝方"}]),
+            ("points", ["name", "lng", "lat", "faction", "status"],
+             [{"name": "点A", "lng": 120.0, "lat": 30.0, "faction": "红方", "status": "重损"}]),
+            ("circles", ["name", "lng", "lat", "strike_radius_km", "detect_radius_km"],
+             [{"name": "圈A", "lng": 120.0, "lat": 30.0,
+               "strike_radius_km": 150, "detect_radius_km": 80}]),
+        ):
+            with self.subTest(hint=hint):
+                legacy = researcher.build_geo_features(rows, columns, hint)
+                explicit = researcher.build_geo_features(
+                    rows, columns, hint,
+                    resolver=FieldResolver(None, columns, ""))
+                self.assertEqual(legacy, explicit)
 
 
 class SanitizeTest(unittest.TestCase):

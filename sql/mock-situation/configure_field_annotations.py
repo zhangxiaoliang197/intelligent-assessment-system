@@ -3,7 +3,7 @@
 
 背景：admin-service 的 /export/for-llm 只导出「已配置字段注解」的数据集
 （见 AdminController.exportForLlm：fields 为空则 continue）。若数据集没有
-字段注解，situation-service 的 LLM 看到的数据集元数据为空，无法规划取数，
+字段注解，ipage 的 LLM 看到的数据集元数据为空，无法规划取数，
 导致发起提问后不产图。
 
 本脚本职责（纯数据配置，不改系统代码）：

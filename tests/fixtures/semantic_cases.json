@@ -71,6 +71,29 @@
       "value": {}
     },
     {
+      "name": "合法：状态列（值映射到运行时状态键）",
+      "valid": true,
+      "value": {
+        "role": "status",
+        "values": { "重度受损": "critical", "轻度受损": "light", "已摧毁": "destroyed" }
+      }
+    },
+    {
+      "name": "合法：高度列角色",
+      "valid": true,
+      "value": { "role": "altitude", "unit": "m" }
+    },
+    {
+      "name": "合法：速度列角色",
+      "valid": true,
+      "value": { "role": "speed", "unit": "km/h" }
+    },
+    {
+      "name": "合法：航向列角色",
+      "valid": true,
+      "value": { "role": "heading", "unit": "deg" }
+    },
+    {
       "name": "非法：role 不在枚举内",
       "valid": false,
       "value": { "role": "geometry" }

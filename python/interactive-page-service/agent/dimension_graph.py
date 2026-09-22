@@ -81,6 +81,51 @@ def parse_semantic(raw: Any) -> Dict[str, Any]:
     return parsed
 
 
+def annotated_geo_pair(schema: Dict[str, Any]) -> Tuple[str, str]:
+    """数据集注解声明的坐标列对：geometry.lngColumn/latColumn 或字段 role=lng/lat。
+
+    返回 (lng列, lat列)；未声明返回 ("", "")。供 Planner（地理能力判定）与
+    prompts（数据集目录标注）共用，避免同一口径两处实现漂移。
+    """
+    semantic = parse_semantic((schema or {}).get("semanticJson"))
+    geometry = semantic.get("geometry") if isinstance(semantic, dict) else None
+    if isinstance(geometry, dict):
+        lng = str(geometry.get("lngColumn") or "").strip()
+        lat = str(geometry.get("latColumn") or "").strip()
+        if lng and lat:
+            return lng, lat
+    role_lng = role_lat = ""
+    for f in (schema or {}).get("fields") or (schema or {}).get("columns") or []:
+        if not isinstance(f, dict):
+            continue
+        role = str(parse_semantic(f.get("semanticJson")).get("role") or "").strip()
+        column = str(f.get("name") or f.get("column") or f.get("fieldName") or "")
+        if not column:
+            continue
+        if role == "lng" and not role_lng:
+            role_lng = column
+        elif role == "lat" and not role_lat:
+            role_lat = column
+    if role_lng and role_lat:
+        return role_lng, role_lat
+    return "", ""
+
+
+def column_name_geo_capable(schema: Dict[str, Any]) -> bool:
+    """按列名启发式判断是否具备成对经纬度（历史口径，保留为兜底）。"""
+    fields = (schema or {}).get("fields") or (schema or {}).get("columns") or []
+    lngs, lats = [], []
+    for f in fields:
+        if not isinstance(f, dict):
+            continue
+        col = str(f.get("name") or f.get("column") or f.get("fieldName") or "").lower()
+        if col.endswith("_lng") or col in ("lng", "lon", "longitude"):
+            lngs.append(col)
+        if col.endswith("_lat") or col in ("lat", "latitude"):
+            lats.append(col)
+    return bool(lngs and lats)
+
+
 def _log_semantic_errors(level: str, table: str, column: str,
                          errors: List[str]) -> None:
     """记录语义注解格式问题（不阻断：admin 侧已拦截，这里兜住历史数据与脚本写入）。"""
@@ -326,7 +371,11 @@ class DimensionGraph:
                 by_name = bool(_NAME_COL_RE.search(low))
                 enum_like = _enum_like_meaning(meaning)
                 by_meaning = enum_like or any(tok in meaning for tok in _STRUCT_MEANING_TOKENS)
-                if not (by_name or by_meaning):
+                # 显式声明值域（字段级 values/synonyms 注解）即为维度列，不依赖列名与业务含义文本：
+                # 这是"字段命名完全不一致"时仍能做实体过滤的关键；无注解时该条件恒为假。
+                col_semantic = meta.get("semantic") if isinstance(meta.get("semantic"), dict) else {}
+                if not (by_name or by_meaning) and not (col_semantic.get("values")
+                                                        or col_semantic.get("synonyms")):
                     continue
                 if not spec.is_textual(col):
                     continue

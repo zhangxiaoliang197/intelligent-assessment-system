@@ -54,8 +54,6 @@ const pageTitle = computed(() => {
     'OntologyModel': '本体',
         'OntologyDetail': '本体详情',
         'OntologyBuild': 'AI 构建',
-        'SituationMap': '态势图',
-        'SituationView': '态势图查看',
         'SituationPageDialog': '态势页面',
         'InteractivePage': '态势页面',
         'InteractiveView': '态势页面查看',

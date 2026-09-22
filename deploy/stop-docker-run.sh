@@ -9,7 +9,6 @@ echo "智能评估系统 - 停止所有服务..."
 SERVICES=(
     assessment-frontend
     assessment-admin
-    assessment-situation
     assessment-ipage
     assessment-ontology
     assessment-evaluation

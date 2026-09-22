@@ -7,7 +7,6 @@ export {}
 
 declare module 'vue' {
   export interface GlobalComponents {
-    ArtifactSandbox: typeof import('./components/situation/ArtifactSandbox.vue')['default']
     CurrentStatePanel: typeof import('./components/CurrentStatePanel.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAvatar: typeof import('element-plus/es')['ElAvatar']
@@ -62,22 +61,10 @@ declare module 'vue' {
     PageSandbox: typeof import('./components/interactive/PageSandbox.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
-    SituationChartCard: typeof import('./components/situation/SituationChartCard.vue')['default']
-    SituationChartGrid: typeof import('./components/situation/SituationChartGrid.vue')['default']
-    SituationLayoutRenderer: typeof import('./components/situation/SituationLayoutRenderer.vue')['default']
-    SituationMapSlot: typeof import('./components/situation/SituationMapSlot.vue')['default']
-    SituationMetricsCard: typeof import('./components/situation/SituationMetricsCard.vue')['default']
-    SituationNarrative: typeof import('./components/situation/SituationNarrative.vue')['default']
-    SituationSkillDrawer: typeof import('./components/situation/SituationSkillDrawer.vue')['default']
-    SituationSkillEditorDialog: typeof import('./components/situation/SituationSkillEditorDialog.vue')['default']
-    SituationSkillMarkdownDialog: typeof import('./components/situation/SituationSkillMarkdownDialog.vue')['default']
-    SituationSkillParametersDialog: typeof import('./components/situation/SituationSkillParametersDialog.vue')['default']
-    SituationSkillToolbar: typeof import('./components/situation/SituationSkillToolbar.vue')['default']
-    SituationToolbar: typeof import('./components/situation/SituationToolbar.vue')['default']
-    SituationTopicExplorer: typeof import('./components/situation/SituationTopicExplorer.vue')['default']
     SkillEditorDialog: typeof import('./components/evaluation/SkillEditorDialog.vue')['default']
     SkillMarkdownDialog: typeof import('./components/evaluation/SkillMarkdownDialog.vue')['default']
     SkillOperationsDrawer: typeof import('./components/evaluation/SkillOperationsDrawer.vue')['default']
+    SkillSelector: typeof import('./components/interactive/SkillSelector.vue')['default']
   }
   export interface ComponentCustomProperties {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

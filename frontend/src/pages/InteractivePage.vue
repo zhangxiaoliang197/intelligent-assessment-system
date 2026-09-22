@@ -75,6 +75,16 @@
 
       <!-- 输入区：仅作为"修改当前页面"入口 -->
       <div class="composer">
+        <!-- 技能策略：会话级生效，作用于本会话后续每一轮修订（默认"关闭技能"） -->
+        <div class="composer-skill">
+          <SkillSelector
+            :model-value="store.effectiveSkillChoice"
+            :skills="store.skills"
+            :disabled="!store.skillsEnabled"
+            disabled-hint="服务端已禁用技能匹配（IPAGE_SKILL_MATCH_ENABLED=false），本轮一律不套用技能"
+            @update:model-value="store.setSkillChoice"
+          />
+        </div>
         <el-input
           v-model="input"
           type="textarea"
@@ -110,6 +120,11 @@
         <el-icon class="rotating"><Loading /></el-icon>
         <span>{{ activeStepLabel || '正在修改页面…' }}</span>
         <el-button size="small" text type="danger" @click="store.cancel()">取消</el-button>
+      </div>
+      <!-- 本轮套用的技能（生成剧本）：可解释命中方式与匹配度 -->
+      <div v-if="appliedSkillBar" class="skill-bar">
+        <el-tag size="small" :type="appliedSkillBar.type" effect="plain">{{ appliedSkillBar.text }}</el-tag>
+        <span class="skill-reason">{{ appliedSkillBar.reason }}</span>
       </div>
       <div v-if="store.status === 'ready' && store.intent === 'data_page' && store.html" class="canvas-wrap">
         <PageSandbox :html="store.html" :bundle="store.dataBundle" />
@@ -148,6 +163,7 @@ import {
   CircleCheck, WarningFilled, DataAnalysis,
 } from '@element-plus/icons-vue'
 import PageSandbox from '@/components/interactive/PageSandbox.vue'
+import SkillSelector from '@/components/interactive/SkillSelector.vue'
 import { useInteractiveStore } from '@/stores/interactive'
 
 defineOptions({ name: 'InteractivePage' })
@@ -169,6 +185,22 @@ const canRevise = computed(
 const activeStepLabel = computed(() => {
   const active = store.steps.find((s) => s.state === 'active')
   return active ? `${active.label}${active.detail ? '：' + active.detail : ''}` : ''
+})
+
+// 本轮套用技能的展示条（未套用或未生效时不显示 / 示警）
+const appliedSkillBar = computed(() => {
+  const applied = store.matchedSkill
+  if (!applied || !applied.id || store.status !== 'ready') return null
+  if (!applied.applied) {
+    return { text: `技能未生效：${applied.name}`, type: 'warning' as const, reason: applied.reason }
+  }
+  const label: Record<string, string> = { auto: '自动匹配', manual: '手动指定', inherited: '继承上一版' }
+  const score = typeof applied.score === 'number' ? `｜匹配度 ${applied.score.toFixed(2)}` : ''
+  return {
+    text: `已套用技能：${applied.name}`,
+    type: 'success' as const,
+    reason: `${label[applied.matchedBy] || '已套用'}${score}`,
+  }
 })
 
 // 修订未生效的中文原因（来自后端 Guard 校验问题列表）
@@ -260,6 +292,8 @@ watch(() => store.status, async (val) => {
 
 onMounted(async () => {
   store.resetRound()
+  // 技能目录与服务端默认策略（默认 off=不套用）：供选择器展示与请求参数推导
+  void store.loadSkills()
   const pid = String(route.query.pageId || '')
   if (pid) {
     try {
@@ -373,6 +407,11 @@ onMounted(async () => {
   border-top: 1px solid #eef2f7;
   padding: 12px 14px;
 }
+.composer-skill {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
 .composer-foot {
   display: flex;
   align-items: center;
@@ -425,6 +464,17 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 .revising-bar span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.skill-reason { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .canvas-wrap > * { flex: 1; }
 .direct-card {

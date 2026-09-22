@@ -11,10 +11,10 @@ import time
 from typing import Any, AsyncIterator, Dict, List, Tuple
 
 import config
-from agent.planner import Planner
+from agent.planner import Planner, resolve_skill_datasets
 from agent.researcher import execute_sub_question, build_map_timeline
 from agent.page_writer import PageWriter
-from agent import dimension_graph, entity_filter
+from agent import dimension_graph, entity_filter, skill_catalog, skill_matcher
 from models import PageRecord
 from store import admin_client, page_store
 
@@ -172,7 +172,9 @@ def _merge_incremental(new_plan: Dict[str, Any], parent_entries: List[Dict[str, 
 
 async def _replan_incremental(plan: Dict[str, Any], entries: List[Dict[str, Any]],
                               sql_log: List[Dict[str, Any]], meta: Dict[str, Any],
-                              query: str) -> AsyncIterator[Tuple[str, Dict[str, Any]]]:
+                              query: str,
+                              skill_context: Dict[str, Any] = None,
+                              ) -> AsyncIterator[Tuple[str, Dict[str, Any]]]:
     """修订延续式重规划 + 只补取新增子问题。
 
     产出 ("progress"/"dataset", payload) 事件，最终产出
@@ -184,7 +186,7 @@ async def _replan_incremental(plan: Dict[str, Any], entries: List[Dict[str, Any]
 
     replan_started = time.monotonic()
     try:
-        planner = Planner(meta)
+        planner = Planner(meta, skill_context)
         new_plan = await asyncio.to_thread(planner.plan, query, "", plan)
         logger.info("阶段耗时 修订延续规划=%d ms", _elapsed_ms(replan_started))
     except Exception as exc:
@@ -229,8 +231,119 @@ async def _replan_incremental(plan: Dict[str, Any], entries: List[Dict[str, Any]
                           "sqlLog": merged_logs, "availableIds": available})
 
 
+# ──────────────────────────────────────────────────────────────────
+# 技能（生成剧本）决策与注入
+# ──────────────────────────────────────────────────────────────────
+
+def _skill_meta(skill_context: Dict[str, Any]) -> Dict[str, Any]:
+    """技能套用信息（JSON 安全），写入 plan["skill"] 供落库与前端展示。"""
+    skill = skill_context.get("skill")
+    return {
+        "id": str(skill_context.get("id") or ""),
+        "name": str(getattr(skill, "name", "") or ""),
+        "version": str(getattr(skill, "version", "") or ""),
+        "applied": bool(skill_context.get("applied")),
+        "matchedBy": str(skill_context.get("matchedBy") or ""),
+        "score": skill_context.get("score"),
+        "reason": str(skill_context.get("reason") or ""),
+        "candidates": skill_context.get("candidates") or [],
+        "unresolvedNeeds": skill_context.get("unresolvedNeeds") or [],
+    }
+
+
+def _build_skill_context(skill, matched_by: str, score, reason: str,
+                         candidates: list, meta: Dict[str, Any]) -> Dict[str, Any]:
+    """构造技能上下文：技能对象 + 已按实体语义解析的取数需求。"""
+    needs, unresolved = resolve_skill_datasets(meta, skill)
+    return {
+        "id": skill.id,
+        "applied": True,
+        "matchedBy": matched_by,
+        "score": score,
+        "reason": reason,
+        "candidates": candidates or [],
+        "skill": skill,
+        "needs": needs,
+        "unresolvedNeeds": unresolved,
+    }
+
+
+def _auto_score(result) -> Any:
+    """取自动命中技能的匹配度（候选首位）。"""
+    for item in result.candidates or []:
+        if item.get("id") == result.auto_id:
+            return item.get("score")
+    return None
+
+
+def _resolve_skill(query: str, meta: Dict[str, Any],
+                   parent_plan: Dict[str, Any] = None,
+                   skill_id: str = "", skill_mode: str = "auto") -> Dict[str, Any]:
+    """决定本次生成套用哪个技能。
+
+    优先级：显式指定 > 关闭技能 > 修订继承父页面技能 > 按问题语义自动匹配。
+    任何一步失败都返回 None（走自由规划），不阻断生成。
+    """
+    explicit = str(skill_id or "").strip()
+    if explicit:
+        skill = skill_catalog.get_skill(explicit)
+        if skill is not None:
+            logger.info("本次生成手动指定技能: %s", skill.id)
+            return _build_skill_context(skill, "manual", None,
+                                        f"手动指定技能「{skill.name}」", [], meta)
+        logger.warning("指定的技能 %s 不存在，回退为自动匹配", explicit)
+
+    if str(skill_mode or "auto").strip().lower() == "off":
+        logger.info("skillMode=off，本次不套用技能")
+        return None
+
+    inherited_id = ""
+    if isinstance(parent_plan, dict):
+        inherited_id = str((parent_plan.get("skill") or {}).get("id") or "")
+    if inherited_id:
+        skill = skill_catalog.get_skill(inherited_id)
+        if skill is not None:
+            logger.info("本次生成继承上一版技能: %s", skill.id)
+            return _build_skill_context(skill, "inherited", None,
+                                        f"继承上一版页面所用技能「{skill.name}」", [], meta)
+
+    try:
+        result = skill_matcher.match(query)
+    except Exception as exc:
+        logger.warning("技能匹配异常，本次不套用技能: %s", exc)
+        return None
+    if not result.auto:
+        if result.reason:
+            logger.info("本次未自动套用技能：%s", result.reason)
+        return None
+
+    skill = skill_catalog.get_skill(result.auto_id)
+    if skill is None:
+        return None
+    logger.info("本次生成自动套用技能: %s（%s）", skill.id, result.reason)
+    return _build_skill_context(skill, "auto", _auto_score(result), result.reason,
+                                result.candidates, meta)
+
+
+def _finalize_skill(plan: Dict[str, Any], skill_context: Dict[str, Any]) -> None:
+    """把技能信息写入规划；规划降级为确定性兜底时如实标记未生效。
+
+    未套用技能时清掉可能从父页面继承来的技能记录 —— 否则「本轮关闭了技能」
+    的新页面仍会显示上一版的技能标签。
+    """
+    if not skill_context:
+        plan.pop("skill", None)
+        return
+    if plan.get("_fallback") or plan.get("_planner_error"):
+        skill_context["applied"] = False
+        skill_context["reason"] = "规划降级为确定性兜底，本次未按技能剧本生成"
+    plan["skill"] = _skill_meta(skill_context)
+
+
 async def generate_stream(page: PageRecord, meta: Dict[str, Any],
-                          query: str, database_id: str = "") -> AsyncIterator[Dict[str, Any]]:
+                          query: str, database_id: str = "",
+                          skill_id: str = "", skill_mode: str = "auto",
+                          ) -> AsyncIterator[Dict[str, Any]]:
     """生成流程主循环。
 
     Args:
@@ -238,11 +351,15 @@ async def generate_stream(page: PageRecord, meta: Dict[str, Any],
         meta: /export/for-llm 元数据
         query: 用户问题（修订场景即反馈意见）
         database_id: 可选数据源限定
+        skill_id: 显式指定的技能 id（非空即手动指定）
+        skill_mode: auto=按问题语义自动匹配技能；off=关闭技能走自由规划
     Yields:
         SSE 事件 dict：{"event": ..., "data": ...}
     """
     def ev(event: str, **data) -> Dict[str, Any]:
         return {"event": event, "data": {"pageId": page.pageId, **data}}
+
+    skill_context: Dict[str, Any] = None
 
     # ── 修订场景：复用父页面规划与数据包 ──
     parent = None
@@ -273,13 +390,17 @@ async def generate_stream(page: PageRecord, meta: Dict[str, Any],
         _save(page)
         yield ev("plan", plan=_public_plan(plan), title=page.title, reused=True)
 
+        # 技能：显式指定 > 关闭 > 继承父页面技能（修订默认延续同一套生成方法论）
+        skill_context = _resolve_skill(query, meta, plan, skill_id, skill_mode)
+
         # ── 修订增量取数：延续式重规划，只为修改意见带来的新数据需求补取数据 ──
         # 「加入飞行轨迹」这类意见本质是取数需求；只换呈现的修订链路永远无法生效。
         # 已有子问题原样沿用（直接继承父条目，不重复查询），仅新增/变更的口径重新取数。
         yield ev("progress", stage="plan", message="正在按修改意见延续规划…")
         original_plan = plan
         result: Dict[str, Any] = {}
-        async for kind, payload in _replan_incremental(plan, entries, sql_log, meta, query):
+        async for kind, payload in _replan_incremental(plan, entries, sql_log, meta, query,
+                                                       skill_context):
             if kind == "progress":
                 yield ev("progress", **payload)
             elif kind == "dataset":
@@ -299,6 +420,7 @@ async def generate_stream(page: PageRecord, meta: Dict[str, Any],
         map_timeline = build_map_timeline(entries)
         if map_timeline:
             bundle["mapTimeline"] = map_timeline
+        _finalize_skill(plan, skill_context)
         page.plan = plan
         page.dataBundle = bundle
         page.sqlLog = sql_log
@@ -310,7 +432,9 @@ async def generate_stream(page: PageRecord, meta: Dict[str, Any],
         yield ev("progress", stage="plan", message="正在分析问题并规划页面结构…")
         plan_started = time.monotonic()
         try:
-            planner = Planner(meta)
+            # 技能决策在规划之前：命中后把取数剧本与区块剧本作为脚手架注入 Planner
+            skill_context = _resolve_skill(query, meta, None, skill_id, skill_mode)
+            planner = Planner(meta, skill_context)
             parent_query = ""
             plan = await asyncio.to_thread(planner.plan, query, parent_query)
             logger.info("阶段耗时 规划(Planner)=%d ms", _elapsed_ms(plan_started))
@@ -333,6 +457,7 @@ async def generate_stream(page: PageRecord, meta: Dict[str, Any],
             yield ev("done", status="ready", intent="general")
             return
 
+        _finalize_skill(plan, skill_context)
         page.title = str(plan.get("title") or query[:25])
         page.intent = "data_page"
         _save(page)
@@ -391,10 +516,10 @@ async def generate_stream(page: PageRecord, meta: Dict[str, Any],
             # 页面「用户问题」用原始问题，修改意见单独作为反馈传入
             html, write_meta = await asyncio.to_thread(
                 writer.redesign, str(bundle.get("question") or query),
-                plan, bundle, parent.html, query)
+                plan, bundle, parent.html, query, skill_context)
         else:
             html, write_meta = await asyncio.to_thread(
-                writer.generate, query, plan, bundle)
+                writer.generate, query, plan, bundle, skill_context)
     except Exception as exc:
         logger.error("PageWriter 异常: %s", exc)
         page.status = "failed"

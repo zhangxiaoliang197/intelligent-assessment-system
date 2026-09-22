@@ -87,13 +87,8 @@ export default defineConfig(({ mode }) => {
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')
       },
-      '/api/situation': {
-        target: 'http://localhost:10257',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
-      },
       '/api/ipage': {
-        target: 'http://localhost:10259',
+        target: 'http://localhost:10257',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')
       },

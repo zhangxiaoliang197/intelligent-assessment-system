@@ -42,24 +42,25 @@ fi
 
 echo "Skill 目录校验通过: 30 个内置 Skill"
 
-SITUATION_READY=0
+IPAGE_READY=0
 for i in $(seq 1 60); do
-    if curl -fsS http://127.0.0.1:10257/situation/health >/dev/null 2>&1; then
-        SITUATION_READY=1
+    if curl -fsS http://127.0.0.1:10257/ipage/health >/dev/null 2>&1; then
+        IPAGE_READY=1
         break
     fi
     sleep 1
 done
-if [[ "$SITUATION_READY" -ne 1 ]]; then
-    echo "ERROR: 态势服务未通过健康检查"
-    docker logs --tail 100 assessment-situation
+if [[ "$IPAGE_READY" -ne 1 ]]; then
+    echo "ERROR: 态势页面服务未通过健康检查"
+    docker logs --tail 100 assessment-ipage
     exit 1
 fi
-SITUATION_SKILLS="$(curl -fsS http://127.0.0.1:10257/situation/skills?limit=100)"
-if ! echo "$SITUATION_SKILLS" | grep -Eq '"catalogTotal"[[:space:]]*:[[:space:]]*30'; then
-    echo "ERROR: 态势 Skill 目录未返回 30 个 Skill"
+IPAGE_HEALTH="$(curl -fsS http://127.0.0.1:10257/ipage/health)"
+if ! echo "$IPAGE_HEALTH" | grep -Eq '"skills"[[:space:]]*:[[:space:]]*9'; then
+    echo "ERROR: 技能目录未加载到 9 个技能"
+    echo "$IPAGE_HEALTH"
     exit 1
 fi
-echo "态势服务校验通过: 30 个内置 Skill"
+echo "态势页面服务校验通过: 9 个技能"
 "${COMPOSE[@]}" ps
 echo "访问地址: http://localhost:10086"

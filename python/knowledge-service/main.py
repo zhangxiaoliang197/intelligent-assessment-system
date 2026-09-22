@@ -221,6 +221,10 @@ knowledge_db, chunks_db, categories_db, tags_db = load_db()
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-zh-v1.5"
 EMBEDDING_MAX_TOKENS = 512  # BGE-small-zh 上下文窗口
 
+# ── 通用向量接口限制（/knowledge/embed 供其它服务做语义匹配，不落库）──
+EMBED_MAX_TEXTS = 64   # 单次请求最大文本条数
+EMBED_MAX_CHARS = 512  # 单条文本最大字符数（约等于模型上下文窗口）
+
 
 # ── 文本分片 ──
 DELIMITER = r'[。！？\n;；!?]'
@@ -396,6 +400,11 @@ class KnowledgeSearchRequest(BaseModel):
     query: str
     top_k: int = 5
     category: Optional[str] = None
+
+
+class EmbedRequest(BaseModel):
+    """通用向量化请求：供其它服务（如 ipage 的技能语料匹配）做纯编码。"""
+    texts: List[str] = []
 
 
 # ═══════════════════════ API ═══════════════════════
@@ -656,6 +665,53 @@ async def search_knowledge(request: KnowledgeSearchRequest):
         logger.error(f"混合检索失败: {e}\n{traceback.format_exc()}")
         return {"success": True, "query": request.query, "total": 0, "results": [],
                 "message": f"检索异常: {str(e)}"}
+
+
+@app.post("/knowledge/embed")
+async def embed(request: EmbedRequest):
+    """文本 → 向量（纯编码，不写 Qdrant）。
+
+    供其它服务做语义匹配（如 ipage 用用户问题与技能语料比相似度）使用：
+    与知识库文档检索完全解耦，不建集合、不落库。入参有单次条数与单条长度上限，
+    超限截断并告警，避免本接口被当作通用算力入口滥用。
+    """
+    if not request.texts:
+        return {"success": False, "message": "texts 不能为空", "data": {}}
+
+    texts = [str(t or "") for t in request.texts]
+    if len(texts) > EMBED_MAX_TEXTS:
+        logger.warning(f"向量化请求文本条数 {len(texts)} 超过上限 {EMBED_MAX_TEXTS}，已截断")
+        texts = texts[:EMBED_MAX_TEXTS]
+
+    truncated_count = 0
+    clipped: List[str] = []
+    for text in texts:
+        if len(text) > EMBED_MAX_CHARS:
+            truncated_count += 1
+            text = text[:EMBED_MAX_CHARS]
+        clipped.append(text)
+
+    if not any(t.strip() for t in clipped):
+        return {"success": False, "message": "texts 中没有有效文本", "data": {}}
+
+    try:
+        vectors = embed_texts(clipped)
+    except Exception as e:
+        logger.error(f"向量化失败: {e}\n{traceback.format_exc()}")
+        return {"success": False, "message": f"向量化失败: {str(e)}", "data": {}}
+
+    if truncated_count:
+        logger.warning(f"向量化请求有 {truncated_count} 条文本超过 {EMBED_MAX_CHARS} 字符，已截断")
+
+    return {
+        "success": True,
+        "data": {
+            "vectors": vectors,
+            "dim": len(vectors[0]) if vectors else 0,
+            "model": EMBEDDING_MODEL_NAME,
+            "truncatedTexts": truncated_count,
+        },
+    }
 
 
 @app.get("/knowledge/list")

@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 import config
 from llm_client import call_llm_with_tools
 from agent import prompts
+from agent import dimension_graph
 
 logger = logging.getLogger("ipage-service")
 
@@ -113,29 +114,145 @@ def _available_dataset_ids(meta: Dict[str, Any]) -> set:
 
 
 def _geo_capable_ids(meta: Dict[str, Any]) -> set:
-    """根据字段名启发式判断具备成对经纬度的数据集。"""
+    """具备成对经纬度的数据集（注解优先，列名启发式兜底）。"""
     if not isinstance(meta, dict) or not meta.get("success"):
         return set()
     schemas = (meta.get("data", {}) or {}).get("schemas", []) or []
     capable = set()
     for schema in schemas:
-        fields = (schema or {}).get("fields") or (schema or {}).get("columns") or []
-        lngs, lats = [], []
-        for f in fields:
-            if not isinstance(f, dict):
-                continue
-            col = str(f.get("name") or f.get("column") or f.get("fieldName") or "").lower()
-            if col.endswith("_lng") or col in ("lng", "lon", "longitude"):
-                lngs.append(col)
-            if col.endswith("_lat") or col in ("lat", "latitude"):
-                lats.append(col)
-        ds_id = str(schema.get("datasetId") or schema.get("id") or "").strip()
-        if ds_id and lngs and lats:
+        ds_id = str((schema or {}).get("datasetId") or (schema or {}).get("id") or "").strip()
+        if ds_id and _dataset_geo_capable(schema):
             capable.add(ds_id)
     return capable
 
 
-def _validate(plan: Dict[str, Any], available: set, geo_capable: set) -> Optional[str]:
+def _dataset_geo_capable(schema: Dict[str, Any]) -> bool:
+    """单个数据集是否具备成对经纬度字段（注解 geometry/role 优先，其次列名）。"""
+    if any(dimension_graph.annotated_geo_pair(schema)):
+        return True
+    return dimension_graph.column_name_geo_capable(schema)
+
+
+def _dataset_roles(schema: Dict[str, Any]) -> set:
+    """数据集内字段级语义注解声明的角色集合（seq/time/radius 等）。"""
+    roles = set()
+    fields = (schema or {}).get("fields") or (schema or {}).get("columns") or []
+    for f in fields:
+        if not isinstance(f, dict):
+            continue
+        role = str(dimension_graph.parse_semantic(f.get("semanticJson")).get("role") or "").strip()
+        if role:
+            roles.add(role)
+    return roles
+
+
+def resolve_skill_datasets(meta: Dict[str, Any], skill: Any) -> tuple:
+    """把技能的实体语义槽位确定性解析成真实数据集（零 LLM）。
+
+    技能只声明「需要哪类实体、什么形态」，数据集归属由数据源注解 ``entityKind`` 决定 ——
+    因此技能换数据源不失效。解析不到的需求**不丢弃**：保留需求描述并标记 resolved=False，
+    交由规划阶段按数据集目录自行选表；同时计入 unresolved 供页面提示。
+    技能也可省略 entityKind，表示不限定实体语义、直接按目录选表。
+
+    Args:
+        meta: /export/for-llm 元数据
+        skill: skill_catalog.Skill 对象（可为 None）
+
+    Returns:
+        (needs, unresolved)：needs 覆盖全部需求，已解析项带 datasetId 且 resolved=True，
+        未解析项 datasetId 为空、resolved=False；unresolved 为可读中文原因列表。
+    """
+    needs: List[Dict[str, Any]] = []
+    unresolved: List[str] = []
+    if skill is None:
+        return needs, unresolved
+
+    schemas = []
+    if isinstance(meta, dict) and meta.get("success"):
+        schemas = (meta.get("data", {}) or {}).get("schemas", []) or []
+
+    catalog = []
+    for schema in schemas:
+        if not isinstance(schema, dict):
+            continue
+        ds_id = str(schema.get("datasetId") or schema.get("id") or "").strip()
+        if not ds_id:
+            continue
+        semantic = dimension_graph.parse_semantic(schema.get("semanticJson"))
+        catalog.append({
+            "datasetId": ds_id,
+            "datasetName": str(schema.get("name") or schema.get("tableName") or ds_id),
+            "entityKind": str(semantic.get("entityKind") or ""),
+            "geoCapable": _dataset_geo_capable(schema),
+            "roles": _dataset_roles(schema),
+        })
+
+    for need in (getattr(skill, "needs", None) or []):
+        if not need.entity_kind:
+            # 不限定实体语义：交给规划阶段按目录选表（事件/任务这类语义无法用实体大类表达）
+            needs.append({
+                "entityKind": "", "mode": need.mode, "geo": need.geo,
+                "question": need.question, "datasetId": "", "datasetName": "",
+                "resolved": False, "reason": "未限定实体语义，按目录选表",
+            })
+            continue
+        candidates = [
+            item for item in catalog
+            if item["entityKind"] == need.entity_kind
+            and (need.geo == "none" or item["geoCapable"])
+        ]
+        if not candidates:
+            reason = (f"entityKind={need.entity_kind}"
+                      + (f" 且需具备坐标（geo={need.geo}）" if need.geo != "none" else "")
+                      + " 没有匹配的数据集")
+            unresolved.append(reason)
+            # 未解析的需求不丢弃：保留需求描述，交由规划阶段按目录选表 ——
+            # 直接丢弃会让技能真正想表达的数据意图彻底丢失。
+            needs.append({
+                "entityKind": need.entity_kind, "mode": need.mode, "geo": need.geo,
+                "question": need.question, "datasetId": "", "datasetName": "",
+                "resolved": False, "reason": reason,
+            })
+            continue
+        # 确定性排序：地理形态所需的字段角色命中数多者优先，其余按目录顺序
+        wanted = {"tracks": {"seq", "time"}, "circles": {"radius"}}.get(need.geo, set())
+        candidates.sort(key=lambda item: len(wanted & item["roles"]), reverse=True)
+        chosen = candidates[0]
+        needs.append({
+            "entityKind": need.entity_kind,
+            "mode": need.mode,
+            "geo": need.geo,
+            "question": need.question,
+            "datasetId": chosen["datasetId"],
+            "datasetName": chosen["datasetName"],
+            "resolved": True,
+            "reason": "",
+        })
+    return needs, unresolved
+
+
+def _validate_skill_constraints(sections: List[Any], kinds: List[str],
+                                skill_context: Dict[str, Any] = None) -> Optional[str]:
+    """校验技能声明的硬性约束；未套用技能时恒为通过（不影响自由规划）。
+
+    只补通用校验覆盖不到的部分（区块类型齐备性）；「地图 ref 必须声明 geo」
+    已由上面的通用校验统一处理。
+    """
+    if not isinstance(skill_context, dict) or not skill_context.get("applied"):
+        return None
+    skill = skill_context.get("skill")
+    if skill is None:
+        return None
+    for kind in (getattr(skill, "required_sections", None) or []):
+        if kind not in kinds:
+            return f"技能「{skill.name}」要求页面必须包含 {kind} 区块"
+    if (getattr(skill, "map_modes", None) or []) and "map" not in kinds:
+        return f"技能「{skill.name}」要求包含地图区块（{'/'.join(skill.map_modes)}）"
+    return None
+
+
+def _validate(plan: Dict[str, Any], available: set, geo_capable: set,
+              skill_context: Dict[str, Any] = None) -> Optional[str]:
     """校验规划，返回错误原因；None 表示通过。"""
     if not isinstance(plan, dict):
         return "工具参数不是对象"
@@ -204,7 +321,7 @@ def _validate(plan: Dict[str, Any], available: set, geo_capable: set) -> Optiona
             return f"sections[{idx}].ref={ref} 未命中任何 subQuestion"
         if kind == "map" and ref and ref not in geo_q_ids:
             return f"sections[{idx}] 地图区块引用的 {ref} 未声明 geo 形态"
-    return None
+    return _validate_skill_constraints(sections, kinds, skill_context)
 
 
 def _fallback_plan(meta: Dict[str, Any], query: str) -> Dict[str, Any]:
@@ -241,8 +358,9 @@ def _fallback_plan(meta: Dict[str, Any], query: str) -> Dict[str, Any]:
 class Planner:
     """页面规划智能体。"""
 
-    def __init__(self, meta: Dict[str, Any]):
+    def __init__(self, meta: Dict[str, Any], skill_context: Dict[str, Any] = None):
         self.meta = meta
+        self.skill_context = skill_context if isinstance(skill_context, dict) else None
         self.available = _available_dataset_ids(meta)
         self.geo_capable = _geo_capable_ids(meta)
 
@@ -268,9 +386,11 @@ class Planner:
             }
         catalog = prompts.format_meta_catalog(self.meta)
         if isinstance(parent_plan, dict) and (parent_plan.get("subQuestions")):
-            messages = prompts.build_replan_messages(query, catalog, parent_plan)
+            messages = prompts.build_replan_messages(query, catalog, parent_plan,
+                                                      self.skill_context)
         else:
-            messages = prompts.build_plan_messages(query, catalog, parent_query)
+            messages = prompts.build_plan_messages(query, catalog, parent_query,
+                                                   self.skill_context)
         last_error = ""
         for attempt in range(1, 4):
             try:
@@ -314,7 +434,7 @@ class Planner:
                      "content": "arguments 无效，请填写完整 JSON 重新调用。"},
                 ]
                 continue
-            err = _validate(args, self.available, self.geo_capable)
+            err = _validate(args, self.available, self.geo_capable, self.skill_context)
             if err:
                 last_error = err
                 logger.warning("Planner 第 %s 次校验失败: %s", attempt, err)

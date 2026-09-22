@@ -47,13 +47,12 @@ mkdir -p "$DATA_DIR/qdrant"
 mkdir -p "$DATA_DIR/qa"
 mkdir -p "$DATA_DIR/ontology"
 mkdir -p "$DATA_DIR/evaluation"
-mkdir -p "$DATA_DIR/situation"
 mkdir -p "$DATA_DIR/ipage"
 mkdir -p "$DATA_DIR/config"
 
 # ─── 日志目录（统一日志持久化）───
 LOG_DIR_HOST="$BASE_DIR/logs"
-mkdir -p "$LOG_DIR_HOST"/{knowledge,qa,indicator,evaluation,ontology,situation,ipage,admin}
+mkdir -p "$LOG_DIR_HOST"/{knowledge,qa,indicator,evaluation,ontology,ipage,admin}
 
 # ─── 日志环境变量（可被外部环境变量覆盖）───
 LOG_ENV="${LOG_ENV:-prod}"
@@ -63,7 +62,6 @@ LOG_MAX_SIZE_MB="${LOG_MAX_SIZE_MB:-100}"
 INTERNAL_SERVICE_TOKEN="${INTERNAL_SERVICE_TOKEN:-}"
 ADMIN_API_TOKEN="${ADMIN_API_TOKEN:-}"
 ADMIN_UI_PASSWORD="${ADMIN_UI_PASSWORD:-}"
-SITUATION_LLM_ALLOWED_HOSTS="${SITUATION_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}"
 IPAGE_LLM_ALLOWED_HOSTS="${IPAGE_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}"
 if [ ${#INTERNAL_SERVICE_TOKEN} -lt 24 ] || [ "$INTERNAL_SERVICE_TOKEN" = "local-development-token" ]; then
     echo "ERROR: INTERNAL_SERVICE_TOKEN 必须显式配置为至少 24 位随机值"
@@ -132,7 +130,6 @@ fi
 SERVICE_CONTAINERS=(
     assessment-frontend
     assessment-admin
-    assessment-situation
     assessment-ipage
     assessment-ontology
     assessment-evaluation
@@ -213,7 +210,9 @@ docker run -d --name assessment-admin \
     -e SPRING_PROFILES_ACTIVE="$LOG_ENV" \
     -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
     -e ADMIN_API_TOKEN="$ADMIN_API_TOKEN" \
-    -e IPAGE_SERVICE_URL="http://assessment-ipage:10259" \
+    -e IPAGE_SERVICE_URL="http://assessment-ipage:10257" \
+    -e ANNOTATION_DRAFT_ENABLED="${ANNOTATION_DRAFT_ENABLED:-false}" \
+    -e ANNOTATION_DRAFT_MAX_COLUMNS="${ANNOTATION_DRAFT_MAX_COLUMNS:-40}" \
     -e LOG_PATH="/app/logs" \
     -e LOG_LEVEL="$LOG_LEVEL" \
     -v "$LOG_DIR_HOST/admin:/app/logs" \
@@ -345,43 +344,17 @@ docker run -d --name assessment-ontology \
     --restart always \
     assessment-ontology:latest
 
-echo "[启动] 态势图服务 (10257)..."
-docker run -d --name assessment-situation \
+echo "[启动] 态势页面服务 (10257)..."
+docker run -d --name assessment-ipage \
     --network "$NET_NAME" \
     -p 127.0.0.1:10257:10257 \
     -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
-    -e SITUATION_SKILL_DB="/app/data/situation_skills.sqlite3" \
-    -e SITUATION_SKILL_MD_OVERRIDE_DIR="/app/data/situation-skill-markdown-overrides" \
-    -e SITUATION_ALLOW_DATA_FALLBACK="true" \
-    -e SITUATION_DATA_ROW_LIMIT="200" \
-    -e SITUATION_STREAM_REPLAY_TTL="300" \
-    -e SITUATION_MAX_INFLIGHT="${SITUATION_MAX_INFLIGHT:-8}" \
-    -e SITUATION_MAX_CONCURRENT="${SITUATION_MAX_CONCURRENT:-2}" \
-    -e SITUATION_MAX_PER_USER="${SITUATION_MAX_PER_USER:-2}" \
-    -e SITUATION_GENERATION_TIMEOUT="${SITUATION_GENERATION_TIMEOUT:-240}" \
-    -e SITUATION_LLM_EVIDENCE_ROWS="${SITUATION_LLM_EVIDENCE_ROWS:-0}" \
-    -e SITUATION_LLM_ALLOWED_HOSTS="$SITUATION_LLM_ALLOWED_HOSTS" \
-    -e SITUATION_CORS_ORIGINS="${SITUATION_CORS_ORIGINS:-http://localhost:10086,http://127.0.0.1:10086}" \
-    -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
-    -e LLM_MAX_TOKENS="24000" \
-    -e LOG_ENV="$LOG_ENV" \
-    -e LOG_LEVEL="$LOG_LEVEL" \
-    -e LOG_DIR="/app/logs" \
-    -e LOG_RETENTION_DAYS="$LOG_RETENTION_DAYS" \
-    -e LOG_MAX_SIZE_MB="$LOG_MAX_SIZE_MB" \
-    -v "$DATA_DIR/situation:/app/data" \
-    -v "$LOG_DIR_HOST/situation:/app/logs" \
-    --log-driver json-file \
-    --log-opt max-size=50m \
-    --log-opt max-file=5 \
-    --restart always \
-    assessment-situation:latest
-
-echo "[启动] 智能交互页面服务 (10259)..."
-docker run -d --name assessment-ipage \
-    --network "$NET_NAME" \
-    -p 127.0.0.1:10259:10259 \
-    -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
+    -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
+    -e IPAGE_SERVICE_PORT="10257" \
+    -e IPAGE_SKILL_MATCH_ENABLED="${IPAGE_SKILL_MATCH_ENABLED:-true}" \
+    -e IPAGE_SKILL_MATCH_HIGH="${IPAGE_SKILL_MATCH_HIGH:-0.62}" \
+    -e IPAGE_SKILL_MATCH_LOW="${IPAGE_SKILL_MATCH_LOW:-0.50}" \
+    -e IPAGE_SKILL_DEFAULT_MODE="${IPAGE_SKILL_DEFAULT_MODE:-off}" \
     -e IPAGE_DB="/app/data/ipage_pages.sqlite3" \
     -e IPAGE_MAX_INFLIGHT="${IPAGE_MAX_INFLIGHT:-8}" \
     -e IPAGE_MAX_CONCURRENT="${IPAGE_MAX_CONCURRENT:-2}" \
@@ -461,26 +434,27 @@ if ! echo "$SKILL_RESPONSE" | grep -Eq '"builtInTotal"[[:space:]]*:[[:space:]]*3
 fi
 echo "  Skill 目录接口校验通过: 30 个内置 Skill"
 
-SITUATION_READY=0
+IPAGE_READY=0
 for i in $(seq 1 60); do
-    if curl -fsS http://127.0.0.1:10257/situation/health >/dev/null 2>&1; then
-        SITUATION_READY=1
-        echo "  态势服务健康检查通过 (${i}s)"
+    if curl -fsS http://127.0.0.1:10257/ipage/health >/dev/null 2>&1; then
+        IPAGE_READY=1
+        echo "  态势页面服务健康检查通过 (${i}s)"
         break
     fi
     sleep 1
 done
-if [ "$SITUATION_READY" -ne 1 ]; then
-    echo "ERROR: 态势服务未通过健康检查"
-    docker logs --tail 100 assessment-situation
+if [ "$IPAGE_READY" -ne 1 ]; then
+    echo "ERROR: 态势页面服务未通过健康检查"
+    docker logs --tail 100 assessment-ipage
     exit 1
 fi
-SITUATION_SKILLS="$(curl -fsS http://127.0.0.1:10257/situation/skills?limit=100)"
-if ! echo "$SITUATION_SKILLS" | grep -Eq '"catalogTotal"[[:space:]]*:[[:space:]]*30'; then
-    echo "ERROR: 态势 Skill 目录未返回 30 个 Skill"
+IPAGE_HEALTH="$(curl -fsS http://127.0.0.1:10257/ipage/health)"
+if ! echo "$IPAGE_HEALTH" | grep -Eq '"skills"[[:space:]]*:[[:space:]]*9'; then
+    echo "ERROR: 技能目录未加载到 9 个技能"
+    echo "$IPAGE_HEALTH"
     exit 1
 fi
-echo "  态势 Skill 目录校验通过: 30 个内置 Skill"
+echo "  技能目录校验通过: 9 个技能"
 
 # ─── 状态汇总 ───
 echo ""

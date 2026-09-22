@@ -17,7 +17,7 @@
 </template>
 
 <script setup lang="ts">
-// ── 智能交互页面沙箱（独立于 situation ArtifactSandbox，协议为 ipage:*）──
+// ── 智能交互页面沙箱（协议为 ipage:*）──
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { Document } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'

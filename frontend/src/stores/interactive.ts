@@ -1,13 +1,13 @@
 /**
  * 态势页面（ipage）Pinia store。
  *
- * 与 situation store 完全独立：SSE 事件 plan/dataset/progress/page/direct/done/error
- * 落到本 store，PageSandbox 用 html + dataBundle 渲染沙箱页面。
+ * SSE 事件 plan/dataset/progress/page/direct/done/error 落到本 store，
+ * PageSandbox 用 html + dataBundle 渲染沙箱页面。
  * 会话模型：主对话框页（SituationPageDialog）与态势页（InteractivePage）
  * 共享同一会话，消息由后端落库，本地仅做即时回显。
  */
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import api from '@/services/api'
 
 export interface IpageStep {
@@ -55,6 +55,38 @@ export interface IpageGenerateOptions {
   dataSourceId?: string
   parentPageId?: string
   source?: string
+  /** 显式指定的技能 id（非空即手动指定） */
+  skillId?: string
+  /** 技能套用方式：auto=按问题语义自动匹配；off=关闭技能走自由规划 */
+  skillMode?: 'auto' | 'off'
+}
+
+/** 技能（生成剧本）元数据：列表接口下发，不含正文 */
+export interface IpageSkill {
+  id: string
+  name: string
+  description: string
+  category: string
+  order: number
+  triggerCount: number
+  requiredEntityKinds: string[]
+  mapModes: string[]
+  playback: boolean
+  focusMetrics: string[]
+  version: string
+}
+
+/** 本轮生成实际套用的技能（后端写在 plan.skill 中） */
+export interface IpageMatchedSkill {
+  id: string
+  name: string
+  version: string
+  applied: boolean
+  matchedBy: '' | 'auto' | 'manual' | 'inherited'
+  score: number | null
+  reason: string
+  candidates: Array<{ id: string; name: string; score: number }>
+  unresolvedNeeds: string[]
 }
 
 export const useInteractiveStore = defineStore('interactive', () => {
@@ -86,6 +118,41 @@ export const useInteractiveStore = defineStore('interactive', () => {
   const sessionId = ref('')
   const sessions = ref<IpageSession[]>([])
   const messages = ref<IpageChatMessage[]>([])
+
+  // ── 技能（生成剧本）──
+  const skills = ref<IpageSkill[]>([])
+  const skillsEnabled = ref(true)
+  /** 服务端下发的默认策略：off=默认不套用；auto=默认自动匹配（回退值 off） */
+  const skillDefaultMode = ref<'off' | 'auto'>('off')
+  /**
+   * 会话级技能选择（三态：__off__ 关闭 / __auto__ 自动匹配 / 技能 id 手动指定）。
+   *
+   * 空串表示"用户尚未显式选择"，显示与请求参数都以 effectiveSkillChoice 为准 ——
+   * 这样"选择器看到的值"与"实际发出的策略"永远一致，且两个入口（主对话框 / 工作台）
+   * 共用同一份状态，不再各自硬编码默认值。
+   */
+  const skillChoice = ref('')
+  /** 本轮实际套用的技能（含匹配方式、匹配度与未生效需求），驱动页面标签展示 */
+  const matchedSkill = computed<IpageMatchedSkill | null>(
+    () => (plan.value?.skill as IpageMatchedSkill) || null,
+  )
+  /** 生效的技能选择：已显式选择用选择值，否则用服务端默认策略 */
+  const effectiveSkillChoice = computed(
+    () => skillChoice.value || (skillDefaultMode.value === 'auto' ? '__auto__' : '__off__'),
+  )
+
+  /** 设置会话级技能选择（'' 表示恢复默认策略） */
+  function setSkillChoice(value: string) {
+    skillChoice.value = value || ''
+  }
+
+  /** 会话级选择 → 请求参数（三态映射；显式技能时后端按手动指定处理，忽略 skillMode） */
+  function resolveSkillChoice(): { skillId: string; skillMode: 'auto' | 'off' } {
+    const choice = effectiveSkillChoice.value
+    if (choice === '__off__') return { skillId: '', skillMode: 'off' }
+    if (choice === '__auto__') return { skillId: '', skillMode: 'auto' }
+    return { skillId: choice, skillMode: 'auto' }
+  }
 
   let eventSource: EventSource | null = null
   let generationEpoch = 0
@@ -255,12 +322,24 @@ export const useInteractiveStore = defineStore('interactive', () => {
     status.value = 'generating'
     setStep('plan', 'active')
     try {
+      // 技能策略：调用方显式传参时以传参为准（并回写到会话级状态，保证两个入口同步），
+      // 否则沿用会话级选择 / 服务端默认策略（默认 off = 不套用技能）
+      const explicitSkill = !!opts.skillMode
+      const skillOpts = explicitSkill
+        ? { skillId: opts.skillId || '', skillMode: opts.skillMode as 'auto' | 'off' }
+        : resolveSkillChoice()
+      if (explicitSkill) {
+        setSkillChoice(skillOpts.skillMode === 'off' ? '__off__'
+          : (skillOpts.skillId ? skillOpts.skillId : '__auto__'))
+      }
       const resp: any = await api.post('/ipage/generate', {
         query: q2,
         source: opts.source || 'manual',
         dataSourceId: opts.dataSourceId || '',
         parentPageId: opts.parentPageId || '',
         sessionId: opts.sessionId || '',
+        skillId: skillOpts.skillId,
+        skillMode: skillOpts.skillMode,
         context: {},
       })
       if (epoch !== generationEpoch) return
@@ -390,6 +469,21 @@ export const useInteractiveStore = defineStore('interactive', () => {
     }
   }
 
+  /** 加载技能目录（供技能选择器；失败静默降级为空列表，不影响生成） */
+  async function loadSkills() {
+    try {
+      const resp: any = await api.get('/ipage/skills')
+      const data = resp?.data || resp
+      skills.value = data?.items || []
+      skillsEnabled.value = data?.enabled !== false
+      // 默认策略由服务端下发（单一来源），缺失时回退 off（不套用技能）
+      skillDefaultMode.value = data?.defaultMode === 'auto' ? 'auto' : 'off'
+    } catch (error: any) {
+      skills.value = []
+      console.error('技能目录加载失败', error?.message)
+    }
+  }
+
   /** 新建空会话并切换为当前会话 */
   async function createSession(title = '') {
     const resp: any = await api.post('/ipage/sessions', { title })
@@ -435,8 +529,11 @@ export const useInteractiveStore = defineStore('interactive', () => {
     errorMsg, steps, datasetLogs,
     history, historyTotal, historyPage,
     sessionId, sessions, messages,
+    skills, skillsEnabled, matchedSkill,
+    skillChoice, skillDefaultMode, effectiveSkillChoice, setSkillChoice, resolveSkillChoice,
     generate, cancel, loadPage, loadFromRecord, fetchHistory, removePage,
     resetRound, closeStream,
     appendLocalMessage, loadSessions, createSession, loadSession, deleteSession,
+    loadSkills,
   }
 })

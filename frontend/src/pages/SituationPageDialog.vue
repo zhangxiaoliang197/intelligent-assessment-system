@@ -33,21 +33,23 @@
 
       <!-- ── 主内容 ── -->
       <div class="main-content">
-        <!-- 顶部工具栏：Skill 预留位 + 数据源选择（真实生效） -->
+        <!-- 顶部工具栏：技能选择（生成剧本）+ 数据源选择 -->
         <div class="top-toolbar">
           <div class="toolbar-left">
             <el-icon :size="18" color="#0ea5e9"><MagicStick /></el-icon>
             <span class="toolbar-title">态势页面</span>
           </div>
           <div class="toolbar-right">
-            <!-- Skill 能力预留位：暂不配置，仅占位（样式对齐态势图 skill 选择器） -->
-            <el-tooltip content="Skill 技能能力正在筹备中，暂不可用" placement="bottom">
-              <div class="skill-placeholder">
-                <el-icon><MagicStick /></el-icon>
-                <span>Skill 能力筹备中</span>
-                <el-tag size="small" effect="plain" type="info">预留</el-tag>
-              </div>
-            </el-tooltip>
+            <!-- 技能：默认"关闭技能"（由服务端默认策略下发），可手动切自动匹配或指定技能；
+                 选择写在 store 里，与页面工作台（/interactive）共用同一份会话级策略 -->
+            <SkillSelector
+              :model-value="store.effectiveSkillChoice"
+              :skills="store.skills"
+              :applied="store.matchedSkill"
+              :disabled="store.status === 'generating' || !store.skillsEnabled"
+              disabled-hint="服务端已禁用技能匹配（IPAGE_SKILL_MATCH_ENABLED=false），本轮一律不套用技能"
+              @update:model-value="store.setSkillChoice"
+            />
             <span class="label">数据源：</span>
             <el-select
               v-model="dataSourceId"
@@ -240,8 +242,8 @@
 </template>
 
 <script setup lang="ts">
-// ── 态势页面主对话框（对齐态势图 SituationMap 三栏布局）──
-// 左=历史会话，中=对话记录，右=执行过程面板；顶部 Skill 预留位 + 数据源选择。
+// ── 态势页面主对话框（三栏布局）──
+// 左=历史会话，中=对话记录，右=执行过程面板；顶部技能选择 + 数据源选择。
 // 发送后不跳转：生成全部在后台进行，完成后对话内插入"打开态势页面"卡片。
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -251,6 +253,7 @@ import {
   CircleClose, CircleCheck, Close, ArrowRight, FullScreen, WarningFilled, Coin,
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
+import SkillSelector from '@/components/interactive/SkillSelector.vue'
 import { useInteractiveStore } from '@/stores/interactive'
 import api from '@/services/api'
 
@@ -268,6 +271,7 @@ const isResizing = ref(false)
 const dsDialogVisible = ref(false)
 const dataSources = ref<Array<{ id: string; name: string; type?: string; status?: string }>>([])
 const dataSourceId = ref('')
+// 技能选择由 store 统一持有（会话级）：此处不再维护本地默认值，避免与工作台入口漂移
 // 发起生成时的会话快照：完成回写消息前若用户已切换会话，则不本地追加（后端已落库）
 const generatingSession = ref('')
 
@@ -400,7 +404,11 @@ async function onSend(text?: string) {
   store.appendLocalMessage({ role: 'user', kind: 'text', content: q })
   showExecPanel.value = true
   await scrollToBottom()
-  await store.generate(q, { sessionId: store.sessionId, dataSourceId: dataSourceId.value })
+  // 技能策略由 store 从会话级选择推导（不在此传参），两个入口因此共用同一份策略
+  await store.generate(q, {
+    sessionId: store.sessionId,
+    dataSourceId: dataSourceId.value,
+  })
 }
 
 async function onCancel() {
@@ -456,6 +464,7 @@ async function scrollToBottom() {
 onMounted(async () => {
   store.resetRound()
   void store.loadSessions()
+  void store.loadSkills()
   void fetchDataSources()
   // 恢复当前会话的对话内容（从态势页返回 / 组件重挂载时不丢上下文）
   if (store.sessionId) {
@@ -529,16 +538,6 @@ onMounted(async () => {
 .toolbar-left { display: flex; align-items: center; gap: 8px; }
 .toolbar-title { font-size: 15px; font-weight: 600; color: var(--text-primary); }
 .toolbar-right { display: flex; align-items: center; gap: 10px; }
-.skill-placeholder {
-  display: flex; align-items: center; gap: 6px;
-  padding: 5px 12px;
-  border: 1px dashed var(--border-normal);
-  border-radius: 6px;
-  font-size: 12.5px;
-  color: var(--text-muted);
-  cursor: not-allowed;
-  background: var(--gray-50);
-}
 .label { font-size: 13px; color: var(--text-secondary); font-weight: 500; white-space: nowrap; }
 .data-source-select { width: 180px; }
 

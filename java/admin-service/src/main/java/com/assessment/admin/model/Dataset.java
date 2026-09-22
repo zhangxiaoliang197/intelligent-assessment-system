@@ -56,6 +56,19 @@ public class Dataset {
     @Column(name = "semantic_json", columnDefinition = "text")
     private String semanticJson;
 
+    /** 最近一次注解校验通过的时间（保存注解或手动校验时写入）。 */
+    @Column(name = "annotation_validated_at")
+    private LocalDateTime annotationValidatedAt;
+
+    /**
+     * 注解校验通过时的表结构指纹（表名 + 列名/类型/注释的摘要）。
+     *
+     * 用于"注解是否过期"判定：手动校验时重算指纹，与本次存储值不一致即提示复核。
+     * 运行期不做指纹比对（保持零成本）。
+     */
+    @Column(name = "annotation_structure_fingerprint", length = 64)
+    private String annotationStructureFingerprint;
+
     private Integer records;
 
     @Column(name = "last_executed")
@@ -108,6 +121,14 @@ public class Dataset {
     public void setKeyMappings(String keyMappings) { this.keyMappings = keyMappings; }
     public String getSemanticJson() { return semanticJson; }
     public void setSemanticJson(String semanticJson) { this.semanticJson = semanticJson; }
+    public LocalDateTime getAnnotationValidatedAt() { return annotationValidatedAt; }
+    public void setAnnotationValidatedAt(LocalDateTime annotationValidatedAt) {
+        this.annotationValidatedAt = annotationValidatedAt;
+    }
+    public String getAnnotationStructureFingerprint() { return annotationStructureFingerprint; }
+    public void setAnnotationStructureFingerprint(String annotationStructureFingerprint) {
+        this.annotationStructureFingerprint = annotationStructureFingerprint;
+    }
     public Integer getRecords() { return records; }
     public void setRecords(Integer records) { this.records = records; }
     public LocalDateTime getLastExecuted() { return lastExecuted; }

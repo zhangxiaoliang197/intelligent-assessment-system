@@ -61,7 +61,7 @@ Start-Process qdrant -WorkingDirectory "D:\qdrant" -WindowStyle Hidden
 $r="d:\code\intelligent-assessment-system"
 Start-Process python -ArgumentList "-u main.py" -WorkingDirectory "$r\python\<service>" -WindowStyle Hidden
 ```
-服务列表: knowledge(10252), qa(10253), indicator(10254), evaluation(10255), ontology(10256)
+服务列表: knowledge(10252), qa(10253), indicator(10254), evaluation(10255), ontology(10256), ipage(10257)
 
 > knowledge-service 需要其专用 venv（含 sentence-transformers/BGE 模型），详见 `python/knowledge-service/环境配置指南.md`
 
@@ -107,6 +107,7 @@ Start-Process "$nodeBin\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "
 | `/api/knowledge` | localhost:10252 | Knowledge Service |
 | `/api/indicator` | localhost:10254 | Indicator Service |
 | `/api/ontology` | localhost:10256 | Ontology Service |
+| `/api/ipage` | localhost:10257 | ipage（态势页面）|
 | `/api/admin` | localhost:10258（不重写路径） | Admin Service |
 | `/tiles`, `/geowebcache` | localhost:9090 | 外部地图服务 |
 
@@ -120,6 +121,7 @@ Start-Process "$nodeBin\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "
 | `/api/knowledge/*` | assessment-knowledge:10252 |
 | `/api/indicator/*` | assessment-indicator:10254 |
 | `/api/ontology/*` | assessment-ontology:10256 |
+| `/api/ipage/*` | assessment-ipage:10257 |
 | `/api/admin/*` | assessment-admin:10258（不重写路径） |
 | `/tiles`, `/geowebcache` | 外部地图服务:9090 |
 
@@ -139,6 +141,8 @@ Start-Process "$nodeBin\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "
 | assessment-indicator | `ONTOLOGY_SERVICE_URL` | assessment-ontology:10256 | ✅ |
 | assessment-knowledge | `QDRANT_URL` | assessment-qdrant:6333 | ✅ |
 | assessment-ontology | `ADMIN_SERVICE_URL`（LLM 配置） | assessment-admin:10258 | ✅ |
+| assessment-ipage | `ADMIN_SERVICE_URL` | assessment-admin:10258 | ✅ |
+| assessment-ipage | `KNOWLEDGE_SERVICE_URL`（技能语义匹配向量，不可用则降级为不套用技能） | assessment-knowledge:10252 | ✅ |
 | assessment-evaluation | (无) | — | — |
 | assessment-admin | `MYSQL_HOST/PORT/...` | 外部 MySQL | ✅ |
 | assessment-frontend | (nginx 反向代理) | 容器名 | ✅ |

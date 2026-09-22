@@ -1,6 +1,6 @@
 """admin-service HTTP 客户端（ipage-service 独立实现）。
 
-仅依赖平台级能力，与 situation-service 无代码耦合：
+仅依赖平台级能力：
 - query_datasets_meta：数据集元数据 + 指标（/export/for-llm）
 - fetch_dataset_structure：物理表结构（Text-to-SQL 用）
 - execute_dataset_sql：执行 LLM 生成的只读 SELECT

@@ -181,30 +181,28 @@ services:
         max-size: "50m"
         max-file: "5"
 
-  situation-service:
-    image: assessment-situation:latest
-    container_name: assessment-situation
+  ipage-service:
+    image: assessment-ipage:latest
+    container_name: assessment-ipage
     ports:
       - "127.0.0.1:10257:10257"
     restart: always
     networks:
       - assessment-net
-    # 独立于本体/向量库：不配置 ONTOLOGY_SERVICE_URL / QDRANT_URL（ADR-01/05）
     environment:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
-      - SITUATION_ALLOW_DATA_FALLBACK=true
-      - SITUATION_DATA_ROW_LIMIT=200
-      - SITUATION_STREAM_REPLAY_TTL=300
-      - SITUATION_MAX_INFLIGHT=${SITUATION_MAX_INFLIGHT:-8}
-      - SITUATION_MAX_CONCURRENT=${SITUATION_MAX_CONCURRENT:-2}
-      - SITUATION_MAX_PER_USER=${SITUATION_MAX_PER_USER:-2}
-      - SITUATION_GENERATION_TIMEOUT=${SITUATION_GENERATION_TIMEOUT:-240}
-      - SITUATION_LLM_EVIDENCE_ROWS=${SITUATION_LLM_EVIDENCE_ROWS:-0}
-      - SITUATION_CORS_ORIGINS=${SITUATION_CORS_ORIGINS:-http://localhost:10086,http://127.0.0.1:10086}
-      - SITUATION_LLM_ALLOWED_HOSTS=${SITUATION_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}
+      - KNOWLEDGE_SERVICE_URL=http://assessment-knowledge:10252
+      - IPAGE_SERVICE_PORT=10257
+      - IPAGE_DB=/app/data/ipage_pages.sqlite3
+      - IPAGE_MAX_INFLIGHT=${IPAGE_MAX_INFLIGHT:-8}
+      - IPAGE_MAX_CONCURRENT=${IPAGE_MAX_CONCURRENT:-2}
+      - IPAGE_MAX_PER_USER=${IPAGE_MAX_PER_USER:-2}
+      - IPAGE_GENERATION_TIMEOUT=${IPAGE_GENERATION_TIMEOUT:-480}
+      - IPAGE_STREAM_REPLAY_TTL=300
+      - IPAGE_TEMPLATE_FALLBACK=${IPAGE_TEMPLATE_FALLBACK:-true}
+      - IPAGE_CORS_ORIGINS=${IPAGE_CORS_ORIGINS:-http://localhost:10086,http://127.0.0.1:10086}
+      - IPAGE_LLM_ALLOWED_HOSTS=${IPAGE_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be configured}
-      - SITUATION_SKILL_DB=/app/data/situation_skills.sqlite3
-      - SITUATION_SKILL_MD_OVERRIDE_DIR=/app/data/situation-skill-markdown-overrides
       - LLM_MAX_TOKENS=24000
       - LOG_ENV=${LOG_ENV:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -212,12 +210,13 @@ services:
       - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-14}
       - LOG_MAX_SIZE_MB=${LOG_MAX_SIZE_MB:-100}
     volumes:
-      - situation-data:/app/data
-      - ./logs/situation-service:/app/logs
+      - ipage-data:/app/data
+      - ./logs/ipage-service:/app/logs
     depends_on:
       - admin-service
+      - knowledge-service
     healthcheck:
-      test: ["CMD", "python", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:10257/situation/health',timeout=3)); h=d.get('data',{}); assert d.get('success') and h.get('skills',0)>=30 and h.get('skillStorage')=='healthy'"]
+      test: ["CMD", "python", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:10257/ipage/health',timeout=3)); h=d.get('data',{}); assert d.get('success') and h.get('skills',0)>=9"]
       interval: 30s
       timeout: 5s
       start_period: 20s
@@ -251,6 +250,7 @@ services:
       - SPRING_PROFILES_ACTIVE=${LOG_ENV:-prod}
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be configured}
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be configured}
+      - IPAGE_SERVICE_URL=http://assessment-ipage:10257
       - LOG_PATH=/app/logs
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     # Linux 下让 host.docker.internal 解析到宿主机网关
@@ -286,5 +286,5 @@ volumes:
   indicator-data:
   evaluation-data:
   ontology-data:
-  situation-data:
+  ipage-data:
   drivers-data:

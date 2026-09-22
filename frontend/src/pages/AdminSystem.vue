@@ -98,28 +98,69 @@
           <div class="tab-content">
             <div class="section-header">
               <h3>数据集列表</h3>
-              <el-button type="primary" @click="openSelectDataset">选择数据集</el-button>
+              <div>
+                <el-button style="margin-right:8px" @click="toggleAllGroups">
+                  {{ allGroupsExpanded ? '全部收起' : '全部展开' }}
+                </el-button>
+                <el-button type="primary" @click="openSelectDataset">选择数据集</el-button>
+              </div>
             </div>
 
-            <el-table :data="datasets" stripe>
-              <el-table-column prop="name" label="名称" min-width="160" />
-              <el-table-column prop="description" label="描述" />
-              <el-table-column label="关联数据库" min-width="140">
-                <template #default="scope">
-                  {{ getDbName(scope.row.databaseId) }}
+            <!-- 按数据源分层：组头显示库信息与注解状态，组内沿用原有表格与全部操作 -->
+            <el-collapse v-model="expandedGroups" class="ds-groups">
+              <el-collapse-item
+                v-for="group in groupedDatasets"
+                :key="group.key"
+                :name="group.key"
+              >
+                <template #title>
+                  <div class="ds-group-title">
+                    <span class="ds-group-name">{{ group.name }}</span>
+                    <el-tag v-if="group.missingDb" size="small" type="danger" effect="plain">数据源缺失</el-tag>
+                    <span class="ds-group-meta">{{ group.meta }}</span>
+                    <el-tag size="small" type="info" effect="plain">{{ group.datasets.length }} 个数据集</el-tag>
+                    <el-tag v-if="group.unvalidated" size="small" type="warning" effect="plain">
+                      未校验 {{ group.unvalidated }}
+                    </el-tag>
+                    <!-- 数据源缺失/未关联时，提供一键改指（@click.stop 避免触发展开收起） -->
+                    <el-button
+                      v-if="group.rank > 0"
+                      size="small"
+                      type="warning"
+                      link
+                      @click.stop="openReassignDialog(group)"
+                    >{{ group.missingDb ? '重新指定数据源' : '指定数据源' }}</el-button>
+                  </div>
                 </template>
-              </el-table-column>
-              <el-table-column prop="tableName" label="数据表" width="150" />
-              <el-table-column prop="records" label="记录数" width="85" />
-              <el-table-column label="操作" min-width="330">
-                <template #default="scope">
-                  <el-button size="small" @click="openTableStructure(scope.row)">表结构</el-button>
-                  <el-button size="small" @click="openDatasetSemantic(scope.row)">语义注解</el-button>
-                  <el-button size="small" @click="editDataset(scope.row)">编辑</el-button>
-                  <el-button size="small" type="danger" @click="deleteDataset(scope.row)">删除</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
+
+                <el-table :data="group.datasets" stripe>
+                  <el-table-column prop="name" label="名称" min-width="160" />
+                  <el-table-column prop="description" label="描述" />
+                  <el-table-column prop="tableName" label="数据表" width="150" />
+                  <el-table-column prop="records" label="记录数" width="85" />
+                  <el-table-column label="注解状态" width="150">
+                    <template #default="scope">
+                      <el-tag v-if="scope.row.annotationValidatedAt" type="success" size="small">
+                        已校验 {{ formatValidatedAt(scope.row.annotationValidatedAt) }}
+                      </el-tag>
+                      <el-tag v-else type="info" size="small">未校验</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" min-width="500">
+                    <template #default="scope">
+                      <el-button size="small" @click="openTableStructure(scope.row)">表结构</el-button>
+                      <el-button size="small" @click="openDatasetSemantic(scope.row)">语义注解</el-button>
+                      <el-button size="small" @click="validateAnnotations(scope.row)">校验注解</el-button>
+                      <el-button size="small" @click="openAnnotationDrafts(scope.row)">AI 注解草稿</el-button>
+                      <el-button size="small" @click="editDataset(scope.row)">编辑</el-button>
+                      <el-button size="small" type="danger" @click="deleteDataset(scope.row)">删除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </el-collapse-item>
+            </el-collapse>
+
+            <el-empty v-if="groupedDatasets.length === 0" description="暂无数据集" />
           </div>
         </el-tab-pane>
 
@@ -387,9 +428,12 @@
         <div v-if="selectDsDbId && !loadingDbTables">
           <div style="margin-bottom: 12px; color: #606266;">
             <span>数据表列表</span>
-            <span style="margin-left: 12px; color: #909399; font-size: 12px;">共 {{ dbTables.length }} 张表，点击选择</span>
+            <span style="margin-left: 12px; color: #909399; font-size: 12px;">
+              共 {{ dbTables.length }} 张表，可勾选多张后批量注册，也可单张「选择」
+            </span>
           </div>
-          <el-table :data="dbTables" stripe max-height="400" highlight-current-row @row-click="onSelectTable">
+          <el-table :data="dbTables" stripe max-height="400" @selection-change="onTableSelectionChange">
+            <el-table-column type="selection" width="45" />
             <el-table-column type="index" label="#" width="50" />
             <el-table-column prop="tableName" label="表名" min-width="200" />
             <el-table-column label="操作" width="100" align="center">
@@ -411,8 +455,109 @@
 
         <template #footer>
           <el-button @click="showSelectDsDialog = false">取消</el-button>
+          <el-button
+            type="primary"
+            :disabled="selectedTables.length === 0"
+            :loading="registeringTables"
+            @click="confirmBatchRegister"
+          >注册选中的 {{ selectedTables.length }} 张表</el-button>
         </template>
       </el-dialog>
+
+      <!-- 重新指定数据源（数据源缺失/未关联分组一键改指） -->
+      <el-dialog
+        v-model="showReassignDialog"
+        :title="reassignGroup?.missingDb ? '重新指定数据源' : '指定数据源'"
+        width="560px"
+      >
+        <div style="color: #606266; line-height: 1.9;">
+          <p style="margin: 0;">当前归属：<b>{{ reassignGroup?.name }}</b>（{{ reassignGroup?.meta }}）</p>
+          <p style="margin: 0 0 8px;">将把该分组下 <b>{{ reassignGroup?.datasets?.length || 0 }}</b> 个数据集改指到：</p>
+          <el-select v-model="reassignTargetDbId" placeholder="选择目标数据源" style="width: 100%">
+            <el-option
+              v-for="db in databases"
+              :key="db.id"
+              :label="`${db.name}（${db.type} · ${db.database}）`"
+              :value="db.id"
+            />
+          </el-select>
+          <p style="color: #e6a23c; font-size: 12px; margin: 12px 0 0;">
+            提示：目标数据源需包含这些数据集对应的同名数据表，否则取数与注解校验仍会失败。
+          </p>
+        </div>
+        <template #footer>
+          <el-button @click="showReassignDialog = false">取消</el-button>
+          <el-button
+            type="primary"
+            :disabled="!reassignTargetDbId"
+            :loading="reassigning"
+            @click="confirmReassign"
+          >确认改指</el-button>
+        </template>
+      </el-dialog>
+
+      <!-- AI 注解草稿审核抽屉：草稿未通过审核前不影响正式注解 -->
+      <el-drawer v-model="showDraftDrawer" :title="`AI 注解草稿：${draftDatasetName}`" size="62%">
+        <div class="draft-toolbar">
+          <el-select v-model="draftStatus" size="small" style="width: 130px" @change="loadDrafts">
+            <el-option label="待审" value="draft" />
+            <el-option label="已通过" value="approved" />
+            <el-option label="已驳回" value="rejected" />
+            <el-option label="全部" value="" />
+          </el-select>
+          <el-button size="small" type="primary" :loading="draftGenerating" @click="generateDrafts">
+            {{ draftItems.length ? '重新生成草稿' : '生成草稿（调用大模型）' }}
+          </el-button>
+          <el-button size="small" type="success" :disabled="!draftBatchId || draftStatus !== 'draft'"
+                     @click="approveDraftBatch">整批通过</el-button>
+          <el-button size="small" type="danger" plain :disabled="!draftBatchId || draftStatus !== 'draft'"
+                     @click="rejectDraftBatch">整批驳回</el-button>
+          <el-button size="small" plain :disabled="!draftBatchId" @click="discardDraftBatch">丢弃整批</el-button>
+          <span class="draft-hint">
+            草稿经「格式 + 结构 + 值域」三层校验；红色问题为硬错误（禁批量通过），需人工改写或驳回
+          </span>
+        </div>
+
+        <el-empty v-if="!draftLoading && draftItems.length === 0"
+                  description="暂无草稿：点上方「生成草稿」调用大模型产出建议" />
+        <el-skeleton v-if="draftLoading" :rows="6" animated />
+
+        <div v-for="item in draftItems" :key="item.id" class="draft-item">
+          <div class="draft-head">
+            <el-tag size="small" :type="item.scope === 'dataset' ? 'warning' : 'info'" effect="plain">
+              {{ item.scope === 'dataset' ? '数据集级语义' : `字段 ${item.columnName}` }}
+            </el-tag>
+            <el-tag size="small" :type="draftStatusTag(item.status)">{{ draftStatusText(item.status) }}</el-tag>
+            <span class="draft-meta">来源 {{ item.source }}｜模型 {{ item.model || '-' }}</span>
+            <div class="draft-actions">
+              <el-button v-if="item.status === 'draft'" size="small" type="success" plain
+                         @click="approveDraft(item)">通过</el-button>
+              <!-- 有硬错误时提供单条强制通过：需填理由、留痕；整批通过仍不接受带硬错误的条目 -->
+              <el-button v-if="item.status === 'draft' && draftList(item.issuesJson).length" size="small"
+                         type="warning" plain @click="forceApproveDraft(item)">强制通过</el-button>
+              <el-button v-if="item.status === 'draft'" size="small" type="danger" plain
+                         @click="rejectDraft(item)">驳回</el-button>
+              <el-button v-if="item.status === 'rejected'" size="small" type="primary" plain
+                         :loading="regeneratingId === item.id" @click="regenerateDraft(item)">按意见重生成</el-button>
+            </div>
+          </div>
+
+          <el-input v-model="item.draftJson" type="textarea" :rows="3" size="small"
+                    :disabled="item.status !== 'draft'"
+                    @change="saveDraft(item)" />
+
+          <div v-if="draftList(item.issuesJson).length" class="draft-issues">
+            <div v-for="(issue, idx) in draftList(item.issuesJson)" :key="idx">✕ {{ issue }}</div>
+          </div>
+          <div v-if="draftList(item.warningsJson).length" class="draft-warnings">
+            <div v-for="(warn, idx) in draftList(item.warningsJson)" :key="idx">! {{ warn }}</div>
+          </div>
+          <div v-if="draftList(item.sampledJson).length" class="draft-meta">
+            真实取值样例：{{ draftList(item.sampledJson).join('、') }}
+          </div>
+          <div v-if="item.reviewRemark" class="draft-meta">驳回意见：{{ item.reviewRemark }}</div>
+        </div>
+      </el-drawer>
 
       <!-- 新增/编辑指标对话框 -->
       <el-dialog v-model="showIndDialog" :title="editingIndId ? '编辑指标' : '新建指标'" width="600px">
@@ -943,11 +1088,6 @@ async function deleteDatabase(row: any) {
   }
 }
 
-function getDbName(dbId: string) {
-  const db = databases.value.find((d: any) => d.id === dbId)
-  return db ? db.name : dbId
-}
-
 // ==================== 数据集 ====================
 const datasets = ref<any[]>([])
 const showSelectDsDialog = ref(false)
@@ -955,10 +1095,346 @@ const selectDsDbId = ref('')
 const dbTables = ref<any[]>([])
 const loadingDbTables = ref(false)
 
+// ── 数据集按数据源分层显示 ──
+// 分组键取 databaseId；未关联数据源（或该数据源已被删除/不可用）的数据集单独成组并排在最后，
+// 避免"看不见"或被误认为正常数据源。组头展示库名与类型/主机，组内沿用原有表格与全部操作按钮。
+const UNASSIGNED_GROUP_KEY = '__unassigned__'
+const expandedGroups = ref<string[]>([])
+let groupsInitialized = false
+
+/** 数据源列表已加载（用于区分"数据源已删除"与"列表尚未返回"两种情况） */
+const databasesLoaded = computed(() => databases.value.length > 0)
+
+const groupedDatasets = computed(() => {
+  const groups = new Map<string, any>()
+  datasets.value.forEach((ds: any) => {
+    const key = ds.databaseId ? String(ds.databaseId) : UNASSIGNED_GROUP_KEY
+    if (!groups.has(key)) {
+      groups.set(key, { key, databaseId: ds.databaseId || '', datasets: [] })
+    }
+    groups.get(key).datasets.push(ds)
+  })
+  return Array.from(groups.values())
+    .map((group: any) => {
+      const db = databases.value.find((item: any) => item.id === group.databaseId)
+      // 数据源缺失：已拿到数据源列表，但该 databaseId 不在其中（数据源被删/不可用）
+      const missingDb = !!group.databaseId && databasesLoaded.value && !db
+      const metaParts = db
+        ? [db.type, db.host, db.port ? `:${db.port}` : '', db.database].filter(Boolean)
+        : []
+      const name = db
+        ? db.name
+        : group.databaseId
+          ? (missingDb ? `数据源缺失（${group.databaseId}）` : group.databaseId)
+          : '未关联数据源'
+      const meta = db
+        ? metaParts.join(' · ')
+        : (missingDb ? '该数据源已删除或不可用，请重新指定' : '未选择数据源')
+      return {
+        key: group.key,
+        datasets: group.datasets,
+        name,
+        meta,
+        missingDb,
+        // 排序优先级：正常数据源 0 → 数据源缺失 1 → 未关联数据源 2
+        rank: db ? 0 : (group.databaseId ? 1 : 2),
+        unvalidated: group.datasets.filter((ds: any) => !ds.annotationValidatedAt).length,
+      }
+    })
+    .sort((a: any, b: any) => {
+      if (a.rank !== b.rank) return a.rank - b.rank
+      return String(a.name).localeCompare(String(b.name), 'zh-Hans-CN')
+    })
+})
+
+const allGroupsExpanded = computed(
+  () => groupedDatasets.value.length > 0
+    && expandedGroups.value.length === groupedDatasets.value.length,
+)
+
+function toggleAllGroups() {
+  expandedGroups.value = allGroupsExpanded.value
+    ? []
+    : groupedDatasets.value.map((group: any) => group.key)
+}
+
+// 首次拿到数据时默认全部展开；此后尊重用户的折叠状态（重新加载不回弹）
+watch(groupedDatasets, (groups) => {
+  if (groupsInitialized || groups.length === 0) return
+  groupsInitialized = true
+  expandedGroups.value = groups.map((group: any) => group.key)
+}, { immediate: true })
+
 // 仅显示已连接的数据库
 const connectedDatabases = computed(() => 
   databases.value.filter((db: any) => db.status === '已连接')
 )
+
+// ── 重新指定数据源（数据源缺失/未关联分组一键改指）──
+const showReassignDialog = ref(false)
+const reassignGroup = ref<any>(null)
+const reassignTargetDbId = ref('')
+const reassigning = ref(false)
+
+function openReassignDialog(group: any) {
+  reassignGroup.value = group
+  reassignTargetDbId.value = ''
+  showReassignDialog.value = true
+}
+
+async function confirmReassign() {
+  const group = reassignGroup.value
+  const target = databases.value.find((db: any) => db.id === reassignTargetDbId.value)
+  if (!group || !target) return
+  reassigning.value = true
+  let done = 0
+  const failed: string[] = []
+  try {
+    for (const ds of group.datasets) {
+      try {
+        // 只改归属数据源（表名/名称/描述保持原样），复用数据集更新接口
+        const res = await api.put(`/admin/dataset/${ds.id}`, {
+          databaseId: target.id,
+          tableName: ds.tableName,
+          description: ds.description,
+        })
+        if (res && res.success) done += 1
+        else failed.push(ds.name || ds.tableName)
+      } catch {
+        failed.push(ds.name || ds.tableName)
+      }
+    }
+    await loadDatasets()
+    if (!expandedGroups.value.includes(target.id)) expandedGroups.value.push(target.id)
+    showReassignDialog.value = false
+    if (failed.length) {
+      ElMessage.warning(`已改指 ${done} 个数据集，失败 ${failed.length} 个（${failed.slice(0, 3).join('、')}）`)
+    } else {
+      ElMessage.success(`已将 ${done} 个数据集改指到「${target.name}」`)
+    }
+  } finally {
+    reassigning.value = false
+  }
+}
+
+// ── AI 注解草稿（LLM 生成 + 人工审核）──
+// 草稿与正式注解物理隔离：只有「通过」才会写入生效注解并触发页面服务缓存失效。
+const showDraftDrawer = ref(false)
+const draftDatasetId = ref('')
+const draftDatasetName = ref('')
+const draftItems = ref<any[]>([])
+const draftStatus = ref('draft')
+const draftBatchId = ref('')
+const draftLoading = ref(false)
+const draftGenerating = ref(false)
+const regeneratingId = ref('')
+
+/** 后端返回的 issues/warnings/sampled 均为 JSON 字符串，统一解析成数组供展示 */
+function draftList(json: any): string[] {
+  if (Array.isArray(json)) return json.map((i) => String(i))
+  if (!json) return []
+  try {
+    const parsed = JSON.parse(String(json))
+    return Array.isArray(parsed) ? parsed.map((i) => String(i)) : []
+  } catch {
+    return [String(json)]
+  }
+}
+
+function draftStatusText(status: string): string {
+  return { draft: '待审', approved: '已通过', rejected: '已驳回', superseded: '已被新版取代' }[status] || status
+}
+
+function draftStatusTag(status: string): 'success' | 'danger' | 'info' | 'warning' {
+  if (status === 'approved') return 'success'
+  if (status === 'rejected') return 'danger'
+  if (status === 'draft') return 'warning'
+  return 'info'
+}
+
+async function openAnnotationDrafts(row: any) {
+  draftDatasetId.value = row.id
+  draftDatasetName.value = row.name || row.tableName || ''
+  draftStatus.value = 'draft'
+  draftItems.value = []
+  draftBatchId.value = ''
+  showDraftDrawer.value = true
+  await loadDrafts()
+}
+
+async function loadDrafts() {
+  if (!draftDatasetId.value) return
+  draftLoading.value = true
+  try {
+    const res = await api.get(`/admin/dataset/${draftDatasetId.value}/annotations/drafts`, {
+      params: { status: draftStatus.value },
+    })
+    draftItems.value = res?.items || []
+    // 批次号取待审草稿里的第一个（整批操作以此为准）
+    draftBatchId.value = draftItems.value.find((i: any) => i.status === 'draft')?.batchId || ''
+  } catch (e: any) {
+    ElMessage.error('加载草稿失败：' + (e?.serverMessage || e?.message || '未知错误'))
+    draftItems.value = []
+  } finally {
+    draftLoading.value = false
+  }
+}
+
+async function generateDrafts() {
+  if (!draftDatasetId.value) return
+  draftGenerating.value = true
+  try {
+    const res = await api.post(`/admin/dataset/${draftDatasetId.value}/annotations/draft/generate`, {})
+    if (res?.success) {
+      ElMessage.success(res.message || '草稿已生成')
+      if (Array.isArray(res.notes) && res.notes.length) {
+        ElMessage.warning({ message: res.notes.join('；'), duration: 6000 })
+      }
+      draftStatus.value = 'draft'
+      await loadDrafts()
+    }
+  } catch (e: any) {
+    ElMessage.error('生成草稿失败：' + (e?.serverMessage || e?.message || '未知错误'))
+  } finally {
+    draftGenerating.value = false
+  }
+}
+
+async function saveDraft(item: any) {
+  try {
+    const res = await api.put(`/admin/annotations/draft/${item.id}`, { draftJson: item.draftJson })
+    if (res?.success) {
+      ElMessage.success('草稿已更新并重新校验')
+      await loadDrafts()
+    }
+  } catch (e: any) {
+    ElMessage.error('保存草稿失败：' + (e?.serverMessage || e?.message || '未知错误'))
+    await loadDrafts()
+  }
+}
+
+/**
+ * 强制通过：仅在草稿存在硬错误（如注解值未在采样中出现，但人工确认其真实存在）时使用。
+ * 必须填写理由，后端会把理由与当时的硬错误一并留痕。
+ */
+async function forceApproveDraft(item: any) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `该草稿存在硬错误，确认强制通过？请说明判定依据（例如"该取值确实存在，只是未进入采样 TOP-N"）\n\n`
+      + draftList(item.issuesJson).join('\n'),
+      '强制通过草稿',
+      { confirmButtonText: '确认强制通过', cancelButtonText: '取消', inputPlaceholder: '填写判定依据（必填）' },
+    )
+    if (!value || !value.trim()) {
+      ElMessage.warning('强制通过必须填写理由')
+      return
+    }
+    const res = await api.post(`/admin/annotations/draft/${item.id}/approve`, { force: true, remark: value })
+    if (res?.success) {
+      ElMessage.success(res.message || '已强制通过')
+      await loadDrafts()
+      await loadDatasets()
+    }
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('强制通过失败：' + (e?.serverMessage || e?.message || '未知错误'))
+  }
+}
+
+async function approveDraft(item: any) {
+  try {
+    const res = await api.post(`/admin/annotations/draft/${item.id}/approve`, {})
+    if (res?.success) {
+      ElMessage.success(res.message || '草稿已生效')
+      await loadDrafts()
+      await loadDatasets()
+    }
+  } catch (e: any) {
+    ElMessage.error('通过失败：' + (e?.serverMessage || e?.message || '未知错误'))
+  }
+}
+
+async function rejectDraft(item: any) {
+  try {
+    const { value } = await ElMessageBox.prompt('驳回意见（可留空；填了可用于「按意见重生成」）', '驳回草稿', {
+      confirmButtonText: '确认驳回', cancelButtonText: '取消', inputPlaceholder: '例如：阵营列不要臆造枚举',
+    })
+    const res = await api.post(`/admin/annotations/draft/${item.id}/reject`, { remark: value || '' })
+    if (res?.success) {
+      ElMessage.success('已驳回')
+      await loadDrafts()
+    }
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('驳回失败：' + (e?.serverMessage || e?.message || '未知错误'))
+  }
+}
+
+async function regenerateDraft(item: any) {
+  regeneratingId.value = item.id
+  try {
+    const res = await api.post(`/admin/annotations/draft/${item.id}/regenerate`, {})
+    if (res?.success) {
+      ElMessage.success(res.message || '已重生成')
+      draftStatus.value = 'draft'
+      await loadDrafts()
+    }
+  } catch (e: any) {
+    ElMessage.error('重生成失败：' + (e?.serverMessage || e?.message || '未知错误'))
+  } finally {
+    regeneratingId.value = ''
+  }
+}
+
+async function approveDraftBatch() {
+  if (!draftBatchId.value) return
+  try {
+    const res = await api.post(`/admin/annotations/drafts/batch/${draftBatchId.value}/approve`, {})
+    if (res?.success) {
+      if (Array.isArray(res.skipped) && res.skipped.length) {
+        ElMessageBox.alert(res.skipped.join('\n'), '部分草稿未通过（存在硬错误或校验未通过）', {
+          confirmButtonText: '知道了', type: 'warning',
+        }).catch(() => { /* 关闭提示不算异常 */ })
+      } else {
+        ElMessage.success(res.message || '整批已通过')
+      }
+      await loadDrafts()
+      await loadDatasets()
+    }
+  } catch (e: any) {
+    ElMessage.error('整批通过失败：' + (e?.serverMessage || e?.message || '未知错误'))
+  }
+}
+
+async function rejectDraftBatch() {
+  if (!draftBatchId.value) return
+  try {
+    const { value } = await ElMessageBox.prompt('整批驳回意见（可留空）', '整批驳回', {
+      confirmButtonText: '确认驳回', cancelButtonText: '取消',
+    })
+    const res = await api.post(`/admin/annotations/drafts/batch/${draftBatchId.value}/reject`, { remark: value || '' })
+    if (res?.success) {
+      ElMessage.success(res.message || '整批已驳回')
+      await loadDrafts()
+    }
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('整批驳回失败：' + (e?.serverMessage || e?.message || '未知错误'))
+  }
+}
+
+async function discardDraftBatch() {
+  if (!draftBatchId.value) return
+  try {
+    await ElMessageBox.confirm('确定丢弃该批次的全部草稿吗？丢弃后不可恢复。', '丢弃草稿', {
+      confirmButtonText: '确定丢弃', cancelButtonText: '取消', type: 'warning',
+    })
+    const res = await api.delete(`/admin/annotations/drafts/batch/${draftBatchId.value}`)
+    if (res?.success) {
+      ElMessage.success(res.message || '已丢弃')
+      await loadDrafts()
+    }
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('丢弃失败：' + (e?.serverMessage || e?.message || '未知错误'))
+  }
+}
 
 async function loadDatasets() {
   try {
@@ -974,6 +1450,7 @@ async function loadDatasets() {
 function openSelectDataset() {
   selectDsDbId.value = ''
   dbTables.value = []
+  selectedTables.value = []
   showSelectDsDialog.value = true
 }
 
@@ -981,6 +1458,7 @@ async function onSelectDsDbChange(dbId: string) {
   if (!dbId) return
   loadingDbTables.value = true
   dbTables.value = []
+  selectedTables.value = []
   try {
     const res = await api.get(`/admin/database/${dbId}/tables`)
     if (res && res.success && res.tables) {
@@ -995,6 +1473,58 @@ async function onSelectDsDbChange(dbId: string) {
     ElMessage.error('获取数据表失败: ' + (e.message || ''))
   } finally {
     loadingDbTables.value = false
+  }
+}
+
+// ── 选择数据集：单张 / 批量注册 ──
+const selectedTables = ref<any[]>([])
+const registeringTables = ref(false)
+
+function onTableSelectionChange(rows: any[]) {
+  selectedTables.value = rows
+}
+
+/** 批量注册勾选的数据表：跳过已注册、逐张登记，最后一次性汇总结果并刷新列表 */
+async function confirmBatchRegister() {
+  const dbId = selectDsDbId.value
+  const db = databases.value.find((item: any) => item.id === dbId)
+  if (!db || selectedTables.value.length === 0) return
+  registeringTables.value = true
+  let added = 0
+  let skipped = 0
+  const failed: string[] = []
+  try {
+    for (const row of selectedTables.value) {
+      const tableName = row.tableName
+      const exists = datasets.value.some((item: any) => item.databaseId === dbId && item.tableName === tableName)
+      if (exists) {
+        skipped += 1
+        continue
+      }
+      try {
+        const res = await api.post('/admin/dataset', {
+          name: `${db.name} - ${tableName}`,
+          description: `来自数据库 ${db.name} 的数据表 ${tableName}`,
+          databaseId: dbId,
+          tableName,
+        })
+        if (res && res.success) added += 1
+        else failed.push(tableName)
+      } catch {
+        failed.push(tableName)
+      }
+    }
+    await loadDatasets()
+    // 新注册的数据集落在该数据源分组内，若被折叠则展开便于确认
+    if (!expandedGroups.value.includes(dbId)) expandedGroups.value.push(dbId)
+    if (failed.length) {
+      ElMessage.warning(`已注册 ${added} 张，跳过已存在 ${skipped} 张，失败 ${failed.length} 张（${failed.slice(0, 3).join('、')}）`)
+    } else {
+      ElMessage.success(`已注册 ${added} 张数据表` + (skipped ? `，跳过已存在 ${skipped} 张` : ''))
+      showSelectDsDialog.value = false
+    }
+  } finally {
+    registeringTables.value = false
   }
 }
 
@@ -1075,7 +1605,11 @@ const SEMANTIC_ROLE_OPTIONS = [
   { label: '半径 (radius)', value: 'radius' },
   { label: '序号 (seq)', value: 'seq' },
   { label: '度量 (measure)', value: 'measure' },
-  { label: '维度 (dimension)', value: 'dimension' }
+  { label: '维度 (dimension)', value: 'dimension' },
+  { label: '状态 (status)', value: 'status' },
+  { label: '高度 (altitude)', value: 'altitude' },
+  { label: '速度 (speed)', value: 'speed' },
+  { label: '航向 (heading)', value: 'heading' }
 ]
 
 const SEMANTIC_SYMBOL_OPTIONS = [
@@ -1163,6 +1697,40 @@ function showSemanticWarnings(warnings: any) {
     type: 'warning',
     message: h('div', { style: 'white-space: pre-line;' }, warnings.join('\n'))
   })
+}
+
+/** 校验时间只展示到分钟，避免列表列宽被秒/毫秒撑开 */
+function formatValidatedAt(value: string): string {
+  const text = String(value || '').replace('T', ' ')
+  return text.length >= 16 ? text.slice(5, 16) : text
+}
+
+/**
+ * 手动校验注解：结构错误（需修正后重新保存）+ 值域告警 + 表结构是否已变化。
+ * 不落库，仅返回校验结论，供改过表结构后随时复核。
+ */
+async function validateAnnotations(row: any) {
+  try {
+    const res = await api.post(`/admin/dataset/${row.id}/annotations/validate`, {})
+    const errors: string[] = Array.isArray(res?.errors) ? res.errors.map((i: any) => String(i)) : []
+    const warnings: string[] = Array.isArray(res?.warnings) ? res.warnings.map((i: any) => String(i)) : []
+    const lines: string[] = []
+    if (typeof res?.message === 'string' && res.message) lines.push(res.message)
+    if (res?.expired) lines.push('表结构自上次校验后已变化，建议复核注解（列增删/改名/注释调整都会触发）')
+    if (errors.length) lines.push(`结构错误（${errors.length} 处，保存会被拒绝）：` + errors.map(i => `\n・${i}`).join(''))
+    if (warnings.length) lines.push(`提示（${warnings.length} 条，不影响保存）：` + warnings.map(i => `\n・${i}`).join(''))
+    if (!res?.structureChecked) lines.push('未能读取表结构，本次只做了格式与语义规则校验')
+    await ElMessageBox.alert(
+      h('div', { style: 'white-space: pre-line; max-height: 55vh; overflow: auto;' }, lines.join('\n')),
+      '注解校验结果',
+      {
+        confirmButtonText: '知道了',
+        type: errors.length ? 'error' : (warnings.length || res?.expired ? 'warning' : 'success')
+      }
+    ).catch(() => { /* 关闭提示弹窗不算异常 */ })
+  } catch (e: any) {
+    ElMessage.error(`注解校验失败：${e?.response?.data?.message || e?.message || '请求失败'}`)
+  }
 }
 
 // ==================== 数据集级语义注解 ====================
@@ -2109,4 +2677,21 @@ onMounted(() => {
 .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
 .section-header h3 { margin: 0; color: #303133; font-size: 1.1rem; font-weight: 600; }
 .llm-form { max-width: 600px; }
+
+/* ── 数据集按数据源分层 ── */
+.ds-groups { border-top: none; }
+.ds-groups :deep(.el-collapse-item__header) { height: auto; line-height: 1.6; padding: 0.5rem 0; }
+.ds-group-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ds-group-name { color: #303133; font-weight: 600; font-size: 0.95rem; }
+.ds-group-meta { color: #909399; font-size: 0.8rem; }
+
+/* ── AI 注解草稿审核抽屉 ── */
+.draft-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.draft-hint { font-size: 12px; color: #909399; }
+.draft-item { border: 1px solid #ebeef5; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+.draft-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.draft-actions { margin-left: auto; }
+.draft-meta { font-size: 12px; color: #909399; margin-top: 6px; word-break: break-all; }
+.draft-issues { color: #dc2626; font-size: 12px; margin-top: 6px; white-space: pre-line; }
+.draft-warnings { color: #d97706; font-size: 12px; margin-top: 6px; white-space: pre-line; }
 </style>

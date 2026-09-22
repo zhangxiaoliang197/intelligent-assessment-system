@@ -35,8 +35,6 @@ public class AdminApiSecurityFilter extends OncePerRequestFilter {
         if ("OPTIONS".equalsIgnoreCase(request.getMethod())) return true;
         if (path.equals("/api/admin/health") || path.equals("/api/admin/info")) return true;
         if ("GET".equalsIgnoreCase(request.getMethod())
-                && path.startsWith("/api/admin/situation/share/")) return true;
-        if ("GET".equalsIgnoreCase(request.getMethod())
                 && path.equals("/api/admin/config/map/active")) return true;
         // Compatibility views are intentionally public but never include an API key.
         return "GET".equalsIgnoreCase(request.getMethod())
@@ -72,8 +70,6 @@ public class AdminApiSecurityFilter extends OncePerRequestFilter {
     private boolean requiresTrustedServiceOnly(HttpServletRequest request) {
         String path = request.getRequestURI();
         if (path.startsWith("/api/admin/internal/")) return true;
-        if (path.startsWith("/api/admin/situation/")) return true;
-        if (path.equals("/api/admin/dataset/authorized-list")) return true;
         if (path.equals("/api/admin/export/for-llm")) return true;
         return path.matches("/api/admin/dataset/[^/]+/query");
     }
@@ -91,7 +87,7 @@ public class AdminApiSecurityFilter extends OncePerRequestFilter {
         if (path.startsWith("/api/admin/chat/")) return true;
         if ("GET".equalsIgnoreCase(method)) {
             // /api/admin/export/for-llm 为只读元数据导出（数据集 schema + 指标定义），
-            // 供 situation-service 运行时做 SQL 规划，与 dataset/list 同级放行服务身份。
+            // 供 ipage（态势页面）运行时做 SQL 规划，与 dataset/list 同级放行服务身份。
             return path.equals("/api/admin/database/list")
                     || path.matches("/api/admin/database/[^/]+/tables")
                     || path.matches("/api/admin/database/[^/]+/table-structure")

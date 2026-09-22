@@ -18,7 +18,9 @@ import config
 import cache_registry
 from llm_client import call_llm_json
 from agent import prompts
+from agent import field_resolver
 from agent.dimension_graph import DimensionGraph
+from agent.field_resolver import FieldResolver, build_resolver
 from store import admin_client
 
 logger = logging.getLogger("ipage-service")
@@ -28,15 +30,13 @@ _MAX_TEXT_LEN = 200
 # 单条航迹抽稀后的点数上限
 _MAX_POINTS_PER_TRACK = 240
 
-# 物理表名 → 地图单位语义（page-kit 据此选择象形符号）
-_UNIT_KIND_BY_TABLE = {
-    "mock_enemy_threat": "threat",
-    "mock_target": "target",
-    "mock_aircraft": "base",
-    "mock_strike_event": "event_strike",
-    "mock_battle_damage": "event_damage",
-    "mock_recon_event": "event_recon",
-}
+# 列名启发式（③ 层）统一由 field_resolver 承载；此处保留旧名以兼容既有调用点与测试，
+# 行为与改造前逐字一致（注解缺失时它就是唯一判据）。
+_find_coord_pairs = field_resolver.find_coord_pairs
+_find_field = field_resolver.find_field
+_find_time_field = field_resolver.find_time_field
+_radius_kind = field_resolver.radius_kind
+_UNIT_KIND_BY_TABLE = field_resolver.UNIT_KIND_BY_TABLE
 
 # 机型/飞机档案索引缓存（key=数据源标识）：跨子问题复用，避免重复拉取小档案表
 _aircraft_index_cache: Dict[str, Dict[str, Any]] = {}
@@ -115,78 +115,6 @@ def _apply_entity_scope(rows: List[Dict[str, Any]], columns: List[str],
 # ──────────────────────────────────────────────────────────────────
 # 地理字段识别与特征整形
 # ──────────────────────────────────────────────────────────────────
-
-def _find_coord_pairs(columns: List[str]) -> List[Tuple[str, str, str]]:
-    """识别成对经纬度列，返回 (前缀, lng列, lat列)；前缀 '' 表示裸 lng/lat。"""
-    lngs, lats = {}, {}
-    for c in columns:
-        low = str(c).lower()
-        if low in ("lng", "lon", "longitude"):
-            lngs[""] = c
-        elif low in ("lat", "latitude"):
-            lats[""] = c
-        elif low.endswith("_lng") or low.endswith("_lon"):
-            lngs[low[:-4]] = c
-        elif low.endswith("_lat"):
-            lats[low[:-4]] = c
-    return [(prefix, lng, lats[prefix]) for prefix, lng in lngs.items() if prefix in lats]
-
-
-def _find_field(columns: List[str], candidates: Tuple[str, ...]) -> Optional[str]:
-    """在列名中按包含关系找字段（如 seq/time/name/radius）。"""
-    lowered = {str(c).lower(): c for c in columns}
-    for cand in candidates:
-        for low, original in lowered.items():
-            if cand in low:
-                return original
-    return None
-
-
-def _radius_kind(col_name: str) -> str:
-    """按半径列名判圈类型：strike→打击圈，detect/recon→侦察(探测)圈，无线索返回空串。
-
-    一张表可能有**多根半径列**（如 detect_radius_km + strike_radius_km），
-    必须用列名把"半径值"与"圈类型"配对，否则会出现
-    "半径取探测值、标签却写打击范围"的错配，且另一根半径被整个忽略。
-    """
-    low = str(col_name or "").lower()
-    if "strike" in low:
-        return "strike"
-    if "detect" in low or "recon" in low or "scout" in low or "search" in low:
-        return "recon"
-    return ""
-
-
-# 档案/管理类日期关键词：服役日期、成立日期、创建时间等是静态属性，不是态势事件时间，
-# 绝不能作为地图时间轴字段（否则会把时间轴拉到数年前）
-_NON_EVENT_TIME_KEYS = ("commission", "found", "establish", "birth", "create", "update", "valid")
-
-
-def _find_time_field(columns: List[str]) -> Optional[str]:
-    """识别态势时间字段（记录/事件发生时间）。
-
-    匹配优先级：
-      1. 明确的事件时间列（record_time/event_time/recon_time/destroyed_time 等）
-      2. 以 _time 结尾的列（排除服役、成立、创建等档案管理时间）
-      3. 含 date/时间的列兜底（同样排除档案日期，如 commission_date）
-    """
-    lows = [str(c).lower() for c in columns]
-    event_cands = ("record_time", "event_time", "recon_time", "destroyed_time",
-                   "occur_time", "detect_time", "strike_time", "damage_time")
-    for cand in event_cands:
-        for low, original in zip(lows, columns):
-            if cand in low:
-                return original
-    for low, original in zip(lows, columns):
-        if (low == "time" or low.endswith("_time")) \
-                and not any(k in low for k in _NON_EVENT_TIME_KEYS):
-            return original
-    for low, original in zip(lows, columns):
-        if ("date" in low or "时间" in str(original)) \
-                and not any(k in low for k in _NON_EVENT_TIME_KEYS):
-            return original
-    return None
-
 
 def _to_float(value: Any) -> Optional[float]:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -358,7 +286,9 @@ def _semantic_index_entry(graph: DimensionGraph, own_table: str,
     输出形状与 load_aircraft_index 单项对齐：
     {faction, category, typeId, strikeRadiusKm, reconRadiusKm, callsign}。
     二跳表字段在 flat_row 中以 "表名.列名" 存储，一跳表字段为裸列名。
-    半径按字段语义分流：打击半径（strike_radius）与侦察半径（recon_radius/detect_radius）。
+    半径按字段语义分流：打击半径（strike_radius）与侦察半径（recon_radius/detect_radius）；
+    注解优先：字段角色 ``role=radius`` 或业务含义含"半径"的列同样参与分流，
+    类型由列名与业务含义共同判定（"打击半径"/"侦察半径"等中文列名可命中）。
     无法判定语义的裸 radius 列不参与动态能力圈，避免给通用数据源凭空造出"打击范围"。
     """
     entry: Dict[str, Any] = {
@@ -371,8 +301,10 @@ def _semantic_index_entry(graph: DimensionGraph, own_table: str,
         src_table, col = (key.split(".", 1) + [""])[:2] if "." in key else (own_table, key)
         spec = graph.tables.get(src_table)
         meaning = ""
+        role = ""
         if spec and col in spec.columns:
             meaning = str(spec.columns[col].get("meaning") or "")
+            role = str((spec.columns[col].get("semantic") or {}).get("role") or "").strip()
         low = str(col).lower()
         text = str(val).strip()
         if not text:
@@ -389,10 +321,17 @@ def _semantic_index_entry(graph: DimensionGraph, own_table: str,
             entry["faction"] = text
         if not entry["typeId"] and low == "type_id":
             entry["typeId"] = text
-        if entry["strikeRadiusKm"] is None and "strike_radius" in low:
-            entry["strikeRadiusKm"] = _to_float(val)
-        if entry["reconRadiusKm"] is None and ("recon_radius" in low or "detect_radius" in low):
-            entry["reconRadiusKm"] = _to_float(val)
+        # 半径语义：列名线索 或 注解角色/业务含义（中文"打击半径"可命中）
+        radius_like = ("radius" in low or role == "radius" or "半径" in meaning)
+        if radius_like:
+            is_strike = ("strike" in low or "打击" in meaning or "攻击" in meaning)
+            is_recon = ("recon" in low or "detect" in low or "scout" in low or "search" in low
+                        or "侦察" in meaning or "探测" in meaning or "搜索" in meaning)
+            if is_strike and entry["strikeRadiusKm"] is None:
+                entry["strikeRadiusKm"] = _to_float(val)
+            elif is_recon and entry["reconRadiusKm"] is None:
+                entry["reconRadiusKm"] = _to_float(val)
+            # 两类线索都没有（裸 radius_km）→ 不参与，保持历史行为
         if not entry["callsign"] and "callsign" in low:
             entry["callsign"] = text
     # callsign 回退：一跳表的通用名称列
@@ -460,27 +399,34 @@ def load_entity_enrich_index(meta: Dict[str, Any], fact_table: str) -> Dict[str,
 
 def build_geo_features(rows: List[Dict[str, Any]], columns: List[str],
                        geo_kind_hint: str, table_name: str = "",
-                       aircraft_index: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
+                       aircraft_index: Optional[Dict[str, Dict[str, Any]]] = None,
+                       resolver: Optional[FieldResolver] = None) -> Dict[str, Any]:
     """把明细行预整形为 SitMap 直接消费的地理特征。
+
+    resolver 为字段解析器（注解优先、业务含义文本次之、列名启发式兜底）。
+    不传时按"无注解"构造 —— 输出与改造前逐字一致（零回归的构造性保证）。
 
     Returns:
         {"kind": "tracks|points|circles|none", "tracks": [], "points": [], "circles": []}
     """
     table = str(table_name or "").lower()
-    table_unit_kind = next((kind for token, kind in _UNIT_KIND_BY_TABLE.items()
-                            if token in table), "")
+    resolver = resolver or FieldResolver(None, columns, table_name)
+    table_unit_kind = resolver.unit_kind()
     aircraft_index = aircraft_index or {}
     empty = {"kind": "none", "tracks": [], "points": [], "circles": [], "units": []}
-    pairs = _find_coord_pairs(columns)
+    # 坐标：注解 geometry 优先并**整体替换**候选，避免误配到同表的其它坐标前缀
+    annotated_pair = resolver.annotated_coord_pair()
+    pairs = ([("", annotated_pair[0], annotated_pair[1])] if annotated_pair
+             else _find_coord_pairs(columns))
     if not pairs:
         return empty
 
-    seq_field = _find_field(columns, ("seq",))
-    time_field = _find_time_field(columns)
+    seq_field = resolver.seq_column()
+    time_field = resolver.event_time_column()
     mission_field = _find_field(columns, ("mission_id", "mission"))
-    alt_field = _find_field(columns, ("altitude", "alt_"))
-    speed_field = _find_field(columns, ("speed",))
-    heading_field = _find_field(columns, ("heading",))
+    alt_field = resolver.altitude_column()
+    speed_field = resolver.speed_column()
+    heading_field = resolver.heading_column()
     name_fields = [
         c for c in columns
         if any(tok in str(c).lower()
@@ -492,28 +438,49 @@ def build_geo_features(rows: List[Dict[str, Any]], columns: List[str],
     name_field = _find_field(columns, ("enemy_aircraft_name", "aircraft_name", "callsign",
                                        "threat_name", "target_name", "base_name", "name",
                                        "呼号", "名称"))
-    type_field = _find_field(columns, ("threat_type", "category", "range_type",
-                                       "damage_type", "weapon_type", "type", "kind"))
-    status_field = _find_field(columns, ("hit_result", "status", "severity"))
+    type_field = resolver.type_column(
+        _find_field(columns, ("threat_type", "category", "range_type",
+                              "damage_type", "weapon_type", "type", "kind")))
+    status_field = resolver.status_column(_find_field(columns, ("hit_result", "status", "severity")))
     kind_field = _find_field(columns, ("type", "category", "kind", "threat_level"))
+    faction_column = resolver.faction_column()
+    # 象形符号：字段注解 symbol 优先，其次数据集 symbolDefault；无注解返回空（前端走原推断）
+    symbol_hint = resolver.symbol(type_field or "")
 
-    def faction_of(row: Dict[str, Any], acid: str = "") -> str:
-        """阵营解析：行值 → 飞机档案索引 → 表名兜底（enemy* 表为敌方=蓝方）。"""
-        val = str(row.get("faction") or "").strip()
-        if val in ("蓝方", "红方"):
-            return val
-        if acid and acid in aircraft_index:
-            val = str(aircraft_index[acid].get("faction") or "")
-            if val in ("蓝方", "红方"):
-                return val
-        return "蓝方" if "enemy" in table else ""
+    def resolve_faction(row: Dict[str, Any], acid: str = "") -> Tuple[str, str]:
+        """阵营解析：注解值映射优先，兜底行值 → 飞机档案索引 → 表名（enemy 表为敌方=蓝方）。"""
+        return resolver.faction_of(row, column=faction_column,
+                                   fallback_unit="蓝方" if "enemy" in table else "",
+                                   aircraft_index=aircraft_index, track_id=acid)
+
+    def attach_faction(item: Dict[str, Any], row: Dict[str, Any], acid: str = "") -> Dict[str, Any]:
+        """写入阵营；颜色仅在由注解值映射推导时出现（无注解时字段不出现，保证零回归）。"""
+        faction, color = resolve_faction(row, acid)
+        item["faction"] = faction
+        if color:
+            item["factionColor"] = color
+        return item
+
+    def attach_symbol(item: Dict[str, Any]) -> Dict[str, Any]:
+        """写入象形符号键（仅注解命中时出现）。"""
+        if symbol_hint:
+            item["symbol"] = symbol_hint
+        return item
+
+    def attach_status_key(item: Dict[str, Any], row: Dict[str, Any]) -> Dict[str, Any]:
+        """写入状态规范键（仅注解值映射命中运行时段时出现）。"""
+        if status_field:
+            key = resolver.status_key(status_field, row.get(status_field))
+            if key:
+                item["statusKey"] = key
+        return item
 
     hint = geo_kind_hint if geo_kind_hint in ("tracks", "points", "circles") else "points"
 
     # ── 范围圈：静态阵地/目标的固定范围圈 ──
     # 一表可含多根半径列（探测/侦察 + 打击），每根半径各自成圈、类型与半径严格配对；
     # 同时输出圆心处的单位符号，避免地图上只剩一个"孤零零的圈"。
-    radius_cols = [c for c in columns if "radius" in str(c).lower()]
+    radius_cols = resolver.radius_columns()
     if hint == "circles" and radius_cols:
         circles = []
         circle_units = []
@@ -526,37 +493,43 @@ def build_geo_features(rows: List[Dict[str, Any]], columns: List[str],
                 continue
             name = str(row.get(name_field) or
                        (row.get(name_fields[0]) if name_fields else "") or "")
-            faction = faction_of(row)
+            faction, faction_color = resolve_faction(row)
             row_range_type = str(row.get("range_type") or "")
             multi_radius = len(radius_cols) > 1
             for rc in radius_cols:
                 radius = _to_float(row.get(rc))
                 if radius is None or radius <= 0:
                     continue
-                col_kind = _radius_kind(rc)
+                col_kind = resolver.radius_kind_of(rc)
                 if col_kind:
-                    # 列名已说明半径含义 → 类型随列走，不再被别的半径列带偏
+                    # 列名/注解已说明半径含义 → 类型随列走，不再被别的半径列带偏
                     kind = col_kind
                     range_type = "打击范围" if kind == "strike" else "侦察范围"
                 else:
-                    # 列名无线索（如单一 radius_km）→ 沿用 range_type 列判定，兜底侦察圈
+                    # 无线索（如单一 radius_km）→ 沿用 range_type 列判定，兜底侦察圈
                     kind = "strike" if "打击" in row_range_type else "recon"
                     range_type = row_range_type or ("打击范围" if kind == "strike" else "侦察范围")
-                circles.append({
+                circle = {
                     "lng": lng, "lat": lat, "radiusKm": radius,
                     # 多根半径时圈名加范围后缀，便于图例/弹窗区分（探测一个、打击一个）
                     "name": (name + "·" + range_type) if multi_radius else name,
                     "faction": faction,
                     "rangeType": range_type,
                     "kind": kind,
-                })
+                }
+                if faction_color:
+                    circle["factionColor"] = faction_color
+                circles.append(circle)
             if table_unit_kind:
-                circle_units.append({
+                unit = {
                     "lng": lng, "lat": lat, "name": name, "unitKind": table_unit_kind,
-                    "faction": faction,
                     "type": str(row.get(type_field) or "") if type_field else "",
                     "status": str(row.get(status_field) or "") if status_field else "",
-                })
+                }
+                attach_symbol(unit)
+                attach_faction(unit, row)
+                attach_status_key(unit, row)
+                circle_units.append(unit)
         if circles:
             limit = config.IPAGE_MAP_POINT_LIMIT
             return {"kind": "circles", "tracks": [], "points": [],
@@ -566,24 +539,28 @@ def build_geo_features(rows: List[Dict[str, Any]], columns: List[str],
     # 同一飞机多个任务必须按 mission 拆成独立航迹，否则跨任务点会交叉连线
     if hint == "tracks":
         pair = _pick_coord_pair(pairs, ("track",))
-        group_field = id_field or (name_fields[0] if name_fields else None)
-        if pair and group_field:
+        # 拆分键：注解 trackGroupKey 优先（须全部命中），否则历史口径（实体列 + 任务列）
+        group_cols = resolver.track_group_columns(
+            id_field, mission_field, name_fields[0] if name_fields else None)
+        if pair and group_cols:
             lng_field, lat_field = pair
-            groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+            groups: Dict[Tuple[str, ...], List[Dict[str, Any]]] = {}
             for row in rows:
                 lng, lat = _to_float(row.get(lng_field)), _to_float(row.get(lat_field))
                 if lng is None or lat is None:
                     continue
-                acid = str(row.get(group_field) or "未知目标")
-                mission = str(row.get(mission_field) or "") if mission_field else ""
-                groups.setdefault((acid, mission), []).append(row)
+                key = tuple(str(row.get(col) or "") for col in group_cols)
+                groups.setdefault(key, []).append(row)
             tracks = []
             lone_points = []
             point_budget = config.IPAGE_MAP_POINT_LIMIT
             per_track = max(20, min(_MAX_POINTS_PER_TRACK,
                                     point_budget // max(1, len(groups))))
             total_points = 0
-            for (acid, mission), group_rows in groups.items():
+            for key, group_rows in groups.items():
+                # 首列为实体标识（无值时与历史一致记作未知目标），其余列为任务维度
+                acid = key[0] or "未知目标"
+                mission = "|".join(part for part in key[1:] if part)
                 sort_field = seq_field or time_field
                 if sort_field:
                     # 数值字段必须按数值排序：字符串排序会使 seq 10 排到 2 前，
@@ -593,14 +570,17 @@ def build_geo_features(rows: List[Dict[str, Any]], columns: List[str],
                 # 不足 2 点不构成航迹，作为飞机位置点标注
                 if len(group_rows) < 2:
                     r0 = group_rows[0]
-                    lone_points.append({
+                    lone = {
                         "lng": _to_float(r0.get(lng_field)), "lat": _to_float(r0.get(lat_field)),
                         "name": str(r0.get(name_field) or acid) if name_field else acid,
                         "kind": "aircraft", "unitKind": "aircraft",
-                        "faction": faction_of(r0, acid),
                         "type": aircraft_index.get(acid, {}).get("category") or "",
                         "time": str(r0.get(time_field)) if time_field and r0.get(time_field) is not None else None,
-                    })
+                    }
+                    attach_symbol(lone)
+                    attach_faction(lone, r0, acid)
+                    attach_status_key(lone, r0)
+                    lone_points.append(lone)
                     continue
                 indices = _thin_indices(len(group_rows), per_track)
                 points = []
@@ -624,18 +604,20 @@ def build_geo_features(rows: List[Dict[str, Any]], columns: List[str],
                         if r.get(name_field):
                             name = str(r.get(name_field))
                             break
-                faction = faction_of(group_rows[0], acid)
                 ac_meta = aircraft_index.get(acid, {})
-                tracks.append({
+                track = {
                     "id": acid,
                     "name": name,
-                    "faction": faction,
                     "category": ac_meta.get("category") or "",
                     "missionId": mission,
                     "strikeRadiusKm": ac_meta.get("strikeRadiusKm"),
                     "reconRadiusKm": ac_meta.get("reconRadiusKm"),
                     "points": points,
-                })
+                }
+                attach_symbol(track)
+                attach_faction(track, group_rows[0], acid)
+                attach_status_key(track, group_rows[0])
+                tracks.append(track)
                 total_points += len(points)
                 if total_points >= point_budget:
                     break
@@ -680,18 +662,21 @@ def build_geo_features(rows: List[Dict[str, Any]], columns: List[str],
         # kind 兼容旧消费方：表语义优先，其次取类型列原值
         kind = table_unit_kind or type_val or "other"
         acid = str(row.get(id_field) or "") if id_field else ""
-        points.append({
+        unit = {
             "lng": lng, "lat": lat,
             "name": name[:40],
             "kind": kind,
             "unitKind": table_unit_kind or "other",
             "id": acid,
-            "faction": faction_of(row, acid),
             "type": type_val,
             "status": str(row.get(status_field)) if status_field and row.get(status_field) is not None else "",
             "time": str(row.get(time_field)) if time_field and row.get(time_field) is not None else None,
             "props": props,
-        })
+        }
+        attach_symbol(unit)
+        attach_faction(unit, row, acid)
+        attach_status_key(unit, row)
+        points.append(unit)
     indices = _thin_indices(len(points), config.IPAGE_MAP_POINT_LIMIT)
     units = [points[i] for i in indices]
     return {"kind": "points", "tracks": [], "points": units, "units": units, "circles": []}
@@ -1014,6 +999,9 @@ def execute_sub_question(sq: Dict[str, Any], meta: Dict[str, Any],
 
     geo = {"kind": "none", "tracks": [], "points": [], "circles": [], "units": []}
     if mode == "detail" and geo_hint != "none":
+        # 字段解析器：注解优先（坐标/事件时间/拆分键/半径/单位大类/符号/阵营值映射），
+        # 列名启发式兜底；数据源无注解时输出与改造前逐字一致
+        resolver = build_resolver(meta, table_name, columns)
         # 航迹档案补全：优先通用维度 enrich（自动发现外键档案，适配任意领域），
         # 通用索引为空时回退飞机档案专用索引，保证现有地图符号不退化
         aircraft_index = {}
@@ -1021,10 +1009,19 @@ def execute_sub_question(sq: Dict[str, Any], meta: Dict[str, Any],
             aircraft_index = load_entity_enrich_index(meta, table_name)
             if not aircraft_index:
                 aircraft_index = load_aircraft_index(meta)
-        geo = build_geo_features(rows, columns, geo_hint,
-                                 table_name=table_name, aircraft_index=aircraft_index)
+        geo = build_geo_features(rows, columns, geo_hint, table_name=table_name,
+                                 aircraft_index=aircraft_index, resolver=resolver)
         if geo["kind"] == "none":
             warnings.append(f"规划的地理形态 {geo_hint} 未在字段中找到可用坐标")
+        # 注解问题如实上报，不阻断生成：
+        # 1) 注解列在结果集中缺失（SQL 可能未投影该列）→ 回落列名启发式；
+        # 2) 值域漂移：真实取值落在注解值域外（零成本，用内存行比对，不查库）；
+        # 3) 值域采样比对：默认关闭（校验已左移到保存期），仅供排障打开。
+        notes = list(resolver.notes) + resolver.value_drift_notes(rows)
+        if config.IPAGE_ANNOTATION_SAMPLE_CHECK:
+            notes += resolver.value_domain_notes()
+        for note in dict.fromkeys(notes):
+            warnings.append(note)
 
     return {
         "id": qid,

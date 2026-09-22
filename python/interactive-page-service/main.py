@@ -1,9 +1,8 @@
 """智能交互页面服务（interactive-page-service / ipage）入口。
 
 独立智能体：针对用户态势问题，直接生成含图表 + 地图 + 文字说明的可交互
-单文件 HTML 页面。与现有态势图服务（situation-service）完全独立，不复用
-其 agent 代码；平台能力仅通过 admin-service 的数据集元数据、只读 SQL 与
-LLM 配置接口复用。
+单文件 HTML 页面。态势生成能力由本服务独立实现；平台能力仅通过
+admin-service 的数据集元数据、只读 SQL 与 LLM 配置接口获取。
 
 路由总览：
   GET    /ipage/health                  健康检查
@@ -18,6 +17,8 @@ LLM 配置接口复用。
   POST   /ipage/sessions                新建空会话
   GET    /ipage/sessions/{sessionId}    会话详情（消息 + 关联页面摘要）
   DELETE /ipage/sessions/{sessionId}    删除会话
+  GET    /ipage/skills                  技能列表（生成剧本元数据，供前端选择器）
+  POST   /ipage/skills/match            按问题语义匹配技能（阈值标定 / 前端预判）
 """
 
 from dotenv import load_dotenv, find_dotenv
@@ -29,6 +30,7 @@ import hmac
 import json
 import logging
 import time
+import urllib.request
 import uuid
 from typing import Dict, Optional
 
@@ -41,10 +43,10 @@ logger = logging.getLogger("ipage-service")
 
 import config
 import cache_registry
-from models import GenerateRequest, PageRecord, SessionCreate
+from models import GenerateRequest, PageRecord, SessionCreate, SkillMatchRequest
 from stream.sse import format_event, sse_response
 from store import admin_client, page_store
-from agent import orchestrator
+from agent import orchestrator, skill_catalog, skill_matcher
 
 app = FastAPI(
     title="智能交互页面服务",
@@ -106,10 +108,13 @@ def _actor(request: Request) -> dict:
 class _GenerationSession:
     """生成任务会话：事件日志 + Condition 唤醒 + 后台任务句柄。"""
 
-    def __init__(self, page: PageRecord, actor: dict, database_id: str):
+    def __init__(self, page: PageRecord, actor: dict, database_id: str,
+                 skill_id: str = "", skill_mode: str = "auto"):
         self.page = page
         self.actor = actor
         self.database_id = database_id
+        self.skill_id = skill_id
+        self.skill_mode = skill_mode
         self.events = []
         self.condition = asyncio.Condition()
         self.finished = False
@@ -165,6 +170,7 @@ async def _run_pipeline(page_id: str, session: _GenerationSession,
             done_payload = {"pageId": page_id, "status": "failed"}
             async for item in orchestrator.generate_stream(
                 page, meta, page.query, session.database_id,
+                session.skill_id, session.skill_mode,
             ):
                 event_type, data = item["event"], item["data"]
                 if event_type == "done":
@@ -302,13 +308,37 @@ def health():
     except Exception as exc:
         logger.error("健康检查-数据库初始化失败: %s", exc)
         db_ok = False
+    skill_count = 0
+    try:
+        skill_count = len(skill_catalog.load_skills())
+    except Exception as exc:
+        logger.warning("健康检查-技能目录加载失败: %s", exc)
     return _ok({
         "status": "healthy" if db_ok else "degraded",
         "service": "interactive-page-service",
         "port": config.SERVICE_PORT,
         "storage": "sqlite" if db_ok else "unavailable",
         "registeredCaches": cache_registry.registered_caches(),
+        "skills": skill_count,
+        "skillMatchEnabled": config.IPAGE_SKILL_MATCH_ENABLED,
+        "knowledgeService": _knowledge_reachable(),
     })
+
+
+def _knowledge_reachable() -> str:
+    """探测向量服务可达性。
+
+    只探 /health，不调用 /knowledge/embed —— 健康检查不该触发模型推理。
+    技能匹配本身可降级，因此这里的结果不影响本服务自身的 healthy 判定。
+    """
+    if not config.KNOWLEDGE_SERVICE_URL:
+        return "unconfigured"
+    url = config.KNOWLEDGE_SERVICE_URL.rstrip("/") + "/health"
+    try:
+        with urllib.request.urlopen(url, timeout=1.5) as resp:
+            return "ok" if resp.status == 200 else "unreachable"
+    except Exception:
+        return "unreachable"
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -353,6 +383,54 @@ async def invalidate_metadata_cache(request: Request):
 
 
 # ──────────────────────────────────────────────────────────────────
+# 技能（生成剧本）：列表与语义匹配
+# ──────────────────────────────────────────────────────────────────
+
+@app.get("/ipage/skills")
+def list_skills():
+    """技能列表（仅元数据，不含正文），供前端技能选择器。
+
+    技能是「生成剧本」（取数口径 / 区块编排 / 呈现偏好 / 叙事要点），
+    不承载领域语义 —— 后者走数据源注解。
+
+    ``defaultMode`` 是前端"是否需要用户选择"的单一来源：默认 off（不套用技能），
+    由用户显式选择是否自动匹配或指定技能；``enabled=false`` 表示服务端彻底禁用了
+    自动匹配（此时即使前端选"自动匹配"也不会生效）。
+    """
+    try:
+        skills = skill_catalog.load_skills()
+    except Exception as exc:
+        logger.error("技能目录加载失败: %s", exc)
+        return _fail("技能目录加载失败，请检查服务日志")
+    return _ok({
+        "enabled": config.IPAGE_SKILL_MATCH_ENABLED,
+        "defaultMode": config.IPAGE_SKILL_DEFAULT_MODE,
+        "matchHigh": config.IPAGE_SKILL_MATCH_HIGH,
+        "matchLow": config.IPAGE_SKILL_MATCH_LOW,
+        "items": [skill.to_meta() for skill in skills],
+    })
+
+
+@app.post("/ipage/skills/match")
+def match_skill(req: SkillMatchRequest):
+    """按问题语义匹配技能：返回候选与分数，以及是否达到自动套用阈值。
+
+    用于阈值标定（用「应命中 / 不应命中」两组真实问法回放）与前端预判。
+    向量服务不可用时返回空候选与中文原因，不报错。
+    """
+    query = (req.query or "").strip()
+    if not query:
+        return _fail("query 不能为空")
+    try:
+        top_n = max(1, min(int(req.topK or 3), 10))
+        result = skill_matcher.match(query, top_n=top_n)
+    except Exception as exc:
+        logger.error("技能匹配失败: %s", exc)
+        return _fail("技能匹配失败，请检查服务日志")
+    return _ok(result.to_dict())
+
+
+# ──────────────────────────────────────────────────────────────────
 # 发起生成
 # ──────────────────────────────────────────────────────────────────
 
@@ -376,7 +454,7 @@ async def generate(req: GenerateRequest, request: Request):
         fingerprint = hashlib.sha256(json.dumps({
             "userId": user_id, "query": query, "source": req.source,
             "dataSourceId": req.dataSourceId, "parentPageId": req.parentPageId,
-            "context": req.context,
+            "context": req.context, "skillId": req.skillId, "skillMode": req.skillMode,
         }, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
         previous = _IDEMPOTENCY.get(idem_key)
         if previous and previous[0] > time.time():
@@ -430,7 +508,9 @@ async def generate(req: GenerateRequest, request: Request):
         _IDEMPOTENCY[idem_key] = (time.time() + config.IPAGE_IDEMPOTENCY_TTL,
                                   fingerprint, page_id)
 
-    session = _GenerationSession(page, actor, req.dataSourceId or "")
+    session = _GenerationSession(page, actor, req.dataSourceId or "",
+                                 (req.skillId or "").strip(),
+                                 (req.skillMode or "auto").strip().lower() or "auto")
     _STREAM_SESSIONS[page_id] = session
     session.task = asyncio.create_task(_run_generation(page_id, session))
 

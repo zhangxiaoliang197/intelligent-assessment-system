@@ -10,6 +10,8 @@
 """
 from typing import Any, Dict, List
 
+from agent import dimension_graph
+
 # ──────────────────────────────────────────────────────────────────
 # 数据集目录格式化
 # ──────────────────────────────────────────────────────────────────
@@ -48,7 +50,8 @@ def format_meta_catalog(meta: Dict[str, Any]) -> str:
             if low.endswith("_lat") or low in ("lat", "latitude"):
                 geo_lat_fields.add(str(col))
         geo_tag = ""
-        if geo_lng_fields and geo_lat_fields:
+        if (geo_lng_fields and geo_lat_fields) or any(dimension_graph.annotated_geo_pair(schema)):
+            # 注解声明的坐标列（如"经度/纬度"）也算有地理能力，避免非约定命名被误判
             geo_tag = "  【地理能力：有坐标字段】"
         block = [f"{idx}. 数据集ID: {ds_id}｜名称: {name}｜表: {table}{geo_tag}"]
         if desc:
@@ -115,17 +118,24 @@ data_page 规划要求：
 """
 
 
-def build_plan_messages(query: str, catalog_text: str, parent_query: str = "") -> list:
-    """Planner 消息列表。"""
+def build_plan_messages(query: str, catalog_text: str, parent_query: str = "",
+                        skill_context: Dict[str, Any] = None) -> list:
+    """Planner 消息列表。
+
+    skill_context 为空（未命中技能）时，消息与改造前完全一致。
+    """
     context_line = f"承接上文：{parent_query}\n" if parent_query else ""
+    guide = format_skill_plan_guide(skill_context)
     return [
-        {"role": "system", "content": PLANNER_SYSTEM_SUFFIX + catalog_text},
+        {"role": "system",
+         "content": PLANNER_SYSTEM_SUFFIX + (("\n" + guide) if guide else "") + catalog_text},
         {"role": "user", "content": f"{context_line}用户问题：{query}"},
     ]
 
 
 def build_replan_messages(feedback: str, catalog_text: str,
-                          parent_plan: Dict[str, Any]) -> list:
+                          parent_plan: Dict[str, Any],
+                          skill_context: Dict[str, Any] = None) -> list:
     """修订场景的「延续式」规划消息。
 
     修订必须在父页面已有取数口径上延续：已有子问题原样沿用（系统直接继承已取到的
@@ -142,8 +152,10 @@ def build_replan_messages(feedback: str, catalog_text: str,
         for sq in (parent_plan.get("subQuestions") or []) if isinstance(sq, dict)
     ]
     existing_text = json.dumps(existing, ensure_ascii=False, indent=2)
+    guide = format_skill_plan_guide(skill_context)
     return [
-        {"role": "system", "content": PLANNER_SYSTEM_SUFFIX + catalog_text},
+        {"role": "system",
+         "content": PLANNER_SYSTEM_SUFFIX + (("\n" + guide) if guide else "") + catalog_text},
         {"role": "user", "content":
             f"这是对已生成页面的修订。用户修改意见：{feedback}\n\n"
             f"上一版规划中已取数的子问题（系统会直接继承其数据，不会重复查询）：\n{existing_text}\n\n"
@@ -263,21 +275,27 @@ RUNTIME_API_GUIDE = """
       center: [120.2, 24.5] | 'auto',      // 不传默认自动适配
       zoom: 6,
       // 单位/事件点：优先使用 geoFeatures.units（与 points 同构，运行时按 unitKind 自动绘制
-      // 飞机/基地/雷达/导弹/目标/威胁/事件等象形符号并生成图例；未知类型自动用圆点兜底）
-      units:   [{lng, lat, name, unitKind:'aircraft'|'base'|'threat'|'target'
+      // 飞机/基地/雷达/导弹/目标/设施/事件等象形符号并生成图例；未知类型自动用圆点兜底）
+      // 数据源注解可额外给出（三者均为可选，缺省时运行时按类型自动推断，页面直接透传即可）：
+      //   symbol      象形符号注册表键（运行时优先使用）
+      //   factionColor 该阵营的规范色 #rrggbb（运行时优先用于符号/航迹/范围圈配色）
+      //   statusKey   状态规范键 destroyed|miss|critical|heavy|light（运行时据此画角标/叉）
+      units:   [{lng, lat, name, unitKind:'aircraft'|'base'|'threat'|'target'|'facility'
                        |'event_strike'|'event_damage'|'event_recon'|'other',
-                 faction:'蓝方'|'红方'|'', type, status, time, props:{...}}],
+                 faction:'蓝方'|'红方'|'', type, status, time, props:{...},
+                 symbol?, factionColor?, statusKey?}],
       // 航迹：一条 track 是一个架次；points 已按时间排序，含 time/alt/speed/heading
       // 半径是装备固有定值（可能为空）：reconRadiusKm 侦察半径、strikeRadiusKm 打击半径，
       // 开启 playback 后运行时据此画出"圆心随飞机走"的动态能力圈；此时整条航迹不预画，
       // 由播放器绘制飞机图标并让已飞航迹渐进显示（见下方"三、时间轴回放"）
       tracks:  [{id, name, faction:'蓝方'|'红方'|'', category, missionId,
-                 strikeRadiusKm, reconRadiusKm,
+                 strikeRadiusKm, reconRadiusKm, symbol?, factionColor?,
                  points:[{lng, lat, seq, time, alt, speed, heading, props:{}}]}],
       // 静态能力范围圈（坐标固定、半径定值，如阵地/威胁圈）：faction/rangeType 用于配色与图例
       // 一表多半径（探测 + 打击）会各自成圈；圆心处的单位符号由运行时一并绘制
       circles: [{lng, lat, radiusKm: 120, name, faction:'蓝方'|'红方'|'',
-                 rangeType:'打击范围'|'侦察范围', kind:'strike'|'recon'|'other'}],
+                 rangeType:'打击范围'|'侦察范围', kind:'strike'|'recon'|'other',
+                 factionColor?}],
       // 时间轴回放（可选）：有带 time 的航迹时强烈建议开启，播放器与动态能力圈由运行时接管
       playback: { enabled: true, radius:'both'|'strike'|'recon', trail: true, speed: 1, showBar: true }
     }
@@ -355,7 +373,8 @@ PAGE_SYSTEM_HEADER = """
    页眉含页面标题、用户问题、生成时间（data.generatedAt）与数据来源说明；
    【阵营颜色自动映射】图表系列名称含"红方""蓝方"时，运行时会自动将"红方"渲染为红色(#dc2626)、
    "蓝方"渲染为蓝色(#1d4ed8)，无需在 spec 中指定 color；series 顺序可任意，颜色不随顺序变化；
-   地图航迹的 faction 字段同样自动上色；其它系列按专业配色自动分配；
+   地图航迹的 faction 字段同样自动上色；**数据项自带 factionColor 时以它为准**（数据源注解
+   已算出规范色，直接透传即可，不要自行覆盖）；其它系列按专业配色自动分配；
 2. 布局用 CSS Grid/Flex 响应式：KPI 卡片横排；图表 2 列（窄屏自动 1 列）；
    地图给足高度（建议 420-520px）；结论区放页面底部；
 3. 图表选型匹配数据：比较/排名用 bar，时间趋势用 line，占比（≤8 类）用 pie，
@@ -445,8 +464,12 @@ def _bundle_view(bundle: Dict[str, Any], sample_rows: int) -> Dict[str, Any]:
 
 
 def build_page_messages(query: str, plan: Dict[str, Any], bundle: Dict[str, Any],
-                        sample_rows: int) -> list:
-    """页面首次生成消息。"""
+                        sample_rows: int,
+                        skill_context: Dict[str, Any] = None) -> list:
+    """页面首次生成消息。
+
+    skill_context 为空（未命中技能）时，消息与改造前完全一致。
+    """
     import json
     sections = plan.get("sections", [])
     plan_text = json.dumps(
@@ -457,8 +480,9 @@ def build_page_messages(query: str, plan: Dict[str, Any], bundle: Dict[str, Any]
     bundle_text = json.dumps(
         _bundle_view(bundle, sample_rows), ensure_ascii=False, indent=2, default=str,
     )
+    guide = format_skill_page_guide(skill_context)
     return [
-        {"role": "system", "content": PAGE_SYSTEM_HEADER},
+        {"role": "system", "content": PAGE_SYSTEM_HEADER + (("\n" + guide) if guide else "")},
         {"role": "user", "content":
             f"用户问题：{query}\n\n页面规划：\n{plan_text}\n\n"
             f"数据包（结构+样例）：\n{bundle_text}\n\n"
@@ -498,3 +522,97 @@ def build_redesign_messages(feedback: str) -> list:
             "   若意见所需的数据当前数据包中确实没有，按「暂无相关数据」空态处理，不得造假；\n"
             "4. 仍然遵守全部运行时契约，直接输出完整单文件 HTML，不要解释。"},
     ]
+
+
+# ──────────────────────────────────────────────────────────────────
+# 4) 技能剧本注入（渐进披露的第二级：命中技能后才追加）
+#
+# 技能未命中时，两个 format 函数都返回空串，三个 build_*_messages 的输出
+# 与改造前逐字节一致 —— 这是「不影响当前生成效果」的硬约束。
+# ──────────────────────────────────────────────────────────────────
+
+def _skill_of(skill_context: Dict[str, Any]):
+    """取技能对象；未套用或缺对象时返回 None。"""
+    if not isinstance(skill_context, dict) or not skill_context.get("applied"):
+        return None
+    return skill_context.get("skill")
+
+
+def _skill_match_reason(skill_context: Dict[str, Any]) -> str:
+    """技能套用原因的简短中文描述（匹配方式 + 匹配度）。"""
+    labels = {"auto": "自动匹配", "manual": "手动指定", "inherited": "继承上一版页面"}
+    label = labels.get(str(skill_context.get("matchedBy") or ""), "已套用")
+    score = skill_context.get("score")
+    if isinstance(score, (int, float)):
+        return f"{label}，匹配度 {float(score):.3f}"
+    return label
+
+
+def format_skill_plan_guide(skill_context: Dict[str, Any]) -> str:
+    """Planner 技能指南：取数剧本（已解析成真实数据集）+ 区块剧本 + 硬性约束。
+
+    数据集由 ipage 按实体语义槽位确定性解析，模型只做「按剧本落位」，不猜数据集 ——
+    这是技能换数据源后不失效的关键。
+    """
+    skill = _skill_of(skill_context)
+    if skill is None:
+        return ""
+    sections = skill.body_sections or {}
+    needs = skill_context.get("needs") or []
+
+    lines = [
+        f"【本次已套用技能：{skill.name}（{_skill_match_reason(skill_context)}）】",
+        "请按下面的技能剧本组织页面规划。已给出数据集 ID 的需求必须使用该数据集，"
+        "不得替换或编造数据集；未给出数据集 ID 的需求由你从下方目录中选择语义最接近的数据集。",
+        "",
+        "取数剧本：",
+    ]
+    if needs:
+        for item in needs:
+            if item.get("datasetId"):
+                lines.append(
+                    f"- 数据集ID={item.get('datasetId')}｜{item.get('datasetName')}"
+                    f"｜mode={item.get('mode')}｜geo={item.get('geo')}"
+                    f"｜要回答：{item.get('question')}")
+            else:
+                lines.append(
+                    f"- 待选表（{item.get('reason') or '按目录选表'}）"
+                    f"｜mode={item.get('mode')}｜geo={item.get('geo')}"
+                    f"｜要回答：{item.get('question')}")
+    else:
+        lines.append("- （本次没有声明的数据需求，请按技能区块剧本自行补齐取数）")
+
+    block_script = str(sections.get("区块剧本") or "").strip()
+    if block_script:
+        lines += ["", "区块剧本：", block_script]
+
+    lines += ["", "硬性要求："]
+    if skill.required_sections:
+        lines.append(f"- sections 必须覆盖这些区块类型：{'、'.join(skill.required_sections)}")
+    if skill.map_modes:
+        lines.append(f"- 必须包含地图区块，且其 ref 指向声明了 geo（{'/'.join(skill.map_modes)}）的子问题")
+    lines.append("- 其余规划要求（区块数量、结论区、地理形态与坐标字段匹配等）保持不变")
+    return "\n".join(lines)
+
+
+def format_skill_page_guide(skill_context: Dict[str, Any]) -> str:
+    """PageWriter 技能指南：区块剧本 + 呈现偏好 + 叙事要点 + 交互 + 动态演示。"""
+    skill = _skill_of(skill_context)
+    if skill is None:
+        return ""
+    sections = skill.body_sections or {}
+    lines = [f"【本次已套用技能：{skill.name}】",
+             "在遵守上述运行时契约的前提下，按下面的技能剧本组织页面结构与呈现。", ""]
+    for key in ("区块剧本", "呈现偏好", "叙事要点"):
+        text = str(sections.get(key) or "").strip()
+        if text:
+            lines += [f"## {key}", text, ""]
+    if skill.recommended_chart_types:
+        lines += [f"推荐图表类型：{'、'.join(skill.recommended_chart_types)}"
+                  "（数据实际不支持时按数据选型）", ""]
+    if skill.interactions:
+        lines += ["## 交互要求", "- " + "；".join(skill.interactions), ""]
+    if skill.playback:
+        lines += ["【动态演示】本技能要求航迹地图开启时间轴回放：给 SitMap 传 spec.playback，"
+                  "由运行时提供播放条与「飞机随播放移动 + 航迹渐进显示」，禁止自行实现播放器。", ""]
+    return "\n".join(lines).rstrip()

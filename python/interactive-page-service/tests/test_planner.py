@@ -90,6 +90,26 @@ class PlannerGeoTest(unittest.TestCase):
             {"name": "track_lng"}, {"name": "track_lat"}]}])
         self.assertIn("ds-track", planner._geo_capable_ids(meta))
 
+    def test_geo_capable_from_annotation_with_foreign_names(self):
+        """字段名完全不符合约定（经度/纬度）时，靠 geometry 注解仍判为有地理能力。"""
+        meta = _meta([{
+            "datasetId": "ds-cn", "name": "架次记录",
+            "semanticJson": '{"geometry": {"lngColumn": "\u7ecf\u5ea6", "latColumn": "\u7eac\u5ea6"}}',
+            "fields": [{"name": "\u7ecf\u5ea6"}, {"name": "\u7eac\u5ea6"}, {"name": "\u5b9e\u4f53\u7f16\u53f7"}],
+        }])
+        self.assertIn("ds-cn", planner._geo_capable_ids(meta))
+
+    def test_geo_capable_from_field_role_annotation(self):
+        """未写 geometry 但字段声明 role=lng/lat 时同样判为有地理能力。"""
+        meta = _meta([{
+            "datasetId": "ds-role", "name": "点位",
+            "fields": [
+                {"name": "X", "semanticJson": '{"role": "lng"}'},
+                {"name": "Y", "semanticJson": '{"role": "lat"}'},
+            ],
+        }])
+        self.assertIn("ds-role", planner._geo_capable_ids(meta))
+
     def test_geo_on_non_spatial_dataset_rejected(self):
         meta = _meta([{"datasetId": "ds-plain", "name": "字典",
                        "fields": [{"name": "id"}, {"name": "name"}]}])

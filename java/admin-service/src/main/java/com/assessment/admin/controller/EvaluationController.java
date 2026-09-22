@@ -31,35 +31,9 @@ public class EvaluationController {
     @Autowired
     private TrustedRequestAuthorizer authorizer;
 
-    /** Minimal, actor-filtered catalog used only by situation-service preflight/runtime. */
-    @GetMapping("/dataset/authorized-list")
-    public ResponseEntity<Map<String, Object>> listAuthorizedDatasets(
-            @RequestHeader(value = "X-Service-Token", required = false) String serviceToken,
-            @RequestHeader(value = "X-User-Id", required = false) String userId,
-            @RequestHeader(value = "X-Team-Ids", required = false) String teamIds,
-            @RequestHeader(value = "X-User-Role", required = false) String role) {
-        if (!authorizer.isTrustedService(serviceToken)) {
-            return ResponseEntity.status(401).body(Map.of("success", false, "message", "服务身份校验失败"));
-        }
-        List<Map<String, Object>> datasets = new ArrayList<>();
-        for (Dataset dataset : datasetRepository.findAll()) {
-            if (!canRead(dataset, userId, teamIds, role)) continue;
-            Map<String, Object> item = new HashMap<>();
-            item.put("id", dataset.getId());
-            item.put("name", dataset.getName());
-            item.put("description", dataset.getDescription() == null ? "" : dataset.getDescription());
-            item.put("databaseId", dataset.getDatabaseId() == null ? "" : dataset.getDatabaseId());
-            item.put("tableName", dataset.getTableName());
-            item.put("schemaVersion", dataset.getSchemaVersion() == null ? 1 : dataset.getSchemaVersion());
-            item.put("sensitiveColumns", new ArrayList<>(csvSet(dataset.getSensitiveColumns())));
-            datasets.add(item);
-        }
-        return ResponseEntity.ok(Map.of("success", true, "total", datasets.size(), "datasets", datasets));
-    }
-
     /**
-     * Situation-service only: execute the server-owned dataset template after service and
-     * actor authorization. No caller supplied SQL is accepted by this endpoint.
+     * 态势页面（ipage）取数专用：执行数据集自带的查询模板。
+     * 不接受调用方传入的 SQL，仅需服务身份 + 数据行级授权。
      */
     @PostMapping("/dataset/{datasetId}/query")
     public ResponseEntity<Map<String, Object>> queryDataset(
@@ -129,14 +103,14 @@ public class EvaluationController {
     }
 
     /**
-     * 态势图专用：在数据集关联的数据库上执行 LLM 生成的只读 SQL。
+     * 态势页面（ipage）取数专用：在数据集关联的数据库上执行 LLM 生成的只读 SQL。
      * POST /api/admin/dataset/{datasetId}/execute-query
      * 与 execute-sql（仅管理员临时 SQL）不同，本端点走服务身份 + 数据集授权，
-     * 供 situation-service 在取数阶段复用评估分析的 Text-to-SQL 能力，
+     * 供 ipage 在取数阶段复用评估分析的 Text-to-SQL 能力，
      * 用 LLM 生成的精确 SQL（WHERE/聚合/GROUP BY）替代整表拉取。
      */
     @PostMapping("/dataset/{datasetId}/execute-query")
-    public ResponseEntity<Map<String, Object>> executeQueryForSituation(
+    public ResponseEntity<Map<String, Object>> executeQueryAsService(
             @PathVariable String datasetId,
             @RequestHeader(value = "X-Service-Token", required = false) String serviceToken,
             @RequestHeader(value = "X-User-Id", required = false) String userId,

@@ -1,6 +1,6 @@
 -- ============================================================
 -- 智能评估系统 - 演示指标种子数据
--- 让 situation-service 的「indicator」数据源有记录可返回，
+-- 让 ipage（态势页面）的「indicator」数据源有记录可返回，
 -- 配合 scripts/demo-business-data.sql 的演示业务库与数据集使用。
 --
 -- 用法（本机 MySQL root/root）：
