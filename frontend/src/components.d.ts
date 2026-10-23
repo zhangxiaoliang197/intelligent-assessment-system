@@ -55,7 +55,6 @@ declare module 'vue' {
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
     ElTree: typeof import('element-plus/es')['ElTree']
     ElUpload: typeof import('element-plus/es')['ElUpload']
-    FloatingSidebar: typeof import('./components/FloatingSidebar.vue')['default']
     GeoMap: typeof import('./components/GeoMap.vue')['default']
     Layout: typeof import('./components/Layout.vue')['default']
     PageSandbox: typeof import('./components/interactive/PageSandbox.vue')['default']

@@ -1,10 +1,6 @@
 <template>
   <div class="portal-page">
-    <div class="portal-bg">
-      <div class="bg-glow bg-glow-1"></div>
-      <div class="bg-glow bg-glow-2"></div>
-      <div class="bg-grid"></div>
-    </div>
+    <div class="portal-bg" aria-hidden="true"></div>
 
     <div class="portal-wrapper">
       <header class="portal-header">
@@ -17,21 +13,28 @@
           </div>
         </div>
         <div class="header-right">
-          <el-button :icon="Setting" circle @click="goToAdmin" />
+          <!-- 顶部胶囊导航：与封面版式一致 -->
+          <button
+            v-for="nav in navItems"
+            :key="nav.id"
+            type="button"
+            class="nav-pill"
+            @click="navigateToTool(nav.path)"
+          >
+            <el-icon :size="15"><component :is="nav.icon" /></el-icon>
+            <span>{{ nav.name }}</span>
+          </button>
           <el-avatar :size="36">{{ username?.charAt(0) || '用' }}</el-avatar>
         </div>
       </header>
 
       <main class="portal-main">
         <section class="hero-section">
-          <div class="hero-icon">
-            <img src="/logo.jfif" alt="天智" class="hero-logo-img" />
-          </div>
           <h1 class="hero-title">
-            有什么可以帮您评估？
+            提出评估构想，分析全局走向
           </h1>
           <p class="hero-subtitle">
-            基于知识库与本体，为您提供智能问答、指标分析、评估分析、态势页面等专业能力
+            我可以帮您进行指标体系构建、评估模型构建、指标溯源、评估结果归因、趋势预测、评估报告生成。
           </p>
         </section>
 
@@ -39,9 +42,9 @@
           <div class="search-box">
             <el-input
               v-model="searchQuery"
-              placeholder="请输入您的问题，回车或点击发送"
               size="large"
               class="search-input"
+              :placeholder="inputPlaceholder"
               @keydown="sendMessageOnEnter($event, handleSearch)"
             >
               <template #prefix>
@@ -73,26 +76,25 @@
             </el-tag>
           </div>
 
+          <!-- 模块入口：横向小胶囊（图标+文字），与封面版式一致 -->
           <div class="tools-row">
-            <div
+            <button
               v-for="tool in tools"
               :key="tool.id"
-              class="tool-pill"
+              type="button"
+              class="tool-btn"
               :style="{ '--tool-color': tool.color }"
               @click="navigateToTool(tool.path)"
             >
-              <el-icon :size="16">
-                <component :is="tool.icon" />
-              </el-icon>
-              <span>{{ tool.name }}</span>
-            </div>
+              <el-icon :size="17"><component :is="tool.icon" /></el-icon>
+              <span class="tool-name">{{ tool.name }}</span>
+            </button>
           </div>
         </section>
 
+        <!-- 推荐卡片区：收进左栏，紧凑 3 列小卡，与封面版式一致 -->
         <section class="suggest-section">
-          <div class="section-header">
-            <h3 class="section-title">推荐试试这些</h3>
-          </div>
+          <h3 class="section-title">推荐试试这些</h3>
           <div class="suggest-grid">
             <div
               v-for="item in suggestList"
@@ -100,27 +102,24 @@
               class="suggest-card"
               @click="selectSuggest(item)"
             >
-              <div class="suggest-icon" :style="{ '--icon-color': item.color }">
-                <el-icon :size="18">
-                  <component :is="item.icon" />
-                </el-icon>
-              </div>
-              <div class="suggest-content">
+              <div class="card-head">
+                <span class="suggest-icon" :style="{ '--icon-color': item.color }">
+                  <el-icon :size="15">
+                    <component :is="item.icon" />
+                  </el-icon>
+                </span>
                 <h4>{{ item.title }}</h4>
-                <p>{{ item.desc }}</p>
               </div>
-              <el-icon class="suggest-arrow"><ArrowRight /></el-icon>
+              <p class="card-desc">{{ item.desc }}</p>
             </div>
           </div>
         </section>
       </main>
-
-      <footer class="portal-footer">
-        <span>天智智能评估系统 · Tianzhi Intelligent Assessment</span>
-      </footer>
     </div>
 
-    <FloatingSidebar />
+    <footer class="portal-footer">
+      <span>天智智能评估系统 · Tianzhi Intelligent Assessment</span>
+    </footer>
 
     <input
       ref="fileInputRef"
@@ -133,7 +132,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Search,
@@ -143,15 +142,15 @@ import {
   PieChart,
   Document,
   Setting,
-  ArrowRight,
   Guide,
   DataAnalysis,
   Aim,
   Box,
   Loading,
-  MagicStick
+  MagicStick,
+  Collection,
+  Share
 } from '@element-plus/icons-vue'
-import FloatingSidebar from '@/components/FloatingSidebar.vue'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import { useAttachmentUpload } from '@/composables/useAttachmentUpload'
@@ -165,6 +164,31 @@ const { attachments, uploading: _uploading, upload: uploadFile, remove: removeAt
 
 const username = userStore.username || '评估员'
 
+// 移动端输入框宽度有限，缩短占位文案避免被截断
+const isNarrow = ref(false)
+const inputPlaceholder = computed(() =>
+  isNarrow.value ? '请输入您的问题' : '请输入您的问题，回车或点击发送'
+)
+const syncViewport = () => {
+  isNarrow.value = window.innerWidth <= 768
+}
+
+onMounted(() => {
+  syncViewport()
+  window.addEventListener('resize', syncViewport)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', syncViewport)
+})
+
+// 顶部胶囊导航项
+const navItems = [
+  { id: 1, name: '知识库', icon: Collection, path: '/knowledge' },
+  { id: 2, name: '动态本体', icon: Share, path: '/ontology' },
+  { id: 3, name: '基础管理', icon: Setting, path: '/admin' }
+]
+
 const tools = [
   {
     id: 1,
@@ -177,7 +201,7 @@ const tools = [
     id: 2,
     name: '指标分析',
     icon: PieChart,
-    color: '#10b981',
+    color: '#0ea5e9',
     path: '/indicator'
   },
   {
@@ -191,7 +215,7 @@ const tools = [
     id: 4,
     name: '态势页面',
     icon: MagicStick,
-    color: '#0ea5e9',
+    color: '#10b981',
     path: '/situation-page'
   }
 ]
@@ -199,43 +223,43 @@ const tools = [
 const suggestList = [
   {
     id: 1,
-    title: '装备作战效能评估',
-    desc: '分析装备在复杂战场环境下的综合作战效能',
+    title: '行动评估指标推荐',
+    desc: '构建典型场景下不同阶段各类行动的指标体系',
     icon: Aim,
     color: '#3b82f6'
   },
   {
     id: 2,
-    title: '战斗力指标体系分析',
-    desc: '构建并分析战斗力相关的关键指标体系',
+    title: '任务完成度指标计算',
+    desc: '问答交互构建计算模型，智能计算并可视化呈现',
     icon: DataAnalysis,
     color: '#10b981'
   },
   {
     id: 3,
-    title: '作战方案可行性评估',
-    desc: '对多套作战方案进行智能对比与评估',
+    title: '指标结果归因分析',
+    desc: '基于动态本体进行指标结果数据溯源与归因分析',
     icon: Guide,
     color: '#f59e0b'
   },
   {
     id: 4,
-    title: '知识库检索问答',
-    desc: '基于知识库内容进行精准问答与知识溯源',
+    title: '专题态势图生成',
+    desc: '生成统计图表与态势图结合的特定场景专题分析',
     icon: ChatDotRound,
     color: '#8b5cf6'
   },
   {
     id: 5,
-    title: '本体关系图谱',
-    desc: '可视化展示本体的数据关联与层次结构',
+    title: '评估报告生成',
+    desc: '报告模板拆解、数据查询填充、结果串联结论生成',
     icon: Box,
     color: '#ec4899'
   },
   {
     id: 6,
-    title: '评估算法配置管理',
-    desc: '配置与管理各类评估指标的计算算法',
+    title: '区域掌控能力分析',
+    desc: '通过制权能力分析智能体进行理解编排、调度计算',
     icon: PieChart,
     color: '#06b6d4'
   }
@@ -295,77 +319,52 @@ const goToPortal = () => {
   }
   router.push('/')
 }
-
-const goToAdmin = () => {
-  router.push('/admin')
-}
 </script>
 
 <style scoped>
 .portal-page {
   position: relative;
   min-height: 100vh;
-  background: var(--bg-page);
+  display: flex;
+  flex-direction: column;
+  color: #06182a;
   overflow-x: hidden;
 }
 
+/* ── 全屏背景 ── */
 .portal-bg {
-  position: absolute;
+  position: fixed;
   inset: 0;
+  z-index: 0;
   pointer-events: none;
-  overflow: hidden;
+  background: #2ea9f6 url('/portal-bg.jfif') center center / cover no-repeat;
 }
 
-.bg-glow {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.4;
-}
-
-.bg-glow-1 {
-  width: 500px;
-  height: 500px;
-  background: radial-gradient(circle, rgba(59, 130, 246, 0.25) 0%, transparent 70%);
-  top: -150px;
-  right: -100px;
-}
-
-.bg-glow-2 {
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle, rgba(16, 185, 129, 0.15) 0%, transparent 70%);
-  bottom: 10%;
-  left: -100px;
-}
-
-.bg-grid {
+.portal-bg::after {
+  content: '';
   position: absolute;
   inset: 0;
-  background-image:
-    linear-gradient(rgba(148, 163, 184, 0.1) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 163, 184, 0.1) 1px, transparent 1px);
-  background-size: 60px 60px;
-  mask-image: radial-gradient(ellipse at center top, black 30%, transparent 70%);
-  -webkit-mask-image: radial-gradient(ellipse at center top, black 30%, transparent 70%);
+  background:
+    radial-gradient(ellipse 58% 72% at 24% 46%, rgba(255, 255, 255, 0.42) 0%, rgba(255, 255, 255, 0) 72%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0) 40%, rgba(255, 255, 255, 0.22) 100%);
 }
 
 .portal-wrapper {
   position: relative;
   z-index: 1;
+  flex: 1 0 auto;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 0 180px 0 80px;
+  width: 100%;
+  padding: 0 clamp(20px, 4.5vw, 88px);
 }
 
+/* ── 顶栏 ── */
 .portal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 64px;
+  height: 80px;
   flex-shrink: 0;
 }
 
@@ -382,13 +381,16 @@ const goToAdmin = () => {
 }
 
 .logo-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-md);
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 4px 14px rgba(6, 44, 74, 0.14);
 }
 
 .logo-img {
@@ -398,86 +400,132 @@ const goToAdmin = () => {
 }
 
 .logo-text {
-  font-size: var(--text-lg);
-  font-weight: 600;
-  color: var(--text-primary);
+  font-size: 19px;
+  font-weight: 700;
+  color: #06182a;
   letter-spacing: 0.5px;
 }
 
 .header-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
+/* ── 顶部胶囊导航 ── */
+.nav-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 15px;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #0b3550;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  box-shadow: 0 6px 16px rgba(6, 44, 74, 0.1);
+  backdrop-filter: blur(10px);
+}
+
+.nav-pill:hover {
+  background: #fff;
+  color: #0b6cc4;
+  border-color: rgba(46, 169, 246, 0.6);
+  transform: translateY(-1px);
+}
+
+.header-right :deep(.el-avatar) {
+  background: rgba(255, 255, 255, 0.9);
+  color: #0b6cc4;
+  border: 1px solid rgba(255, 255, 255, 0.95);
+}
+
+/* ── 主内容：全部收进左侧栏，右侧留给背景主视觉 ── */
 .portal-main {
   flex: 1;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  padding: 40px 0;
-  gap: 48px;
+  justify-content: flex-start;
+  width: min(900px, 48%);
+  padding-top: clamp(28px, 7vh, 90px);
+  padding-bottom: clamp(16px, 3vh, 34px);
 }
 
 .hero-section {
-  text-align: center;
-}
-
-.hero-icon {
-  width: 88px;
-  height: 88px;
-  margin: 0 auto 20px;
-  border-radius: var(--radius-xl);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.25);
-}
-
-.hero-logo-img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
+  text-align: left;
 }
 
 .hero-title {
-  font-size: 36px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0 0 12px 0;
-  letter-spacing: -0.5px;
-  line-height: 1.3;
+  margin: 0;
+  font-size: clamp(30px, 3.25vw, 62px);
+  font-weight: 800;
+  line-height: 1.22;
+  letter-spacing: 1px;
+  color: #06182a;
+  text-wrap: balance;
 }
 
 .hero-subtitle {
-  font-size: var(--text-lg);
-  color: var(--text-tertiary);
-  margin: 0;
-  max-width: 600px;
-  margin-left: auto;
-  margin-right: auto;
-  line-height: 1.6;
+  margin: 16px 0 0;
+  max-width: 100%;
+  font-size: 15.5px;
+  line-height: 1.7;
+  color: #10618c;
 }
 
+/* ── 搜索区 ── */
 .search-section {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 20px;
+  align-items: flex-start;
+  gap: 18px;
+  width: 100%;
+  margin-top: clamp(24px, 4vh, 40px);
 }
 
 .search-box {
   width: 100%;
-  max-width: 720px;
+  max-width: 560px;
 }
 
-.search-input {
-  font-size: var(--text-lg);
+.search-section .search-input :deep(.el-input__wrapper) {
+  padding: 8px 8px 8px 18px !important;
+  border-radius: 16px !important;
+  background: #fff !important;
+  border: none;
+  box-shadow:
+    inset 0 0 0 1px rgba(13, 88, 140, 0.38),
+    0 18px 40px rgba(6, 44, 74, 0.26) !important;
+}
+
+.search-section .search-input :deep(.el-input__wrapper:hover) {
+  box-shadow:
+    inset 0 0 0 1px rgba(46, 169, 246, 0.75),
+    0 18px 40px rgba(6, 44, 74, 0.28) !important;
+}
+
+.search-section .search-input :deep(.el-input.is-focus .el-input__wrapper) {
+  box-shadow:
+    inset 0 0 0 1px #2ea9f6,
+    0 0 0 3px rgba(46, 169, 246, 0.22),
+    0 18px 40px rgba(6, 44, 74, 0.3) !important;
+}
+
+.search-input :deep(.el-input__inner) {
+  color: #0b3550;
+  font-size: 16px;
+}
+
+.search-input :deep(.el-input__inner::placeholder) {
+  color: #54748a;
 }
 
 .search-prefix-icon {
-  color: var(--text-muted);
+  color: #7aa8c4;
   font-size: 18px;
 }
 
@@ -491,142 +539,188 @@ const goToAdmin = () => {
   height: 36px;
 }
 
+.search-suffix :deep(.el-button.is-circle) {
+  background: #f0f8ff;
+  border-color: rgba(46, 169, 246, 0.28);
+  color: #0f7ce3;
+}
+
+.search-suffix :deep(.el-button.is-circle:hover) {
+  background: #e2f4ff;
+  border-color: #2ea9f6;
+  color: #0b6cc4;
+}
+
+/* ── 模块入口：横向小胶囊 ── */
 .tools-row {
   display: flex;
-  gap: 12px;
   flex-wrap: wrap;
-  justify-content: center;
+  gap: 10px;
 }
 
-.tool-pill {
-  display: flex;
+.tool-btn {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 18px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-normal);
-  border-radius: var(--radius-full);
+  gap: 7px;
+  padding: 9px 16px;
+  font-family: inherit;
+  color: var(--tool-color);
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  border-radius: 999px;
   cursor: pointer;
   transition: all var(--transition-fast);
-  font-size: var(--text-sm);
+  box-shadow: 0 8px 20px rgba(6, 44, 74, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.tool-btn:hover {
+  background: #fff;
+  border-color: color-mix(in srgb, var(--tool-color) 45%, white);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 26px rgba(6, 44, 74, 0.18);
+}
+
+.tool-name {
+  font-size: 13.5px;
   font-weight: 500;
-  color: var(--text-secondary);
+  color: #0b3550;
+  white-space: nowrap;
 }
 
-.tool-pill:hover {
-  border-color: var(--tool-color);
-  color: var(--tool-color);
-  background: color-mix(in srgb, var(--tool-color) 8%, white);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
-}
-
-.tool-pill .el-icon {
-  color: var(--tool-color);
-}
-
-.section-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 16px;
+/* ── 推荐卡片区：紧凑小卡直接排在左栏 ── */
+.suggest-section {
+  /* 布局整体下移，与搜索区拉开距离 */
+  margin-top: clamp(34px, 5.5vh, 56px);
 }
 
 .section-title {
-  font-size: var(--text-lg);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.section-desc {
-  font-size: var(--text-sm);
-  color: var(--text-muted);
+  margin: 0 0 14px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #06182a;
 }
 
 .suggest-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
+  gap: 12px;
+  /* 卡片整体比主栏更窄，进一步缩短卡片长度 */
+  width: 85%;
 }
 
 .suggest-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  padding: 16px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
+  padding: 13px 14px 12px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  border-radius: 8px;
   cursor: pointer;
   transition: all var(--transition-fast);
+  box-shadow: 0 10px 24px rgba(6, 44, 74, 0.12);
+  backdrop-filter: blur(8px);
 }
 
 .suggest-card:hover {
-  border-color: var(--border-normal);
-  box-shadow: var(--shadow-md);
+  border-color: rgba(46, 169, 246, 0.55);
+  box-shadow: 0 14px 30px rgba(15, 124, 227, 0.16);
   transform: translateY(-2px);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.card-head h4 {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #0b2436;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .suggest-icon {
   flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--icon-color) 12%, white);
-  color: var(--icon-color);
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: color-mix(in srgb, var(--icon-color) 14%, white);
+  color: var(--icon-color);
 }
 
-.suggest-content {
-  flex: 1;
-  min-width: 0;
+.card-desc {
+  margin: 7px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #4f7089;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.suggest-content h4 {
-  font-size: var(--text-base);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 4px 0;
-}
-
-.suggest-content p {
-  font-size: var(--text-sm);
-  color: var(--text-tertiary);
-  margin: 0;
-  line-height: 1.5;
-}
-
-.suggest-arrow {
-  flex-shrink: 0;
-  color: var(--text-muted);
-  opacity: 0;
-  transition: all var(--transition-fast);
-  align-self: center;
-}
-
-.suggest-card:hover .suggest-arrow {
-  opacity: 1;
-  transform: translateX(2px);
-  color: var(--primary-500);
-}
-
+/* ── 页脚 ── */
 .portal-footer {
+  position: relative;
+  z-index: 1;
   flex-shrink: 0;
   text-align: center;
-  padding: 24px 0;
-  font-size: var(--text-sm);
-  color: var(--text-muted);
+  padding: 0 40px 22px;
+}
+
+.portal-footer span {
+  color: #2c5a75;
+  font-size: 12.5px;
+  letter-spacing: 0.3px;
 }
 
 .attachment-chips {
   display: flex;
-  gap: 6px;
   flex-wrap: wrap;
-  justify-content: center;
-  margin-top: 2px;
+  gap: 6px;
+}
+
+/* ── 响应式 ── */
+@media (max-width: 1300px) {
+  .portal-main {
+    width: min(720px, 52%);
+    /* 压缩纵向节奏，保证 800 高度视口下页脚仍在一屏内 */
+    padding-top: clamp(20px, 4vh, 40px);
+    padding-bottom: 20px;
+  }
+
+  .suggest-section {
+    margin-top: 24px;
+  }
+
+  .suggest-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 1100px) {
+  .portal-main {
+    width: min(620px, calc(100% - 280px));
+  }
+}
+
+@media (max-width: 900px) {
+  .portal-wrapper {
+    padding: 0 28px;
+  }
+
+  .portal-main {
+    width: 100%;
+    max-width: 640px;
+    padding-top: 40px;
+  }
 }
 
 @media (max-width: 768px) {
@@ -634,16 +728,40 @@ const goToAdmin = () => {
     padding: 0 20px;
   }
 
+  .portal-header {
+    height: 64px;
+  }
+
+  .nav-pill {
+    display: none;
+  }
+
   .hero-title {
     font-size: 28px;
+    letter-spacing: 0.5px;
   }
 
   .hero-subtitle {
-    font-size: var(--text-base);
+    margin-top: 12px;
+    font-size: 14px;
+  }
+
+  .search-section {
+    margin-top: 24px;
+    gap: 14px;
+  }
+
+  .search-box {
+    max-width: 100%;
   }
 
   .suggest-grid {
     grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .portal-footer {
+    padding: 0 20px 18px;
   }
 }
 </style>
