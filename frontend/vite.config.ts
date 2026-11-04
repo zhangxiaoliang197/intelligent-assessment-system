@@ -102,6 +102,23 @@ export default defineConfig(({ mode }) => {
       '/geowebcache': {
         target: 'http://localhost:9090',
         changeOrigin: true
+      },
+      // 高德瓦片同源代理（开发环境）：/amap-tiles/vec|anno/{z}/{x}/{y}.png → 高德瓦片服务
+      '/amap-tiles/vec': {
+        target: 'https://webrd01.is.autonavi.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(
+          /^\/amap-tiles\/vec\/(\d+)\/(\d+)\/(\d+)\.png/,
+          '/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x=$2&y=$3&z=$1'
+        )
+      },
+      '/amap-tiles/anno': {
+        target: 'https://webst01.is.autonavi.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(
+          /^\/amap-tiles\/anno\/(\d+)\/(\d+)\/(\d+)\.png/,
+          '/appmaptile?style=8&x=$2&y=$3&z=$1'
+        )
       }
       }
     },

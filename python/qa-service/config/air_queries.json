@@ -1,4 +1,5 @@
 {
+  "note": "制空权分析 SQL 模板。当前面向演示库 mock_situation（mock_aircraft + mock_aircraft_type），按阵营(faction)聚合；该演示库没有区域维度，{region} 仅作为结果标签随行返回，不参与过滤。",
   "regionRules": {
     "patterns": [
       {"regex": "([A-Z])\\s*区域", "group": 1, "suffix": "区域"},
@@ -16,7 +17,7 @@
         {
           "label": "红蓝双方占位能力对比",
           "keywords": ["占位", "部署", "空中巡逻", "巡逻"],
-          "sql": "SELECT side, capability_score, aircraft_count, patrol_coverage FROM air_capability WHERE region = '{region}' AND capability_type = 'occupation'",
+          "sql": "SELECT '{region}' AS region, faction AS side, COUNT(*) AS aircraft_count, SUM(CASE WHEN status = '在役' THEN 1 ELSE 0 END) AS active_count, SUM(CASE WHEN status = '战损' THEN 1 ELSE 0 END) AS lost_count FROM mock_aircraft GROUP BY faction ORDER BY aircraft_count DESC",
           "vizType": "bar"
         }
       ]
@@ -28,7 +29,7 @@
         {
           "label": "红蓝双方打击能力对比",
           "keywords": ["打击", "攻击", "摧毁", "命中"],
-          "sql": "SELECT side, capability_score, weapon_count, strike_range FROM air_capability WHERE region = '{region}' AND capability_type = 'strike'",
+          "sql": "SELECT '{region}' AS region, a.faction AS side, ROUND(AVG(NULLIF(t.strike_radius_km, 0)), 1) AS avg_strike_radius_km, MAX(t.strike_radius_km) AS max_strike_radius_km, SUM(t.combat_load_kg) AS total_combat_load_kg FROM mock_aircraft a JOIN mock_aircraft_type t ON a.type_id = t.type_id GROUP BY a.faction",
           "vizType": "bar"
         }
       ]
@@ -40,7 +41,7 @@
         {
           "label": "红蓝双方侦察能力对比",
           "keywords": ["侦察", "探测", "预警", "感知"],
-          "sql": "SELECT side, capability_score, recon_range, detection_accuracy FROM air_capability WHERE region = '{region}' AND capability_type = 'recon'",
+          "sql": "SELECT '{region}' AS region, a.faction AS side, ROUND(AVG(NULLIF(t.recon_radius_km, 0)), 1) AS avg_recon_radius_km, MAX(t.max_altitude_m) AS max_altitude_m, ROUND(AVG(t.cruise_speed_kmh), 0) AS avg_cruise_speed_kmh FROM mock_aircraft a JOIN mock_aircraft_type t ON a.type_id = t.type_id GROUP BY a.faction",
           "vizType": "bar"
         }
       ]
@@ -52,7 +53,7 @@
         {
           "label": "红蓝双方总体制空能力对比",
           "keywords": ["总体", "综合", "制空权", "制空能力"],
-          "sql": "SELECT side, total_score, occupation_score, strike_score, recon_score FROM air_overall WHERE region = '{region}'",
+          "sql": "SELECT '{region}' AS region, a.faction AS side, COUNT(*) AS aircraft_count, ROUND(AVG(NULLIF(t.recon_radius_km, 0)), 1) AS avg_recon_radius_km, ROUND(AVG(NULLIF(t.strike_radius_km, 0)), 1) AS avg_strike_radius_km, SUM(t.combat_load_kg) AS total_combat_load_kg, ROUND(AVG(t.max_speed_kmh), 0) AS avg_max_speed_kmh FROM mock_aircraft a JOIN mock_aircraft_type t ON a.type_id = t.type_id GROUP BY a.faction",
           "vizType": "bar"
         }
       ]

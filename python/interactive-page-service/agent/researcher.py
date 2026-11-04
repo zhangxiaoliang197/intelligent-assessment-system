@@ -886,6 +886,264 @@ def _inject_scope_where(sql: str, scope: Dict[str, set]) -> str:
     return sql.rstrip().rstrip(";") + f" WHERE {extra}"
 
 
+# ──────────────────────────────────────────────────────────────────
+# 时序（时间桶）取数：确定性 SQL + 后端统一时间轴
+# ──────────────────────────────────────────────────────────────────
+
+# 桶宽档位（秒）→ 名称；前端/图表按 bucketSeconds 推断当前桶归属
+_BUCKET_NAMES = {
+    60: "minute", 300: "5minute", 900: "15minute", 1800: "30minute",
+    3600: "hour", 10800: "3hour", 21600: "6hour", 43200: "12hour", 86400: "day",
+}
+
+# auto 档位：从细到粗，按"桶数 ≤ 上限"选第一个能装下的档位
+_AUTO_STEPS = [60, 300, 900, 1800, 3600, 10800, 21600, 43200, 86400]
+
+
+def bucket_step_for(seconds_hint: Any, span_seconds: float) -> int:
+    """把规划/配置给的桶宽提示收敛成合法档位。
+
+    Args:
+        seconds_hint: 桶宽（秒）或档位名 minute/5minute/15minute/hour/day；
+            非法或 auto 时按跨度自动选
+        span_seconds: 数据时间跨度（秒）
+    """
+    hint = None
+    if isinstance(seconds_hint, str):
+        # 支持配置/规划里写档位名（IPAGE_TIMELINE_BUCKET=minute 等）
+        name = seconds_hint.strip().lower()
+        if name in ("", "auto"):
+            hint = None
+        else:
+            hint = {"minute": 60, "5minute": 300, "15minute": 900,
+                    "30minute": 1800, "hour": 3600, "3hour": 10800,
+                    "6hour": 21600, "12hour": 43200, "day": 86400}.get(name)
+    else:
+        try:
+            hint = int(seconds_hint) if seconds_hint not in (None, "", "auto") else None
+        except (TypeError, ValueError):
+            hint = None
+    if hint and hint > 0:
+        # 收敛到最近的合法档位（向上取整，避免桶数爆炸）
+        for s in _AUTO_STEPS:
+            if hint <= s:
+                return s
+        return _AUTO_STEPS[-1]
+    span = max(float(span_seconds or 0), 60.0)
+    for s in _AUTO_STEPS:
+        if span / s <= config.IPAGE_TIMELINE_MAX_BUCKETS:
+            return s
+    return _AUTO_STEPS[-1]
+
+
+def _quote_ident(dialect: str, name: str) -> str:
+    """按方言引用标识符（列名可能是中文，必须加引号）。"""
+    n = str(name or "").replace('"', '""').replace("`", "``")
+    if dialect == "postgresql":
+        return f'"{n}"'
+    if dialect == "h2":
+        return f'"{n}"'
+    return f"`{n}`"
+
+
+def bucket_expr(dialect: str, column: str, step_seconds: int) -> str:
+    """生成时间桶表达式（字符串形式的桶起点，统一 YYYY-MM-DD HH:MM:SS）。
+
+    mysql=DATE_FORMAT；postgresql=to_char；h2=FORMATDATETIME；
+    5/15 分钟档位通过"减去分钟余数"对齐到整 5/15 分钟。
+    """
+    col = _quote_ident(dialect, column)
+    step = int(step_seconds)
+    if dialect == "postgresql":
+        if step < 3600:
+            base = f"date_trunc('hour', {col}) + (floor(extract(minute from {col})/{step // 60}) * interval '{step // 60} minute')"
+            return f"to_char({base}, 'YYYY-MM-DD HH24:MI:00')"
+        if step == 3600:
+            return f"to_char({col}, 'YYYY-MM-DD HH24:00:00')"
+        if step >= 86400:
+            return f"to_char({col}, 'YYYY-MM-DD 00:00:00')"
+        h = step // 3600
+        base = f"date_trunc('day', {col}) + (floor(extract(hour from {col})/{h}) * interval '{h} hour')"
+        return f"to_char({base}, 'YYYY-MM-DD HH24:MI:00')"
+    if dialect == "h2":
+        if step < 3600:
+            base = f"DATEADD(MINUTE, -(EXTRACT(MINUTE FROM {col}) % {step // 60}), {col})"
+            return f"FORMATDATETIME({base}, 'yyyy-MM-dd HH:mm:00')"
+        if step == 3600:
+            return f"FORMATDATETIME({col}, 'yyyy-MM-dd HH:00:00')"
+        if step >= 86400:
+            return f"FORMATDATETIME({col}, 'yyyy-MM-dd 00:00:00')"
+        h = step // 3600
+        base = f"DATEADD(HOUR, -(EXTRACT(HOUR FROM {col}) % {h}), {col})"
+        return f"FORMATDATETIME({base}, 'yyyy-MM-dd HH:mm:00')"
+    # mysql（默认）
+    if step < 3600:
+        expr = f"DATE_ADD({col}, INTERVAL -(MINUTE({col}) % {step // 60}) MINUTE)"
+        return f"DATE_FORMAT({expr}, '%Y-%m-%d %H:%i:00')"
+    if step == 3600:
+        return f"DATE_FORMAT({col}, '%Y-%m-%d %H:00:00')"
+    if step >= 86400:
+        return f"DATE_FORMAT({col}, '%Y-%m-%d 00:00:00')"
+    h = step // 3600
+    expr = f"DATE_ADD({col}, INTERVAL -(HOUR({col}) % {h}) HOUR)"
+    return f"DATE_FORMAT({expr}, '%Y-%m-%d %H:%i:00')"
+
+
+def _sql_literal(value: Any) -> str:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def build_timeseries_sql(dialect: str, table_name: str, columns: List[str],
+                         time_column: str, step_seconds: int,
+                         group_columns: List[str], metric: Dict[str, Any],
+                         filters: Dict[str, Any]) -> str:
+    """确定性生成"桶 × 分组"聚合 SQL（不依赖 LLM，避免方言/别名差异）。
+
+    输出列固定为：bucketKey（桶起点字符串）、分组列、value（聚合值）。
+    """
+    group_columns = [c for c in group_columns if c in columns]
+    agg = str((metric or {}).get("agg") or "count").lower()
+    agg_col = str((metric or {}).get("column") or "")
+    if agg in ("sum", "avg", "max", "min") and agg_col in columns:
+        value_expr = f"{agg.upper()}({_quote_ident(dialect, agg_col)})"
+    else:
+        value_expr = "COUNT(*)"
+
+    select_parts = [f"{bucket_expr(dialect, time_column, step_seconds)} AS bucketKey"]
+    for c in group_columns:
+        select_parts.append(_quote_ident(dialect, c))
+    select_parts.append(f"{value_expr} AS value")
+
+    where_parts: List[str] = []
+    for col, val in (filters or {}).items():
+        if col not in columns:
+            continue
+        col_sql = _quote_ident(dialect, col)
+        if isinstance(val, dict):
+            if val.get("gte") is not None:
+                where_parts.append(f"{col_sql} >= {_sql_literal(val.get('gte'))}")
+            if val.get("lte") is not None:
+                where_parts.append(f"{col_sql} <= {_sql_literal(val.get('lte'))}")
+        elif isinstance(val, (list, tuple)):
+            vals = ", ".join(_sql_literal(v) for v in val[:500])
+            if vals:
+                where_parts.append(f"{col_sql} IN ({vals})")
+        elif val is not None:
+            where_parts.append(f"{col_sql} = {_sql_literal(val)}")
+
+    # GROUP BY 用序号，规避 PostgreSQL 不允许按列别名分组的问题
+    group_positions = ", ".join(str(i + 1) for i in range(1 + len(group_columns)))
+    sql = f"SELECT {', '.join(select_parts)} FROM {table_name}"
+    if where_parts:
+        sql += " WHERE " + " AND ".join(where_parts)
+    sql += f" GROUP BY {group_positions} ORDER BY 1"
+    return sql
+
+
+def _parse_any_time(value: Any) -> Optional[str]:
+    """把时间值规范化成 YYYY-MM-DD HH:MM:SS 字符串（无法解析返回 None）。"""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    text = text.replace("T", " ")
+    if "." in text:
+        text = text.split(".", 1)[0]
+    if len(text) == 10:
+        text += " 00:00:00"
+    try:
+        return dt.datetime.fromisoformat(text).strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def build_page_timeline(entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """汇总所有时间源，生成页面级统一时间轴（bundle.timeline）。
+
+    时间源：
+    1. mode=timeseries 数据集的 bucketKey；
+    2. 地理明细的航迹点 / 事件点时刻。
+    桶宽取各源所需的最细档位，再收敛到 ≤ IPAGE_TIMELINE_MAX_BUCKETS。
+    只有一个桶时返回 None（时间轴无意义）。
+    """
+    moments: List[dt.datetime] = []
+    geo_moments: List[dt.datetime] = []
+    step_hint = 0
+    has_geo = False
+    has_ts = False
+
+    for entry in entries or []:
+        mode = str(entry.get("mode") or "")
+        if mode == "timeseries":
+            has_ts = True
+            step_hint = max(step_hint, int(entry.get("bucketSeconds") or 0), 1)
+            for row in entry.get("rows") or []:
+                t = _parse_any_time(row.get("bucketKey"))
+                if t:
+                    moments.append(dt.datetime.fromisoformat(t))
+        geo = entry.get("geoFeatures") or {}
+        for tr in geo.get("tracks") or []:
+            for p in tr.get("points") or []:
+                t = _parse_any_time(p.get("time"))
+                if t:
+                    geo_moments.append(dt.datetime.fromisoformat(t))
+        for u in (geo.get("units") or geo.get("points") or []):
+            t = _parse_any_time(u.get("time"))
+            if t:
+                geo_moments.append(dt.datetime.fromisoformat(t))
+        if geo.get("tracks") or geo.get("units") or geo.get("points"):
+            has_geo = True
+
+    moments.extend(geo_moments)
+    if not moments:
+        return None
+
+    start_raw, end_raw = min(moments), max(moments)
+    span = (end_raw - start_raw).total_seconds()
+
+    # 桶宽 = 各时间源所需的最细档位（地图动画不能被粗粒度时序表拖慢），
+    # 再按桶数上限收敛；配置 IPAGE_TIMELINE_BUCKET 可强制覆盖。
+    forced = config.IPAGE_TIMELINE_BUCKET
+    if forced not in (None, "", "auto"):
+        step = bucket_step_for(forced, span)
+    else:
+        candidates: List[int] = []
+        if step_hint > 0:
+            candidates.append(bucket_step_for(step_hint, span))
+        if geo_moments:
+            geo_span = (max(geo_moments) - min(geo_moments)).total_seconds()
+            candidates.append(bucket_step_for(None, geo_span))
+        step = bucket_step_for(min(candidates) if candidates else None, span)
+
+    def floor_to(d: dt.datetime, sec: int) -> dt.datetime:
+        if sec >= 86400:
+            return d.replace(hour=0, minute=0, second=0, microsecond=0)
+        epoch = int(d.timestamp())
+        return dt.datetime.fromtimestamp(epoch - epoch % sec)
+
+    start = floor_to(start_raw, step)
+    buckets = []
+    cur = start
+    # 末桶也要包含 end_raw 所在桶
+    while cur <= end_raw and len(buckets) < config.IPAGE_TIMELINE_MAX_BUCKETS:
+        label = cur.strftime("%m-%d %H:%M") if step >= 86400 or span > 172800 else cur.strftime("%H:%M")
+        buckets.append({"t": cur.strftime("%Y-%m-%d %H:%M:%S"), "label": label})
+        cur = cur + dt.timedelta(seconds=step)
+    # 只有一个桶时的时间轴没有拖动意义，按"不生成时间轴"处理，图表保持静态
+    if len(buckets) < 2:
+        return None
+
+    return {
+        "granularity": _BUCKET_NAMES.get(step, f"{step}s"),
+        "bucketSeconds": step,
+        "startTime": buckets[0]["t"],
+        "endTime": (end_raw.strftime("%Y-%m-%d %H:%M:%S")),
+        "buckets": buckets,
+        "sources": {"geo": has_geo, "timeseries": has_ts},
+    }
+
+
 def execute_sub_question(sq: Dict[str, Any], meta: Dict[str, Any],
                          query: str, entity_scope: Dict[str, Any] = None,
                          entity_hits: List[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -924,8 +1182,66 @@ def execute_sub_question(sq: Dict[str, Any], meta: Dict[str, Any],
     structure = admin_client.fetch_dataset_structure(dataset_id)
     fields = structure.get("fields") or []
     payload: Dict[str, Any] = {}
+    ts_meta: Dict[str, Any] = {}
 
-    if fields:
+    if mode == "timeseries" and fields:
+        # 时间桶聚合：确定性 SQL（不依赖 LLM），时间列由注解/列名解析
+        all_columns = [str((f or {}).get("column") or "") for f in fields]
+        dialect = str((meta.get("data") or {}).get("dbType") or "mysql").lower()
+        resolver = build_resolver(meta, table_name, all_columns)
+        time_col = str(sq.get("timeField") or "").strip()
+        if time_col not in all_columns:
+            time_col = resolver.event_time_column() or ""
+        if not time_col:
+            warnings.append("未找到可用的态势时间列，时序数据集降级为普通聚合")
+            mode = "aggregate"
+        else:
+            bucket_hint = {"minute": 60, "5minute": 300, "15minute": 900,
+                           "hour": 3600, "day": 86400}.get(
+                               str(sq.get("bucket") or "").strip().lower(), None)
+            span_seconds = 0.0
+            if bucket_hint is None:
+                # auto：先用一次 MIN/MAX 轻量探测时间跨度，再收敛桶宽（避免行数爆炸）
+                probe_sql = (f"SELECT MIN({_quote_ident(dialect, time_col)}) AS mn, "
+                             f"MAX({_quote_ident(dialect, time_col)}) AS mx FROM {table_name}")
+                probe = admin_client.execute_dataset_sql(dataset_id, probe_sql)
+                if probe.get("success"):
+                    _, probe_rows = _extract_rows_columns(probe)
+                    if probe_rows:
+                        mn = _parse_any_time(probe_rows[0].get("mn"))
+                        mx = _parse_any_time(probe_rows[0].get("mx"))
+                        if mn and mx:
+                            span_seconds = (dt.datetime.fromisoformat(mx)
+                                            - dt.datetime.fromisoformat(mn)).total_seconds()
+            step = bucket_step_for(bucket_hint, span_seconds)
+            group_cols = [str(c) for c in (sq.get("groupBy") or [])
+                          if str(c) in all_columns][:3]
+            sql = build_timeseries_sql(dialect, table_name, all_columns, time_col, step,
+                                       group_cols, sq.get("metric") or {},
+                                       sq.get("filters") or {})
+            if scope:
+                sql = _inject_scope_where(sql, scope)
+                sql_log["scopeInjected"] = True
+            sql = _append_limit(sql, config.IPAGE_TIMESERIES_ROW_LIMIT)
+            sql_log["sql"] = sql
+            payload = admin_client.execute_dataset_sql(dataset_id, sql)
+            sql_log["viaSql"] = bool(payload.get("success"))
+            if payload.get("success"):
+                ts_columns, ts_rows = _extract_rows_columns(payload)
+                low_cols = [str(c).lower() for c in ts_columns]
+                if "bucketkey" not in low_cols or "value" not in low_cols or not ts_rows:
+                    warnings.append("时序聚合结果缺少 bucketKey/value，降级为普通聚合")
+                    payload = {}
+                else:
+                    ts_meta = {"bucketSeconds": step, "valueField": "value",
+                               "timeField": time_col, "groupBy": group_cols}
+            else:
+                warnings.append(
+                    f"时序聚合 SQL 执行失败，降级为普通聚合: {str(payload.get('message'))[:120]}")
+                payload = {}
+            if not payload:
+                mode = "aggregate"
+    elif fields:
         try:
             sql_result = call_llm_json(
                 prompts.build_sql_messages(sq.get("question") or query, structure, mode,
@@ -992,7 +1308,12 @@ def execute_sub_question(sq: Dict[str, Any], meta: Dict[str, Any],
 
     total_rows = len(rows)
     truncated = False
-    row_cap = config.IPAGE_CHART_ROW_LIMIT if mode == "aggregate" else config.IPAGE_DETAIL_ROW_LIMIT
+    if mode == "timeseries":
+        row_cap = config.IPAGE_TIMESERIES_ROW_LIMIT
+    elif mode == "aggregate":
+        row_cap = config.IPAGE_CHART_ROW_LIMIT
+    else:
+        row_cap = config.IPAGE_DETAIL_ROW_LIMIT
     if len(rows) > row_cap:
         rows = rows[:row_cap]
         truncated = True
@@ -1023,7 +1344,7 @@ def execute_sub_question(sq: Dict[str, Any], meta: Dict[str, Any],
         for note in dict.fromkeys(notes):
             warnings.append(note)
 
-    return {
+    entry = {
         "id": qid,
         "datasetId": dataset_id,
         "name": name,
@@ -1040,3 +1361,12 @@ def execute_sub_question(sq: Dict[str, Any], meta: Dict[str, Any],
         "warnings": warnings,
         "_sqlLog": sql_log,
     }
+    if mode == "timeseries" and ts_meta:
+        # 前端按 bucketSeconds 把页面 tick 归属到数据桶，valueField 指示聚合值列
+        entry.update({
+            "bucketSeconds": ts_meta["bucketSeconds"],
+            "valueField": ts_meta["valueField"],
+            "timeField": ts_meta["timeField"],
+            "groupBy": ts_meta.get("groupBy") or [],
+        })
+    return entry

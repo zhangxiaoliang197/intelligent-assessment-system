@@ -9,6 +9,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import api from '@/services/api'
+import type { EvaluationArtifactPayload } from '@/utils/evaluationArtifacts'
 
 export interface IpageStep {
   id: string
@@ -59,6 +60,8 @@ export interface IpageGenerateOptions {
   skillId?: string
   /** 技能套用方式：auto=按问题语义自动匹配；off=关闭技能走自由规划 */
   skillMode?: 'auto' | 'off'
+  /** 评估分析产物：非空时后端跳过规划与取数，直接用产物生成页面 */
+  artifacts?: EvaluationArtifactPayload
 }
 
 /** 技能（生成剧本）元数据：列表接口下发，不含正文 */
@@ -157,6 +160,9 @@ export const useInteractiveStore = defineStore('interactive', () => {
   let eventSource: EventSource | null = null
   let generationEpoch = 0
   let messageSeq = 0
+  // 消息版本号：loadSession 请求期间若本地已追加消息（如点击推荐问题），
+  // 返回的旧会话快照不能再覆盖当前对话
+  let messagesRevision = 0
 
   function resetRound() {
     closeStream()
@@ -341,6 +347,7 @@ export const useInteractiveStore = defineStore('interactive', () => {
         skillId: skillOpts.skillId,
         skillMode: skillOpts.skillMode,
         context: {},
+        artifacts: opts.artifacts || undefined,
       })
       if (epoch !== generationEpoch) return
       if (!resp || resp.success === false) throw new Error(resp?.message || '生成请求失败')
@@ -373,7 +380,10 @@ export const useInteractiveStore = defineStore('interactive', () => {
     if (item.sessionId) sessionId.value = item.sessionId
     title.value = item.title || ''
     query.value = item.query || ''
-    status.value = item.status === 'ready' ? 'ready' : item.status === 'failed' ? 'failed' : 'idle'
+    status.value = item.status === 'ready' ? 'ready'
+      : item.status === 'failed' ? 'failed'
+      : item.status === 'generating' ? 'generating'
+      : 'idle'
     intent.value = item.intent || ''
     html.value = item.html || ''
     dataBundle.value = item.dataBundle || null
@@ -390,6 +400,24 @@ export const useInteractiveStore = defineStore('interactive', () => {
     const item = resp?.data || resp
     if (!item) throw new Error('页面不存在')
     loadFromRecord(item)
+    return item
+  }
+
+  /**
+   * 打开页面并在「生成中」时续订 SSE。
+   *
+   * 用于从其他入口（历史列表、评估页跳转）打开一个尚未完成的页面：
+   * loadFromRecord 会关闭旧流，因此必须在它之后重新订阅，否则进度会丢失。
+   */
+  async function attachPage(pid: string) {
+    const resp: any = await api.get(`/ipage/pages/${encodeURIComponent(pid)}`)
+    const item = resp?.data || resp
+    if (!item) throw new Error('页面不存在')
+    loadFromRecord(item)
+    if (item.status === 'generating') {
+      const epoch = ++generationEpoch
+      subscribeSSE(pid, epoch)
+    }
     return item
   }
 
@@ -447,6 +475,7 @@ export const useInteractiveStore = defineStore('interactive', () => {
   /** 即时回显一条本地消息（后端已落库，重载会话时会被服务端消息替换） */
   function appendLocalMessage(msg: { role: 'user' | 'ai'; kind: IpageChatMessage['kind']; content: string; pageId?: string; title?: string; usedTemplate?: boolean }) {
     messageSeq += 1
+    messagesRevision += 1
     messages.value.push({
       id: `local-${messageSeq}`,
       role: msg.role,
@@ -500,15 +529,19 @@ export const useInteractiveStore = defineStore('interactive', () => {
       })
       sessionId.value = data.sessionId
       messages.value = []
+      messagesRevision += 1
     }
     return data
   }
 
   /** 加载会话详情：恢复整段对话消息 */
   async function loadSession(sid: string) {
+    const revisionAtStart = messagesRevision
     const resp: any = await api.get(`/ipage/sessions/${encodeURIComponent(sid)}`)
     const data = resp?.data || resp
     if (!data) throw new Error('会话不存在')
+    // 请求期间用户已发起新问题/追加消息，或正在生成：保留当前对话，不用旧快照覆盖
+    if (messagesRevision !== revisionAtStart || status.value === 'generating') return data
     sessionId.value = data.sessionId || sid
     messages.value = (data.messages || []).map(normalizeMessage)
     return data
@@ -520,6 +553,7 @@ export const useInteractiveStore = defineStore('interactive', () => {
     if (sessionId.value === sid) {
       sessionId.value = ''
       messages.value = []
+      messagesRevision += 1
     }
   }
 
@@ -531,7 +565,7 @@ export const useInteractiveStore = defineStore('interactive', () => {
     sessionId, sessions, messages,
     skills, skillsEnabled, matchedSkill,
     skillChoice, skillDefaultMode, effectiveSkillChoice, setSkillChoice, resolveSkillChoice,
-    generate, cancel, loadPage, loadFromRecord, fetchHistory, removePage,
+    generate, cancel, loadPage, attachPage, loadFromRecord, fetchHistory, removePage,
     resetRound, closeStream,
     appendLocalMessage, loadSessions, createSession, loadSession, deleteSession,
     loadSkills,

@@ -15,6 +15,7 @@ import config
 from llm_client import call_llm_with_tools
 from agent import prompts
 from agent import dimension_graph
+from agent.field_resolver import find_time_field
 
 logger = logging.getLogger("ipage-service")
 
@@ -54,13 +55,36 @@ EMIT_PAGE_PLAN_TOOL = {
                             "datasetId": {"type": "string", "description": "必须来自数据集目录"},
                             "question": {"type": "string", "description": "本子问题要回答的事实，聚焦可量化内容"},
                             "mode": {
-                                "type": "string", "enum": ["aggregate", "detail"],
-                                "description": "aggregate=聚合统计供图表；detail=逐行明细供地图/表格",
+                                "type": "string", "enum": ["aggregate", "detail", "timeseries"],
+                                "description": "aggregate=聚合统计供静态图表；detail=逐行明细供地图/表格；timeseries=按时间桶预聚合，供页面时间轴联动的图表",
                             },
                             "geo": {
                                 "type": "string",
                                 "enum": ["none", "points", "tracks", "circles"],
-                                "description": "地理形态：无坐标 none；单位/事件位置 points（基地/阵地/威胁/目标/事件，运行时自动符号化）；逐点航迹 tracks（含实体编号/序号/时间）；装备能力范围圈 circles",
+                                "description": "地理形态：无坐标 none；单位/事件位置 points（基地/阵地/威胁/目标/事件，运行时自动符号化）；逐点航迹 tracks（含实体编号/序号/时间）；装备能力范围圈 circles；timeseries 必须为 none",
+                            },
+                            "timeField": {
+                                "type": "string",
+                                "description": "mode=timeseries 时可选：用于分桶的时间列（必须是该数据集真实列）；缺省由系统按注解/列名自动识别",
+                            },
+                            "bucket": {
+                                "type": "string",
+                                "enum": ["auto", "minute", "5minute", "15minute", "hour", "day"],
+                                "description": "mode=timeseries 时的目标桶宽；auto 由系统按实际时间跨度收敛",
+                            },
+                            "groupBy": {
+                                "type": "array", "maxItems": 3,
+                                "items": {"type": "string"},
+                                "description": "mode=timeseries 时可选：分组列（真实字段名），用于多条曲线/分类对比",
+                            },
+                            "metric": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "agg": {"type": "string", "enum": ["count", "sum", "avg", "max", "min"]},
+                                    "column": {"type": "string", "description": "agg=sum/avg/max/min 时的数值列"},
+                                },
+                                "description": "mode=timeseries 的聚合方式，缺省 count",
                             },
                             "filters": {
                                 "type": "object",
@@ -131,6 +155,26 @@ def _dataset_geo_capable(schema: Dict[str, Any]) -> bool:
     if any(dimension_graph.annotated_geo_pair(schema)):
         return True
     return dimension_graph.column_name_geo_capable(schema)
+
+
+def _time_capable_ids(meta: Dict[str, Any]) -> set:
+    """可做时间桶聚合的数据集（存在可识别的态势时间列）。
+
+    口径与取数侧 field_resolver.find_time_field 一致（事件/记录时间优先，
+    排除服役/成立/创建等档案日期），保证"规划能过 = 取数能分桶"。
+    """
+    if not isinstance(meta, dict) or not meta.get("success"):
+        return set()
+    schemas = (meta.get("data", {}) or {}).get("schemas", []) or []
+    capable = set()
+    for schema in schemas:
+        ds_id = str((schema or {}).get("datasetId") or (schema or {}).get("id") or "").strip()
+        if not ds_id:
+            continue
+        columns = [str((f or {}).get("column") or "") for f in (schema.get("fields") or [])]
+        if find_time_field(columns):
+            capable.add(ds_id)
+    return capable
 
 
 def _dataset_roles(schema: Dict[str, Any]) -> set:
@@ -252,7 +296,8 @@ def _validate_skill_constraints(sections: List[Any], kinds: List[str],
 
 
 def _validate(plan: Dict[str, Any], available: set, geo_capable: set,
-              skill_context: Dict[str, Any] = None) -> Optional[str]:
+              skill_context: Dict[str, Any] = None,
+              time_capable: set = None) -> Optional[str]:
     """校验规划，返回错误原因；None 表示通过。"""
     if not isinstance(plan, dict):
         return "工具参数不是对象"
@@ -272,6 +317,8 @@ def _validate(plan: Dict[str, Any], available: set, geo_capable: set,
 
     q_ids = set()
     geo_q_ids = set()
+    ts_q_ids = set()
+    time_capable = time_capable or set()
     for idx, sq in enumerate(sub_questions):
         if not isinstance(sq, dict):
             return f"subQuestions[{idx}] 不是对象"
@@ -287,11 +334,19 @@ def _validate(plan: Dict[str, Any], available: set, geo_capable: set,
         if available and ds_id not in available:
             return f"subQuestions[{idx}].datasetId={ds_id} 不在可用数据集目录中"
         mode = str(sq.get("mode") or "aggregate").strip()
-        if mode not in ("aggregate", "detail"):
-            return f"subQuestions[{idx}].mode 必须是 aggregate 或 detail"
+        if mode not in ("aggregate", "detail", "timeseries"):
+            return f"subQuestions[{idx}].mode 必须是 aggregate / detail / timeseries"
         geo = str(sq.get("geo") or "none").strip()
         if geo not in ("none", "points", "tracks", "circles"):
             return f"subQuestions[{idx}].geo 非法"
+        if mode == "timeseries":
+            # 时序子问题只产出时间桶聚合表，不参与地图几何渲染
+            if geo != "none":
+                return f"subQuestions[{idx}] mode=timeseries 时 geo 必须为 none"
+            if available and ds_id not in time_capable:
+                return (f"subQuestions[{idx}].datasetId={ds_id} 无可识别的态势时间列，"
+                        f"不能规划 timeseries（请改用 aggregate/detail）")
+            ts_q_ids.add(qid)
         if geo != "none":
             if available and ds_id not in geo_capable:
                 return f"subQuestions[{idx}].datasetId={ds_id} 无成对经纬度字段，不能规划 {geo}"
@@ -305,6 +360,8 @@ def _validate(plan: Dict[str, Any], available: set, geo_capable: set,
         return "页面至少要包含一个 chart 或 map 可视化区块"
     if "text" not in kinds:
         return "页面必须包含一个 text 分析结论区块"
+    if ts_q_ids and "timeline" not in kinds:
+        return "存在 timeseries 子问题时必须包含 timeline 区块（否则图表不会随页面时间轴联动）"
     sec_ids = set()
     for idx, sec in enumerate(sections):
         if not isinstance(sec, dict):
@@ -321,6 +378,8 @@ def _validate(plan: Dict[str, Any], available: set, geo_capable: set,
             return f"sections[{idx}].ref={ref} 未命中任何 subQuestion"
         if kind == "map" and ref and ref not in geo_q_ids:
             return f"sections[{idx}] 地图区块引用的 {ref} 未声明 geo 形态"
+        if kind == "timeline" and ref and ref not in (ts_q_ids | geo_q_ids):
+            return f"sections[{idx}] timeline 区块只能引用 timeseries 或地理子问题"
     return _validate_skill_constraints(sections, kinds, skill_context)
 
 
@@ -363,6 +422,7 @@ class Planner:
         self.skill_context = skill_context if isinstance(skill_context, dict) else None
         self.available = _available_dataset_ids(meta)
         self.geo_capable = _geo_capable_ids(meta)
+        self.time_capable = _time_capable_ids(meta)
 
     def plan(self, query: str, parent_query: str = "",
              parent_plan: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -434,7 +494,8 @@ class Planner:
                      "content": "arguments 无效，请填写完整 JSON 重新调用。"},
                 ]
                 continue
-            err = _validate(args, self.available, self.geo_capable, self.skill_context)
+            err = _validate(args, self.available, self.geo_capable,
+                            self.skill_context, self.time_capable)
             if err:
                 last_error = err
                 logger.warning("Planner 第 %s 次校验失败: %s", attempt, err)

@@ -1,8 +1,8 @@
 /**
  * 地图瓦片配置（共享工具）。
  *
- * 从 GeoMap.vue 抽出：根据 admin-service 的地图服务配置构建 Leaflet 瓦片图层参数。
- * 消费方：GeoMap.vue（态势地图主组件）、ArtifactSandbox.vue（HTML Artifact 沙箱）。
+ * 根据 admin-service 的地图服务配置构建 Leaflet 瓦片图层参数，并给出备用图层。
+ * 消费方：GeoMap.vue（问答/指标/评估页地图）、PageSandbox.vue（态势页面沙箱）。
  */
 import api from '@/services/api'
 
@@ -18,8 +18,17 @@ export interface MapLayerConfig {
   attribution?: string
 }
 
-// 默认硬编码配置（GeoWebCache 6 层叠加，作为 API 失败时的兜底）
+// 默认硬编码配置（GeoWebCache 6 层叠加，作为 API 失败或高德不可达时的兜底）
 export const DEFAULT_BASE_URL = '/geowebcache/gwc'
+
+// 高德瓦片同源代理前缀（vite 开发代理 / nginx 生产代理转发到高德瓦片域名）
+export const DEFAULT_AMAP_BASE = '/amap-tiles'
+
+/** 主用与备用瓦片图层 */
+export interface MapLayersConfig {
+  primary: MapLayerConfig[]
+  fallback: MapLayerConfig[]
+}
 
 /** 把本机 GeoServer 绝对地址转成同源代理相对路径，避免导出时 canvas 跨域污染 */
 export function normalizeBaseUrl(baseUrl: string): string {
@@ -42,27 +51,35 @@ export function buildLayers(type: string, baseUrl: string): MapLayerConfig[] {
     ]
   }
   if (type === 'amap') {
+    // 高德栅格瓦片经同源代理获取（baseUrl 留空时用默认代理前缀），
+    // 矢量底图 webrd 本身自带注记，不再叠加 webst 注记层，避免文字重影。
+    const base = url || DEFAULT_AMAP_BASE
     return [
-      { id: 'amap_vector', name: '高德矢量底图', urlTemplate: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', opacity: 1, minZoom: 3, maxZoom: 18, tms: false, subdomains: ['1', '2', '3', '4'], attribution: '高德地图' },
-      { id: 'amap_labels', name: '高德路网注记', urlTemplate: 'https://webst0{s}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}', opacity: 1, minZoom: 3, maxZoom: 18, tms: false, subdomains: ['1', '2', '3', '4'], attribution: '高德地图' },
+      { id: 'amap_vector', name: '高德矢量底图', urlTemplate: `${base}/vec/{z}/{x}/{y}.png`, opacity: 1, minZoom: 3, maxZoom: 18, attribution: '高德地图' },
     ]
   }
   // 自定义: 地址作为单层瓦片源
   return [{ id: 'custom', name: '自定义图层', urlTemplate: normalizeBaseUrl(baseUrl), opacity: 0.9, minZoom: 3, maxZoom: 18, tms: true }]
 }
 
-/** 从 API 加载地图服务配置，失败则用默认配置 */
-export async function loadActiveTileLayers(): Promise<MapLayerConfig[]> {
+/** GeoWebCache 兜底图层（非高德底图时无需回退） */
+export function buildFallbackLayers(): MapLayerConfig[] {
+  return buildLayers('geowebcache', DEFAULT_BASE_URL)
+}
+
+/** 从 API 加载地图服务配置，失败则用默认 GeoWebCache 配置 */
+export async function loadMapLayersConfig(): Promise<MapLayersConfig> {
   try {
     const res: any = await api.get('/admin/config/map/active')
     if (res.success && res.data && res.data.type) {
-      const layers = buildLayers(res.data.type, res.data.baseUrl || DEFAULT_BASE_URL)
+      const type = res.data.type
+      const layers = buildLayers(type, res.data.baseUrl || (type === 'amap' ? DEFAULT_AMAP_BASE : DEFAULT_BASE_URL))
       console.log('[mapTileConfig] 加载动态地图配置:', res.data.name, layers.length, '层')
-      return layers
+      return { primary: layers, fallback: type === 'amap' ? buildFallbackLayers() : [] }
     }
   } catch (e) {
     console.warn('[mapTileConfig] 地图配置API加载失败，使用默认配置:', e)
   }
   console.log('[mapTileConfig] 使用默认 GeoWebCache 配置')
-  return buildLayers('geowebcache', DEFAULT_BASE_URL)
+  return { primary: buildLayers('geowebcache', DEFAULT_BASE_URL), fallback: [] }
 }

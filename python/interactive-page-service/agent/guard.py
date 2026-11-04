@@ -89,6 +89,16 @@ def validate_page(html: str, bundle: Dict[str, Any]) -> List[str]:
     if not ("SitChart.render" in text or "SitMap.render" in text or "SitTable.render" in text):
         issues.append("页面至少要调用 SitChart.render / SitMap.render / SitTable.render 之一展示数据")
 
+    # 页面级时间轴（bundle.timeline）相关的契约校验
+    timeline = (bundle or {}).get("timeline") if isinstance(bundle, dict) else None
+    if timeline and (timeline.get("buckets") or []):
+        if "SitTimeline.render" not in text:
+            issues.append("数据包包含统一时间轴，页面必须调用 SitTimeline.render 创建页面级时间轴")
+        # 页面时钟与地图内播放器互斥，否则地图与图表会按不同时钟播放
+        if re.search(r"playback\s*:\s*(true|\{)", text):
+            issues.append("页面级时间轴与 SitMap spec.playback 不能同时使用（避免双时钟）")
+        # 图表是否绑定 timeline 由页面按数据口径决定（按需联动），Guard 不强制要求
+
     # 标签/外链
     for pattern, msg in _FORBIDDEN_TAG_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):

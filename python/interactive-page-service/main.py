@@ -109,12 +109,13 @@ class _GenerationSession:
     """生成任务会话：事件日志 + Condition 唤醒 + 后台任务句柄。"""
 
     def __init__(self, page: PageRecord, actor: dict, database_id: str,
-                 skill_id: str = "", skill_mode: str = "auto"):
+                 skill_id: str = "", skill_mode: str = "auto", artifacts=None):
         self.page = page
         self.actor = actor
         self.database_id = database_id
         self.skill_id = skill_id
         self.skill_mode = skill_mode
+        self.artifacts = artifacts
         self.events = []
         self.condition = asyncio.Condition()
         self.finished = False
@@ -157,20 +158,32 @@ async def _cleanup_session(page_id: str, session: _GenerationSession) -> None:
 
 async def _run_pipeline(page_id: str, session: _GenerationSession,
                         page: PageRecord) -> dict:
-    """拉取元数据并执行四阶段编排；返回终态 done 载荷（done 不在此广播）。"""
+    """拉取元数据并执行四阶段编排；返回终态 done 载荷（done 不在此广播）。
+
+    评估产物模式（session.artifacts 非空）以及按评估产物页修订时，页面数据
+    完全来自评估结果，不需要 admin 数据集元数据，跳过元数据拉取。
+    """
     async with _GENERATION_SEMAPHORE:
         async with asyncio.timeout(config.IPAGE_GENERATION_TIMEOUT):
-            meta = await asyncio.to_thread(orchestrator.fetch_meta, session.database_id)
-            if not isinstance(meta, dict) or not meta.get("success"):
-                msg = str((meta or {}).get("message") or "数据集元数据获取失败")
-                page.status = "failed"
-                page.error = msg
-                await session.publish("error", {"pageId": page_id, "message": msg, "fatal": True})
-                return {"pageId": page_id, "status": "failed"}
+            need_meta = session.artifacts is None
+            if need_meta and page.parentId:
+                parent_item = page_store.get_page(page.parentId)
+                parent_plan = (parent_item or {}).get("plan") or {}
+                if str((parent_plan.get("origin") or {}).get("type") or "") == "evaluation":
+                    need_meta = False
+            meta: dict = {}
+            if need_meta:
+                meta = await asyncio.to_thread(orchestrator.fetch_meta, session.database_id)
+                if not isinstance(meta, dict) or not meta.get("success"):
+                    msg = str((meta or {}).get("message") or "数据集元数据获取失败")
+                    page.status = "failed"
+                    page.error = msg
+                    await session.publish("error", {"pageId": page_id, "message": msg, "fatal": True})
+                    return {"pageId": page_id, "status": "failed"}
             done_payload = {"pageId": page_id, "status": "failed"}
             async for item in orchestrator.generate_stream(
                 page, meta, page.query, session.database_id,
-                session.skill_id, session.skill_mode,
+                session.skill_id, session.skill_mode, session.artifacts,
             ):
                 event_type, data = item["event"], item["data"]
                 if event_type == "done":
@@ -434,13 +447,42 @@ def match_skill(req: SkillMatchRequest):
 # 发起生成
 # ──────────────────────────────────────────────────────────────────
 
+def _validate_artifacts(artifacts) -> str:
+    """校验评估产物请求，返回中文错误原因（空串表示通过）。"""
+    if not artifacts.items:
+        return "未选择任何可用的评估产物（至少勾选一个数据产物）"
+    if not any(item.rows for item in artifacts.items):
+        return "所选评估产物没有可展示的数据"
+    try:
+        payload = json.dumps(artifacts.model_dump(), ensure_ascii=False, default=str)
+    except Exception:
+        return "评估产物序列化失败，请重新选择后重试"
+    if len(payload.encode("utf-8")) > 8 * 1024 * 1024:
+        return "评估产物过大（超过 8MB），请减少勾选项后重试"
+    return ""
+
+
 @app.post("/ipage/generate")
 async def generate(req: GenerateRequest, request: Request):
     actor = _actor(request)
     user_id, team_ids = actor["userId"], actor["teamIds"]
     query = (req.query or "").strip()
+    artifacts = req.artifacts
+    if artifacts is not None:
+        error = _validate_artifacts(artifacts)
+        if error:
+            raise HTTPException(status_code=400, detail=error)
+        if req.parentPageId:
+            raise HTTPException(status_code=400, detail="评估产物模式不支持基于历史页面修订")
+        if not query:
+            query = (artifacts.title or "基于评估分析结果生成态势页面").strip()
     if not query:
         raise HTTPException(status_code=400, detail="问题不能为空")
+
+    # 评估产物模式不使用 ipage 技能剧本（数据与结构都来自评估结果）
+    skill_id = "" if artifacts is not None else (req.skillId or "").strip()
+    skill_mode = "off" if artifacts is not None else (
+        (req.skillMode or "auto").strip().lower() or "auto")
 
     if len(_INFLIGHT) >= config.IPAGE_MAX_INFLIGHT:
         raise HTTPException(status_code=429, detail="生成队列已满，请稍后重试")
@@ -451,10 +493,16 @@ async def generate(req: GenerateRequest, request: Request):
     idem_key = request.headers.get("Idempotency-Key", "").strip()[:128]
     fingerprint = ""
     if idem_key:
+        artifacts_digest = ""
+        if artifacts is not None:
+            artifacts_digest = hashlib.sha256(json.dumps(
+                artifacts.model_dump(), ensure_ascii=False, sort_keys=True, default=str,
+            ).encode("utf-8")).hexdigest()
         fingerprint = hashlib.sha256(json.dumps({
             "userId": user_id, "query": query, "source": req.source,
             "dataSourceId": req.dataSourceId, "parentPageId": req.parentPageId,
-            "context": req.context, "skillId": req.skillId, "skillMode": req.skillMode,
+            "context": req.context, "skillId": skill_id, "skillMode": skill_mode,
+            "artifacts": artifacts_digest,
         }, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
         previous = _IDEMPOTENCY.get(idem_key)
         if previous and previous[0] > time.time():
@@ -482,10 +530,11 @@ async def generate(req: GenerateRequest, request: Request):
     if not session_id:
         session_id = page_store.create_session(user_id, team_ids, query[:25])["sessionId"]
 
+    title = (artifacts.title.strip() if artifacts is not None and artifacts.title else query[:25])
     page_id = _gen_page_id()
     page = PageRecord(
         pageId=page_id,
-        title=query[:25],
+        title=title,
         query=query,
         source=req.source or "manual",
         parentId=req.parentPageId or "",
@@ -509,13 +558,13 @@ async def generate(req: GenerateRequest, request: Request):
                                   fingerprint, page_id)
 
     session = _GenerationSession(page, actor, req.dataSourceId or "",
-                                 (req.skillId or "").strip(),
-                                 (req.skillMode or "auto").strip().lower() or "auto")
+                                 skill_id, skill_mode, artifacts)
     _STREAM_SESSIONS[page_id] = session
     session.task = asyncio.create_task(_run_generation(page_id, session))
 
-    logger.info("发起交互页面生成: pageId=%s parent=%s session=%s query=%s",
-                page_id, req.parentPageId or "-", session_id, query[:50])
+    logger.info("发起交互页面生成: pageId=%s parent=%s session=%s artifacts=%s query=%s",
+                page_id, req.parentPageId or "-", session_id,
+                bool(artifacts), query[:50])
     return _ok({
         "pageId": page_id,
         "status": "generating",

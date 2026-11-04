@@ -1959,6 +1959,9 @@ public class AdminController {
         result.put("indicators", indicatorConfigs);
         // 语义注解格式规范随元数据下发：Python 侧据此复用同一份 schema 校验，避免两端各存一份漂移
         result.put("semanticSchema", semanticSchemaValidator.rawSchema());
+        // 目标库方言：ipage 生成"时间桶聚合 SQL"时按方言选择日期截断函数
+        // （mysql=DATE_FORMAT / postgresql=to_char / h2=FORMATDATETIME），避免跨库语法不兼容
+        result.put("dbType", dbType);
         result.put("exportTime", java.time.LocalDateTime.now().toString());
 
         return ResponseEntity.ok(Map.of("success", true, "data", result));

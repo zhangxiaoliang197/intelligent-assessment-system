@@ -35,6 +35,12 @@ TRACKS_PATH = SQL_DIR / "drawn_tracks.json"
 OUR_FACTION = "红方"
 ENEMY_FACTION = "蓝方"
 
+# ── 演示时间口径 ──
+# 明细数据（任务/航迹/事件）全部压缩到同一演示日并错峰起飞，保证多架同时在空，
+# 页级时间轴可直接使用真实时间；日汇总另保留 30 天历史序列供趋势类图表使用。
+DEMO_DATE = date(2026, 7, 16)
+DAILY_HISTORY_DAYS = 30      # mock_daily_situation 总天数（含演示日）
+
 
 def mission_id_tag(aircraft_id):
     """按机群取任务编号前缀（M-BL=大陆方机群 / M-RD=敌方机群）。
@@ -116,7 +122,7 @@ def daily_phase_label(has_strike: bool, has_damage: bool,
     """根据当日活动类型动态标注当日活动类型，不依赖硬编码阶段范围。
 
     优先级：打击 > 敌我同时活动(摩擦) > 我方侦察/预警(侦察) > 敌机前出(前出) > 我战损(对抗)。
-    08-10 既打击又有战损，仍归为「打击日」；被击落当天归入敌机前出日而非对抗日。
+    演示日既打击又有战损，仍归为「打击日」；被击落当天归入敌机前出日而非对抗日。
     """
     if has_strike:
         return "打击日"
@@ -448,11 +454,40 @@ def compute_enemy_overlap():
 
 # ════════════════════════ 每日态势汇总 ════════════════════════
 
-def build_daily(tracks):
-    """按日聚合态势汇总（时间轴切片核心表）。tracks 为含威胁字段的我方航迹行。
+def history_day_metrics(day, days_before_demo):
+    """演示日之前的历史日态势（确定性合成）。
 
-    列名 blue_*/red_* 按阵营命名（蓝方=敌方、红方=我方），因此写入时
-    蓝方列取敌方数据、红方列取我方数据。
+    明细表只有演示日一天的真实航迹，历史日没有可复算的架次明细；此处按日期哈希
+    生成稳定、可复现的低~中烈度序列（越接近演示日活动越密），避免日汇总全 0
+    导致「每日架次/威胁指数趋势」类图表失去意义。历史日仅用于汇总趋势，
+    不与明细表做逐条核对。
+    """
+    seed = int(hashlib.md5(("daily:" + day.isoformat()).encode("utf-8")).hexdigest()[:8], 16)
+    # 越接近演示日，我方出动越频繁（0~2 架次/日）
+    our_sortie = 1 + (seed % 2) if days_before_demo <= 10 else (seed % 2)
+    enemy_sortie = (seed >> 3) % 2
+    recon_cnt = (seed >> 7) % 3
+    strike_cnt = 1 if (seed >> 11) % 8 == 0 else 0
+    our_loss = 1 if (seed >> 15) % 12 == 0 else 0
+    enemy_loss = 1 if (seed >> 19) % 6 == 0 else 0
+    max_threat = (seed >> 23) % 5
+    return {
+        "our": our_sortie, "enemy": enemy_sortie,
+        "recon": recon_cnt, "strike": strike_cnt,
+        "our_loss": our_loss, "enemy_loss": enemy_loss,
+        "threat": max_threat,
+    }
+
+
+def build_daily(tracks):
+    """构建日汇总表（时间轴切片核心表）。tracks 为含威胁字段的我方航迹行。
+
+    时间口径：
+    1. 演示日（DEMO_DATE）及任何真实有明细活动的日期，按任务/事件/战损实算；
+    2. DEMO_DATE 之前且无明细日期，用 history_day_metrics 合成历史序列，
+       使 mock_daily_situation 始终覆盖 DAILY_HISTORY_DAYS 天；
+    3. 列名 blue_*/red_* 按阵营命名（蓝方=敌方、红方=我方），
+       因此蓝方列取敌方数据、红方列取我方数据。
     """
     our_sortie, enemy_sortie = {}, {}
     awacs_days, recon_days = set(), set()
@@ -483,28 +518,46 @@ def build_daily(tracks):
         key = r[5].date()
         max_threat_d[key] = max(max_threat_d.get(key, 0), r[13])
 
-    start = min(m[7].date() for m in missions)
-    end = max(m[7].date() for m in missions)
+    # 有真实明细活动的日期（任务、事件、战损任一即可）
+    actual_days = set(our_sortie) | set(enemy_sortie) | set(recon_cnt) | set(strike_cnt) \
+        | set(our_loss_d) | set(enemy_loss_d) | set(max_threat_d)
+
+    start = DEMO_DATE - timedelta(days=DAILY_HISTORY_DAYS - 1)
+    # 明细若扩展到演示日之后，日汇总自动延长到最晚明细日，保证不丢真实数据
+    actual_last = max(actual_days) if actual_days else DEMO_DATE
+    end = max(DEMO_DATE, actual_last)
     rows = []
     ot = et = 0
     d = start
     while d <= end:
-        ol = our_loss_d.get(d, 0)
-        el = enemy_loss_d.get(d, 0)
+        if d in actual_days:
+            our = our_sortie.get(d, 0)
+            enemy = enemy_sortie.get(d, 0)
+            recon = recon_cnt.get(d, 0)
+            strike = strike_cnt.get(d, 0)
+            ol = our_loss_d.get(d, 0)
+            el = enemy_loss_d.get(d, 0)
+            mx = max_threat_d.get(d, 0)
+            has_recon = (d in recon_days) or (d in awacs_days)
+        elif d < DEMO_DATE:
+            # 历史日：确定性合成，仅作用于汇总趋势，不与明细核对
+            m = history_day_metrics(d, (DEMO_DATE - d).days)
+            our, enemy = m["our"], m["enemy"]
+            recon, strike = m["recon"], m["strike"]
+            ol, el, mx = m["our_loss"], m["enemy_loss"], m["threat"]
+            has_recon = recon > 0
+        else:
+            our = enemy = recon = strike = ol = el = mx = 0
+            has_recon = False
+
         ot += ol
         et += el
-        mx = max_threat_d.get(d, 0)
-        enemy_active = enemy_sortie.get(d, 0) > 0
-        phase_name = daily_phase_label(
-            strike_cnt.get(d, 0) > 0, (ol + el) > 0,
-            (d in recon_days) or (d in awacs_days), enemy_active)
+        enemy_active = enemy > 0
+        phase_name = daily_phase_label(strike > 0, (ol + el) > 0, has_recon, enemy_active)
         base = {"低烈度日": 8, "前出日": 15, "侦察日": 20, "摩擦日": 35,
                 "对抗日": 55, "打击日": 72}.get(phase_name, 8)
-        idx = base + ol * 4 + el * 2 + strike_cnt.get(d, 0) * 3 + mx * 2
-        rows.append((d, phase_name,
-                     enemy_sortie.get(d, 0), our_sortie.get(d, 0),
-                     recon_cnt.get(d, 0), strike_cnt.get(d, 0),
-                     el, ol, et, ot,
+        idx = base + ol * 4 + el * 2 + strike * 3 + mx * 2
+        rows.append((d, phase_name, enemy, our, recon, strike, el, ol, et, ot,
                      mx, min(100, idx), 1 if enemy_active else 0))
         d += timedelta(days=1)
     return rows

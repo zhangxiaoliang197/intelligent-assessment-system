@@ -8,12 +8,13 @@ import datetime as dt
 import json
 import logging
 import time
-from typing import Any, AsyncIterator, Dict, List, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import config
 from agent.planner import Planner, resolve_skill_datasets
-from agent.researcher import execute_sub_question, build_map_timeline
+from agent.researcher import execute_sub_question, build_map_timeline, build_page_timeline
 from agent.page_writer import PageWriter
+from agent.evaluation_bridge import build_bundle_and_plan
 from agent import dimension_graph, entity_filter, skill_catalog, skill_matcher
 from models import PageRecord
 from store import admin_client, page_store
@@ -95,11 +96,19 @@ async def _research_all(plan: Dict[str, Any], meta: Dict[str, Any],
 # ──────────────────────────────────────────────────────────────────
 
 def _sub_question_signature(sq: Dict[str, Any]) -> tuple:
-    """子问题取数口径签名：datasetId/mode/geo/question/filters 任一变化即视为定义变化。"""
+    """子问题取数口径签名：任一取数口径变化即视为定义变化。
+
+    timeseries 的时间列/桶宽/分组/聚合方式都属于取数口径，必须纳入签名，
+    否则修订时改了桶宽会被误判为"未变化"而沿用旧数据。
+    """
     return (
         str(sq.get("datasetId") or ""),
         str(sq.get("mode") or ""),
         str(sq.get("geo") or "none"),
+        str(sq.get("timeField") or ""),
+        str(sq.get("bucket") or ""),
+        json.dumps(sq.get("groupBy") or [], ensure_ascii=False, sort_keys=True),
+        json.dumps(sq.get("metric") or {}, ensure_ascii=False, sort_keys=True),
         str(sq.get("question") or "").strip(),
         json.dumps(sq.get("filters") or {}, ensure_ascii=False, sort_keys=True),
     )
@@ -343,16 +352,18 @@ def _finalize_skill(plan: Dict[str, Any], skill_context: Dict[str, Any]) -> None
 async def generate_stream(page: PageRecord, meta: Dict[str, Any],
                           query: str, database_id: str = "",
                           skill_id: str = "", skill_mode: str = "auto",
+                          artifacts=None,
                           ) -> AsyncIterator[Dict[str, Any]]:
     """生成流程主循环。
 
     Args:
         page: 已初始化的页面记录（pageId/user/team 就绪，status=generating）
-        meta: /export/for-llm 元数据
+        meta: /export/for-llm 元数据（评估产物模式可为空字典）
         query: 用户问题（修订场景即反馈意见）
         database_id: 可选数据源限定
         skill_id: 显式指定的技能 id（非空即手动指定）
         skill_mode: auto=按问题语义自动匹配技能；off=关闭技能走自由规划
+        artifacts: 评估分析产物；非空时跳过规划与取数，直接生成页面
     Yields:
         SSE 事件 dict：{"event": ..., "data": ...}
     """
@@ -360,6 +371,37 @@ async def generate_stream(page: PageRecord, meta: Dict[str, Any],
         return {"event": event, "data": {"pageId": page.pageId, **data}}
 
     skill_context: Dict[str, Any] = None
+
+    # ── 评估产物模式：跳过 Planner/Researcher，直接用勾选产物生成页面 ──
+    if artifacts:
+        if page.parentId:
+            page.status = "failed"
+            page.error = "评估产物模式不支持基于历史页面修订"
+            _save(page)
+            yield ev("error", message=page.error)
+            return
+        yield ev("progress", stage="plan", message="正在整理评估结果产物…")
+        try:
+            bundle, plan, warnings = build_bundle_and_plan(artifacts, query)
+        except ValueError as exc:
+            page.status = "failed"
+            page.error = str(exc)[:200]
+            _save(page)
+            yield ev("error", message=page.error)
+            return
+        if warnings:
+            logger.info("评估产物整理告警: %s", "；".join(warnings[:5]))
+        page.plan = plan
+        page.title = str(plan.get("title") or query[:25])
+        page.intent = "data_page"
+        page.dataBundle = bundle
+        page.sqlLog = []
+        _save(page)
+        yield ev("plan", plan=_public_plan(plan), title=page.title)
+        for dataset in bundle.get("datasets") or []:
+            yield ev("dataset", qid=dataset.get("id"), name=dataset.get("name"),
+                     mode=dataset.get("mode"), totalRows=dataset.get("totalRows"),
+                     truncated=dataset.get("truncated"))
 
     # ── 修订场景：复用父页面规划与数据包 ──
     parent = None
@@ -390,44 +432,59 @@ async def generate_stream(page: PageRecord, meta: Dict[str, Any],
         _save(page)
         yield ev("plan", plan=_public_plan(plan), title=page.title, reused=True)
 
-        # 技能：显式指定 > 关闭 > 继承父页面技能（修订默认延续同一套生成方法论）
-        skill_context = _resolve_skill(query, meta, plan, skill_id, skill_mode)
+        is_evaluation_page = str(
+            (plan.get("origin") or {}).get("type") or "") == "evaluation"
+        if is_evaluation_page:
+            # 评估产物页：只按修改意见重排呈现，不新增取数（其数据源未必仍可用）
+            yield ev("progress", stage="plan", message="正在按修改意见重排评估结果呈现…")
+            _finalize_skill(plan, None)
+            page.plan = plan
+            page.dataBundle = bundle
+            page.sqlLog = sql_log
+            _save(page)
+        else:
+            # 技能：显式指定 > 关闭 > 继承父页面技能（修订默认延续同一套生成方法论）
+            skill_context = _resolve_skill(query, meta, plan, skill_id, skill_mode)
 
-        # ── 修订增量取数：延续式重规划，只为修改意见带来的新数据需求补取数据 ──
-        # 「加入飞行轨迹」这类意见本质是取数需求；只换呈现的修订链路永远无法生效。
-        # 已有子问题原样沿用（直接继承父条目，不重复查询），仅新增/变更的口径重新取数。
-        yield ev("progress", stage="plan", message="正在按修改意见延续规划…")
-        original_plan = plan
-        result: Dict[str, Any] = {}
-        async for kind, payload in _replan_incremental(plan, entries, sql_log, meta, query,
-                                                       skill_context):
-            if kind == "progress":
-                yield ev("progress", **payload)
-            elif kind == "dataset":
-                yield ev("dataset", **payload)
-            elif kind == "__result__":
-                result = payload
-        plan = result.get("plan") or original_plan
-        entries = result.get("entries") or entries
-        sql_log = result.get("sqlLog") or sql_log
-        # 数据包按原始页面问题重建：航迹带时间时重算时间轴，动态演示才有据可依
-        bundle = {
-            "question": str((parent.dataBundle or {}).get("question") or query),
-            "generatedAt": _now(),
-            "dataSourceId": str((parent.dataBundle or {}).get("dataSourceId") or database_id),
-            "datasets": entries,
-        }
-        map_timeline = build_map_timeline(entries)
-        if map_timeline:
-            bundle["mapTimeline"] = map_timeline
-        _finalize_skill(plan, skill_context)
-        page.plan = plan
-        page.dataBundle = bundle
-        page.sqlLog = sql_log
-        _save(page)
-        if plan is not original_plan:
-            yield ev("plan", plan=_public_plan(plan), title=page.title)
-    else:
+            # ── 修订增量取数：延续式重规划，只为修改意见带来的新数据需求补取数据 ──
+            # 「加入飞行轨迹」这类意见本质是取数需求；只换呈现的修订链路永远无法生效。
+            # 已有子问题原样沿用（直接继承父条目，不重复查询），仅新增/变更的口径重新取数。
+            yield ev("progress", stage="plan", message="正在按修改意见延续规划…")
+            original_plan = plan
+            result: Dict[str, Any] = {}
+            async for kind, payload in _replan_incremental(plan, entries, sql_log, meta, query,
+                                                           skill_context):
+                if kind == "progress":
+                    yield ev("progress", **payload)
+                elif kind == "dataset":
+                    yield ev("dataset", **payload)
+                elif kind == "__result__":
+                    result = payload
+            plan = result.get("plan") or original_plan
+            entries = result.get("entries") or entries
+            sql_log = result.get("sqlLog") or sql_log
+            # 数据包按原始页面问题重建：航迹带时间时重算时间轴，动态演示才有据可依
+            bundle = {
+                "question": str((parent.dataBundle or {}).get("question") or query),
+                "generatedAt": _now(),
+                "dataSourceId": str((parent.dataBundle or {}).get("dataSourceId") or database_id),
+                "datasets": entries,
+            }
+            map_timeline = build_map_timeline(entries)
+            if map_timeline:
+                bundle["mapTimeline"] = map_timeline
+            # 页面级统一时间轴（地图 + 图表共享同一刻度）；与 mapTimeline 并存以兼容历史页面
+            page_timeline = build_page_timeline(entries)
+            if page_timeline:
+                bundle["timeline"] = page_timeline
+            _finalize_skill(plan, skill_context)
+            page.plan = plan
+            page.dataBundle = bundle
+            page.sqlLog = sql_log
+            _save(page)
+            if plan is not original_plan:
+                yield ev("plan", plan=_public_plan(plan), title=page.title)
+    elif not artifacts:
         # ── 阶段一：Planner ──
         yield ev("progress", stage="plan", message="正在分析问题并规划页面结构…")
         plan_started = time.monotonic()
@@ -502,6 +559,10 @@ async def generate_stream(page: PageRecord, meta: Dict[str, Any],
         map_timeline = build_map_timeline(entries)
         if map_timeline:
             bundle["mapTimeline"] = map_timeline
+        # 页面级统一时间轴（地图 + 图表共享同一刻度）；与 mapTimeline 并存以兼容历史页面
+        page_timeline = build_page_timeline(entries)
+        if page_timeline:
+            bundle["timeline"] = page_timeline
         page.dataBundle = bundle
         page.sqlLog = sql_log
         _save(page)

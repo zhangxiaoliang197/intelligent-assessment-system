@@ -104,9 +104,8 @@
                   :class="['message', msg.role]"
                 >
                   <div class="message-avatar">
-                    <el-avatar :size="40">
-                      {{ msg.role === 'user' ? '我' : 'AI' }}
-                    </el-avatar>
+                    <el-avatar v-if="msg.role === 'user'" :size="40">我</el-avatar>
+                    <AssistantAvatar v-else />
                   </div>
                   <div class="message-content">
                     <!-- 用户消息 -->
@@ -117,10 +116,7 @@
                     <!-- AI消息 -->
                     <div v-else class="ai-response">
                       <!-- loading 提示：querying 期间且 content 还未开始流式输出时显示 -->
-                      <div v-if="msg.querying && !msg.content" class="message-loading">
-                        <span class="loading-dots"><i></i><i></i><i></i></span>
-                        <span class="loading-text">{{ getLoadingPhaseLabel(msg) }}</span>
-                      </div>
+                      <div v-if="msg.querying && !msg.content" class="message-loading">分析中...</div>
 
                       <!-- 地图显示提示 -->
                       <div v-if="msg.showMapPrompt" class="map-prompt">
@@ -453,21 +449,8 @@
             </div>
           </div>
 
-          <div class="tools-bar">
-            <div
-              v-for="tool in tools"
-              :key="tool.id"
-              :class="['tool-item', { 'current': tool.current }]"
-              @click="navigateToTool(tool.path)"
-            >
-              <div class="tool-icon">
-                <el-icon :size="16" :color="tool.current ? 'white' : tool.color">
-                  <component :is="tool.icon" />
-                </el-icon>
-              </div>
-              <span class="tool-name">{{ tool.name }}</span>
-            </div>
-          </div>
+          <!-- 四模块切换卡片 -->
+          <ToolSwitchBar />
         </div>
       </div>
     </div>
@@ -604,12 +587,13 @@ import { Search, Collection, Box, PieChart, Plus, Delete, ArrowRight, ArrowDown,
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import Layout from '@/components/Layout.vue'
+import AssistantAvatar from '@/components/AssistantAvatar.vue'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData, extractGeoFromResults, detectMapIntent } from '@/composables/useMapPrompt'
 import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
 import api from '@/services/api'
 import { renderMarkdown } from '@/utils/markdown'
-import { useToolNav } from '@/composables/useToolNav'
+import ToolSwitchBar from '@/components/ToolSwitchBar.vue'
 
 const router = useRouter()
 
@@ -649,9 +633,6 @@ const toggleSpeech = () => {
     startSpeech()
   }
 }
-
-// 四功能切换栏（共享配置，current 由当前路由自动推导）
-const { tools, navigateToTool } = useToolNav()
 
 // ── localStorage 持久化 ──
 const LS_SESSION_ID = 'indicator_session_id'
@@ -1047,6 +1028,7 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
   messages.value.push({
     role: 'assistant',
     content: '',
+    querying: true,
     tree: null,
     indicators: [],
     references: [],
@@ -1117,8 +1099,8 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
           const data = JSON.parse(line)
           if (data.type === 'text') {
             fullText += data.content
+            // 流式输出期间不自动滚动，避免抢占用户正在阅读的内容
             messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: fullText }
-            nextTick(() => scrollToBottom())
           } else if (data.type === 'step') {
             const step = data.step || data
             // 更新左侧消息的步骤（upsert by phase+step+description）
@@ -1143,7 +1125,6 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
             }
             // 展开右侧面板
             if (!showExecutionPanel.value) showExecutionPanel.value = true
-            nextTick(() => scrollToBottom())
           } else if (data.type === 'result') {
             const resultContent = fullText || data.final_answer || ''
             // 后端指标管线会单独返回 map_annotations（明细坐标查询生成），优先解析
@@ -1200,7 +1181,6 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
           } else if (data.type === 'error') {
             fullText += '\n\n' + (data.message || data.content || '未知错误')
             messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: fullText }
-            nextTick(() => scrollToBottom())
           } else if (data.type === 'new_message') {
             const content = data.content || ''
             const currentMsg = messages.value[currentMsgIndex]
@@ -1240,7 +1220,6 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
               })
               currentMsgIndex = messages.value.length - 1
             }
-            nextTick(() => scrollToBottom())
           }
         } catch (e) { /* ignore */ }
       }
@@ -1261,7 +1240,7 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
     persistState()
 
     nextTick(() => {
-      setTimeout(() => { renderTreesForMessages(); scrollToBottom() }, 300)
+      setTimeout(() => { renderTreesForMessages() }, 300)
     })
   } catch (e: any) {
     if (cancelRequested || (e as Error).name === 'AbortError') {
@@ -1291,21 +1270,6 @@ const saveHistory = (id: string, question: string) => {
 }
 
 const setTreeChartRef = (el: any, index: number) => { if (el) treeChartRefs.value[index] = el }
-
-// ── loading 阶段文案：根据最近一条 in_progress 步骤推导 ──
-const getLoadingPhaseLabel = (msg: any): string => {
-  const steps = msg.steps || []
-  // 优先取最近一条 in_progress
-  const active = [...steps].reverse().find((s: any) => s.status === 'in_progress')
-    || steps[steps.length - 1]
-  if (!active) return '正在思考...'
-  const phaseMap: Record<string, string> = {
-    indicator_gen: '正在生成指标体系…',
-    data_query: '正在查询数据…',
-    dataset: '正在执行数据集…',
-  }
-  return phaseMap[active.phase] || `正在${active.description || '分析'}…`
-}
 
 // ── 树图动态高度：根据叶子数推算（echarts tree 默认 LR 布局，叶子数决定垂直高度）──
 const countTreeLeaves = (node: any): number => {
@@ -1365,7 +1329,12 @@ const scrollToBottom = () => {
   nextTick(() => { if (chatArea.value) chatArea.value.scrollTop = chatArea.value.scrollHeight })
 }
 
-watch(() => messages.value.length, () => scrollToBottom())
+// 仅在非分析状态下补滚动（发送时已有显式滚动）；
+// 分析流式输出期间不自动跟随，窗口完全交给用户手动滑动
+watch(() => messages.value.length, () => {
+  if (analyzing.value) return
+  scrollToBottom()
+})
 
 const filteredHistoryList = computed(() => {
   if (!searchQuery.value.trim()) return historyList.value
@@ -1762,40 +1731,33 @@ onMounted(async () => {
 .message-text { padding: 14px 18px; border-radius: 16px; line-height: 1.75; font-size: 15px; white-space: pre-wrap; word-wrap: break-word; }
 .message.user .message-text { background: linear-gradient(135deg, #4f8cff 0%, #3b82f6 100%); color: white; border-bottom-right-radius: 4px; }
 .message.assistant .message-text {
-  background: var(--bg-card);
+  background: transparent;
   color: var(--text-primary);
-  padding: 14px 18px;
-  border: 1px solid var(--border-light);
-  border-radius: 16px;
-  border-bottom-left-radius: 4px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  padding: 0;
+  border-radius: 0;
 }
 
+/* AI 等待态：与智能问答保持一致（文字 + 蓝色呼吸圆点） */
 .message-loading {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: 12px;
-  border-bottom-left-radius: 4px;
+  padding: 12px 0;
   color: var(--text-muted);
   font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.loading-dots { display: inline-flex; gap: 4px; }
-.loading-dots i {
-  width: 6px; height: 6px; border-radius: 50%;
+.message-loading::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
   background: var(--primary-500);
-  animation: loading-bounce 1.2s infinite ease-in-out;
+  animation: loading-pulse 1.2s ease-in-out infinite;
 }
-.loading-dots i:nth-child(2) { animation-delay: 0.2s; }
-.loading-dots i:nth-child(3) { animation-delay: 0.4s; }
-@keyframes loading-bounce {
-  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
-  40% { transform: scale(1); opacity: 1; }
+@keyframes loading-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
 }
-.loading-text { font-weight: 500; }
 
 /* ── AI 响应 ── */
 .ai-response { display: flex; flex-direction: column; gap: 1rem; }
@@ -2034,17 +1996,6 @@ onMounted(async () => {
   border: none; border-radius: 0; box-shadow: none;
   display: flex; flex-direction: column; gap: 0;
 }
-
-.tools-bar { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 14px; }
-.tools-bar .tool-item { display: flex; align-items: center; gap: 6px; padding: 6px 14px; background: var(--gray-50); border-radius: 20px; cursor: pointer; transition: all 0.2s; border: 1px solid var(--border-light); }
-.tools-bar .tool-item:hover { background: white; border-color: var(--primary-300); box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1); }
-.tools-bar .tool-item.current { background: var(--primary-500); border-color: var(--primary-500); cursor: default; }
-.tools-bar .tool-icon { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: inherit; }
-.tools-bar .tool-item.current .tool-icon { background: transparent; }
-.tools-bar .tool-name { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
-.tools-bar .tool-item.current .tool-name { color: white; }
-.tools-bar .tool-item:hover .tool-name { color: var(--primary-600); }
-.tools-bar .tool-item.current:hover .tool-name { color: white; }
 
 .input-wrapper { position: relative; max-width: 1000px; margin: 0 auto; width: 100%; }
 .input-wrapper :deep(.el-textarea__inner) { border-radius: 16px !important; border-color: var(--border-normal) !important; padding: 16px 100px 16px 20px !important; font-size: 15px !important; line-height: 1.6 !important; transition: all 0.2s !important; background: var(--gray-50) !important; resize: none; }

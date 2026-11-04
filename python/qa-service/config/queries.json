@@ -6,7 +6,7 @@
       {
         "label": "单位战损统计",
         "keywords": ["战损", "损失", "伤亡", "损毁", "战损"],
-        "sql": "SELECT * FROM test_student_scores tss",
+        "sql": "SELECT faction AS side, aircraft_name AS unit, COUNT(*) AS damage_count FROM mock_battle_damage GROUP BY faction, aircraft_name ORDER BY damage_count DESC",
         "vizType": "bar"
       }
     ]

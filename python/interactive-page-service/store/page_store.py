@@ -99,6 +99,7 @@ def init_db() -> None:
                 pass  # 列已存在，忽略
             conn.commit()
             _migrate_legacy_pages(conn)
+            _backfill_session_titles(conn)
             conn.commit()
             _initialized = True
         finally:
@@ -156,6 +157,25 @@ def _migrate_legacy_pages(conn: sqlite3.Connection) -> None:
                 (f"m_{uuid.uuid4().hex[:12]}", sid, "ai", kind, content, page_id, row["created_at"] or now),
             )
         logger.info("存量交互页面已迁移至历史会话: user=%s pages=%s session=%s", user_id, len(items), sid)
+
+
+def _backfill_session_titles(conn: sqlite3.Connection) -> None:
+    """存量空标题会话回填：取该会话首条用户消息前 25 字作为标题，幂等可重入。
+
+    历史上前端"新会话"按钮创建的空标题会话在提问后未被命名，
+    这里统一按"每条记录用用户问题来命名"的规则修复。
+    """
+    cursor = conn.execute(
+        """UPDATE ipage_session SET title = COALESCE((
+               SELECT SUBSTR(m.content, 1, 25) FROM ipage_message m
+               WHERE m.session_id = ipage_session.id
+                 AND m.role = 'user' AND TRIM(m.content) != ''
+               ORDER BY m.created_at ASC, m.rowid ASC LIMIT 1
+           ), title)
+           WHERE TRIM(title) = ''"""
+    )
+    if cursor.rowcount > 0:
+        logger.info("已回填 %s 个空标题会话（取首条用户问题命名）", cursor.rowcount)
 
 
 def _loads(raw: str, default: Any) -> Any:
@@ -462,7 +482,10 @@ def delete_session(session_id: str) -> bool:
 
 def append_message(session_id: str, role: str, kind: str, content: str,
                    page_id: str = "") -> Optional[Dict[str, Any]]:
-    """向会话追加一条消息（user/ai），并刷新会话 updated_at。"""
+    """向会话追加一条消息（user/ai），并刷新会话 updated_at。
+
+    首条用户消息会为空标题会话命名（取问题前 25 字），与其它模块的历史记录规则一致。
+    """
     init_db()
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     mid = f"m_{uuid.uuid4().hex[:12]}"
@@ -474,6 +497,12 @@ def append_message(session_id: str, role: str, kind: str, content: str,
                 "VALUES (?,?,?,?,?,?,?)",
                 (mid, session_id, role, kind, content or "", page_id or "", now),
             )
+            # 空标题会话用首条用户问题命名（仅 user 消息触发，原子条件防覆盖已有标题）
+            if role == "user" and (content or "").strip():
+                conn.execute(
+                    "UPDATE ipage_session SET title = ? WHERE id = ? AND TRIM(title) = ''",
+                    (content.strip()[:25], session_id),
+                )
             conn.execute(
                 "UPDATE ipage_session SET updated_at = ? WHERE id = ?", (now, session_id),
             )

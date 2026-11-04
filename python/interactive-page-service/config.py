@@ -69,6 +69,16 @@ IPAGE_LLM_BUNDLE_CHARS = max(4000, min(int(os.getenv("IPAGE_LLM_BUNDLE_CHARS", "
 # 整表回退查询行数上限
 IPAGE_DATA_ROW_LIMIT = max(100, min(int(os.getenv("IPAGE_DATA_ROW_LIMIT", "5000")), 10000))
 
+# ── 页级时间轴 / 时序聚合 ──
+# 页面时间轴桶数上限（超出按"好读档位"调粗，保证前端拖动与图表刷新性能）
+IPAGE_TIMELINE_MAX_BUCKETS = max(30, min(int(os.getenv("IPAGE_TIMELINE_MAX_BUCKETS", "600")), 2000))
+# 强制桶宽（排障用）：auto=按实际跨度收敛；也可指定 minute/5minute/15minute/hour/day
+IPAGE_TIMELINE_BUCKET = os.getenv("IPAGE_TIMELINE_BUCKET", "auto").strip().lower()
+# 单个时序数据集结果行上限（桶 × 分组的组合行数）
+IPAGE_TIMESERIES_ROW_LIMIT = max(50, min(int(os.getenv("IPAGE_TIMESERIES_ROW_LIMIT", "3000")), 10000))
+# 时序分组列去重后的类别上限（超出归并为「其他」，避免图例爆炸）
+IPAGE_TIMESERIES_MAX_GROUPS = max(2, min(int(os.getenv("IPAGE_TIMESERIES_MAX_GROUPS", "12")), 50))
+
 # ── Agent 行为开关 ──
 # Guard 校验失败后的 LLM 重写次数（0=不重写直接模板兜底）
 IPAGE_REPAIR_MAX_ROUNDS = max(0, min(int(os.getenv("IPAGE_REPAIR_MAX_ROUNDS", "1")), 2))

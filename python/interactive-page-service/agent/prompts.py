@@ -92,6 +92,11 @@ data_page 规划要求：
 1. subQuestions 至少 1 个，每个 datasetId 必须来自目录；问题之间互不重复，分别支撑页面的一个信息面；
 2. mode=aggregate 用于图表/统计（SQL 可 GROUP BY 聚合）；mode=detail 用于地图航迹/标点、明细表格，
    需要逐行数据，必须保留全部业务列；
+2.1 需要"用时间轴拖动联动变化的图表"时，规划 mode=timeseries（按时间桶预聚合）：
+   可指定 timeField（真实时间列，缺省由系统按注解/列名识别）、可选 groupBy（最多 3 列）与
+   metric（count/sum/avg/max/min，缺省 count）；timeseries 的 geo 必须为 none，
+   且规划中必须包含 timeline 区块（ref 指向该 timeseries 子问题），页面会以统一时间轴同步驱动
+   地图与图表。数据集没有可识别时间列时不要规划 timeseries；
 3. 需要地图时，按数据集语义选择地理形态（该数据集必须有成对经纬度字段，否则 geo=none）：
    - tracks：逐点航迹/轨迹表（含实体编号、序号 seq、记录时间，如敌我双方航迹明细），运行时自动按实体+任务串线；
    - points：单位/事件位置（飞机基地、雷达/导弹阵地、威胁点、打击/侦察/战损事件位置、目标点分布等），
@@ -165,8 +170,10 @@ def build_replan_messages(feedback: str, catalog_text: str,
             "2. 只有当修改意见确实需要新的数据维度（如新增飞行轨迹/时间序列/新的分类统计）时，"
             "才追加新子问题，id 依次为 q3、q4…（不得与已有 id 重复），datasetId 必须来自数据集目录；\n"
             "2.1 需要航迹/动态演示时，选择含实体编号、序号、记录时间与成对经纬度的航迹表，"
-            "并声明 geo=tracks（页面开启 playback 即可让能力范围圈随飞机移动）；"
+            "并声明 geo=tracks（页面用 SitMap timeline:true 让能力范围圈随飞机移动）；"
             "只有需要静止阵地/目标的固定范围圈时才声明 geo=circles（表须有半径字段）；\n"
+            "2.2 需要图表随统一时间轴联动时，追加 mode=timeseries 子问题（时间桶聚合）"
+            "并在 sections 中包含 timeline 区块（ref 指向该子问题）；\n"
             "3. sections 可按修改意见重新组织，但 ref 只能引用最终存在的子问题 id；"
             "新增航迹/时间序列时相应增加 map 区块（引用航迹子问题）与 timeline 区块；\n"
             "4. 其余规划要求（区块数量、结论区、地理形态与坐标字段匹配等）保持不变。\n\n"
@@ -268,6 +275,15 @@ RUNTIME_API_GUIDE = """
     散点：spec = {type:'scatter', title, series:[{name, data:[[x,y],...]}]}
     返回 chart 对象（一般无需持有）。容器 div 必须有明确高度（CSS 给高度，如 .ip-card 内 320px）。
 
+    **时间轴联动（可选）**：data.timeline 存在、且数据来自 mode=timeseries 的时序数据集时，
+    给 chart spec 增加 timeline 配置并显式传 rows（页面端只筛选/透视，不做业务聚合）：
+      timeline: { mode:'trend'|'bucket', bucketField:'bucketKey', valueField:'数量', categoryField:'机型' }
+      rows: data.datasets[i].rows
+      - trend ：随时间轴累积到当前桶并高亮当前时刻（适合 line / bar 趋势）
+      - bucket：只显示覆盖当前时刻的一个桶（适合分类对比 bar / pie）
+      - categoryField 可省略（单系列曲线）
+    没有时间列的数据集不要传 timeline —— 该图表在拖动时间轴时保持静态。
+
 二、SitMap.render(el, spec) —— 地图（瓦片/坐标系/符号/图例全部由运行时处理）
     地理数据来自每个 detail 数据集的 geoFeatures（见数据说明），把需要上图的数据集合并后传入：
     spec：
@@ -296,9 +312,11 @@ RUNTIME_API_GUIDE = """
       circles: [{lng, lat, radiusKm: 120, name, faction:'蓝方'|'红方'|'',
                  rangeType:'打击范围'|'侦察范围', kind:'strike'|'recon'|'other',
                  factionColor?}],
-      // 时间轴回放（可选）：有带 time 的航迹时强烈建议开启，播放器与动态能力圈由运行时接管
-      playback: { enabled: true, radius:'both'|'strike'|'recon', trail: true, speed: 1, showBar: true }
+      // 页面时间轴联动（新契约）：data.timeline 存在时传 timeline:true，
+      // 地图订阅 SitTimeline 的统一时钟，播放条由页面时间轴提供（不要同时传 playback）
+      timeline: true
     }
+    （兼容旧页面的 playback 配置仍可用，但新页面不要再使用；详见"三、SitTimeline"）
     多数据集上图：遍历 data.datasets，把各 ds.geoFeatures 的 units/tracks/circles 分别 concat 后传入；
     同一数据集 geoFeatures.units 不存在时回退使用 points。
     返回 mapApi：
@@ -315,33 +333,27 @@ RUNTIME_API_GUIDE = """
     - 仅在确实需要把地图定位到特定坐标（如点击某架飞机聚焦）时，才传 center 或调用 flyTo；
     - 首次渲染不传 center 会自动适配到全部数据范围（开启 playback 时已把半径计入）。
 
-三、时间轴回放（SitMap 内置，禁止自己实现播放器）
-    地图数据中存在带 time 的航迹时，直接给 SitMap 传 spec.playback，运行时自动完成：
-    1. 注入播放条：播放/暂停、进度拖动、完整时间标签（YYYY-MM-DD HH:MM:SS）、
-       倍速按钮（0.5×/1×/2×/4× 循环切换）、重置；
-    2. **不预画整条航迹**：开启 playback 后整条航迹折线、起点标记与终点图标全部由播放器
-       接管，地图上只出现飞机图标（按机型象形符号、机头朝当前航向）；
-    3. 按当前时刻在航迹点上线性插值出每架飞机的位置，飞机图标随播放移动；同时把
-       "起点→当前位置"的已飞航迹逐步画出（飞机到哪航迹显示到哪），未飞到的航段不出现；
-       拖动进度条回退时航迹随之缩短，重置回起点时只剩飞机图标、无航迹线；
-    4. 以飞机当前位置为圆心、以 strikeRadiusKm / reconRadiusKm 为半径画动态能力圈
-       （侦察虚线、打击实线），圆心随飞机运动；
-    5. 对已飞航段生成扫掠走廊（圆扫过的覆盖范围）留痕，从起飞累积到当前时刻、
-       随播放推进增长（拖动回退随之收缩），重置时清空，不预展示全程；
-    6. 多架次真实日期分散在多个自然日时，运行时自动按"日内归一化"把全部航迹叠加到
-       同一虚拟日演示；播放条时间按"虚拟基准日（取时间轴最早真实日期）+ 日内时刻"显示
-       完整年月日时分秒，航迹弹窗等业务展示仍是真实日期（数据不篡改）；
-    7. 当前时刻早于首点（未出动）或晚于末点（已返航）的架次不显示飞机图标、不留航迹、
-       不画圈不留带，已画出的图层即时消失——任何时刻都是"有多少在空飞机就有多少圈"；
-    8. 带 time 的事件类点（unitKind 为 event_strike / event_damage / event_recon）按各自的
-       "事件时刻"出现、此后常显：当前时刻早于该事件时刻时它不在图上，拖动回退或重置时
-       重新隐藏；单位、阵地等非事件点即使带 time 也始终常显。事件时刻会并入时间轴，
-       因此晚于全部航迹末点的事件也能等到自己的时刻。若希望某类点一开始就全程常显，
-       就不要给它填 time 字段。
-    **严禁**再自己写 setInterval 播放循环、自己写滑块、自己画航迹折线与飞机图标、
-    自己过滤航迹点重渲染地图——那样图标不会随飞机移动、航迹不会渐进显示，且不同页面
-    表现不一致。需要自定义控件时只调用 mapApi.playback.* 并订阅其事件
-    （事件参数 s={index,total,ratio,time,playing,speed}），不要重新调用 SitMap.render。
+三、SitTimeline —— 页面级时间轴（页面唯一时钟；控件由宿主渲染，页面不画控件）
+    data.timeline 存在时，页面必须在结论区之后放一个空占位容器并调用：
+      var tl = SitTimeline.render('#tl', { axis: data.timeline.buckets, interval: 400 });
+    该容器只做占位：无标题、无高度、无卡片样式，运行时不再在其中绘制播放条。
+    脚本顺序上**必须先调用 SitTimeline.render 建时钟，再渲染需要联动的图表和地图**；
+    容器视觉上可以放在结论区之后，但不要因为视觉位置把它挪到最后才执行。
+    播放/暂停、进度拖动、完整时间标签、0.5×/1×/2×/4× 倍速、重置由宿主浮层渲染
+    （固定在窗口底部、不随页面滚动移动），通过消息驱动同一个时钟；
+    页面禁止自绘按钮、滑块、进度条，也不要额外创建第二个播放条。
+    当前时刻变化时通过 SitBus 广播 'timeline:tick'（s={index,total,ratio,time,t,playing,speed}）。
+    组件联动：
+    1. 地图：SitMap.render(el, { tracks, units, timeline: true }) 绑定页面时钟，按当前时刻
+       插值航迹、渐进显示已飞航段、画动态能力圈/扫掠走廊、按事件时刻显隐事件点；
+    2. 图表：**按需**绑定，只给"按时间桶聚合且与地图共用同一时间刻度"的图表配置 timeline
+       （见"一、SitChart"），trend 累积增长、bucket 切换当前桶；
+    3. 没有时间列、或时间口径与地图对不上的图表不要传 timeline，保持静态；
+    4. 不要再给 SitMap 传 spec.playback，也不要在页面里写 setInterval/滑块/自绘航迹——
+       否则会出现"地图自己播、图表不动"的双时钟；需要自定义交互时只订阅 tl.on(fn)
+       或 SitBus.on('timeline:tick', fn)。
+    **兼容说明**：无 data.timeline 的历史页面仍可用 SitMap spec.playback（地图内自带播放条，
+    含日内归一化）；新页面一律优先使用 SitTimeline。
 
 四、SitBus —— 组件联动事件总线
     SitBus.on('filter', function(payload){ ... });
@@ -356,7 +368,8 @@ RUNTIME_API_GUIDE = """
     SitUtil.groupBy(rows, key)     -> {类别: [行]}
     SitUtil.sum(rows, key) / avg(rows, key) / countBy(rows, key)
     SitUtil.unique(rows, key)      去重值列表
-    SitTable.render(el, {columns:[{key,label}], rows, pageSize:10})  带分页的明细表
+    SitTable.render(el, {columns:[{key,label}], rows, pageSize:rows.length})  明细表；
+        页面下部的明细表要平铺展示，pageSize 传全部行数、不传 maxHeight，不要分页或内部滚动
 
 六、SitApp 其它
     SitApp.reportError(msg)        页面内业务异常可上报（父界面据此提示，不影响其它区块）
@@ -375,15 +388,36 @@ PAGE_SYSTEM_HEADER = """
    "蓝方"渲染为蓝色(#1d4ed8)，无需在 spec 中指定 color；series 顺序可任意，颜色不随顺序变化；
    地图航迹的 faction 字段同样自动上色；**数据项自带 factionColor 时以它为准**（数据源注解
    已算出规范色，直接透传即可，不要自行覆盖）；其它系列按专业配色自动分配；
-2. 布局用 CSS Grid/Flex 响应式：KPI 卡片横排；图表 2 列（窄屏自动 1 列）；
-   地图给足高度（建议 420-520px）；结论区放页面底部；
+2. 版式：页头 → KPI 行 → 主区（左图表 / 右地图）→ 明细表 → 结论，分「单屏区」与「平铺区」两部分：
+   - 单屏区（页头 + KPI + 主区）高度固定为宿主注入的 var(--ipage-vh,720px)：
+     纵向 flex，页头/KPI 为 auto，主区 flex:1;min-height:0；
+     **不要用 100vh 计算高度**（iframe 自动撑高时 100vh 等于内容高，会形成反馈循环）；
+   - 明细表（如战损明细记录）与结论放在单屏区之外，向下自然平铺，页面总高可以超过一屏：
+     不要给它们设固定高度/max-height/overflow 滚动条，也不要分页（SitTable 的 pageSize 传全部行数）；
+   - 页面底部预留 14px 给时间轴折叠态进度线；
+   主区左右分栏，左宽用 --ipage-left（脚本按图表数设置，不要直接写内联 grid-template-columns）：
+   leftPct = clamp(32, 28 + 4 * 图表数, 58)；
+   左栏图表排列按数量决定（脚本设置网格列数与行轨道）：
+   - 1~3 张：单列纵向均分；
+   - 4 张：2 列 × 2 行；
+   - 5 张：上方 2×2、下方通栏一张（优先放可拉宽的折线图，卡片 grid-column:1/-1）；
+   - 6 张及以上：2 列，行数按 ceil(图表数/2)；
+   单个图表卡片限制尺寸：max-width:520px、max-height:420px（通栏折线图例外，占满左栏但
+   max-width:900px），高度由行轨道均分且不要设 min-height（避免小屏挤压溢出），
+   宽高比不固定但受这两个上限约束；图表容器 height:100%；
+   右栏地图容器 height:100%，不要再写死 420-520px；
+   无地理数据时主区退化为单列全宽图表，不得虚构地图；窗口窄于 900px 时上下堆叠、
+   取消固定高度并恢复自然滚动；
 3. 图表选型匹配数据：比较/排名用 bar，时间趋势用 line，占比（≤8 类）用 pie，
    多维能力对比用 radar，两数值维度分布用 scatter；每个图表有中文标题与一句话结论（可放卡片下方）；
+   图表标题一律用卡片内的 HTML 标题（.ip-title/h3），**调用 SitChart 时不要再传 title**，
+   否则画布内会重复画一遍标题并与图例、坐标轴文字互相压字；
 4. 可交互：如果数据含阵营/类别/时间等维度，提供筛选按钮或下拉并通过 SitBus 联动
-   KPI、图表、地图（地图用 mapApi.highlight）；有航迹数据时须给 SitMap 传 spec.playback，
-   由运行时提供播放条（含 0.5×/1×/2×/4× 倍速）、"飞机图标随播放移动 + 航迹渐进显示 +
-   能力圈随飞机移动"的动态演示，不要自己写播放器、不要自己画航迹折线；
-   至少让页面上的关键控件真正生效，禁止摆设按钮；
+   KPI、图表、地图（地图用 mapApi.highlight）；**data.timeline 存在时必须有 timeline 区块**，
+   但该区块只是结论区之后的空占位容器，调用 SitTimeline.render 建页面级时间轴（控件由宿主浮层渲染），
+   地图传 timeline:true；图表**按需绑定**：只有数据本身按时间桶聚合、且与地图时间刻度一致的图表
+   才传 timeline 配置，其余图表保持静态，不要为了联动强行绑定或改造数据；
+   不要自己写播放器、不要自己画航迹折线；至少让页面上的关键控件真正生效，禁止摆设按钮；
 5. KPI 必须用 SitUtil 从 data.datasets 的 rows 实时计算（如总数、平均值、分类计数），
    不得硬编码任何数字；所有数字、名称只能来自数据包，严禁编造；数据为空的区块显示
    「暂无相关数据」空态，不得留白或造假；
@@ -439,6 +473,24 @@ def _bundle_view(bundle: Dict[str, Any], sample_rows: int) -> Dict[str, Any]:
         "generatedAt": bundle.get("generatedAt", ""),
         "datasets": [],
     }
+    # 评估产物模式的综合结论：仅非空时附加，普通页面数据包视图保持不变
+    conclusion = str(bundle.get("conclusion") or "").strip()
+    if conclusion:
+        view["conclusion"] = conclusion
+    timeline = bundle.get("timeline") or {}
+    if timeline:
+        buckets = timeline.get("buckets") or []
+        view["timeline"] = {
+            "granularity": timeline.get("granularity"),
+            "bucketSeconds": timeline.get("bucketSeconds"),
+            "startTime": timeline.get("startTime"),
+            "endTime": timeline.get("endTime"),
+            "totalBuckets": len(buckets),
+            "firstBuckets": buckets[:3],
+            "lastBuckets": buckets[-2:],
+            "note": "运行时 data.timeline.buckets 为完整刻度；页面用 SitTimeline.render 建轴，"
+                    "地图传 timeline:true，时序图表传 timeline 配置",
+        }
     for ds in bundle.get("datasets", []):
         rows = ds.get("rows", []) or []
         entry = {
@@ -459,8 +511,27 @@ def _bundle_view(bundle: Dict[str, Any], sample_rows: int) -> Dict[str, Any]:
                 if ds.get("mode") == "detail" and len(rows) > sample_rows else ""
             ),
         }
+        if ds.get("mode") == "timeseries":
+            entry.update({
+                "bucketSeconds": ds.get("bucketSeconds"),
+                "valueField": ds.get("valueField"),
+                "timeField": ds.get("timeField"),
+                "groupBy": ds.get("groupBy") or [],
+                "timelineNote": "该数据集已按时间桶预聚合；图表用 timeline 配置 + rows 绑定，不要自行再聚合",
+            })
         view["datasets"].append(entry)
     return view
+
+
+EVALUATION_PAGE_GUIDE = """
+【评估产物模式】
+本页数据来自已完成的评估分析结果，不是在本次生成中重新取数：
+- 页面中的数值只能来自数据包，禁止自行推算、补全或修改数字；
+- 数据包可能包含 conclusion 字段（评估结论），结论区必须直接用 data.conclusion 渲染，
+  可以归纳表达，但不得新增结论；
+- 只在数据包存在 geoFeatures 时渲染地图；
+- 不得输出「数据待补充」「TODO」等占位内容。
+"""
 
 
 def build_page_messages(query: str, plan: Dict[str, Any], bundle: Dict[str, Any],
@@ -468,7 +539,8 @@ def build_page_messages(query: str, plan: Dict[str, Any], bundle: Dict[str, Any]
                         skill_context: Dict[str, Any] = None) -> list:
     """页面首次生成消息。
 
-    skill_context 为空（未命中技能）时，消息与改造前完全一致。
+    skill_context 为空（未命中技能）时，消息与改造前完全一致；
+    plan.origin.type='evaluation' 时追加「评估产物模式」写作约束。
     """
     import json
     sections = plan.get("sections", [])
@@ -481,8 +553,14 @@ def build_page_messages(query: str, plan: Dict[str, Any], bundle: Dict[str, Any]
         _bundle_view(bundle, sample_rows), ensure_ascii=False, indent=2, default=str,
     )
     guide = format_skill_page_guide(skill_context)
+    origin = (plan.get("origin") or {}) if isinstance(plan, dict) else {}
+    evaluation_guide = (
+        "\n" + EVALUATION_PAGE_GUIDE
+        if str(origin.get("type") or "") == "evaluation" else ""
+    )
     return [
-        {"role": "system", "content": PAGE_SYSTEM_HEADER + (("\n" + guide) if guide else "")},
+        {"role": "system",
+         "content": PAGE_SYSTEM_HEADER + (("\n" + guide) if guide else "") + evaluation_guide},
         {"role": "user", "content":
             f"用户问题：{query}\n\n页面规划：\n{plan_text}\n\n"
             f"数据包（结构+样例）：\n{bundle_text}\n\n"

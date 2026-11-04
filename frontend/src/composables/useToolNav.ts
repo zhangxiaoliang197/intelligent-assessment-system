@@ -12,8 +12,8 @@ export interface ToolItem {
   current: boolean
 }
 
-// 三个功能页面的统一切换栏配置（单一数据源）。
-// 新增功能只需在此追加一项，各功能页面自动同步，避免重复维护导致漏配。
+// 四个功能页面的统一切换栏配置（单一数据源）。
+// 新增功能只需在此追加一项，各功能页面（统一通过 ToolSwitchBar 渲染）自动同步。
 const TOOL_DEFS: Array<Omit<ToolItem, 'current'>> = [
   { id: 1, name: '智能问答', icon: ChatDotRound, color: '#409eff', path: '/qa' },
   { id: 2, name: '指标分析', icon: PieChart, color: '#67c23a', path: '/indicator' },

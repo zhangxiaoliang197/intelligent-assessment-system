@@ -216,11 +216,12 @@
                   :class="['message', msg.role]"
                 >
                   <div class="message-avatar">
-                    <el-avatar :size="40">
-                      {{ msg.role === 'user' ? '我' : 'AI' }}
-                    </el-avatar>
+                    <el-avatar v-if="msg.role === 'user'" :size="40">我</el-avatar>
+                    <AssistantAvatar v-else />
                   </div>
                   <div class="message-content">
+                    <!-- AI 等待态：与智能问答保持一致 -->
+                    <div v-if="msg.querying && !msg.content && !msg.result" class="message-loading">分析中...</div>
                     <!-- 结果展示区（SQL + 数据表格）放在建议前面 -->
                     <div v-if="msg.result" class="result-section">
                       <div v-if="msg.result.type === 'skill'" class="skill-result">
@@ -492,6 +493,28 @@
                           <li v-for="(ref, idx) in msg.result.knowledgeReference" :key="idx">{{ ref }}</li>
                         </ul>
                       </div>
+
+                      <!-- 基于本次评估产物生成态势页面：非强制，展开后就地选择，不弹层 -->
+                      <div v-if="showsSituationEntry(msg)" class="situation-entry">
+                        <el-button
+                          v-if="artifactPanelIndex !== index"
+                          type="primary"
+                          plain
+                          size="small"
+                          @click="openArtifactSheet(index, msg)"
+                        >
+                          <el-icon><MapLocation /></el-icon>
+                          生成态势页面（可选）
+                        </el-button>
+                        <SituationArtifactSheet
+                          v-else
+                          :result="msg.result"
+                          :context="artifactContextOf(msg)"
+                          :loading="situationSheetLoading"
+                          @confirm="onGenerateSituation"
+                          @cancel="artifactPanelIndex = null"
+                        />
+                      </div>
                     </div>
                     <!-- 分析建议（2-3条） -->
                     <div v-if="msg.content" class="message-text" v-html="renderMarkdown(msg.content)"></div>
@@ -569,8 +592,13 @@
               </div>
             </div>
           </div>
-          <!-- 收起状态下的展开按钮 -->
-          <div v-else class="execution-panel-toggle" @click="showExecutionPanel = true" title="展开系统执行过程">
+          <!-- 收起状态下的展开按钮：仅在发起过任务后出现，首页保持干净 -->
+          <div
+            v-else-if="executionSteps.length || analyzing"
+            class="execution-panel-toggle"
+            @click="showExecutionPanel = true"
+            title="展开系统执行过程"
+          >
             <el-icon><ArrowRight /></el-icon>
             <span class="toggle-text">执行过程</span>
           </div>
@@ -606,22 +634,8 @@
             </div>
           </div>
           
-          <!-- 工具按钮 -->
-          <div class="tools-bar">
-            <div
-              v-for="tool in tools"
-              :key="tool.id"
-              :class="['tool-item', { 'current': tool.current }]"
-              @click="navigateToTool(tool.path)"
-            >
-              <div class="tool-icon">
-                <el-icon :size="16" :color="tool.current ? 'white' : tool.color">
-                  <component :is="tool.icon" />
-                </el-icon>
-              </div>
-              <span class="tool-name">{{ tool.name }}</span>
-            </div>
-          </div>
+          <!-- 四模块切换卡片 -->
+          <ToolSwitchBar />
         </div>
       </div>
 
@@ -669,6 +683,7 @@
         :skill="selectedSkill"
         @saved="handleSkillMarkdownSaved"
       />
+
     </div>
   </Layout>
 </template>
@@ -695,15 +710,20 @@ import {
   Delete,
   Search,
   ArrowRight,
-  Microphone
+  Microphone,
+  MapLocation
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
-import { useToolNav } from '@/composables/useToolNav'
+import AssistantAvatar from '@/components/AssistantAvatar.vue'
+import ToolSwitchBar from '@/components/ToolSwitchBar.vue'
 import SkillsLibrary from '@/pages/SkillsLibrary.vue'
 import SkillMarkdownDialog from '@/components/evaluation/SkillMarkdownDialog.vue'
+import SituationArtifactSheet from '@/components/evaluation/SituationArtifactSheet.vue'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData, extractGeoFromResults } from '@/composables/useMapPrompt'
 import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
+import { hasUsableArtifacts, type ArtifactContext, type EvaluationArtifactPayload } from '@/utils/evaluationArtifacts'
+import { useInteractiveStore } from '@/stores/interactive'
 import api from '@/services/api'
 import {
   cancelSkillExecution,
@@ -721,6 +741,7 @@ use([CanvasRenderer, BarChart, PieChart, LineChart, GridComponent, TooltipCompon
 
 const router = useRouter()
 const route = useRoute()
+const interactiveStore = useInteractiveStore()
 
 // ── 语音识别 ──
 const { isListening, isSupported: speechSupported, start: startSpeech, stop: stopSpeech } = useSpeechRecognition()
@@ -740,10 +761,6 @@ const toggleSpeech = () => {
 
 // localStorage 持久化 key（仅保留 session_id）
 const LS_SESSION_ID = 'solution_session_id'
-
-// 工具配置
-// 四功能切换栏（共享配置，current 由当前路由自动推导）
-const { tools, navigateToTool } = useToolNav()
 
 // 状态
 const inputMessage = ref('')
@@ -784,7 +801,8 @@ const selectedSkillId = ref<string>('')
 const skillLibraryVisible = ref(false)
 const skillMarkdownVisible = ref(false)
 const dataSourceDialogVisible = ref(false)
-const showExecutionPanel = ref(true)
+// 执行过程默认收起，发起任务后再自动展开
+const showExecutionPanel = ref(false)
 const chartViewMode = ref('chart')
 const executionPanelWidth = ref(460)
 const isResizing = ref(false)
@@ -798,6 +816,106 @@ let recommendationTimer: ReturnType<typeof setTimeout> | null = null
 let recommendationAbortController: AbortController | null = null
 let activeAbortController: AbortController | null = null
 let cancelRequested = false
+
+// ── 评估产物 → 态势页面 ──
+// 选择区内联在评估结果卡之后，默认收起；同一时刻只展开一条消息的选择区
+const artifactPanelIndex = ref<number | null>(null)
+const situationSheetLoading = ref(false)
+
+/** 某条评估消息生成态势页面时使用的上下文（问题、数据源、技能） */
+function artifactContextOf(msg: any): ArtifactContext {
+  return {
+    question: String(msg?.question || ''),
+    dataSourceId: String(msg?.databaseId || ''),
+    sourceSessionId: sessionId.value,
+    skillId: String(msg?.skillId || selectedSkillId.value || ''),
+    skillName: String(msg?.result?.skill?.name || selectedSkill.value?.name || ''),
+  }
+}
+
+/** 评估结果类型中可能带数据产物的形态（用于决定是否展示入口） */
+const ARTIFACT_RESULT_TYPES = new Set([
+  'skill', 'air_superiority', 'combat_effectiveness',
+  'indicator_calculation', 'general', 'data_query',
+])
+
+/**
+ * 是否展示「生成态势页面（可选）」入口。
+ * 只按结果类型判断，不看缓存字段——历史会话恢复的本地快照没有 hasArtifacts，
+ * 若用缓存字段会把入口隐藏掉。真正是否可生成在点击时用 hasUsableArtifacts 兜底提示。
+ */
+function showsSituationEntry(msg: any): boolean {
+  return ARTIFACT_RESULT_TYPES.has(String(msg?.result?.type || ''))
+}
+
+/** 把「没有可用产物」的原因说清楚，便于排查是取数失败还是确实无数据 */
+function describeNoArtifacts(result: any): string {
+  const type = String(result?.type || '')
+  const reasonOf = (entry: any) => String(entry?.error || entry?.insight || '').trim()
+  if (type === 'skill') {
+    const steps = Array.isArray(result.queryResults) ? result.queryResults : []
+    const failed = steps.filter((s: any) => String(s?.status || '') !== 'completed')
+    const reason = failed.map(reasonOf).find(Boolean)
+    return `本次评估 ${steps.length} 个步骤均无可用数据${reason ? '：' + reason.slice(0, 60) : ''}`
+  }
+  if (type === 'air_superiority' || type === 'combat_effectiveness') {
+    const entries = Array.isArray(result.results) ? result.results : []
+    const empty = entries.filter((e: any) => !(Array.isArray(e?.rows) && e.rows.length))
+    const reason = empty.map(reasonOf).find(Boolean)
+    return `本次评估 ${entries.length} 个查询均未返回数据${reason ? '：' + reason.slice(0, 60) : ''}`
+  }
+  const rows = Array.isArray(result?.rawResults) ? result.rawResults : []
+  return rows.length
+    ? '评估结果未包含可展示的数据列'
+    : '本次评估没有返回可展示的数据行'
+}
+
+/** 就地展开产物选择区（仅当存在可展示的数据产物） */
+function openArtifactSheet(index: number, msg: any) {
+  if (!msg?.result) {
+    ElMessage.info('本次评估还没有结果，稍后再试')
+    return
+  }
+  if (!hasUsableArtifacts(msg.result)) {
+    ElMessage.info(`无法生成态势页面：${describeNoArtifacts(msg.result)}`)
+    return
+  }
+  artifactPanelIndex.value = artifactPanelIndex.value === index ? null : index
+}
+
+/** 确认生成：清空 ipage 旧会话上下文 → 发起生成 → 进入工作台 */
+async function onGenerateSituation(payload: EvaluationArtifactPayload) {
+  if (situationSheetLoading.value) return
+  situationSheetLoading.value = true
+  try {
+    // 丢弃上一轮 ipage 状态（不删除服务端旧任务），确保本次进入独立会话
+    interactiveStore.resetRound()
+    interactiveStore.messages.splice(0)
+    interactiveStore.sessionId = ''
+    await interactiveStore.generate(
+      payload.question || '基于评估分析结果生成态势页面',
+      {
+        source: 'evaluation',
+        dataSourceId: payload.dataSourceId,
+        artifacts: payload,
+      },
+    )
+    if (interactiveStore.status === 'failed') {
+      ElMessage.error(interactiveStore.errorMsg || '态势页面生成失败')
+      return
+    }
+    if (!interactiveStore.pageId) {
+      ElMessage.error('未获取到态势页面 ID，请稍后重试')
+      return
+    }
+    artifactPanelIndex.value = null
+    router.push({ path: '/interactive', query: { pageId: interactiveStore.pageId } })
+  } catch (error: any) {
+    ElMessage.error(error?.serverMessage || error?.message || '态势页面生成请求失败')
+  } finally {
+    situationSheetLoading.value = false
+  }
+}
 
 const selectedSkill = computed(() =>
   evaluationSkills.value.find(skill => skill.id === selectedSkillId.value) || null
@@ -979,7 +1097,6 @@ const onSkillChange = (skillId: string) => {
   executionSteps.value = []
   invalidateSkillRecommendations()
   if (skillId) {
-    showExecutionPanel.value = true
     const skill = evaluationSkills.value.find(item => item.id === skillId)
     if (skill) ElMessage.success(`已选择 Skill：${skill.name}`)
   }
@@ -1061,7 +1178,6 @@ const selectRecommendedSkill = (skill: EvaluationSkill) => {
   }
   selectedSkillId.value = skill.id
   executionSteps.value = []
-  showExecutionPanel.value = true
   const availability = skill.availability
   ElMessage.success(
     availability?.runtimeSelectable && !availability.complete
@@ -1347,6 +1463,8 @@ const sendMessage = async () => {
   invalidateSkillRecommendations()
   inputMessage.value = ''
   analyzing.value = true
+  // 任务真正发起时才展开「系统执行过程」面板
+  showExecutionPanel.value = true
   cancelRequested = false
   activeRunId.value = ''
   executionSteps.value = []
@@ -1360,12 +1478,14 @@ const sendMessage = async () => {
   // 添加AI等待消息
   const aiMessage: any = {
     role: 'assistant',
-    content: '正在分析您的需求，请稍候...',
+    content: '',
+    querying: true,
     result: null,
     executionSteps: [] as any[],
     skillId: selectedSkillId.value,
     databaseId: selectedDataSourceId.value || '',
-    databaseName: selectedDataSourceName.value
+    databaseName: selectedDataSourceName.value,
+    question: query
   }
   messages.value.push(aiMessage)
   
@@ -1431,13 +1551,14 @@ const sendMessage = async () => {
           executionSteps.value.push(step)
         }
         aiMessage.executionSteps = executionSteps.value.map(item => ({ ...item }))
-        aiMessage.content = '正在分析...'
-        scrollToBottom()
+        // 等待态由 querying 驱动，流式步骤期间不再写入占位文案
+        scrollExecutionPanelToBottom()
         return
       }
 
       if (data.type === 'result') {
         const result = data.result || {}
+        aiMessage.querying = false
         const answerText = result.final_answer || result.summary || result.answer || '分析完成'
         // Skill 结果卡已经包含综合结论，正文不再重复显示。
         aiMessage.content = result.type === 'skill' || result.need_conclusion === false ? '' : stripMapAnnotationBlock(answerText)
@@ -1481,12 +1602,12 @@ const sendMessage = async () => {
           aiMessage.showMapPrompt = false
         }
         if (data.session_id) persistCompletedRun(data.session_id)
-        scrollToBottom()
         return
       }
 
       if (data.type === 'error') {
         const message = data.message || data.content || '评估流程执行失败'
+        aiMessage.querying = false
         aiMessage.content = `分析失败：${message}`
         aiMessage.executionSteps = executionSteps.value.map(item => ({ ...item }))
         ElMessage.error(message)
@@ -1534,21 +1655,30 @@ const sendMessage = async () => {
       ElMessage.error('分析失败：' + (error as Error).message)
     }
   } finally {
+    aiMessage.querying = false
     analyzing.value = false
     activeAbortController = null
     activeRunId.value = ''
     cancelRequested = false
+    // 评估产物选择区不自动弹出：结果卡下方常驻「生成态势页面（可选）」按钮，由用户按需展开。
+    // 结果内容与入口都在消息末尾，收尾后滚到最新，避免用户以为没有入口。
+    setTimeout(() => scrollToBottom(), 120)
   }
 }
 
-// 滚动聊天区域到底部
+// 滚动聊天区域到底部（仅用于发送消息等非流式场景）
 const scrollToBottom = () => {
   nextTick(() => {
     const chatArea = document.querySelector('.chat-area') as HTMLElement
     if (chatArea) {
       chatArea.scrollTop = chatArea.scrollHeight
     }
-    // 同时滚动执行过程面板
+  })
+}
+
+// 滚动右侧执行过程面板到底部（流式执行期间跟随步骤输出，不影响聊天窗口）
+const scrollExecutionPanelToBottom = () => {
+  nextTick(() => {
     const execContent = document.querySelector('.execution-content') as HTMLElement
     if (execContent) {
       execContent.scrollTop = execContent.scrollHeight
@@ -1556,9 +1686,9 @@ const scrollToBottom = () => {
   })
 }
 
-// 监听消息和步骤变化，自动滚动
+// 新消息落盘时滚动到最新；执行步骤流式输出期间不滚动聊天窗口，完全交给用户手动滑动
 watch(() => messages.value.length, () => scrollToBottom())
-watch(() => executionSteps.value.length, () => scrollToBottom())
+watch(() => executionSteps.value.length, () => scrollExecutionPanelToBottom())
 
 const restoreSessionContext = (item: any = {}) => {
   const lastAssistantMessage = [...messages.value].reverse().find(message => message.role === 'assistant')
@@ -1609,7 +1739,8 @@ const loadHistory = async (item: any) => {
             executionSteps: Array.isArray(turn.steps) ? turn.steps : [],
             skillId,
             databaseId,
-            databaseName
+            databaseName,
+            question: turn.question || item.title || ''
           }
         ]
       })
@@ -1787,7 +1918,6 @@ onMounted(async () => {
   const routeSkillId = typeof route.query.skillId === 'string' ? route.query.skillId : ''
   if (routeSkillId && evaluationSkills.value.some(skill => skill.id === routeSkillId)) {
     selectedSkillId.value = routeSkillId
-    showExecutionPanel.value = true
   }
   const routePrompt = typeof route.query.prompt === 'string' ? route.query.prompt : ''
   if (routePrompt && !inputMessage.value) inputMessage.value = routePrompt
@@ -2310,9 +2440,32 @@ onMounted(async () => {
 }
 
 .message.assistant .message-text {
-  background: white;
-  border: 1px solid #e2e8f0;
-  color: #374151;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  padding: 0;
+}
+
+/* AI 等待态：与智能问答保持一致（文字 + 蓝色呼吸圆点） */
+.message-loading {
+  padding: 12px 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.message-loading::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary-500);
+  animation: loading-pulse 1.2s ease-in-out infinite;
+}
+@keyframes loading-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
 }
 
 /* ── 地图显示提示 ── */
@@ -2711,6 +2864,18 @@ onMounted(async () => {
   color: #64748b;
 }
 
+/* 评估产物 → 态势页面入口：按钮右对齐，展开后选择区内联占满整行 */
+.situation-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #e2e8f0;
+}
+.situation-entry :deep(.artifact-panel) { width: 100%; }
+
 .execution-panel-toggle {
   display: flex;
   flex-direction: column;
@@ -2917,70 +3082,6 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 0;
-}
-
-.tools-bar {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
-}
-
-.tools-bar .tool-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  background: var(--gray-50);
-  border-radius: 20px;
-  cursor: pointer;
-  transition: all 0.2s;
-  border: 1px solid var(--border-light);
-}
-
-.tools-bar .tool-item:hover {
-  background: white;
-  border-color: var(--primary-300);
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
-}
-
-.tools-bar .tool-item.current {
-  background: var(--primary-500);
-  border-color: var(--primary-500);
-  cursor: default;
-}
-
-.tools-bar .tool-icon {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: inherit;
-}
-
-.tools-bar .tool-item.current .tool-icon {
-  background: transparent;
-}
-
-.tools-bar .tool-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.tools-bar .tool-item.current .tool-name {
-  color: white;
-}
-
-.tools-bar .tool-item:hover .tool-name {
-  color: var(--primary-600);
-}
-
-.tools-bar .tool-item.current:hover .tool-name {
-  color: white;
 }
 
 .input-wrapper {

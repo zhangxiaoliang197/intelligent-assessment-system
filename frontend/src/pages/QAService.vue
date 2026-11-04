@@ -81,9 +81,8 @@
               :class="['message', msg.role]"
             >
               <div class="message-avatar">
-                <el-avatar :size="40">
-                  {{ msg.role === 'user' ? '我' : 'AI' }}
-                </el-avatar>
+                <el-avatar v-if="msg.role === 'user'" :size="40">我</el-avatar>
+                <AssistantAvatar v-else />
               </div>
               <div class="message-content">
                 <div v-if="msg.role === 'assistant' && !msg.content" class="message-loading">分析中...</div>
@@ -248,22 +247,8 @@
             </div>
           </div>
           
-          <!-- 工具按钮 -->
-          <div class="tools-bar">
-            <div
-              v-for="tool in tools"
-              :key="tool.id"
-              :class="['tool-item', { 'current': tool.current }]"
-              @click="navigateToTool(tool.path)"
-            >
-              <div class="tool-icon">
-                <el-icon :size="16" :color="tool.current ? 'white' : tool.color">
-                  <component :is="tool.icon" />
-                </el-icon>
-              </div>
-              <span class="tool-name">{{ tool.name }}</span>
-            </div>
-          </div>
+          <!-- 四模块切换卡片 -->
+          <ToolSwitchBar />
         </div>
       </div>
     </div>
@@ -276,7 +261,8 @@ import { useRouter } from 'vue-router'
 import { Search, Collection, Box, ChatLineRound, Promotion, Plus, Delete, ArrowRight, Microphone, Upload, Loading, Picture } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import Layout from '@/components/Layout.vue'
-import { useToolNav } from '@/composables/useToolNav'
+import AssistantAvatar from '@/components/AssistantAvatar.vue'
+import ToolSwitchBar from '@/components/ToolSwitchBar.vue'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData } from '@/composables/useMapPrompt'
 import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
@@ -329,10 +315,6 @@ const onImageChange = async (event: Event) => {
   await uploadImage(file)
   input.value = ''
 }
-
-// 工具配置
-// 四功能切换栏（共享配置，current 由当前路由自动推导）
-const { tools, navigateToTool } = useToolNav()
 
 // localStorage 持久化 key（仅保留 session_id，其余数据通过 API 从 MySQL 读取）
 const LS_SESSION_ID = 'qa_session_id'
@@ -713,8 +695,8 @@ const sendMessage = async () => {
           const data = JSON.parse(line)
           if (data.type === 'text') {
             fullText += data.content
+            // 流式输出期间不自动滚动，避免抢占用户正在阅读的内容
             messages.value[msgIndex] = { ...messages.value[msgIndex], content: fullText }
-            nextTick(() => scrollToBottom())
           } else if (data.type === 'done') {
             const mapData = processMapData(fullText, userQuestion)
             // 优先使用后处理注入引用后的答案，否则用原始文本
@@ -1235,61 +1217,6 @@ onMounted(() => {
   background: linear-gradient(to top, var(--bg-card) 60%, transparent);
 }
 
-.tools-bar {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
-}
-
-.tools-bar .tool-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  background: var(--gray-50);
-  border-radius: 20px;
-  cursor: pointer;
-  transition: all 0.2s;
-  border: 1px solid var(--border-light);
-}
-
-.tools-bar .tool-item:hover {
-  background: white;
-  border-color: var(--primary-300);
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
-}
-
-.tools-bar .tool-item.current {
-  background: var(--primary-500);
-  border-color: var(--primary-500);
-  cursor: default;
-}
-
-.tools-bar .tool-icon {
-  width: 18px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: inherit;
-}
-
-.tools-bar .tool-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.tools-bar .tool-item.current .tool-name {
-  color: white;
-}
-
-.tools-bar .tool-item:hover .tool-name {
-  color: var(--primary-600);
-}
-
 .message-loading {
   padding: 12px 0;
   color: var(--text-muted);
@@ -1429,10 +1356,6 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
-}
-
-.tools-bar .tool-item.current:hover .tool-name {
-  color: white;
 }
 
 .input-wrapper {

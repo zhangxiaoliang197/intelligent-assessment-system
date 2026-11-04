@@ -3,7 +3,7 @@
  *
  * 运行在 iframe sandbox="allow-scripts" 中（无同源权限、CSP connect-src 'none'）：
  * 1. 与父页 postMessage 握手，接收 'ipage:data'（dataBundle + 瓦片配置）；
- * 2. 向业务页面暴露且仅暴露：SitApp / SitChart / SitMap / SitBus / SitUtil / SitTable；
+ * 2. 向业务页面暴露且仅暴露：SitApp / SitTimeline / SitChart / SitMap / SitBus / SitUtil / SitTable；
  * 3. 封装 ECharts、Leaflet（含 gcoord WGS84→GCJ02、markercluster），业务代码
  *    无法直接触碰 echarts / L 全局对象，也不能发起任何网络请求。
  *
@@ -25,6 +25,7 @@
   var chartByEl = [];           // [el, inst]，重渲染时先销毁旧实例
   var mapByEl = [];             // [el, mapApi]
   var tileLayers = [];
+  var fallbackTileLayers = [];  // 底图瓦片不可达时的备用图层（GeoWebCache）
 
   // 专业态势配色：蓝为主，红/橙/绿/紫/青为辅
   var PALETTE = ['#1d4ed8', '#dc2626', '#d97706', '#059669', '#7c3aed', '#0891b2', '#be185d', '#65a30d'];
@@ -174,22 +175,49 @@
   // ────────────────────────────────────────────────────────────────
   // SitChart —— ECharts 高层封装
   // ────────────────────────────────────────────────────────────────
-  function baseGrid(spec) {
-    return { left: 56, right: 28, top: spec.title ? 46 : 30, bottom: spec.showDataZoom ? 64 : 42, containLabel: true };
+  // 图表容器所在的卡片若已有 HTML 标题（.ip-title / h3 / *title*），
+  // 再让 ECharts 画一次 title 会与图例、坐标轴文字挤在同一块画布上，造成"重影/压字"。
+  function cardHeadingOf(node) {
+    var el = node.parentElement;
+    for (var depth = 0; el && depth < 3; depth++, el = el.parentElement) {
+      for (var i = 0; i < el.children.length; i++) {
+        var c = el.children[i];
+        if (c === node || (c.contains && c.contains(node))) continue;
+        var tag = (c.tagName || '').toLowerCase();
+        var cls = String(c.className || '');
+        if (tag === 'h1' || tag === 'h2' || tag === 'h3' || tag === 'h4' || /title/i.test(cls)) {
+          var text = String(c.textContent || '').trim();
+          if (text) return text;
+        }
+      }
+    }
+    return '';
   }
-  function axisCommon() {
+
+  function baseGrid(spec) {
+    var compact = !!spec._compact;
+    return {
+      left: compact ? 46 : 56, right: compact ? 16 : 28,
+      top: spec.title ? (compact ? 34 : 46) : (compact ? 24 : 30),
+      bottom: spec.showDataZoom ? 64 : (compact ? 32 : 42), containLabel: true,
+    };
+  }
+  function axisCommon(compact) {
     return {
       axisLine: { lineStyle: { color: '#cbd5e1' } },
       axisTick: { show: false },
-      axisLabel: { color: '#475569' },
+      axisLabel: { color: '#475569', fontSize: compact ? 10 : 12 },
       splitLine: { lineStyle: { color: '#eef2f7' } },
     };
   }
-  function legend(series) {
-    return series.length > 1 ? {
-      top: 8, right: 12, icon: 'roundRect', itemWidth: 12, itemHeight: 8,
-      textStyle: { color: '#475569', fontSize: 12 },
-    } : undefined;
+  function legend(series, compact) {
+    if (!series || series.length <= 1) return undefined;
+    return {
+      type: 'scroll', top: compact ? 0 : 8, left: 8, right: 8,
+      icon: 'roundRect', itemWidth: compact ? 10 : 12, itemHeight: compact ? 6 : 8,
+      itemGap: compact ? 8 : 12, pageIconSize: 8,
+      textStyle: { color: '#475569', fontSize: compact ? 10 : 12 },
+    };
   }
   function tooltip(extra) {
     return Object.assign({
@@ -203,8 +231,12 @@
   function buildOption(spec) {
     var type = spec.type;
     var option = { color: PALETTE, title: undefined, tooltip: undefined, grid: baseGrid(spec) };
+    var compact = !!spec._compact;
     if (spec.title) {
-      option.title = { text: spec.title, left: 12, top: 6, textStyle: { fontSize: 14, color: '#0f172a', fontWeight: 600 } };
+      option.title = {
+        text: spec.title, left: 8, top: 4,
+        textStyle: { fontSize: compact ? 12 : 14, color: '#0f172a', fontWeight: 600 },
+      };
     }
     var series = spec.series || [];
 
@@ -212,14 +244,14 @@
       var horizontal = !!spec.horizontal;
       var xAxis, yAxis, xData = spec.xData || [];
       if (!horizontal) {
-        xAxis = Object.assign({ type: 'category', data: xData, axisLabel: { color: '#475569', interval: 0 } }, axisCommon());
-        yAxis = Object.assign({ type: 'value', name: spec.yName || '' }, axisCommon());
+        xAxis = Object.assign({ type: 'category', data: xData, axisLabel: { color: '#475569', interval: 0 } }, axisCommon(compact));
+        yAxis = Object.assign({ type: 'value', name: spec.yName || '' }, axisCommon(compact));
       } else {
-        xAxis = Object.assign({ type: 'value', name: spec.yName || '' }, axisCommon());
-        yAxis = Object.assign({ type: 'category', data: xData.slice().reverse() }, axisCommon());
+        xAxis = Object.assign({ type: 'value', name: spec.yName || '' }, axisCommon(compact));
+        yAxis = Object.assign({ type: 'category', data: xData.slice().reverse() }, axisCommon(compact));
       }
       option.tooltip = tooltip();
-      option.legend = legend(series);
+      option.legend = legend(series, compact);
       option.xAxis = xAxis;
       option.yAxis = yAxis;
       option.series = series.map(function (s, idx) {
@@ -254,9 +286,9 @@
 
     if (type === 'line') {
       option.tooltip = tooltip({ trigger: 'axis' });
-      option.legend = legend(series);
-      option.xAxis = Object.assign({ type: 'category', boundaryGap: false, data: spec.xData || [], axisLabel: { color: '#475569' } }, axisCommon());
-      option.yAxis = Object.assign({ type: 'value', name: spec.yName || '' }, axisCommon());
+      option.legend = legend(series, compact);
+      option.xAxis = Object.assign({ type: 'category', boundaryGap: false, data: spec.xData || [], axisLabel: { color: '#475569' } }, axisCommon(compact));
+      option.yAxis = Object.assign({ type: 'value', name: spec.yName || '' }, axisCommon(compact));
       option.series = series.map(function (s, idx) {
         var color = factionColor(s.name, PALETTE[idx % PALETTE.length]);
         return {
@@ -287,12 +319,17 @@
       }).filter(function (d) { return d.value > 0; });
       option.grid = undefined;
       option.tooltip = tooltip({ trigger: 'item', formatter: '{b}: {c} ({d}%)' });
-      option.legend = { orient: 'vertical', right: 10, top: 'middle', icon: 'circle', textStyle: { color: '#475569', fontSize: 12 } };
+      option.legend = {
+        orient: 'vertical', right: compact ? 4 : 10, top: 'middle', icon: 'circle',
+        itemWidth: compact ? 8 : 14, itemGap: compact ? 6 : 10,
+        textStyle: { color: '#475569', fontSize: compact ? 10 : 12 },
+      };
       option.series = [{
-        name: (series[0] || {}).name || '占比', type: 'pie', radius: ['42%', '68%'],
+        name: (series[0] || {}).name || '占比', type: 'pie',
+        radius: compact ? ['36%', '58%'] : ['42%', '68%'],
         center: ['42%', '54%'], avoidLabelOverlap: true,
         itemStyle: { borderColor: '#fff', borderWidth: 2, borderRadius: 4 },
-        label: { color: '#475569', fontSize: 12 },
+        label: { color: '#475569', fontSize: compact ? 10 : 12, show: !compact },
         data: pieData,
       }];
       return option;
@@ -301,11 +338,17 @@
     if (type === 'radar') {
       option.grid = undefined;
       option.tooltip = { confine: true };
-      option.legend = legend(series);
+      // 雷达的轴名环绕在四周，图例放上方会压住轴名；统一放到底部
+      option.legend = legend(series, compact);
+      if (option.legend) {
+        option.legend.top = undefined;
+        option.legend.bottom = 0;
+      }
       option.radar = {
         indicator: (spec.indicators || []).map(function (n) { return { name: n, max: spec.max }; }),
-        radius: '62%', center: ['50%', '55%'],
-        axisName: { color: '#475569', fontSize: 12 },
+        radius: compact ? '56%' : '62%',
+        center: ['50%', compact ? '50%' : '55%'],
+        axisName: { color: '#475569', fontSize: compact ? 10 : 12 },
         splitLine: { lineStyle: { color: '#e2e8f0' } },
         splitArea: { areaStyle: { color: ['#fff', '#f8fafc'] } },
       };
@@ -332,9 +375,9 @@
           return esc(p.seriesName) + '<br/>' + esc(d[2] != null ? d[2] : ('(' + d[0] + ', ' + d[1] + ')'));
         },
       });
-      option.legend = legend(series);
-      option.xAxis = Object.assign({ type: 'value', scale: true, name: spec.xName || '' }, axisCommon());
-      option.yAxis = Object.assign({ type: 'value', scale: true, name: spec.yName || '' }, axisCommon());
+      option.legend = legend(series, compact);
+      option.xAxis = Object.assign({ type: 'value', scale: true, name: spec.xName || '' }, axisCommon(compact));
+      option.yAxis = Object.assign({ type: 'value', scale: true, name: spec.yName || '' }, axisCommon(compact));
       option.series = series.map(function (s, idx) {
         var color = factionColor(s.name, PALETTE[idx % PALETTE.length]);
         return {
@@ -353,6 +396,154 @@
     return option;
   }
 
+  // ────────────────────────────────────────────────────────────────
+  // 时间桶图表 —— SitChart 与页面时间轴（SitTimeline）联动
+  //
+  // spec.timeline：
+  //   mode        'trend'（时间趋势：累积到当前桶并高亮）| 'bucket'（只看当前桶）
+  //   bucketField 行上的时间桶键列（默认 bucketKey）
+  //   valueField  数值列（默认 value）
+  //   categoryField 可选分类列；为空则单系列
+  // 数据来自后端预聚合的时序数据集（rows），页面端只做筛选/透视，不做业务聚合。
+  // 未传 spec.timeline 的图表保持静态，不订阅时钟。
+  // ────────────────────────────────────────────────────────────────
+  var chartTimelineByEl = [];   // [el, unsubscribe]，重渲染时解除旧订阅
+
+  function timelineBucketLabel(key) {
+    var s = String(key == null ? '' : key);
+    return s.length >= 16 ? s.slice(11, 16) : s;
+  }
+
+  // 行字段读取：精确匹配优先，失败时按大小写不敏感兜底
+  // （PostgreSQL 会把未加引号的别名折叠成小写，如 bucketKey → bucketkey）
+  function timelineRowValue(row, field) {
+    if (!row || !field) return null;
+    if (row[field] != null) return row[field];
+    var lower = String(field).toLowerCase();
+    for (var k in row) {
+      if (Object.prototype.hasOwnProperty.call(row, k) && k.toLowerCase() === lower) {
+        return row[k];
+      }
+    }
+    return null;
+  }
+
+  function buildTimelineModel(spec) {
+    var tl = spec.timeline || {};
+    var rows = spec.rows || [];
+    var bucketField = tl.bucketField || 'bucketKey';
+    var valueField = tl.valueField || 'value';
+    var categoryField = tl.categoryField || '';
+    var mode = tl.mode === 'bucket' ? 'bucket' : 'trend';
+    var map = {};
+    var buckets = [];
+    rows.forEach(function (r) {
+      var rawKey = timelineRowValue(r, bucketField);
+      var key = String(rawKey == null ? '' : rawKey);
+      if (!key) return;
+      var t = parseTime(key);
+      if (t === null) return;
+      var b = map[key];
+      if (!b) {
+        b = map[key] = { key: key, t: t, label: timelineBucketLabel(key), values: {} };
+        buckets.push(b);
+      }
+      var rawCat = categoryField ? timelineRowValue(r, categoryField) : null;
+      var cat = categoryField ? String(rawCat == null ? '未知' : rawCat) : '';
+      var v = toNum(timelineRowValue(r, valueField));
+      b.values[cat] = (b.values[cat] || 0) + (v === null ? 0 : v);
+    });
+    buckets.sort(function (a, b) { return a.t - b.t; });
+    return {
+      mode: mode, valueField: valueField, categoryField: categoryField,
+      buckets: buckets,
+      categories: (function () {
+        if (!categoryField) return [];
+        var seen = {}, out = [];
+        buckets.forEach(function (b) {
+          Object.keys(b.values).forEach(function (c) {
+            if (!seen[c]) { seen[c] = 1; out.push(c); }
+          });
+        });
+        return out;
+      })(),
+    };
+  }
+
+  function buildTimelineChartOption(spec, model, timeText) {
+    var tMs = parseTime(timeText);
+    if (tMs === null) tMs = Infinity;
+    var current = -1;
+    for (var i = 0; i < model.buckets.length; i++) {
+      if (model.buckets[i].t <= tMs) current = i;
+    }
+    if (current < 0) current = 0;
+    var buckets = model.buckets;
+    var cats = model.categories;
+    var base = {
+      type: spec.type, title: spec.title, yName: spec.yName,
+      horizontal: spec.horizontal, stack: spec.stack,
+      showDataZoom: spec.showDataZoom, percent: spec.percent,
+      _compact: spec._compact,
+    };
+
+    if (model.mode === 'trend') {
+      var xData = buckets.map(function (b) { return b.label; });
+      var series;
+      if (cats.length) {
+        series = cats.map(function (c) {
+          return {
+            name: c,
+            data: buckets.map(function (b, idx) {
+              return idx <= current ? (b.values[c] || 0) : null;
+            }),
+          };
+        });
+      } else {
+        series = [{
+          name: model.valueField,
+          data: buckets.map(function (b, idx) {
+            return idx <= current ? (b.values[''] || 0) : null;
+          }),
+        }];
+      }
+      // 组装成 SitChart 的 spec 再走统一 buildOption，避免把裸 option 直接交给 ECharts
+      var opt = buildOption(Object.assign({}, base, { xData: xData, series: series }));
+      // 当前时刻标记：图表与地图同一 tick，视觉上明确"现在播到哪"
+      if (current >= 0 && opt.series && opt.series.length) {
+        opt.series[0].markLine = {
+          symbol: 'none', silent: true, label: { show: false },
+          lineStyle: { color: '#1d4ed8', type: 'dashed', width: 1.5 },
+          data: [{ xAxis: current }],
+        };
+      }
+      return opt;
+    }
+
+    // bucket：只取覆盖当前时刻的那一个桶
+    var b = buckets[current] || { label: '', values: {} };
+    var xData, series;
+    if (spec.type === 'pie') {
+      xData = [];
+      series = [{
+        name: model.valueField || '占比',
+        data: (cats.length ? cats : [b.label]).map(function (c) {
+          return { name: c || b.label || '—', value: b.values[c] || 0 };
+        }),
+      }];
+    } else if (cats.length) {
+      xData = cats;
+      series = [{
+        name: model.valueField,
+        data: cats.map(function (c) { return b.values[c] || 0; }),
+      }];
+    } else {
+      xData = [b.label];
+      series = [{ name: model.valueField, data: [b.values[''] || 0] }];
+    }
+    return buildOption(Object.assign({}, base, { xData: xData, series: series }));
+  }
+
   var SitChart = {
     render: function (el, spec) {
       var node = resolveEl(el);
@@ -367,9 +558,56 @@
         chartByEl.push([node, inst]);
         echartsInstances.push(inst);
       }
-      try {
-        inst.setOption(buildOption(spec), true);
-      } catch (e) { reportError('图表渲染失败: ' + e.message); }
+      // 解除同一容器的旧时间轴订阅（重渲染不叠加监听）
+      var oldTl = chartTimelineByEl.filter(function (pair) { return pair[0] === node; })[0];
+      if (oldTl) {
+        try { oldTl[1](); } catch (e) { }
+        chartTimelineByEl = chartTimelineByEl.filter(function (pair) { return pair[0] !== node; });
+      }
+      // 卡片已有 HTML 标题时不再让 ECharts 重画标题；容器过小时切换紧凑排版，
+      // 避免标题、图例、坐标轴文字在同一块画布上互相压字
+      var heading = cardHeadingOf(node);
+      var boxW = node.clientWidth || 0;
+      var boxH = node.clientHeight || 0;
+      var compact = (boxH > 0 && boxH < 220) || (boxW > 0 && boxW < 380);
+      var renderSpec = spec;
+      if (spec.title && heading) renderSpec = Object.assign({}, spec, { title: '' });
+      if (compact) renderSpec = Object.assign({}, renderSpec, { _compact: true });
+
+      var tl = spec.timeline ? SitTimeline.current() : null;
+      var model = (spec.timeline && spec.type !== 'radar' && spec.type !== 'scatter')
+        ? buildTimelineModel(renderSpec) : null;
+      if (model && !model.buckets.length) model = null;
+
+      if (model && tl) {
+        // 绑定页面时钟：只按桶索引变化重绘，避免每个 tick 空转 ECharts
+        var paint = function (tick) {
+          try {
+            inst.setOption(buildTimelineChartOption(renderSpec, model, tick && tick.t), true);
+          } catch (e) { reportError('图表时间轴渲染失败: ' + e.message); }
+        };
+        var lastTickIndex = tl.current().index;
+        paint({ t: tl.current().t });
+        var handler = function (s) {
+          if (s.index === lastTickIndex) return;
+          lastTickIndex = s.index;
+          paint(s);
+        };
+        SitBus.on('timeline:tick', handler);
+        chartTimelineByEl.push([node, function () { SitBus.off('timeline:tick', handler); }]);
+      } else if (model) {
+        // 页面此时还没有时间轴（常见于 SitTimeline.render 写在脚本末尾）：
+        // 先按"全部桶"静态展示避免空白，等时间轴创建后自动重绘并绑定
+        try { inst.setOption(buildTimelineChartOption(renderSpec, model, ''), true); }
+        catch (e) { reportError('图表渲染失败: ' + e.message); }
+        if (spec.timeline) {
+          deferTimelineRebind(node, function () { SitChart.render(node, spec); });
+        }
+      } else {
+        try {
+          inst.setOption(buildOption(renderSpec), true);
+        } catch (e) { reportError('图表渲染失败: ' + e.message); }
+      }
       return {
         on: function (event, fn) {
           inst.on(event, function (params) {
@@ -389,8 +627,10 @@
   // ────────────────────────────────────────────────────────────────
   // SitMap —— Leaflet 封装（瓦片托管 / 坐标转换 / 点航迹圈 / 联动）
   // ────────────────────────────────────────────────────────────────
-  function addTiles(map) {
-    (tileLayers || []).forEach(function (cfg) {
+  // 挂载一组瓦片图层，返回已挂载的图层实例
+  function mountTiles(map, list) {
+    var mounted = [];
+    (list || []).forEach(function (cfg) {
       try {
         var opts = {
           opacity: cfg.opacity != null ? cfg.opacity : 1,
@@ -399,8 +639,28 @@
           tms: !!cfg.tms, attribution: cfg.attribution || '',
         };
         if (cfg.subdomains) opts.subdomains = cfg.subdomains;
-        window.L.tileLayer(cfg.urlTemplate, opts).addTo(map);
+        mounted.push(window.L.tileLayer(cfg.urlTemplate, opts).addTo(map));
       } catch (e) { /* 单层失败跳过 */ }
+    });
+    return mounted;
+  }
+
+  // 挂载底图：主图层瓦片连续失败 6 次时，自动替换为备用图层（只回退一次）
+  function addTiles(map) {
+    var mounted = mountTiles(map, tileLayers);
+    var fallback = fallbackTileLayers || [];
+    if (!mounted.length || !fallback.length) return;
+    var errorCount = 0;
+    var applied = false;
+    mounted.forEach(function (ly) {
+      ly.on('tileerror', function () {
+        errorCount += 1;
+        if (applied || errorCount < 6) return;
+        applied = true;
+        mounted.forEach(function (l) { try { map.removeLayer(l); } catch (e) { } });
+        mountTiles(map, fallback);
+        console.warn('[SitMap] 底图瓦片加载失败，已回退为 GeoWebCache 备用图层');
+      });
     });
   }
 
@@ -755,6 +1015,8 @@
       ly.startMarkers = [];
       if (ly.cluster) { try { map.removeLayer(ly.cluster); } catch (e) { } ly.cluster = null; }
       if (ly.legendControl) { try { map.removeControl(ly.legendControl); } catch (e) { } ly.legendControl = null; }
+      // 页面时间轴订阅需先解除，避免重渲染后旧地图实例继续接收 tick
+      if (api._timelineOff) { try { api._timelineOff(); } catch (e) { } api._timelineOff = null; }
       // 播放器需先销毁：停止计时器并移除动态能力圈/扫掠走廊/播放条
       if (ly.playback) { try { ly.playback.destroy(); } catch (e) { } ly.playback = null; }
     } catch (e) {
@@ -852,6 +1114,9 @@
 
   function createPlayback(L, map, spec, api) {
     var cfg = spec.playback === true ? {} : (spec.playback || {});
+    // 页面级时间轴模式：由 SitTimeline 提供统一刻度与时钟，地图只负责"按 t 重绘"，
+    // 不创建自带播放条、不使用日内归一化（cfg.external / cfg.axis 由 SitMap.render 注入）
+    var externalAxis = Array.isArray(cfg.axis) && cfg.axis.length ? cfg.axis : null;
     var tracks = (spec.tracks || []).filter(function (t) { return (t.points || []).length >= 2; });
     if (!tracks.length) return null;
 
@@ -898,9 +1163,10 @@
       });
     });
     var dayCount = Object.keys(daySet).length;
-    var dayNorm = cfg.dayNormalize === true ? true
-      : cfg.dayNormalize === false ? false
-        : (dayCount > 1 && items.length >= 2);
+    var dayNorm = externalAxis ? false
+      : cfg.dayNormalize === true ? true
+        : cfg.dayNormalize === false ? false
+          : (dayCount > 1 && items.length >= 2);
 
     // 生效时刻 et：归一化时为"当日 0 点起毫秒"（跨零点航迹累加一天保持单调递增，
     // 避免插值倒退），否则为真实毫秒；posAt/axis/airborneAt 统一使用 et
@@ -952,21 +1218,32 @@
       eventMoments.push(dayNorm ? (v - dayStartMs(v)) : v);
     });
 
-    // 全局时间轴：所有航迹点时间去重排序，标签统一为 YYYY-MM-DD HH:MM:SS
-    var axisMap = {};
-    items.forEach(function (it) {
-      it.pts.forEach(function (p, i) {
-        var v = it.et[i];
-        if (v !== null && axisMap[v] === undefined) axisMap[v] = fmtDateTime(baseMs + v);
+    // 时间刻度：
+    // 1. 页面级时间轴（externalAxis）直接沿用 SitTimeline 的统一桶刻度，保证地图与图表同刻；
+    // 2. 旧式回放由航迹点/事件时刻去重排序生成，标签统一为 YYYY-MM-DD HH:MM:SS。
+    var axis;
+    if (externalAxis) {
+      axis = externalAxis.map(function (b) {
+        return { t: parseTime(b && b.t), label: String((b && b.label) || '') };
+      }).filter(function (b) { return b.t !== null; })
+        .sort(function (a, b) { return a.t - b.t })
+        .map(function (b) { return { t: b.t, label: b.label || fmtDateTime(b.t) }; });
+    } else {
+      var axisMap = {};
+      items.forEach(function (it) {
+        it.pts.forEach(function (p, i) {
+          var v = it.et[i];
+          if (v !== null && axisMap[v] === undefined) axisMap[v] = fmtDateTime(baseMs + v);
+        });
       });
-    });
-    // 事件时刻一并并入时间轴：否则晚于全部航迹末点的事件等不到自己的时刻，会被播放吞掉
-    eventMoments.forEach(function (v) {
-      if (axisMap[v] === undefined) axisMap[v] = fmtDateTime(baseMs + v);
-    });
-    var axis = Object.keys(axisMap).map(Number)
-      .sort(function (a, b) { return a - b; })
-      .map(function (v) { return { t: v, label: axisMap[v] }; });
+      // 事件时刻一并并入时间轴：否则晚于全部航迹末点的事件等不到自己的时刻，会被播放吞掉
+      eventMoments.forEach(function (v) {
+        if (axisMap[v] === undefined) axisMap[v] = fmtDateTime(baseMs + v);
+      });
+      axis = Object.keys(axisMap).map(Number)
+        .sort(function (a, b) { return a - b; })
+        .map(function (v) { return { t: v, label: axisMap[v] }; });
+    }
     if (axis.length < 2) return null;
 
     var total = axis.length;
@@ -1317,7 +1594,21 @@
       total: total,
       on: function (fn) { if (typeof fn === 'function') listeners.push(fn); return playback; },
       off: function (fn) { listeners = listeners.filter(function (f) { return f !== fn; }); return playback; },
-      current: function () { return { index: idx, time: axis[idx] ? axis[idx].label : '' }; },
+      current: function () {
+        return { index: idx, time: axis[idx] ? axis[idx].label : '',
+                 t: axis[idx] ? fmtDateTime(axis[idx].t) : '' };
+      },
+      // 页面级时间轴联动：外部时钟直接按桶索引驱动重绘（不改动内部计时器）
+      seekIndex: function (i, silent) {
+        var n = toNum(i);
+        if (n === null) return;
+        idx = Math.max(0, Math.min(total - 1, Math.round(n)));
+        renderAt(axis[idx].t, true);
+        if (!silent) emit();
+      },
+      axis: function () {
+        return axis.map(function (b) { return { t: fmtDateTime(b.t), label: b.label }; });
+      },
       // 把事件类点交给播放器按事件时刻显隐（由 units 渲染调用）
       registerEvent: registerEvent,
       // 整图重渲染前销毁：停止计时器、移除播放条与全部动态图层
@@ -1338,8 +1629,9 @@
     };
 
     // ── 内置播放条（LLM 不必自己写播放器）──
+    // 页面级时间轴模式（cfg.external）不建地图内播放条：播放控件统一由 SitTimeline 提供
     var control = null;
-    if (cfg.showBar !== false) {
+    if (cfg.showBar !== false && !cfg.external) {
       var PlaybackCtl = L.Control.extend({
         options: { position: 'bottomleft' },
         onAdd: function () {
@@ -1384,8 +1676,236 @@
     }
 
     renderAt(axis[0].t, true);
-    emit();
+    if (!cfg.external) emit();
     return playback;
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // SitTimeline —— 页面级时间轴（与 SitChart / SitMap / SitTable 同级）
+  //
+  // 页面唯一时钟：负责刻度、播放/暂停/倍速/拖动，并通过 SitBus 广播
+  // 'timeline:tick'（payload 含 index/total/ratio/time/t/playing/speed）。
+  // **无头时钟**：控件由宿主页面（PageSandbox 底部浮层）渲染，这里只维护状态，
+  // 不再生成播放条 DOM，避免页内与宿主出现两套控件、两个时钟源。
+  // 地图与图表只订阅事件，不再各自维护时钟：
+  //   - SitMap.render(el, { timeline: true }) 绑定本时钟，不创建地图内播放条；
+  //   - SitChart.render(el, { timeline: {...} }) 按当前时刻过滤/切片时间桶数据；
+  //   - 未传 timeline 的图表保持静态。
+  // 刻度来源：spec.axis 优先，否则读取注入数据包 data.timeline.buckets。
+  // ────────────────────────────────────────────────────────────
+
+  var timelineInstance = null;
+  // 默认 4×，另提供 6×/8× 档位（页级时间轴）
+  var TIMELINE_SPEEDS = [0.5, 1, 2, 4, 6, 8];
+  var TIMELINE_DEFAULT_SPEED = 4;
+
+  // 延迟绑定队列：页面常把 SitTimeline.render 写在脚本末尾（先画图表/地图），
+  // 此时 SitChart/SitMap 取不到页面时钟，会退化为静态渲染。这里记下待重绑的渲染调用，
+  // 等时间轴创建后统一重绘，避免"能拖动时间轴但图表地图不动"。
+  var pendingTimelineRebinds = [];
+  function deferTimelineRebind(node, rerender) {
+    pendingTimelineRebinds = pendingTimelineRebinds.filter(function (p) { return p.node !== node; });
+    pendingTimelineRebinds.push({ node: node, rerender: rerender });
+  }
+  function flushTimelineRebinds() {
+    var list = pendingTimelineRebinds;
+    pendingTimelineRebinds = [];
+    list.forEach(function (p) {
+      try { p.rerender(); } catch (e) { reportError('时间轴延迟绑定失败: ' + (e && e.message)); }
+    });
+  }
+
+  // 向宿主浮层同步当前时刻（宿主据此绘制进度线、时刻与按钮状态）
+  function postTimelineState(s) {
+    try {
+      window.parent.postMessage({
+        type: 'ipage:timeline',
+        index: s.index, total: s.total, ratio: s.ratio,
+        time: s.time, t: s.t, playing: s.playing, speed: s.speed,
+      }, '*');
+    } catch (e) { }
+  }
+
+  function normalizeTimelineAxis(list) {
+    var out = [];
+    (list || []).forEach(function (b) {
+      var t = parseTime(b && b.t);
+      if (t === null) return;
+      out.push({ t: t, label: String((b && b.label) || fmtDateTime(t)) });
+    });
+    out.sort(function (a, b) { return a.t - b.t; });
+    return out;
+  }
+
+  function timelineAxisFromData() {
+    var data = state && state.data;
+    var buckets = data && data.timeline && data.timeline.buckets;
+    return normalizeTimelineAxis(buckets);
+  }
+
+  function createTimelineInstance(axis, spec) {
+    var idx = 0;
+    var playing = false;
+    var timer = null;
+    var speed = TIMELINE_DEFAULT_SPEED;
+    var interval = Math.max(120, toNum(spec.interval) || 500);
+    var listeners = [];
+    var node = null;
+
+    var axisOut = axis.map(function (b) { return { t: fmtDateTime(b.t), label: b.label }; });
+    var total = axis.length;
+
+    function payload() {
+      return {
+        index: idx, total: total,
+        ratio: total > 1 ? idx / (total - 1) : 0,
+        time: axis[idx] ? axis[idx].label : '',
+        t: axis[idx] ? fmtDateTime(axis[idx].t) : '',
+        playing: playing, speed: speed,
+      };
+    }
+
+    function notify() {
+      var s = payload();
+      postTimelineState(s);
+      listeners.forEach(function (fn) {
+        try { fn(s); } catch (e) { reportError('时间轴事件处理异常: ' + e.message); }
+      });
+      SitBus.emit('timeline:tick', s);
+    }
+
+    function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
+    function startTimer() { stopTimer(); timer = setInterval(step, Math.max(80, interval / speed)); }
+
+    function step() {
+      if (idx >= total - 1) { pause(); return; }
+      idx += 1;
+      notify();
+    }
+
+    function play() {
+      if (playing || total < 2) return;
+      if (idx >= total - 1) idx = 0;
+      playing = true;
+      startTimer();
+      notify();
+    }
+
+    function pause() {
+      stopTimer();
+      playing = false;
+      notify();
+    }
+
+    function seekIndex(i) {
+      var n = toNum(i);
+      if (n === null) return;
+      idx = Math.max(0, Math.min(total - 1, Math.round(n)));
+      notify();
+    }
+
+    function seek(ratio) {
+      var r = toNum(ratio);
+      r = r === null ? 0 : Math.max(0, Math.min(1, r));
+      seekIndex(Math.round(r * (total - 1)));
+    }
+
+    function setSpeed(v) {
+      var i = TIMELINE_SPEEDS.indexOf(v);
+      if (i < 0) return;
+      speed = TIMELINE_SPEEDS[i];
+      if (playing) startTimer();
+      notify();
+    }
+
+    function reset() {
+      pause();
+      idx = 0;
+      notify();
+    }
+
+    function mount(el) {
+      // 无头时钟：不再向页面容器绘制播放条，控件统一由宿主浮层提供。
+      node = el;
+    }
+
+    var api = {
+      play: play, pause: pause, reset: reset, seek: seek, seekIndex: seekIndex,
+      toggle: function () { if (playing) pause(); else play(); },
+      isPlaying: function () { return playing; },
+      setSpeed: setSpeed,
+      total: total,
+      current: payload,
+      axis: function () { return axisOut.slice(); },
+      interval: function () { return interval; },
+      speed: function () { return speed; },
+      on: function (fn) {
+        if (typeof fn === 'function') listeners.push(fn);
+        return function () {
+          listeners = listeners.filter(function (f) { return f !== fn; });
+        };
+      },
+      attach: mount,
+      // 首次挂载后主动向宿主同步一次，宿主浮层无需等到第一次 tick 才出现
+      postState: function () { postTimelineState(payload()); },
+      destroy: function () {
+        stopTimer();
+        playing = false;
+        listeners = [];
+        if (timelineInstance === api) timelineInstance = null;
+      },
+    };
+    return api;
+  }
+
+  var SitTimeline = {
+    render: function (el, spec) {
+      var node = resolveEl(el);
+      spec = spec || {};
+      var axis = normalizeTimelineAxis(spec.axis && spec.axis.length ? spec.axis : timelineAxisFromData());
+      if (!node) { reportError('时间轴容器不可用'); return null; }
+      if (axis.length < 2) {
+        // 单桶/无刻度时退回静态页面：清空容器并销毁旧实例，避免遗留僵尸计时器
+        if (timelineInstance) timelineInstance.destroy();
+        node.innerHTML = '';
+        return null;
+      }
+      if (!timelineInstance) timelineInstance = createTimelineInstance(axis, spec);
+      timelineInstance.attach(node);
+      timelineInstance.postState();
+      // 时间轴创建前已渲染的图表/地图在这里补绑，保证拖动立刻生效
+      flushTimelineRebinds();
+      return timelineInstance;
+    },
+    current: function () { return timelineInstance; },
+    destroy: function () { if (timelineInstance) timelineInstance.destroy(); },
+  };
+
+  // 宿主浮层下发的时间轴操作（播放/暂停/seek/倍速/重置）→ 驱动唯一时钟
+  function applyTimelineCommand(msg) {
+    var inst = timelineInstance;
+    if (!inst) return;
+    try {
+      if (msg.action === 'toggle') inst.toggle();
+      else if (msg.action === 'play') inst.play();
+      else if (msg.action === 'pause') inst.pause();
+      else if (msg.action === 'reset') inst.reset();
+      // 拖动进度先暂停（与原页内播放条行为一致），避免播放计时器覆盖用户拖动位置
+      else if (msg.action === 'seek') { inst.pause(); inst.seek(msg.value); }
+      else if (msg.action === 'seekIndex') inst.seekIndex(msg.value);
+      else if (msg.action === 'speed') inst.setSpeed(msg.value);
+    } catch (e) { reportError('时间轴命令执行失败: ' + (e && e.message)); }
+  }
+
+  // 宿主下发可视高度：写入 --ipage-vh 供页面做"一屏"布局，并重排图表
+  function applyViewportHeight(h) {
+    var n = toNum(h);
+    if (n === null || n <= 0) return;
+    document.documentElement.style.setProperty('--ipage-vh', Math.round(n) + 'px');
+    setTimeout(function () {
+      echartsInstances.forEach(function (inst) { try { inst.resize(); } catch (e) { } });
+      postHeight();
+    }, 60);
   }
 
   var SitMap = {
@@ -1437,13 +1957,39 @@
       function pushBounds(ll) { bounds.push(ll); }
 
       // ── 时间轴回放（内置播放器 + 动态能力圈 + 扫掠留痕 + 事件点按时刻显隐）──
+      // 新契约：spec.timeline=true 时绑定页面级 SitTimeline，只按 tick 重绘，不建地图内播放条；
+      // 兼容：spec.playback 仍走旧式地图内播放器，历史页面行为不变。
       // 必须先创建播放器：它是否真的建得起来（有时间轴且航迹可用）决定静态整条航迹
       // 是否交给播放器接管（playbackOn），也决定事件类点是否交给播放器按时刻显隐。
-      // 缺省（未传 spec.playback）时不注入播放条、不画能力圈，行为与历史版本一致。
       api.playback = null;
-      if (spec.playback && (spec.tracks || []).length) {
-        api.playback = createPlayback(L, map, spec, api);
+      api._timelineOff = null;
+      var pageTimeline = spec.timeline ? SitTimeline.current() : null;
+      if (spec.timeline && !pageTimeline) {
+        // 时间轴可能写在脚本末尾：先静态渲染，等时钟创建后自动重绘并绑定
+        deferTimelineRebind(node, function () { SitMap.render(node, spec); });
+      }
+      var playbackSpec = spec;
+      if (pageTimeline) {
+        // 把页面统一刻度注入旧播放器的渲染层：外部时钟 + 关闭归一化 + 不建自带播放条
+        playbackSpec = Object.assign({}, spec, {
+          playback: Object.assign({}, (spec.playback === true ? {} : (spec.playback || {})), {
+            axis: pageTimeline.axis(), external: true, showBar: false, dayNormalize: false,
+          }),
+        });
+      }
+      if ((spec.playback || pageTimeline) && (spec.tracks || []).length) {
+        api.playback = createPlayback(L, map, playbackSpec, api);
         api._layers.playback = api.playback;
+      }
+      if (api.playback && pageTimeline) {
+        // 首帧对齐页面时钟当前索引，之后仅按桶索引变化重绘（避免地图与图表不同刻）
+        try { api.playback.seekIndex(pageTimeline.current().index, true); } catch (e) { }
+        var lastTimelineIndex = pageTimeline.current().index;
+        api._timelineOff = pageTimeline.on(function (s) {
+          if (s.index === lastTimelineIndex) return;   // 仅播放状态变化时不做多余重绘
+          lastTimelineIndex = s.index;
+          try { api.playback.seekIndex(s.index, true); } catch (e) { }
+        });
       }
       var playbackOn = !!api.playback;
 
@@ -1820,6 +2366,8 @@
       // 多轮事件循环后量高，等待图表/地图挂载完成
       [60, 220, 600].forEach(function (t) { setTimeout(postHeight, t); });
     }
+    // 业务脚本已创建时间轴时，再补发一次初始状态（宿主可能早于脚本就绪）
+    if (timelineInstance) timelineInstance.postState();
   }
 
   var SitApp = {
@@ -1865,9 +2413,12 @@
 
   window.addEventListener('message', function (e) {
     var msg = e.data || {};
+    if (msg.type === 'ipage:viewport') { applyViewportHeight(msg.height); return; }
+    if (msg.type === 'ipage:timeline-cmd') { applyTimelineCommand(msg); return; }
     if (msg.type !== 'ipage:data' || !msg.payload) return;
     state = msg.payload;
     tileLayers = state.tileLayers || [];
+    fallbackTileLayers = state.fallbackTileLayers || [];
     boot();
   });
 
@@ -1876,6 +2427,7 @@
   Object.defineProperty(window, 'SitChart', { value: SitChart, writable: false, configurable: false });
   Object.defineProperty(window, 'SitMap', { value: SitMap, writable: false, configurable: false });
   Object.defineProperty(window, 'SitBus', { value: SitBus, writable: false, configurable: false });
+  Object.defineProperty(window, 'SitTimeline', { value: SitTimeline, writable: false, configurable: false });
   Object.defineProperty(window, 'SitUtil', { value: SitUtil, writable: false, configurable: false });
   Object.defineProperty(window, 'SitTable', { value: SitTable, writable: false, configurable: false });
 

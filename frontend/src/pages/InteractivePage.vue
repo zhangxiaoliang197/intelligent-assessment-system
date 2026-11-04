@@ -36,7 +36,7 @@
             <div class="bubble bubble-user">{{ m.content }}</div>
           </div>
           <div v-else class="msg msg-ai">
-            <div class="ai-avatar"><el-icon><MagicStick /></el-icon></div>
+            <AssistantAvatar />
             <div class="bubble bubble-ai">
               <!-- 直答回答 -->
               <template v-if="m.kind === 'direct'">
@@ -71,6 +71,16 @@
             </div>
           </div>
         </template>
+        <!-- AI 等待态：生成期间显示"分析中..."（与智能问答一致） -->
+        <div
+          v-if="store.status === 'generating' && store.sessionId === generatingSession"
+          class="msg msg-ai"
+        >
+          <AssistantAvatar />
+          <div class="bubble bubble-ai">
+            <div class="message-loading">分析中...</div>
+          </div>
+        </div>
       </div>
 
       <!-- 输入区：仅作为"修改当前页面"入口 -->
@@ -126,6 +136,11 @@
         <el-tag size="small" :type="appliedSkillBar.type" effect="plain">{{ appliedSkillBar.text }}</el-tag>
         <span class="skill-reason">{{ appliedSkillBar.reason }}</span>
       </div>
+      <!-- 来源标签：本页由评估分析结果直接生成 -->
+      <div v-if="store.plan?.origin?.type === 'evaluation'" class="origin-bar">
+        <el-tag size="small" type="success" effect="plain">基于评估分析结果</el-tag>
+        <span class="origin-sub">{{ store.query }}</span>
+      </div>
       <div v-if="store.status === 'ready' && store.intent === 'data_page' && store.html" class="canvas-wrap">
         <PageSandbox :html="store.html" :bundle="store.dataBundle" />
       </div>
@@ -137,6 +152,18 @@
             <p v-for="(line, i) in splitLines(store.directAnswer)" :key="i">{{ line }}</p>
           </div>
         </article>
+      </div>
+      <!-- 生成中：展示后台进度（从评估页跳转过来时沿用同一 store 的 SSE） -->
+      <div v-else-if="store.status === 'generating'" class="canvas-placeholder generating">
+        <el-icon class="rotating" :size="42" color="#1d4ed8"><Loading /></el-icon>
+        <p>{{ activeStepLabel || '正在生成态势页面…' }}</p>
+        <div v-if="store.steps.length" class="gen-steps">
+          <span
+            v-for="s in store.steps"
+            :key="s.id"
+            :class="['gen-step', s.state]"
+          >{{ s.label }}</span>
+        </div>
       </div>
       <div v-else-if="store.status === 'failed'" class="canvas-placeholder">
         <el-icon :size="42" color="#dc2626"><WarningFilled /></el-icon>
@@ -163,6 +190,7 @@ import {
   CircleCheck, WarningFilled, DataAnalysis,
 } from '@element-plus/icons-vue'
 import PageSandbox from '@/components/interactive/PageSandbox.vue'
+import AssistantAvatar from '@/components/AssistantAvatar.vue'
 import SkillSelector from '@/components/interactive/SkillSelector.vue'
 import { useInteractiveStore } from '@/stores/interactive'
 
@@ -291,13 +319,19 @@ watch(() => store.status, async (val) => {
 })
 
 onMounted(async () => {
-  store.resetRound()
   // 技能目录与服务端默认策略（默认 off=不套用）：供选择器展示与请求参数推导
   void store.loadSkills()
   const pid = String(route.query.pageId || '')
+  // 从评估分析页直接跳转过来时，store 已持有在途生成状态与 SSE 订阅：
+  // 此时不能 resetRound()，否则会清空页面并丢失流式进度。
+  const reusable = !!pid && pid === store.pageId
+    && (store.status === 'generating' || store.status === 'ready')
+  if (reusable) return
+
+  store.resetRound()
   if (pid) {
     try {
-      await loadTargetPage(pid)
+      await store.attachPage(pid)
     } catch (e: any) {
       store.appendLocalMessage({ role: 'ai', kind: 'error', content: e?.serverMessage || '页面加载失败' })
     }
@@ -375,19 +409,13 @@ onMounted(async () => {
   white-space: pre-wrap;
   word-wrap: break-word;
 }
-.msg-ai { gap: 8px; align-items: flex-start; }
-.ai-avatar {
-  width: 28px; height: 28px; flex-shrink: 0;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #38bdf8, #0ea5e9);
-  color: #fff;
-  display: flex; align-items: center; justify-content: center;
-}
+.msg-ai { gap: 16px; align-items: flex-start; }
 .bubble-ai {
-  background: #f8fafc;
-  border: 1px solid #eef2f7;
-  color: #1f2937;
-  border-bottom-left-radius: 3px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+  color: var(--text-primary);
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -397,6 +425,28 @@ onMounted(async () => {
 .direct-text p { margin: 0 0 6px; }
 .direct-text p:last-child { margin-bottom: 0; }
 .plain-text { white-space: pre-wrap; }
+
+/* AI 等待态：与智能问答保持一致（文字 + 蓝色呼吸圆点） */
+.message-loading {
+  padding: 12px 0;
+  color: #64748b;
+  font-size: 13.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.message-loading::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3b82f6;
+  animation: ipage-loading-pulse 1.2s ease-in-out infinite;
+}
+@keyframes ipage-loading-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
 .ready-text, .error-text { display: flex; align-items: center; gap: 6px; font-weight: 600; }
 .ready-text { color: #047857; }
 .error-text { color: #dc2626; font-weight: 500; }
@@ -475,6 +525,42 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 .skill-reason { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 来源标签：基于评估分析结果 */
+.origin-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+.origin-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 生成中的步骤进度 */
+.gen-steps {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.gen-step {
+  font-size: 12px;
+  color: #94a3b8;
+  padding: 4px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #fff;
+}
+.gen-step.active { color: #1d4ed8; border-color: #bfdbfe; background: #f0f9ff; }
+.gen-step.completed { color: #059669; border-color: #a7f3d0; background: #ecfdf5; }
+.gen-step.error { color: #dc2626; border-color: #fecaca; background: #fef2f2; }
 .canvas-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .canvas-wrap > * { flex: 1; }
 .direct-card {

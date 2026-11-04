@@ -1,18 +1,29 @@
 <template>
   <Layout>
     <div class="sp-container">
-      <!-- ── 左栏：历史会话（与态势图一致）── -->
+      <!-- ── 左栏：导航 + 历史记录（与智能问答等模块风格一致）── -->
       <div class="sidebar">
         <div class="sidebar-section">
           <div class="sidebar-section-header">
-            <h3 class="sidebar-title">会话记录</h3>
+            <h3 class="sidebar-title">导航</h3>
             <el-button class="new-session-btn" type="primary" @click="onNewSession">
               <el-icon><Plus /></el-icon> 新会话
             </el-button>
           </div>
+          <div class="nav-item" @click="router.push('/knowledge')">
+            <el-icon><Collection /></el-icon>
+            <span>知识库</span>
+          </div>
+          <div class="nav-item" @click="router.push('/ontology')">
+            <el-icon><Box /></el-icon>
+            <span>本体</span>
+          </div>
+        </div>
+        <div class="sidebar-section">
+          <h3 class="sidebar-title">历史记录</h3>
           <div class="session-list custom-scroll">
             <div
-              v-for="s in store.sessions"
+              v-for="s in filteredSessions"
               :key="s.sessionId"
               :class="['session-item', { active: s.sessionId === store.sessionId }]"
               @click="onPickSession(s.sessionId)"
@@ -26,7 +37,10 @@
                 <el-icon><Delete /></el-icon>
               </el-button>
             </div>
-            <el-empty v-if="!store.sessions.length" description="暂无会话" :image-size="56" />
+            <el-empty v-if="!filteredSessions.length" :description="sessionSearch ? '无匹配会话' : '暂无会话'" :image-size="56" />
+          </div>
+          <div class="session-search">
+            <el-input v-model="sessionSearch" placeholder="搜索历史记录..." :prefix-icon="Search" clearable />
           </div>
         </div>
       </div>
@@ -79,13 +93,22 @@
               <div v-if="!store.messages.length" class="empty-state">
                 <p>态势页面</p>
                 <span class="empty-sub">提出态势问题，系统在后台自动取数并生成含图表、地图与文字结论的可交互页面</span>
-                <div class="suggest-list">
+                <div class="suggest-grid">
                   <button
                     v-for="s in suggestions"
-                    :key="s"
-                    class="suggest-item"
-                    @click="onSend(s)"
-                  >{{ s }}</button>
+                    :key="s.text"
+                    class="suggest-card"
+                    @click="onSend(s.text)"
+                  >
+                    <span class="suggest-icon" :style="{ background: s.bg, color: s.color }">
+                      <el-icon :size="20"><component :is="s.icon" /></el-icon>
+                    </span>
+                    <span class="suggest-body">
+                      <span class="suggest-title">{{ s.text }}</span>
+                      <span class="suggest-desc">{{ s.desc }}</span>
+                    </span>
+                    <el-icon class="suggest-arrow" :size="14"><ArrowRight /></el-icon>
+                  </button>
                 </div>
               </div>
 
@@ -98,7 +121,7 @@
                   </div>
                   <!-- AI 消息 -->
                   <div v-else class="message assistant">
-                    <div class="ai-avatar"><el-icon><MagicStick /></el-icon></div>
+                    <AssistantAvatar />
                     <div class="assistant-body">
                       <!-- 直答回答 -->
                       <div v-if="m.kind === 'direct'" class="direct-text">
@@ -125,6 +148,16 @@
                     </div>
                   </div>
                 </template>
+                <!-- AI 等待态：生成期间显示"分析中..."（与智能问答一致） -->
+                <div
+                  v-if="store.status === 'generating' && store.sessionId === generatingSession"
+                  class="message assistant"
+                >
+                  <AssistantAvatar />
+                  <div class="assistant-body">
+                    <div class="message-loading">分析中...</div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -148,7 +181,8 @@
                   </el-button>
                 </div>
               </div>
-              <div class="input-tip">发送后自动在后台生成，过程在右侧面板展示，完成后可打开态势页面</div>
+              <!-- 四模块切换卡片 -->
+              <ToolSwitchBar />
             </div>
           </div>
 
@@ -245,14 +279,17 @@
 // ── 态势页面主对话框（三栏布局）──
 // 左=历史会话，中=对话记录，右=执行过程面板；顶部技能选择 + 数据源选择。
 // 发送后不跳转：生成全部在后台进行，完成后对话内插入"打开态势页面"卡片。
-import { ref, computed, nextTick, onMounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, watch, markRaw } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, Delete, ChatDotRound, MagicStick, Setting, Promotion, Loading,
   CircleClose, CircleCheck, Close, ArrowRight, FullScreen, WarningFilled, Coin,
+  TrendCharts, Aim, MapLocation, Histogram, DataLine, Collection, Box, Search,
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
+import AssistantAvatar from '@/components/AssistantAvatar.vue'
+import ToolSwitchBar from '@/components/ToolSwitchBar.vue'
 import SkillSelector from '@/components/interactive/SkillSelector.vue'
 import { useInteractiveStore } from '@/stores/interactive'
 import api from '@/services/api'
@@ -275,11 +312,46 @@ const dataSourceId = ref('')
 // 发起生成时的会话快照：完成回写消息前若用户已切换会话，则不本地追加（后端已落库）
 const generatingSession = ref('')
 
+// ── 历史记录搜索（与智能问答等模块一致）──
+const sessionSearch = ref('')
+const filteredSessions = computed(() => {
+  const q = sessionSearch.value.trim().toLowerCase()
+  if (!q) return store.sessions
+  return store.sessions.filter((s: any) => (s.title || '').toLowerCase().includes(q))
+})
+
+// 首页推荐问题：卡片式展示，第一项覆盖"飞机轨迹随时间变化"的主场景
 const suggestions = [
-  '红蓝双方空中力量对比，用图表展示并标注地图分布',
-  '当前航线受到哪些打击范围圈威胁？',
-  '各基地保障的飞机数量统计与地理分布',
-  '介绍一下态势分析的基本流程',
+  {
+    text: '飞机轨迹随时间变化的红蓝空中态势分析',
+    desc: '航迹回放 · 时序联动 · 空间分布',
+    icon: markRaw(TrendCharts), color: '#3b82f6', bg: '#eaf2ff',
+  },
+  {
+    text: '对比红蓝双方的空中力量与机型能力',
+    desc: '兵力构成与能力多维对比',
+    icon: markRaw(Aim), color: '#ef4444', bg: '#fff0ef',
+  },
+  {
+    text: '评估当前航线受到的打击范围威胁',
+    desc: '威胁圈与航迹重叠分析',
+    icon: markRaw(WarningFilled), color: '#f59e0b', bg: '#fff5e6',
+  },
+  {
+    text: '统计各基地保障的飞机数量与地理分布',
+    desc: '基地保障与空间分布',
+    icon: markRaw(MapLocation), color: '#10b981', bg: '#e8f8f0',
+  },
+  {
+    text: '分析战损事件的时空分布与主要原因',
+    desc: '战损明细与时序变化',
+    icon: markRaw(DataLine), color: '#8b5cf6', bg: '#f3ecff',
+  },
+  {
+    text: '介绍一下态势分析的基本流程',
+    desc: '概念说明 · 无需取数',
+    icon: markRaw(Histogram), color: '#ec4899', bg: '#ffeaf2',
+  },
 ]
 
 // ── 执行面板进度（三阶段步骤收敛为百分比）──
@@ -418,7 +490,11 @@ async function onCancel() {
 
 // 生成结束 → 对话内插入结果消息（本地即时回显；后端同步落库）
 watch(() => store.status, async (val) => {
-  if (val === 'generating') return
+  // 生成开始时滚动到底部，让"分析中..."等待态可见
+  if (val === 'generating') {
+    await scrollToBottom()
+    return
+  }
   if (store.sessionId !== generatingSession.value) return
   if (val === 'ready') {
     if (store.intent === 'general') {
@@ -466,8 +542,9 @@ onMounted(async () => {
   void store.loadSessions()
   void store.loadSkills()
   void fetchDataSources()
-  // 恢复当前会话的对话内容（从态势页返回 / 组件重挂载时不丢上下文）
-  if (store.sessionId) {
+  // 恢复当前会话的对话内容（从态势页返回 / 组件重挂载时不丢上下文）；
+  // 已有本地消息时不再拉会话快照，避免把刚点击推荐问题追加的消息覆盖掉
+  if (store.sessionId && !store.messages.length) {
     try {
       await store.loadSession(store.sessionId)
       await scrollToBottom()
@@ -504,14 +581,38 @@ onMounted(async () => {
   transition: all 0.2s; color: var(--text-secondary);
 }
 .session-item:hover { background: rgba(0, 0, 0, 0.04); color: var(--text-primary); }
-.session-item.active { background: rgba(14, 165, 233, 0.09); color: #0369a1; }
+.session-item.active { background: rgba(59, 130, 246, 0.08); color: var(--primary-600); }
 .session-item .el-icon { font-size: 16px; flex-shrink: 0; color: var(--text-muted); }
-.session-item.active .el-icon { color: #0ea5e9; }
+.session-item.active .el-icon { color: var(--primary-500); }
 .session-delete-btn { opacity: 0; transition: opacity 0.2s; flex-shrink: 0; }
 .session-item:hover .session-delete-btn { opacity: 1; }
 .session-item-content { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .session-item-title { font-size: 13px; font-weight: 500; color: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .session-item-time { font-size: 11px; color: var(--text-muted); }
+
+/* ── 导航项（与智能问答等模块一致）── */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+}
+.nav-item:hover { background: rgba(0, 0, 0, 0.04); color: var(--text-primary); }
+.nav-item .el-icon { font-size: 18px; }
+
+/* ── 历史记录搜索框 ── */
+.session-search { margin-top: 4px; }
+.session-search :deep(.el-input__wrapper) {
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--border-normal) inset;
+  background: var(--bg-card);
+}
 
 /* ── 主内容区 ── */
 .main-content {
@@ -573,50 +674,107 @@ onMounted(async () => {
 }
 .empty-state p { margin: 0; font-size: 18px; font-weight: 600; color: var(--text-primary); }
 .empty-sub { margin-top: 10px; font-size: 13px; max-width: 520px; text-align: center; line-height: 1.7; }
-.suggest-list { margin-top: 26px; display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 520px; padding: 0 24px; }
-.suggest-item {
-  text-align: left;
-  border: 1px solid var(--border-light);
-  background: var(--gray-50);
-  border-radius: 9px;
-  padding: 10px 14px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all .15s;
-  line-height: 1.5;
+/* 首页推荐问题：两列卡片（图标 + 标题 + 说明 + 箭头） */
+.suggest-grid {
+  margin-top: 26px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  width: 100%;
+  max-width: 760px;
+  padding: 0 24px;
 }
-.suggest-item:hover { border-color: #0ea5e9; color: #0369a1; background: #f0f9ff; }
+.suggest-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  text-align: left;
+  border: 1px solid var(--border-light, #eef2f7);
+  background: var(--gray-50, #f8fafc);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+.suggest-card:hover {
+  border-color: #bfdbfe;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, .08);
+}
+.suggest-icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+.suggest-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.suggest-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text-primary, #0f172a);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.suggest-desc {
+  font-size: 11.5px;
+  color: var(--text-muted, #94a3b8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.suggest-arrow { flex: none; color: #cbd5e1; transition: color .15s; }
+.suggest-card:hover .suggest-arrow { color: #0ea5e9; }
+@media (max-width: 720px) {
+  .suggest-grid { grid-template-columns: 1fr; max-width: 520px; }
+}
 
-/* ── 消息列表 ── */
-.message-list { display: flex; flex-direction: column; gap: 22px; max-width: 860px; margin: 0 auto; padding: 0 40px; }
+/* ── 消息列表（与智能问答保持一致）── */
+.message-list { display: flex; flex-direction: column; gap: 28px; max-width: 900px; margin: 0 auto; padding: 0 40px; }
 .message { display: flex; }
 .message.user { justify-content: flex-end; }
 .message-text { padding: 12px 16px; border-radius: 14px; line-height: 1.7; font-size: 14px; white-space: pre-wrap; word-wrap: break-word; }
 .user-text { background: linear-gradient(135deg, #4f8cff 0%, #3b82f6 100%); color: #fff; border-bottom-right-radius: 4px; max-width: 80%; }
-.message.assistant { gap: 10px; align-items: flex-start; }
-.ai-avatar {
-  width: 30px; height: 30px; flex-shrink: 0;
-  border-radius: 9px;
-  background: linear-gradient(135deg, #38bdf8, #0ea5e9);
-  color: #fff;
-  display: flex; align-items: center; justify-content: center;
-}
+.message.assistant { gap: 16px; align-items: flex-start; }
 .assistant-body {
-  background: var(--gray-50);
-  border: 1px solid var(--border-light);
-  border-bottom-left-radius: 4px;
-  border-radius: 14px;
-  padding: 12px 16px;
+  padding: 0;
   max-width: 82%;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.direct-text { font-size: 14px; line-height: 1.9; color: var(--text-primary); }
+.direct-text { font-size: 15px; line-height: 1.75; color: var(--text-primary); }
 .direct-text p { margin: 0 0 6px; }
 .direct-text p:last-child { margin-bottom: 0; }
-.plain-text { font-size: 14px; line-height: 1.7; color: var(--text-primary); white-space: pre-wrap; }
+.plain-text { font-size: 15px; line-height: 1.75; color: var(--text-primary); white-space: pre-wrap; }
+
+/* AI 等待态：与智能问答保持一致（文字 + 蓝色呼吸圆点） */
+.message-loading {
+  padding: 12px 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.message-loading::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary-500);
+  animation: sp-loading-pulse 1.2s ease-in-out infinite;
+}
+@keyframes sp-loading-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
 
 /* 页面完成卡片 */
 .page-card {
@@ -628,19 +786,21 @@ onMounted(async () => {
 .page-card-head { display: flex; align-items: center; gap: 6px; font-weight: 600; color: #047857; font-size: 14px; }
 .error-text { display: flex; align-items: center; gap: 6px; color: #dc2626; font-size: 13.5px; font-weight: 500; }
 
-/* ── 输入区 ── */
+/* ── 输入区（与智能问答/指标分析/评估分析保持一致）── */
 .input-area {
   flex-shrink: 0;
-  padding: 12px 40px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  padding: 16px 40px 24px;
+  background: linear-gradient(to top, var(--bg-card) 60%, transparent);
+  border: none; border-radius: 0; box-shadow: none;
+  display: flex; flex-direction: column; gap: 0;
 }
-.input-wrapper { position: relative; max-width: 860px; margin: 0 auto; width: 100%; }
-.input-wrapper :deep(.el-textarea__inner) { border-radius: 14px !important; padding: 14px 100px 14px 18px !important; font-size: 14px !important; line-height: 1.6 !important; resize: none; }
-.input-actions { position: absolute; bottom: 12px; right: 14px; display: flex; gap: 8px; }
-.input-actions .el-button { height: 36px; padding: 0 20px; border-radius: 9px; font-weight: 500; font-size: 13.5px; }
-.input-tip { max-width: 860px; margin: 0 auto; width: 100%; font-size: 11.5px; color: var(--text-muted); text-align: center; }
+.input-wrapper { position: relative; max-width: 1000px; margin: 0 auto; width: 100%; }
+.input-wrapper :deep(.el-textarea__inner) { border-radius: 16px !important; border-color: var(--border-normal) !important; padding: 16px 100px 16px 20px !important; font-size: 15px !important; line-height: 1.6 !important; transition: all 0.2s !important; background: var(--gray-50) !important; resize: none; }
+.input-wrapper :deep(.el-textarea__inner:hover) { border-color: var(--primary-400) !important; background: white !important; }
+.input-wrapper :deep(.el-textarea__inner:focus) { border-color: var(--primary-500) !important; background: white !important; box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1) !important; }
+
+.input-actions { position: absolute; bottom: 14px; right: 16px; display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.input-actions .el-button { height: 38px; padding: 0 22px; border-radius: 10px; font-weight: 500; font-size: 14px; }
 
 /* ── 执行面板（右栏）── */
 .execution-panel {

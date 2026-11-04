@@ -94,7 +94,7 @@ import { type GeoPoint } from '@/utils/geoParser'
 import { type GeoRoute, type GeoArea } from '@/utils/geoAnnotation'
 import { type CircleArea } from '@/utils/mapAnnotationParser'
 import { cnLabel } from '@/utils/mapAnnotationParser'
-import { type MapLayerConfig, loadActiveTileLayers } from '@/utils/mapTileConfig'
+import { type MapLayerConfig, loadMapLayersConfig } from '@/utils/mapTileConfig'
 
 const props = withDefaults(defineProps<{
   points: GeoPoint[]
@@ -295,6 +295,32 @@ function clearTileLayers() {
     if (map) map.removeLayer(tl.layer)
   })
   tileLayers = []
+}
+
+// ── 瓦片失败回退：高德瓦片不可达时自动降级为 GeoWebCache 6 层 ──
+let fallbackApplied = false
+
+/** 移除当前底图并挂上备用图层（只执行一次，避免反复抖动） */
+function applyFallbackTileLayers(fallback: MapLayerConfig[]) {
+  if (fallbackApplied || !fallback.length || !map) return
+  fallbackApplied = true
+  clearTileLayers()
+  buildTileLayers(fallback)
+  addTileLayers()
+  updateLayerOpacity()
+  console.warn('[GeoMap] 底图瓦片加载失败，已回退为 GeoWebCache 备用图层')
+}
+
+/** 监听瓦片加载错误，连续失败达到阈值即触发回退 */
+function watchTileErrors(fallback: MapLayerConfig[]) {
+  if (!fallback.length) return
+  let errorCount = 0
+  tileLayers.forEach(({ layer }) => {
+    layer.on('tileerror', () => {
+      errorCount += 1
+      if (errorCount >= 6) applyFallbackTileLayers(fallback)
+    })
+  })
 }
 
 // ── leaflet-draw 中文本地化 ──
@@ -515,7 +541,7 @@ function updateDrawnCount() {
 async function initMap() {
   if (!mapContainer.value) return
 
-  const layerConfigs = await loadActiveTileLayers()
+  const layersConfig = await loadMapLayersConfig()
 
   const initialViewport = resolveViewport()
   map = L.map(mapContainer.value, {
@@ -528,8 +554,9 @@ async function initMap() {
     preferCanvas: true,
   })
 
-  buildTileLayers(layerConfigs)
+  buildTileLayers(layersConfig.primary)
   addTileLayers()
+  watchTileErrors(layersConfig.fallback)
 
   // ── 初始化绘制控件（在瓦片层之上，AI标注层之下） ──
   initDrawControl()

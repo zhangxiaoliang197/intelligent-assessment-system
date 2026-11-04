@@ -360,18 +360,18 @@
             <el-input v-model="mapForm.name" placeholder="如：GeoWebCache 内网地图、高德瓦片服务" />
           </el-form-item>
           <el-form-item label="服务类型">
-            <el-select v-model="mapForm.type" placeholder="请选择服务类型" style="width: 100%">
+            <el-select v-model="mapForm.type" placeholder="请选择服务类型" style="width: 100%" @change="onMapTypeChange">
               <el-option label="GeoWebCache" value="geowebcache" />
               <el-option label="自定义瓦片服务" value="custom" />
-              <el-option label="高德地图" value="amap" />
+              <el-option label="高德在线底图（同源代理）" value="amap" />
             </el-select>
           </el-form-item>
           <el-form-item label="服务地址">
-            <el-input v-model="mapForm.baseUrl" :disabled="mapForm.type === 'amap'" :placeholder="mapForm.type === 'geowebcache' ? '如：/geowebcache 或 http://192.168.1.100:9090/geowebcache' : mapForm.type === 'amap' ? '高德地图无需配置服务地址' : '如：http://192.168.1.100:9090/tiles/{z}/{x}/{y}.png'" />
+            <el-input v-model="mapForm.baseUrl" :placeholder="mapForm.type === 'geowebcache' ? '如：/geowebcache 或 http://192.168.1.100:9090/geowebcache' : mapForm.type === 'amap' ? '默认 /amap-tiles（同源代理前缀）' : '如：http://192.168.1.100:9090/tiles/{z}/{x}/{y}.png'" />
           </el-form-item>
           <div style="color: #909399; font-size: 12px; margin-top: 8px;">
             <template v-if="mapForm.type === 'geowebcache'">GeoWebCache 将自动叠加 6 层标准图层（省级、城市、水域、水系、道路、铁路）。</template>
-            <template v-else-if="mapForm.type === 'amap'">高德地图将自动加载矢量底图与路网注记（GCJ02 坐标，与前端标注坐标一致，无需服务地址）。</template>
+            <template v-else-if="mapForm.type === 'amap'">高德栅格底图经同源代理加载（GCJ02 坐标，与前端标注坐标一致）；需部署服务器可访问外网，不可达时自动回退 GeoWebCache。</template>
             <template v-else>自定义服务将使用地址作为单层瓦片源。</template>
           </div>
         </el-form>
@@ -2589,6 +2589,8 @@ async function testLlmConnection(row: any) {
 const mapConfigs = ref<any[]>([])
 const showMapDialog = ref(false)
 const editingMapId = ref('')
+// 高德底图默认走同源代理前缀，避免客户端直连高德域名
+const DEFAULT_AMAP_PROXY = '/amap-tiles'
 const mapForm = ref({ name: '', type: 'geowebcache', baseUrl: '' })
 
 function openMapDialog(row?: any) {
@@ -2604,6 +2606,15 @@ function openMapDialog(row?: any) {
     mapForm.value = { name: '', type: 'geowebcache', baseUrl: '' }
   }
   showMapDialog.value = true
+}
+
+/** 切换服务类型：高德自动填入同源代理前缀，切回其他类型时清空该默认值 */
+function onMapTypeChange(type: string) {
+  if (type === 'amap') {
+    if (!mapForm.value.baseUrl.trim()) mapForm.value.baseUrl = DEFAULT_AMAP_PROXY
+  } else if (mapForm.value.baseUrl === DEFAULT_AMAP_PROXY) {
+    mapForm.value.baseUrl = ''
+  }
 }
 
 async function saveMapConfig() {
