@@ -36,6 +36,7 @@ from agents.skill_catalog import (
     update_custom_skill,
 )
 from agents.skill_runner import run_skill_workflow
+from agents.geo_artifacts import collect_geo_artifact
 from skill_api import skill_actor_from_request
 
 logger = logging.getLogger("evaluation.api")
@@ -104,6 +105,24 @@ def _delete_session_from_mysql(sid: str) -> bool:
     """从 MySQL 删除评估会话"""
     resp = _cs_delete(sid)
     return resp.get("success", False)
+
+
+def _normalize_session_id(raw: Optional[str]) -> str:
+    """统一会话 ID 为 32 位无连字符格式。
+
+    聊天表（ass_chat_message / ass_chat_history / ass_chat_context）的
+    session_id 列长度为 32，而 str(uuid.uuid4()) 带连字符时是 36 位，
+    直接落库会触发 “Data too long for column 'session_id'”，导致历史记录
+    无法保存、侧边栏始终为空。这里统一转换为 uuid.hex（32 位）。
+    """
+    value = (raw or "").strip()
+    if not value:
+        return uuid.uuid4().hex
+    try:
+        return uuid.UUID(value).hex
+    except ValueError:
+        # 非标准 UUID（如外部传入的业务 ID）保持原样
+        return value
 
 
 class EvaluationRequest(BaseModel):
@@ -468,7 +487,7 @@ async def analyze_stream(request: EvaluationRequest, http_request: Request):
         f"技能={request.skill_id or 'default-workflow'}"
     )
 
-    session_id = request.session_id or str(uuid.uuid4())
+    session_id = _normalize_session_id(request.session_id)
     actor = skill_actor_from_request(http_request)
     selected_skill = None
     if request.skill_id:
@@ -492,6 +511,8 @@ async def analyze_stream(request: EvaluationRequest, http_request: Request):
         final_answer = ""
         final_result = {}
         execution_steps = []
+        # 反应式工作流可能多次下发同一 result，空间分布产物只尝试一次
+        geo_enriched = False
         try:
             if selected_skill:
                 workflow = run_skill_workflow(
@@ -535,6 +556,35 @@ async def analyze_stream(request: EvaluationRequest, http_request: Request):
                 if event.get("type") == "result":
                     event["session_id"] = session_id
                     final_result = event.get("result", {})
+                    # ── 补充空间分布产物 ──
+                    # 评估主查询多为聚合统计，行内没有经纬度；在落库与下发前额外执行
+                    # 一条只读坐标明细查询，供态势页面地图渲染。失败或超时均降级跳过，
+                    # 不影响评估主结果。
+                    if final_result and request.database_id and not geo_enriched:
+                        geo_enriched = True
+                        try:
+                            geo_artifact = await asyncio.wait_for(
+                                asyncio.get_running_loop().run_in_executor(
+                                    _thread_pool,
+                                    partial(
+                                        collect_geo_artifact,
+                                        request.database_id,
+                                        request.query,
+                                        final_result,
+                                        str((selected_skill or {}).get("name") or ""),
+                                    ),
+                                ),
+                                timeout=8.0,
+                            )
+                            if geo_artifact:
+                                final_result["geoArtifacts"] = [geo_artifact]
+                                event["result"] = final_result
+                        except asyncio.TimeoutError:
+                            logger.warning("空间分布产物生成超时（8秒），已跳过")
+                        except Exception as geo_error:
+                            logger.warning(
+                                "空间分布产物生成失败，已跳过：%s", geo_error
+                            )
                     final_answer = event.get("final_answer", "") or final_result.get("final_answer", "")
                     if final_answer:
                         try:
@@ -1131,7 +1181,7 @@ async def get_history():
 @evaluation_router.post("/session/new")
 async def create_new_session():
     """创建一个新会话，返回新的 session_id"""
-    new_id = str(uuid.uuid4())
+    new_id = uuid.uuid4().hex
     return {"success": True, "session_id": new_id}
 
 

@@ -293,8 +293,37 @@ function resolveChartHint(result: any, item: EvaluationArtifactItem): Evaluation
   }
 }
 
-/** 归一化评估结果：返回数据项与结论 */
+/**
+ * 归一化评估结果：返回数据项与结论。
+ *
+ * 在原有结果形态之外，追加后端补充的「空间分布」产物
+ * （result.geoArtifacts），使评估分析可以直接生成带地图的态势页面。
+ */
 export function normalizeEvaluationResult(
+  result: any,
+  ctx: ArtifactContext,
+): { items: EvaluationArtifactItem[]; conclusion: string } {
+  const normalized = normalizeBaseEvaluationResult(result, ctx)
+  const seen = new Set(normalized.items.map((item) => item.artifactId))
+  const geoItems = Array.isArray(result?.geoArtifacts) ? result.geoArtifacts : []
+  geoItems.forEach((raw: any, index: number) => {
+    const item = normalizeGeoArtifact(raw, index)
+    if (!item) return
+    let artifactId = item.artifactId
+    let seq = 2
+    while (seen.has(artifactId)) {
+      artifactId = `${item.artifactId}_${seq}`
+      seq += 1
+    }
+    item.artifactId = artifactId
+    seen.add(artifactId)
+    normalized.items.push(item)
+  })
+  return normalized
+}
+
+/** 原有结果形态归一化（skill / 空战 / 效能 / 指标 / 通用查询） */
+function normalizeBaseEvaluationResult(
   result: any,
   ctx: ArtifactContext,
 ): { items: EvaluationArtifactItem[]; conclusion: string } {
@@ -376,6 +405,84 @@ export function normalizeEvaluationResult(
   return { items, conclusion }
 }
 
+/** 清洗后端下发的 geo 结构（坐标非法或数量不足时返回 undefined） */
+function sanitizeGeo(raw: any): ArtifactGeo | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+
+  const markers: ArtifactMarker[] = []
+  for (const item of Array.isArray(raw.markers) ? raw.markers : []) {
+    const lng = toNumber(item?.lng)
+    const lat = toNumber(item?.lat)
+    if (lng === null || lat === null) continue
+    markers.push({
+      name: String(item?.name || `坐标点 ${markers.length + 1}`),
+      lng,
+      lat,
+      props: item?.props && typeof item.props === 'object' ? item.props : undefined,
+    })
+  }
+
+  const routes: ArtifactRoute[] = []
+  for (const route of Array.isArray(raw.routes) ? raw.routes : []) {
+    const points: Array<{ lng: number; lat: number }> = []
+    for (const point of Array.isArray(route?.points) ? route.points : []) {
+      const lng = toNumber(point?.lng)
+      const lat = toNumber(point?.lat)
+      if (lng === null || lat === null) continue
+      points.push({ lng, lat })
+    }
+    if (points.length >= 2) {
+      routes.push({ name: String(route?.name || `航迹 ${routes.length + 1}`), points })
+    }
+  }
+
+  const areas: ArtifactArea[] = []
+  for (const area of Array.isArray(raw.areas) ? raw.areas : []) {
+    const lng = toNumber(area?.lng)
+    const lat = toNumber(area?.lat)
+    const radiusKm = toNumber(area?.radiusKm)
+    if (lng === null || lat === null || radiusKm === null || radiusKm <= 0) continue
+    areas.push({
+      name: String(area?.name || '范围区域'),
+      lng,
+      lat,
+      radiusKm,
+      props: area?.props && typeof area.props === 'object' ? area.props : undefined,
+    })
+  }
+
+  if (!markers.length && !routes.length && !areas.length) return undefined
+  return {
+    markers: markers.length ? markers : undefined,
+    routes: routes.length ? routes : undefined,
+    areas: areas.length ? areas : undefined,
+  }
+}
+
+/** 后端补充的「空间分布」产物 → 前端产物条目 */
+function normalizeGeoArtifact(raw: any, index: number): EvaluationArtifactItem | null {
+  if (!raw || typeof raw !== 'object') return null
+  const rawColumns = Array.isArray(raw.columns) ? raw.columns.map(String) : []
+  const rows = cleanRows(rawColumns, Array.isArray(raw.rows) ? raw.rows : [])
+  if (!rows.length) return null
+  const columns = deriveColumns(rawColumns, rows)
+  // 优先使用后端预计算的 geo，保证与态势页面 bridge 的识别口径一致
+  const geo = sanitizeGeo(raw.geo) || detectGeo(columns, rows)
+  if (!geo) return null
+  const sanitizedId = String(raw.artifactId || `geo${index + 1}`).replace(/[^A-Za-z0-9_-]/g, '')
+  return {
+    artifactId: sanitizedId || `geo${index + 1}`,
+    name: String(raw.name || '空间分布'),
+    purpose: String(raw.purpose || ''),
+    mode: 'detail',
+    columns,
+    rows,
+    totalRows: Math.max(Number(raw.totalRows || 0), rows.length),
+    truncated: !!raw.truncated || rows.length >= MAX_ROWS,
+    geo,
+  }
+}
+
 /** 是否存在可用于生成态势页面的数据产物 */
 export function hasUsableArtifacts(result: any): boolean {
   if (!result) return false
@@ -396,6 +503,9 @@ export function buildArtifactPayload(
 ): EvaluationArtifactPayload {
   const { items, conclusion } = normalizeEvaluationResult(result, ctx)
   const selectedIds = new Set(selection.itemIds)
+  const selectedItems = items.filter((item) => selectedIds.has(item.artifactId))
+  // 已勾选产物没有坐标时不允许请求地图，避免生成空白地图
+  const mapAvailable = selectedItems.some((item) => itemCapabilities(item).map)
   return {
     sourceSessionId: ctx.sourceSessionId || '',
     question: ctx.question || '',
@@ -404,7 +514,10 @@ export function buildArtifactPayload(
     skillId: ctx.skillId || '',
     skillName: ctx.skillName || '',
     conclusion: selection.includeConclusion ? conclusion : '',
-    presentation: { ...selection.presentation },
-    items: items.filter((item) => selectedIds.has(item.artifactId)),
+    presentation: {
+      ...selection.presentation,
+      map: selection.presentation.map && mapAvailable,
+    },
+    items: selectedItems,
   }
 }

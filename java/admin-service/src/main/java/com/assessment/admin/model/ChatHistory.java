@@ -16,7 +16,7 @@ public class ChatHistory {
     @Column(length = 32)
     private String id;
 
-    @Column(name = "session_id", length = 32, nullable = false)
+    @Column(name = "session_id", length = 50, nullable = false)
     private String sessionId;
 
     @Column(name = "user_id", length = 64, nullable = false)
@@ -31,7 +31,7 @@ public class ChatHistory {
     @Column(length = 500, nullable = false)
     private String summary = "";
 
-    @Column(name = "skill_id", length = 32)
+    @Column(name = "skill_id", length = 50)
     private String skillId;                  // evaluation 专用
 
     @Column(name = "create_time")

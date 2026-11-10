@@ -201,7 +201,8 @@ const router = useRouter()
 const store = useInteractiveStore()
 
 const input = ref('')
-const leftCollapsed = ref(false)
+// 打开态势页面默认全屏：左侧修正对话栏初始收起，仅保留悬浮「对话」展开按钮
+const leftCollapsed = ref(true)
 const chatScrollRef = ref<HTMLElement | null>(null)
 // 发起修订时的会话快照：完成回写消息前若已切换页面/会话，则不本地追加
 let generatingSession = ''

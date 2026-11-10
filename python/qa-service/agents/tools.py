@@ -268,7 +268,7 @@ def fetch_table_structure(db_id: str, table_name: str) -> dict:
     return {"tableName": safe_table_name, "columns": [], "count": 0}
 
 
-def execute_sql_on_database(db_id: str, sql: str) -> dict:
+def execute_sql_on_database(db_id: str, sql: str, timeout: int = 120) -> dict:
     """在指定数据库上执行 SQL 查询。
 
     通过 admin-service 的 POST /api/admin/database/{db_id}/execute-sql 接口
@@ -280,12 +280,13 @@ def execute_sql_on_database(db_id: str, sql: str) -> dict:
     Args:
         db_id:   数据库配置 ID
         sql:     要执行的 SQL 语句（仅允许 SELECT/WITH 开头）
+        timeout: HTTP 超时秒数，默认 120 秒；坐标明细等辅助查询可传更小值
 
     Returns:
         字典，包含 success / columns / rows 等字段。
         success 为 True 时包含查询结果，为 False 时包含 message 错误信息。
     """
-    return _api_post(f"database/{db_id}/execute-sql", {"sql": sql}, timeout=120)
+    return _api_post(f"database/{db_id}/execute-sql", {"sql": sql}, timeout=timeout)
 
 
 # ============================================================

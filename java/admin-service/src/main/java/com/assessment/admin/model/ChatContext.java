@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 public class ChatContext {
 
     @Id
-    @Column(name = "session_id", length = 32)
+    @Column(name = "session_id", length = 50)
     private String sessionId;
 
     @Id

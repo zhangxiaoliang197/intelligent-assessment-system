@@ -16,7 +16,7 @@ public class ChatMessage {
     @Column(length = 32)
     private String id;
 
-    @Column(name = "session_id", length = 32, nullable = false)
+    @Column(name = "session_id", length = 50, nullable = false)
     private String sessionId;
 
     @Column(length = 16, nullable = false)

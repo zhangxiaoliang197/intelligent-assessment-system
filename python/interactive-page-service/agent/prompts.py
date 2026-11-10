@@ -326,6 +326,10 @@ RUNTIME_API_GUIDE = """
       mapApi.playback.play() / pause() / toggle() / seek(0~1) / reset();
       mapApi.playback.on(function(s){ /* s={index,total,ratio,time,playing} */ });
     坐标一律用 WGS84 经纬度（数据集里的原始坐标），运行时按底图自动转换。
+    **图例即图层开关**：运行时按上图要素自动生成"图层 / 图例"面板，支持逐架飞机的
+    飞机图标/航迹线/侦察圈/打击圈/侦察扫掠带/打击扫掠带，以及全局航迹线、扫掠区域、
+    侦察/打击范围圈、单位分组与静态范围圈的独立开关（默认全部显示）；
+    页面**不要自绘图例**，也不要重复添加控件。
 
     **地图视图自动锁定**：同一容器反复调用 SitMap.render（如时间轴播放轨迹）时，
     运行时会**自动保留用户的缩放/拖动视图**，不会因数据变化而重新 fitBounds。因此：
@@ -335,17 +339,18 @@ RUNTIME_API_GUIDE = """
 
 三、SitTimeline —— 页面级时间轴（页面唯一时钟；控件由宿主渲染，页面不画控件）
     data.timeline 存在时，页面必须在结论区之后放一个空占位容器并调用：
-      var tl = SitTimeline.render('#tl', { axis: data.timeline.buckets, interval: 400 });
+      var tl = SitTimeline.render('#tl', { axis: data.timeline.buckets });
     该容器只做占位：无标题、无高度、无卡片样式，运行时不再在其中绘制播放条。
     脚本顺序上**必须先调用 SitTimeline.render 建时钟，再渲染需要联动的图表和地图**；
     容器视觉上可以放在结论区之后，但不要因为视觉位置把它挪到最后才执行。
-    播放/暂停、进度拖动、完整时间标签、0.5×/1×/2×/4× 倍速、重置由宿主浮层渲染
-    （固定在窗口底部、不随页面滚动移动），通过消息驱动同一个时钟；
+    播放/暂停、进度拖动、完整时间标签、重置由宿主浮层渲染
+    （固定在窗口底部、不随页面滚动移动、常驻展开），通过消息驱动同一个时钟；
+    回放为固定 1 秒/帧的逐帧显示，每帧对齐一条真实采样时刻，不做插值，不提供倍速。
     页面禁止自绘按钮、滑块、进度条，也不要额外创建第二个播放条。
-    当前时刻变化时通过 SitBus 广播 'timeline:tick'（s={index,total,ratio,time,t,playing,speed}）。
+    当前时刻变化时通过 SitBus 广播 'timeline:tick'（s={index,total,ratio,time,t,playing}）。
     组件联动：
-    1. 地图：SitMap.render(el, { tracks, units, timeline: true }) 绑定页面时钟，按当前时刻
-       插值航迹、渐进显示已飞航段、画动态能力圈/扫掠走廊、按事件时刻显隐事件点；
+    1. 地图：SitMap.render(el, { tracks, units, timeline: true }) 绑定页面时钟，按当前帧
+       对齐最近真实航迹点、渐进显示已飞航段、画动态能力圈/扫掠走廊、按事件时刻显隐事件点；
     2. 图表：**按需**绑定，只给"按时间桶聚合且与地图共用同一时间刻度"的图表配置 timeline
        （见"一、SitChart"），trend 累积增长、bucket 切换当前桶；
     3. 没有时间列、或时间口径与地图对不上的图表不要传 timeline，保持静态；
@@ -356,9 +361,11 @@ RUNTIME_API_GUIDE = """
     含日内归一化）；新页面一律优先使用 SitTimeline。
 
 四、SitBus —— 组件联动事件总线
-    SitBus.on('filter', function(payload){ ... });
-    SitBus.emit('filter', {faction:'蓝方'});
-    筛选器/Tab 变化时 emit，KPI 与所有图表的渲染函数订阅后用筛选后的数据重算重绘。
+    SitBus.on('filter', function(payload){ ... });      // payload.faction 为当前阵营（'' = 全部）
+    SitBus.emit('filter', {faction:'蓝方'});            // 页面自定义筛选时 emit
+    阵营筛选由宿主浮层统一驱动：运行时已自动过滤地图与图表，切换后还会广播
+    'filter'（payload={faction}）与 'faction:change'；页面可选订阅它们联动 KPI/表格，
+    但不要重复过滤地图/图表的数据。其它筛选器/Tab 变化时 emit，KPI 与图表订阅后重算重绘。
 
 五、SitUtil / SitTable —— 工具
     SitUtil.esc(s)                 HTML 转义（拼 innerHTML 时必须用）
@@ -394,7 +401,7 @@ PAGE_SYSTEM_HEADER = """
      **不要用 100vh 计算高度**（iframe 自动撑高时 100vh 等于内容高，会形成反馈循环）；
    - 明细表（如战损明细记录）与结论放在单屏区之外，向下自然平铺，页面总高可以超过一屏：
      不要给它们设固定高度/max-height/overflow 滚动条，也不要分页（SitTable 的 pageSize 传全部行数）；
-   - 页面底部预留 14px 给时间轴折叠态进度线；
+   - 时间轴浮层常驻底部，--ipage-vh 已扣除其高度，页面无需再额外预留底部空间；
    主区左右分栏，左宽用 --ipage-left（脚本按图表数设置，不要直接写内联 grid-template-columns）：
    leftPct = clamp(32, 28 + 4 * 图表数, 58)；
    左栏图表排列按数量决定（脚本设置网格列数与行轨道）：
@@ -412,7 +419,9 @@ PAGE_SYSTEM_HEADER = """
    多维能力对比用 radar，两数值维度分布用 scatter；每个图表有中文标题与一句话结论（可放卡片下方）；
    图表标题一律用卡片内的 HTML 标题（.ip-title/h3），**调用 SitChart 时不要再传 title**，
    否则画布内会重复画一遍标题并与图例、坐标轴文字互相压字；
-4. 可交互：如果数据含阵营/类别/时间等维度，提供筛选按钮或下拉并通过 SitBus 联动
+4. 可交互：阵营筛选由运行时宿主浮层统一提供（同时控制地图与图表），**页面不要再自绘阵营按钮**；
+   地图图例/图层开关（逐架飞机、航迹线、范围圈、扫掠区域）同样由运行时地图控件生成，
+   页面不要自绘图例；其它维度（类别/状态等）可提供筛选按钮并通过 SitBus 联动
    KPI、图表、地图（地图用 mapApi.highlight）；**data.timeline 存在时必须有 timeline 区块**，
    但该区块只是结论区之后的空占位容器，调用 SitTimeline.render 建页面级时间轴（控件由宿主浮层渲染），
    地图传 timeline:true；图表**按需绑定**：只有数据本身按时间桶聚合、且与地图时间刻度一致的图表
@@ -466,6 +475,16 @@ def _geo_features_view(geo: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _has_geo_features(geo: Dict[str, Any]) -> bool:
+    """判断 geoFeatures 是否包含可上车的地图要素（空数组视为无地图数据）。"""
+    if not isinstance(geo, dict):
+        return False
+    return any(
+        isinstance(geo.get(key), list) and bool(geo.get(key))
+        for key in ("tracks", "points", "units", "circles")
+    )
+
+
 def _bundle_view(bundle: Dict[str, Any], sample_rows: int) -> Dict[str, Any]:
     """供 LLM 阅读的数据包视图：明细数据只给样例行 + 完整字段与总行数。"""
     view = {
@@ -493,6 +512,7 @@ def _bundle_view(bundle: Dict[str, Any], sample_rows: int) -> Dict[str, Any]:
         }
     for ds in bundle.get("datasets", []):
         rows = ds.get("rows", []) or []
+        geo_features = ds.get("geoFeatures")
         entry = {
             "id": ds.get("id"),
             "name": ds.get("name"),
@@ -502,7 +522,9 @@ def _bundle_view(bundle: Dict[str, Any], sample_rows: int) -> Dict[str, Any]:
             "totalRows": ds.get("totalRows", len(rows)),
             "truncated": ds.get("truncated", False),
             "geo": ds.get("geo", {"kind": "none"}),
-            "geoFeatures": _geo_features_view(ds.get("geoFeatures")),
+            # 明确告知模型该数据集是否真的有可上车的地图要素（空数组=false）
+            "geoAvailable": _has_geo_features(geo_features),
+            "geoFeatures": _geo_features_view(geo_features),
             "summary": ds.get("summary", ""),
             "rowsSample": rows[:sample_rows],
             "sampleNote": (
@@ -520,6 +542,8 @@ def _bundle_view(bundle: Dict[str, Any], sample_rows: int) -> Dict[str, Any]:
                 "timelineNote": "该数据集已按时间桶预聚合；图表用 timeline 配置 + rows 绑定，不要自行再聚合",
             })
         view["datasets"].append(entry)
+    # 顶层地图可用性：只有存在非空 geoFeatures 的数据集时才为 true
+    view["mapAvailable"] = any(bool(entry.get("geoAvailable")) for entry in view["datasets"])
     return view
 
 
@@ -529,7 +553,9 @@ EVALUATION_PAGE_GUIDE = """
 - 页面中的数值只能来自数据包，禁止自行推算、补全或修改数字；
 - 数据包可能包含 conclusion 字段（评估结论），结论区必须直接用 data.conclusion 渲染，
   可以归纳表达，但不得新增结论；
-- 只在数据包存在 geoFeatures 时渲染地图；
+- 地图渲染硬约束：仅当 data.mapAvailable === true 且「页面规划」sections 中存在 kind="map"
+  的区块时，才创建地图容器并调用 SitMap.render；否则禁止输出任何地图 DIV、地图标题或
+  SitMap 调用，不要生成空白地图；
 - 不得输出「数据待补充」「TODO」等占位内容。
 """
 
@@ -691,6 +717,8 @@ def format_skill_page_guide(skill_context: Dict[str, Any]) -> str:
     if skill.interactions:
         lines += ["## 交互要求", "- " + "；".join(skill.interactions), ""]
     if skill.playback:
-        lines += ["【动态演示】本技能要求航迹地图开启时间轴回放：给 SitMap 传 spec.playback，"
-                  "由运行时提供播放条与「飞机随播放移动 + 航迹渐进显示」，禁止自行实现播放器。", ""]
+        lines += ["【动态演示】本技能要求航迹地图支持逐帧回放：数据包有统一时间轴时，"
+                  "先 SitTimeline.render 建时钟，再给 SitMap 传 timeline:true（禁止同时传 playback）；"
+                  "仅无统一时间轴的历史兼容场景才给 SitMap 传 spec.playback。"
+                  "两种方式都由运行时负责「飞机随帧对齐真实位置 + 航迹渐进显示」，禁止自行实现播放器。", ""]
     return "\n".join(lines).rstrip()

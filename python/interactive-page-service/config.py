@@ -72,6 +72,9 @@ IPAGE_DATA_ROW_LIMIT = max(100, min(int(os.getenv("IPAGE_DATA_ROW_LIMIT", "5000"
 # ── 页级时间轴 / 时序聚合 ──
 # 页面时间轴桶数上限（超出按"好读档位"调粗，保证前端拖动与图表刷新性能）
 IPAGE_TIMELINE_MAX_BUCKETS = max(30, min(int(os.getenv("IPAGE_TIMELINE_MAX_BUCKETS", "600")), 2000))
+# 单日态势页面的目标帧数：按此目标选择时间轴步长，避免采样过密（逐帧显示，不做插值）
+IPAGE_TIMELINE_TARGET_FRAMES = max(10, min(
+    int(os.getenv("IPAGE_TIMELINE_TARGET_FRAMES", "60")), 600))
 # 强制桶宽（排障用）：auto=按实际跨度收敛；也可指定 minute/5minute/15minute/hour/day
 IPAGE_TIMELINE_BUCKET = os.getenv("IPAGE_TIMELINE_BUCKET", "auto").strip().lower()
 # 单个时序数据集结果行上限（桶 × 分组的组合行数）

@@ -20,7 +20,18 @@ SitApp.bootstrap(function (data) {
 </script>
 </body></html>"""
 
-BUNDLE = {"datasets": [{"id": "q1", "rows": [{"lng": 120, "lat": 30}]}]}
+BUNDLE = {
+    "datasets": [{
+        "id": "q1",
+        "rows": [{"lng": 120, "lat": 30}],
+        "geoFeatures": {
+            "tracks": [],
+            "points": [{"lng": 120, "lat": 30, "name": "点位"}],
+            "units": [{"lng": 120, "lat": 30, "name": "点位"}],
+            "circles": [],
+        },
+    }]
+}
 
 
 class GuardTest(unittest.TestCase):
@@ -84,6 +95,18 @@ class GuardTest(unittest.TestCase):
                             "SitMap.render('#m1', {points: data.datasets['q9'].geoFeatures.points});")
         issues = validate_page(html, BUNDLE)
         self.assertTrue(any("q9" in i for i in issues))
+
+    def test_map_without_geo_features_rejected(self):
+        """没有地理要素时禁止渲染 SitMap，避免生成空白地图。"""
+        empty_geo_bundle = {
+            "datasets": [{
+                "id": "q1",
+                "rows": [{"side": "红方"}],
+                "geoFeatures": {"tracks": [], "points": [], "units": [], "circles": []},
+            }]
+        }
+        issues = validate_page(VALID_HTML, empty_geo_bundle)
+        self.assertTrue(any("地理要素" in i for i in issues))
 
     def test_preamble_before_doctype_rejected(self):
         """LLM 在文档前输出寒暄说明文字必须被判为不合规。"""

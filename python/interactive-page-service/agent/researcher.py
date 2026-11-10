@@ -892,12 +892,16 @@ def _inject_scope_where(sql: str, scope: Dict[str, set]) -> str:
 
 # 桶宽档位（秒）→ 名称；前端/图表按 bucketSeconds 推断当前桶归属
 _BUCKET_NAMES = {
-    60: "minute", 300: "5minute", 900: "15minute", 1800: "30minute",
+    60: "minute", 120: "2minute", 180: "3minute", 300: "5minute",
+    600: "10minute", 900: "15minute", 1800: "30minute",
     3600: "hour", 10800: "3hour", 21600: "6hour", 43200: "12hour", 86400: "day",
 }
 
 # auto 档位：从细到粗，按"桶数 ≤ 上限"选第一个能装下的档位
 _AUTO_STEPS = [60, 300, 900, 1800, 3600, 10800, 21600, 43200, 86400]
+
+# 单日态势页面的帧步长候选（秒）：按目标帧数选档，保证逐帧显示不堆叠
+_PAGE_FRAME_STEPS = [60, 120, 180, 300, 600, 900, 1800, 3600]
 
 
 def bucket_step_for(seconds_hint: Any, span_seconds: float) -> int:
@@ -934,6 +938,27 @@ def bucket_step_for(seconds_hint: Any, span_seconds: float) -> int:
         if span / s <= config.IPAGE_TIMELINE_MAX_BUCKETS:
             return s
     return _AUTO_STEPS[-1]
+
+
+def page_frame_step(span_seconds: float, target_frames: int) -> int:
+    """按目标帧数为单日态势页面选择时间轴步长（秒）。
+
+    帧数按"起点帧 + 每步一帧"估算，选第一个不超过目标帧数的档位；
+    全部档位都超出时返回最大档位（帧数仍由 MAX_BUCKETS 兜底）。
+
+    Args:
+        span_seconds: 数据时间跨度（秒）
+        target_frames: 目标帧数上限
+
+    Returns:
+        候选帧步长（秒）
+    """
+    span = max(float(span_seconds or 0), 60.0)
+    limit = max(2, int(target_frames or 0))
+    for s in _PAGE_FRAME_STEPS:
+        if span / s + 1 <= limit:
+            return s
+    return _PAGE_FRAME_STEPS[-1]
 
 
 def _quote_ident(dialect: str, name: str) -> str:
@@ -1102,11 +1127,16 @@ def build_page_timeline(entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any
     start_raw, end_raw = min(moments), max(moments)
     span = (end_raw - start_raw).total_seconds()
 
-    # 桶宽 = 各时间源所需的最细档位（地图动画不能被粗粒度时序表拖慢），
-    # 再按桶数上限收敛；配置 IPAGE_TIMELINE_BUCKET 可强制覆盖。
+    # 桶宽选择：
+    # 1. 单日态势（有地理时间点）按目标帧数选档，避免采样过密，保证逐帧显示；
+    # 2. 跨多日/纯时序沿用"各时间源最细档位 + 桶数上限收敛"，不改变历史页面行为；
+    # 3. 配置 IPAGE_TIMELINE_BUCKET 可强制覆盖（排障用）。
     forced = config.IPAGE_TIMELINE_BUCKET
+    same_day = start_raw.date() == end_raw.date()
     if forced not in (None, "", "auto"):
         step = bucket_step_for(forced, span)
+    elif same_day and geo_moments:
+        step = page_frame_step(span, config.IPAGE_TIMELINE_TARGET_FRAMES)
     else:
         candidates: List[int] = []
         if step_hint > 0:
@@ -1122,14 +1152,28 @@ def build_page_timeline(entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any
         epoch = int(d.timestamp())
         return dt.datetime.fromtimestamp(epoch - epoch % sec)
 
+    def fmt_label(d: dt.datetime) -> str:
+        # 末尾补帧可能落在非整分时刻，此时标签补上秒，保证"真实时刻"可读
+        has_sec = d.second != 0
+        if step >= 86400 or span > 172800:
+            return d.strftime("%m-%d %H:%M:%S" if has_sec else "%m-%d %H:%M")
+        return d.strftime("%H:%M:%S" if has_sec else "%H:%M")
+
     start = floor_to(start_raw, step)
     buckets = []
     cur = start
     # 末桶也要包含 end_raw 所在桶
     while cur <= end_raw and len(buckets) < config.IPAGE_TIMELINE_MAX_BUCKETS:
-        label = cur.strftime("%m-%d %H:%M") if step >= 86400 or span > 172800 else cur.strftime("%H:%M")
-        buckets.append({"t": cur.strftime("%Y-%m-%d %H:%M:%S"), "label": label})
+        buckets.append({"t": cur.strftime("%Y-%m-%d %H:%M:%S"), "label": fmt_label(cur)})
         cur = cur + dt.timedelta(seconds=step)
+    # 末尾补帧：粗步长时最后一个对齐桶可能早于 end_raw，
+    # 不补则末尾事件（如最后一刻的打击）永远等不到自己的帧。
+    # 用 end_raw 的精确秒数（不回退到整分），保证末帧能覆盖 end_raw 当时的事件。
+    tail = end_raw.replace(microsecond=0)
+    last_key = buckets[-1]["t"] if buckets else ""
+    if tail.strftime("%Y-%m-%d %H:%M:%S") != last_key \
+            and len(buckets) < config.IPAGE_TIMELINE_MAX_BUCKETS:
+        buckets.append({"t": tail.strftime("%Y-%m-%d %H:%M:%S"), "label": fmt_label(tail)})
     # 只有一个桶时的时间轴没有拖动意义，按"不生成时间轴"处理，图表保持静态
     if len(buckets) < 2:
         return None

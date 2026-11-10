@@ -64,6 +64,23 @@ export interface IpageGenerateOptions {
   artifacts?: EvaluationArtifactPayload
 }
 
+/**
+ * 评估分析 → 态势页面生成任务。
+ *
+ * 评估页可能在生成过程中被导航离开并销毁，任务状态放在全局 store 中，
+ * 返回评估页后仍能恢复「正在生成 / 已生成」回执。
+ */
+export interface EvaluationSituationTask {
+  id: string
+  /** 发起任务的评估会话 id，用于只在对应会话中展示回执 */
+  evaluationSessionId: string
+  title: string
+  pageId: string
+  status: 'generating' | 'ready' | 'failed'
+  error: string
+  createdAt: string
+}
+
 /** 技能（生成剧本）元数据：列表接口下发，不含正文 */
 export interface IpageSkill {
   id: string
@@ -122,6 +139,9 @@ export const useInteractiveStore = defineStore('interactive', () => {
   const sessions = ref<IpageSession[]>([])
   const messages = ref<IpageChatMessage[]>([])
 
+  // ── 评估分析 → 态势页面生成任务（跨路由保留，避免返回后回执消失）──
+  const situationTask = ref<EvaluationSituationTask | null>(null)
+
   // ── 技能（生成剧本）──
   const skills = ref<IpageSkill[]>([])
   const skillsEnabled = ref(true)
@@ -155,6 +175,64 @@ export const useInteractiveStore = defineStore('interactive', () => {
     if (choice === '__off__') return { skillId: '', skillMode: 'off' }
     if (choice === '__auto__') return { skillId: '', skillMode: 'auto' }
     return { skillId: choice, skillMode: 'auto' }
+  }
+
+  // ── 评估分析让态势页面生成的跨页面任务 ──
+  /** 开始一条评估分析发起的态势页面生成任务 */
+  function startSituationTask(input: { evaluationSessionId?: string; title?: string } = {}) {
+    situationTask.value = {
+      id: `st-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      evaluationSessionId: input.evaluationSessionId || '',
+      title: input.title || '态势页面',
+      pageId: '',
+      status: 'generating',
+      error: '',
+      createdAt: new Date().toISOString(),
+    }
+    return situationTask.value
+  }
+
+  /** 更新任务字段（页面 id、状态、错误等） */
+  function updateSituationTask(patch: Partial<EvaluationSituationTask>) {
+    if (!situationTask.value) return
+    situationTask.value = { ...situationTask.value, ...patch }
+  }
+
+  /** 清除评估页的态势页面回执 */
+  function clearSituationTask() {
+    situationTask.value = null
+  }
+
+  /**
+   * 把当前页面生成状态同步到评估页任务回执。
+   *
+   * 任务已有 pageId 时只接受同一页面的事件，避免被其他页面生成覆盖；
+   * 任务尚未拿到 pageId 时采用当前页面 id（POST 返回后立即绑定）。
+   */
+  function syncSituationTask(statusOverride?: 'generating' | 'ready' | 'failed') {
+    const task = situationTask.value
+    if (!task || task.status !== 'generating') return
+    if (task.pageId && pageId.value && task.pageId !== pageId.value) return
+    const nextPageId = task.pageId || pageId.value
+    const nextStatus = statusOverride || status.value
+    if (nextStatus === 'ready') {
+      situationTask.value = {
+        ...task,
+        pageId: nextPageId,
+        title: title.value || task.title,
+        status: 'ready',
+        error: '',
+      }
+    } else if (nextStatus === 'failed') {
+      situationTask.value = {
+        ...task,
+        pageId: nextPageId,
+        status: 'failed',
+        error: errorMsg.value || task.error || '态势页面生成失败',
+      }
+    } else if (nextPageId && nextPageId !== task.pageId) {
+      situationTask.value = { ...task, pageId: nextPageId }
+    }
   }
 
   let eventSource: EventSource | null = null
@@ -239,14 +317,17 @@ export const useInteractiveStore = defineStore('interactive', () => {
         if (data.fatal) {
           status.value = 'failed'
           steps.value.forEach((s) => { if (s.state === 'active') s.state = 'error' })
+          syncSituationTask('failed')
         }
         break
       case 'done':
         if (data.status === 'ready') {
           status.value = 'ready'
           steps.value.forEach((s) => { if (s.state !== 'error') s.state = 'completed' })
+          syncSituationTask('ready')
         } else if (data.status === 'failed') {
           status.value = 'failed'
+          syncSituationTask('failed')
         }
         closeStream()
         break
@@ -300,6 +381,7 @@ export const useInteractiveStore = defineStore('interactive', () => {
       if (recoveryAttempts >= 6) {
         errorMsg.value = '生成连接中断且后台状态暂不可确认，请稍后从历史记录重新打开'
         status.value = 'failed'
+        syncSituationTask('failed')
         closeStream()
       } else {
         scheduleRecovery(pid, epoch)
@@ -354,11 +436,14 @@ export const useInteractiveStore = defineStore('interactive', () => {
       const data = resp.data || resp
       pageId.value = data.pageId
       if (data.sessionId && !sessionId.value) sessionId.value = data.sessionId
+      // POST 返回后立即把页面 id 绑定到评估页任务，方便返回时恢复回执
+      syncSituationTask()
       subscribeSSE(data.pageId, epoch)
     } catch (error: any) {
       errorMsg.value = error?.serverMessage || error?.message || '生成请求失败'
       status.value = 'failed'
       setStep('plan', 'error', errorMsg.value)
+      syncSituationTask('failed')
     }
   }
 
@@ -368,10 +453,91 @@ export const useInteractiveStore = defineStore('interactive', () => {
     if (pid) {
       try { await api.delete(`/ipage/generate/${encodeURIComponent(pid)}`) } catch { /* 任务可能已结束 */ }
     }
+    if (situationTask.value?.status === 'generating') {
+      updateSituationTask({ status: 'failed', error: '态势页面生成已取消' })
+    }
     status.value = 'idle'
   }
 
   // ── 历史 / 详情 ──
+  /**
+   * 页面记录 → 执行步骤。
+   *
+   * 页面生成完成后再次打开（历史记录、态势页返回、评估产物页）时，
+   * SSE 步骤不会重放；这里根据 plan / dataBundle / sqlLog / html 还原
+   * 执行过程面板，避免面板空白。
+   */
+  function buildStepsFromRecord(item: any): IpageStep[] {
+    const plan = item?.plan || {}
+    const bundle = item?.dataBundle || {}
+    const datasets = Array.isArray(bundle.datasets) ? bundle.datasets : []
+    const sqlLog = Array.isArray(item?.sqlLog) ? item.sqlLog : []
+    const status = String(item?.status || '')
+    const generating = status === 'generating'
+    const failed = status === 'failed'
+    const hasPlan = !!item?.plan
+    const hasData = datasets.length > 0 || sqlLog.length > 0
+    const hasHtml = !!item?.html
+    const isEvaluation = String(plan?.origin?.type || '') === 'evaluation'
+
+    const planState: IpageStep['state'] = hasPlan
+      ? 'completed'
+      : generating ? 'active' : 'pending'
+    const researchState: IpageStep['state'] = hasData
+      ? 'completed'
+      : generating && hasPlan ? 'active' : 'pending'
+    const writeState: IpageStep['state'] = hasHtml
+      ? 'completed'
+      : failed ? 'error' : generating && hasData ? 'active' : 'pending'
+
+    const labels = isEvaluation
+      ? { plan: '解析评估产物并规划页面', research: '整理勾选产物', write: '生成交互页面' }
+      : { plan: '分析问题与规划页面', research: '查询数据集', write: '生成交互页面' }
+    const pageTitle = String(plan?.title || item?.title || '')
+    const researchDetail = isEvaluation
+      ? `已整理 ${datasets.length} 个评估产物`
+      : sqlLog.length
+        ? `已执行 ${sqlLog.length} 条取数 SQL`
+        : datasets.length ? `已获取 ${datasets.length} 个数据集` : ''
+    const writeDetail = hasHtml
+      ? '页面已生成'
+      : failed ? String(item?.error || '页面生成失败') : ''
+
+    return [
+      {
+        id: 'plan',
+        label: labels.plan,
+        state: planState,
+        detail: pageTitle ? `页面标题：${pageTitle}` : undefined,
+      },
+      {
+        id: 'research',
+        label: labels.research,
+        state: researchState,
+        detail: researchDetail || undefined,
+      },
+      {
+        id: 'write',
+        label: labels.write,
+        state: writeState,
+        detail: writeDetail || undefined,
+      },
+    ]
+  }
+
+  /** 页面记录 → 取数明细（来自 dataBundle.datasets） */
+  function buildDatasetLogsFromRecord(item: any) {
+    const bundle = item?.dataBundle || {}
+    const datasets = Array.isArray(bundle.datasets) ? bundle.datasets : []
+    return datasets.map((dataset: any) => ({
+      datasetId: dataset?.id || dataset?.datasetId || '',
+      name: dataset?.name || dataset?.tableName || '数据集',
+      mode: dataset?.mode === 'aggregate' ? 'aggregate' : 'detail',
+      totalRows: dataset?.totalRows ?? 0,
+      truncated: !!dataset?.truncated,
+    }))
+  }
+
   function loadFromRecord(item: any) {
     closeStream()
     generationEpoch += 1
@@ -392,7 +558,13 @@ export const useInteractiveStore = defineStore('interactive', () => {
     usedTemplate.value = item.error === 'template_fallback'
     guardIssues.value = []
     revised.value = true
-    steps.value = []
+    // 从记录还原执行过程，避免历史页面/评估产物页的执行面板空白
+    steps.value = buildStepsFromRecord(item)
+    datasetLogs.value = buildDatasetLogsFromRecord(item)
+    // 若加载的是评估页正在等待的同一个页面，按落库状态刷新回执
+    if (situationTask.value?.pageId && situationTask.value.pageId === pageId.value) {
+      syncSituationTask()
+    }
   }
 
   async function loadPage(pid: string) {
@@ -563,6 +735,8 @@ export const useInteractiveStore = defineStore('interactive', () => {
     errorMsg, steps, datasetLogs,
     history, historyTotal, historyPage,
     sessionId, sessions, messages,
+    situationTask,
+    startSituationTask, updateSituationTask, clearSituationTask,
     skills, skillsEnabled, matchedSkill,
     skillChoice, skillDefaultMode, effectiveSkillChoice, setSkillChoice, resolveSkillChoice,
     generate, cancel, loadPage, attachPage, loadFromRecord, fetchHistory, removePage,

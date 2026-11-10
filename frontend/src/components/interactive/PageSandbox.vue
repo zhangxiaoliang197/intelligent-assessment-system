@@ -10,18 +10,26 @@
       title="态势页面"
     ></iframe>
 
-    <!-- 页面级时间轴浮层：固定在画布区底部，不随页面滚动移动；控件唯一真相源 -->
+    <!-- 页面级浮层：阵营筛选 + 时间轴，固定在画布区底部、常驻展开；控件唯一真相源 -->
     <div
-      v-if="dockVisible && dockState"
+      v-if="dockVisible"
       class="ip-tl-dock"
       :style="{ left: dockLeft + 'px' }"
       role="region"
-      aria-label="页面时间轴"
+      aria-label="页面级控制条"
     >
-      <div class="dock-line" aria-hidden="true">
-        <i :style="{ width: dockPercent + '%' }"></i>
+      <!-- 阵营行：控制地图与图表；未检测到多于一个阵营时不显示 -->
+      <div v-if="factionOptions.length" class="dock-faction">
+        <span class="dock-label">阵营</span>
+        <button
+          v-for="opt in factionButtons"
+          :key="opt.value"
+          type="button"
+          :class="['dock-chip', { active: activeFaction === opt.value }]"
+          @click="pickFaction(opt.value)"
+        >{{ opt.label }}</button>
       </div>
-      <div class="dock-panel">
+      <div v-if="dockState" class="dock-panel">
         <button type="button" class="dock-btn" @click="togglePlay">
           {{ dockState.playing ? '暂停' : '播放' }}
         </button>
@@ -40,7 +48,6 @@
           @input="onSeekInput"
         />
         <span class="dock-time">{{ dockState.time || '—' }}</span>
-        <button type="button" class="dock-btn" @click="cycleSpeed">{{ speedText }}</button>
         <button type="button" class="dock-btn" @click="sendTimelineCmd('reset')">重置</button>
       </div>
     </div>
@@ -77,27 +84,67 @@ let tileLayers: MapLayerConfig[] = []
 let fallbackTileLayers: MapLayerConfig[] = []
 let pendingPayload: any = null
 
-// ── 页面级时间轴浮层（宿主是唯一控件来源，页内 SitTimeline 为无头时钟）──
+// ── 页面级浮层（阵营 + 时间轴；宿主是唯一控件来源，页内 SitTimeline 为无头时钟）──
+// 浮层常驻展开，高度用于从 --ipage-vh 中扣除，避免遮挡页面结论区
+const DOCK_HEIGHT = 48
+const FACTION_ROW_HEIGHT = 32
 const dockState = ref<any>(null)
 const dragging = ref(false)
 const dragRatio = ref(0)
 const dockLeft = ref(0)
 let dockPostTimer: ReturnType<typeof setTimeout> | null = null
 
+// ── 阵营选项：从数据包自动推导（地理要素 + 表格阵营列），≥2 个才显示 ──
+const FACTION_ALIAS: Record<string, string> = {
+  red: '红方', blue: '蓝方', 红方: '红方', 蓝方: '蓝方',
+}
+function normalizeFactionValue(v: unknown): string {
+  const s = String(v ?? '').trim()
+  return FACTION_ALIAS[s] || FACTION_ALIAS[s.toLowerCase()] || ''
+}
+const factionOptions = computed<string[]>(() => {
+  const found = new Set<string>()
+  const add = (v: unknown) => {
+    const f = normalizeFactionValue(v)
+    if (f) found.add(f)
+  }
+  for (const ds of props.bundle?.datasets || []) {
+    const geo = ds?.geoFeatures || {}
+    for (const key of ['units', 'points', 'tracks', 'circles']) {
+      for (const item of geo[key] || []) add(item?.faction)
+    }
+    for (const row of ds?.rows || []) {
+      for (const col of Object.keys(row || {})) {
+        if (/^(阵营|faction)$/i.test(col)) add(row[col])
+      }
+    }
+  }
+  const order = ['红方', '蓝方']
+  return Array.from(found).sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b)
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
+  })
+})
+const activeFaction = ref('')
+const factionButtons = computed(() => [
+  { value: '', label: '全部' },
+  ...factionOptions.value.map((f) => ({ value: f, label: f })),
+])
+
 // 数据包带 2 个以上时间桶时，页面一定存在页面级时间轴
-const dockVisible = computed(() => {
+const hasTimeline = computed(() => {
   const buckets = props.bundle?.timeline?.buckets
   return Array.isArray(buckets) && buckets.length >= 2
 })
+// 有阵营行或时间轴时都需要浮层
+const dockVisible = computed(() => hasTimeline.value || factionOptions.value.length > 0)
+const dockHeightPx = computed(() =>
+  (factionOptions.value.length ? FACTION_ROW_HEIGHT : 0) + (hasTimeline.value ? DOCK_HEIGHT : 0),
+)
 const dockRatio = computed(() =>
   dragging.value ? dragRatio.value : Number(dockState.value?.ratio ?? 0),
 )
-const dockPercent = computed(() => Math.round(dockRatio.value * 100))
 const sliderValue = computed(() => Math.round(dockRatio.value * 1000))
-const speedText = computed(() => {
-  const s = Number(dockState.value?.speed ?? 4)
-  return (Number.isInteger(s) ? String(s) : s.toFixed(1)) + '×'
-})
 
 // ── 基础类：业务页面可直接使用，也可被其自定义 <style> 覆盖 ──
 const BASE_STYLE = `
@@ -117,7 +164,8 @@ const BASE_STYLE = `
 // 基准取"最近的滚动容器可视高度"，而不是 iframe 顶部位置：父页滚动时后者会失真
 function computeViewportHeight(): number {
   const box = boxRef.value
-  if (!box) return Math.max(360, Math.floor(window.innerHeight - 72 - 12))
+  const dock = dockVisible.value ? dockHeightPx.value : 0
+  if (!box) return Math.max(360, Math.floor(window.innerHeight - 72 - 12 - dock))
   let host: HTMLElement | null = box.parentElement
   while (host && host !== document.body) {
     const overflowY = getComputedStyle(host).overflowY
@@ -133,7 +181,8 @@ function computeViewportHeight(): number {
   // 画布上方可能还有修订进度条/技能提示条，可用高度要扣掉这部分偏移
   const offset = Math.max(0, boxRect.top - (hostRect.top + padTop))
   const visible = hostRect.height - padTop - padBottom - offset
-  return Math.max(360, Math.floor(Math.min(visible, window.innerHeight - 12)))
+  // 时间轴浮层常驻底部，一屏布局要给浮层让出高度
+  return Math.max(360, Math.floor(Math.min(visible, window.innerHeight - 12) - dock))
 }
 
 // 浮层水平居中基准：画布区（不是整窗），左侧对话栏折叠/展开后需要重算
@@ -173,10 +222,15 @@ function onSeekInput(e: Event) {
   sendTimelineCmd('seek', ratio)
 }
 
-function cycleSpeed() {
-  const speeds = [0.5, 1, 2, 4, 6, 8]
-  const current = Number(dockState.value?.speed ?? 4)
-  sendTimelineCmd('speed', speeds[(speeds.indexOf(current) + 1) % speeds.length])
+// ── 阵营筛选：下发到 iframe，地图与图表同时生效 ──
+function sendFaction(value: string) {
+  frameRef.value?.contentWindow?.postMessage({ type: 'ipage:faction', value }, '*')
+}
+
+function pickFaction(value: string) {
+  if (activeFaction.value === value) return
+  activeFaction.value = value
+  sendFaction(value)
 }
 
 // ── 归一化 LLM 产物：剥离寒暄前言/Markdown 围栏，截取完整文档窗口 ──
@@ -218,16 +272,18 @@ function buildSrcdoc(rawHtml: string): string {
     + `<link rel="stylesheet" href="${origin}/vendor/MarkerCluster.css">`
     + `<link rel="stylesheet" href="${origin}/vendor/MarkerCluster.Default.css">`
     + `<style>${BASE_STYLE}</style>`
-    // 一屏布局基准：页面用 var(--ipage-vh) 分配页头/KPI/主区/结论，避免页内 100vh 自我循环
-    + `<style>:root{--ipage-vh:${computeViewportHeight()}px}</style>`
+    // 一屏布局基准：页面用 var(--ipage-vh) 分配页头/KPI/主区/结论，避免页内 100vh 自我循环；
+    // 浮层常驻时再给 body 补底部留白，保证滚动到底时结论/明细表不被浮层遮住
+    + `<style>:root{--ipage-vh:${computeViewportHeight()}px;--ipage-dock-h:${dockVisible.value ? dockHeightPx.value : 0}px}`
+    + `body{padding-bottom:var(--ipage-dock-h,0)!important}</style>`
     + `<script src="${origin}/vendor/gcoord.min.js"><\/script>`
     + `<script src="${origin}/vendor/echarts.min.js"><\/script>`
     + `<script src="${origin}/vendor/leaflet.js"><\/script>`
     + `<script src="${origin}/vendor/leaflet.markercluster.js"><\/script>`
     // turf 必须在 page-kit 之前：page-kit 的能力圈扫掠留痕依赖 window.turf.buffer
     + `<script src="${origin}/vendor/turf.min.js"><\/script>`
-    // 版本号用于强制刷新运行时缓存：新增 SitTimeline 后，旧缓存会导致新页面找不到接口
-    + `<script src="${origin}/vendor/page-kit.js?v=20261104-3"><\/script>`
+    // 版本号用于强制刷新运行时缓存：新增图例图层开关与阵营联动后，旧缓存会缺失接口
+    + `<script src="${origin}/vendor/page-kit.js?v=20261109-3"><\/script>`
 
   const headMatch = pageHtml.match(/<head[^>]*>/i)
   if (headMatch) {
@@ -249,9 +305,11 @@ function onMessage(e: MessageEvent) {
         { type: 'ipage:data', payload: pendingPayload }, '*',
       )
     }
-    // 新文档就绪后补发视口高度，覆盖首帧注入时元素尚未布局的情况
+    // 新文档就绪后补发视口高度，覆盖首帧注入时元素尚未布局的情况；
+    // 阵营状态也在就绪后重放一次，避免页面初始化期间的切换丢失
     updateDockLeft()
     scheduleSyncViewport()
+    if (activeFaction.value) sendFaction(activeFaction.value)
   } else if (msg.type === 'ipage:height' && typeof msg.height === 'number') {
     const h = Math.max(Math.ceil(msg.height), 480)
     if (frameRef.value) frameRef.value.style.height = h + 'px'
@@ -263,7 +321,6 @@ function onMessage(e: MessageEvent) {
       ratio: Number(msg.ratio) || 0,
       time: String(msg.time || ''),
       playing: !!msg.playing,
-      speed: Number(msg.speed) || 1,
     }
     if (!dragging.value) dragRatio.value = Number(msg.ratio) || 0
   } else if (msg.type === 'ipage:error') {
@@ -284,6 +341,8 @@ async function rebuild() {
   dockState.value = null
   dragging.value = false
   dragRatio.value = 0
+  // 换页即重置阵营筛选（新页面默认"全部"）
+  activeFaction.value = ''
   if (!props.html) {
     srcdoc.value = ''
     return
@@ -353,46 +412,60 @@ onBeforeUnmount(() => {
   background: #fff;
   display: block;
 }
-/* ── 页面时间轴浮层：默认细进度线，hover/聚焦展开，触屏常驻展开 ── */
+/* ── 页面级浮层（阵营 + 时间轴）：常驻展开，固定在画布区底部，不随页面滚动 ── */
 .ip-tl-dock {
   position: fixed;
   bottom: 0;
   z-index: 1200;
-  width: min(720px, calc(100vw - 24px));
-  height: 14px;
-  overflow: hidden;
+  box-sizing: border-box;
+  width: min(760px, calc(100vw - 24px));
   transform: translateX(-50%);
   background: rgba(255, 255, 255, 0.97);
   border: 1px solid #e2e8f0;
   border-bottom: none;
   border-radius: 10px 10px 0 0;
   box-shadow: 0 -2px 12px rgba(15, 23, 42, 0.14);
-  transition: height 0.18s ease;
 }
-.ip-tl-dock:hover,
-.ip-tl-dock:focus-within {
-  height: auto;
+/* 阵营行：与时间轴同一浮层，置于进度线下方 */
+.dock-faction {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 4px 12px 0;
+  font-size: 12px;
+  color: #1e293b;
 }
-.dock-line {
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 4px;
-  background: #e2e8f0;
+.dock-label {
+  color: #64748b;
+  margin-right: 2px;
 }
-.dock-line i {
-  display: block;
-  height: 100%;
+.dock-chip {
+  padding: 2px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.dock-chip:hover { background: #f1f5f9; }
+.dock-chip.active {
+  border-color: #1d4ed8;
   background: #1d4ed8;
-  transition: width 0.12s linear;
+  color: #fff;
 }
 .dock-panel {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 12px 10px;
+  padding: 8px 12px 10px;
   font-size: 12px;
   color: #1e293b;
 }
+/* 有阵营行时进一步压缩间距，避免浮层过高 */
+.dock-faction + .dock-panel { padding-top: 4px; }
 .dock-btn {
   padding: 3px 9px;
   border: 1px solid #cbd5e1;
@@ -414,9 +487,6 @@ onBeforeUnmount(() => {
   color: #475569;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-}
-@media (hover: none) {
-  .ip-tl-dock { height: auto; }
 }
 @media (max-width: 640px) {
   .ip-tl-dock { width: calc(100vw - 16px); }

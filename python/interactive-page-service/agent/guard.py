@@ -11,6 +11,25 @@
 import re
 from typing import Any, Dict, List
 
+
+def _bundle_has_geo_features(bundle: Any) -> bool:
+    """数据包中是否存在非空地理要素（空数组视为没有地图数据）。"""
+    if not isinstance(bundle, dict):
+        return False
+    for dataset in bundle.get("datasets") or []:
+        if not isinstance(dataset, dict):
+            continue
+        geo = dataset.get("geoFeatures")
+        if not isinstance(geo, dict):
+            continue
+        if any(
+            isinstance(geo.get(key), list) and bool(geo.get(key))
+            for key in ("tracks", "points", "units", "circles")
+        ):
+            return True
+    return False
+
+
 # 禁止出现的 JS 危险片段（词法级，避免误伤子串：带调用形态）
 _FORBIDDEN_JS_PATTERNS = [
     (r"\beval\s*\(", "禁止使用 eval"),
@@ -88,6 +107,9 @@ def validate_page(html: str, bundle: Dict[str, Any]) -> List[str]:
         issues.append("必须通过 SitApp.bootstrap(function(data){...}) 作为唯一数据入口")
     if not ("SitChart.render" in text or "SitMap.render" in text or "SitTable.render" in text):
         issues.append("页面至少要调用 SitChart.render / SitMap.render / SitTable.render 之一展示数据")
+    # 数据包没有地理要素时禁止渲染地图，避免生成空白地图
+    if "SitMap.render" in text and not _bundle_has_geo_features(bundle):
+        issues.append("数据包没有可渲染的地理要素，页面不允许调用 SitMap.render 或创建地图容器")
 
     # 页面级时间轴（bundle.timeline）相关的契约校验
     timeline = (bundle or {}).get("timeline") if isinstance(bundle, dict) else None

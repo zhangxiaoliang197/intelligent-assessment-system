@@ -68,7 +68,11 @@
         <div class="presentation-row">
           <el-checkbox v-model="presentation.kpi" :disabled="loading">KPI 指标</el-checkbox>
           <el-checkbox v-model="presentation.chart" :disabled="loading">图表</el-checkbox>
-          <el-checkbox v-model="presentation.map" :disabled="loading">地图</el-checkbox>
+          <el-checkbox
+            v-model="presentation.map"
+            :disabled="loading || !mapAvailable"
+            :title="mapAvailable ? '' : '当前勾选的评估产物没有坐标数据，地图不可用'"
+          >地图</el-checkbox>
           <el-checkbox v-model="presentation.table" :disabled="loading">明细表</el-checkbox>
         </div>
         <div class="title-row">
@@ -146,6 +150,11 @@ const conclusionPreview = computed(() => {
 })
 
 const canSubmit = computed(() => selectedIds.value.length > 0)
+/** 当前已勾选产物中是否至少有一项带坐标，决定「地图」区块是否可选 */
+const mapAvailable = computed(() => {
+  const selected = new Set(selectedIds.value)
+  return items.value.some((item) => selected.has(item.artifactId) && itemCapabilities(item).map)
+})
 
 /** 产物能力（图表/地图/明细） */
 function capabilities(item: EvaluationArtifactItem) {
@@ -159,7 +168,13 @@ function initSelection() {
   conclusion.value = normalized.conclusion
   selectedIds.value = defaultSelectedIds(normalized.items)
   includeConclusion.value = !!normalized.conclusion
-  presentation.value = { kpi: true, chart: true, map: true, table: false }
+  // 没有任何坐标产物时不默认勾选地图，避免生成后地图区域空白
+  presentation.value = {
+    kpi: true,
+    chart: true,
+    map: normalized.items.some((item) => itemCapabilities(item).map),
+    table: false,
+  }
   title.value = props.context.skillName
     ? `${props.context.skillName} · 态势分析`
     : '评估态势分析'
@@ -175,10 +190,21 @@ function onConfirm() {
   emit('confirm', buildArtifactPayload(props.result, props.context, {
     itemIds: selectedIds.value,
     includeConclusion: includeConclusion.value,
-    presentation: presentation.value,
+    // 已勾选产物没有坐标时，强制关闭地图，避免生成空白地图
+    presentation: {
+      ...presentation.value,
+      map: presentation.value.map && mapAvailable.value,
+    },
     title: title.value.trim(),
   }))
 }
+
+// 取消勾选最后一个坐标产物后，自动取消地图区块
+watch(mapAvailable, (available) => {
+  if (!available && presentation.value.map) {
+    presentation.value.map = false
+  }
+})
 
 watch(
   () => [props.result, props.context.skillName, props.context.question],

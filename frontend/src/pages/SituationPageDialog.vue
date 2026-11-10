@@ -424,6 +424,8 @@ function confirmDataSource() {
 
 // ── 会话 ──
 async function onNewSession() {
+  // 新建会话时清空上一页面的执行过程，避免面板残留旧步骤
+  store.resetRound()
   try {
     await store.createSession()
     showExecPanel.value = false
@@ -538,7 +540,13 @@ async function scrollToBottom() {
 }
 
 onMounted(async () => {
-  store.resetRound()
+  // 从评估分析/态势页工作台返回时，store 中保存着刚生成页面的执行步骤；
+  // 此时不能 resetRound()，否则执行过程面板会变成空白/全 pending。
+  const hasLivePage = !!store.pageId
+    && (store.status === 'generating' || store.status === 'ready')
+  if (!hasLivePage) {
+    store.resetRound()
+  }
   void store.loadSessions()
   void store.loadSkills()
   void fetchDataSources()

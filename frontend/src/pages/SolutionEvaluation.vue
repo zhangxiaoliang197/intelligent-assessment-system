@@ -183,7 +183,7 @@
           <div class="chat-panel">
             <div class="chat-area custom-scroll" ref="chatArea">
               <!-- 初始推荐问题 -->
-              <div v-if="messages.length === 0" class="empty-state">
+              <div v-if="messages.length === 0 && !showSituationTask" class="empty-state">
                 <div class="tags-section">
                   <div class="suggest-cards">
                       <div
@@ -538,6 +538,31 @@
                     />
                   </div>
                 </div>
+                <!-- 评估分析 → 态势页面生成回执：跨模块导航后仍保留 -->
+                <div v-if="showSituationTask" class="message assistant">
+                  <div class="message-avatar">
+                    <AssistantAvatar />
+                  </div>
+                  <div class="message-content">
+                    <div class="situation-status-card" :class="situationTask?.status">
+                      <template v-if="situationTask && situationTask.status === 'generating'">
+                        <el-icon class="is-loading"><Loading /></el-icon>
+                        <span>正在生成态势页面{{ situationTask.title ? `：${situationTask.title}` : '' }}…</span>
+                      </template>
+                      <template v-else-if="situationTask && situationTask.status === 'ready'">
+                        <el-icon color="#059669"><CircleCheck /></el-icon>
+                        <span>态势页面已生成：{{ situationTask.title || '未命名页面' }}</span>
+                        <el-button type="primary" size="small" @click="openSituationPage(situationTask.pageId)">
+                          <el-icon><FullScreen /></el-icon>打开态势页面
+                        </el-button>
+                      </template>
+                      <template v-else>
+                        <el-icon color="#dc2626"><WarningFilled /></el-icon>
+                        <span>{{ situationTask?.error || '态势页面生成失败' }}</span>
+                      </template>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -711,7 +736,9 @@ import {
   Search,
   ArrowRight,
   Microphone,
-  MapLocation
+  MapLocation,
+  FullScreen,
+  WarningFilled
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
 import AssistantAvatar from '@/components/AssistantAvatar.vue'
@@ -793,6 +820,23 @@ function renderMarkdown(text: string): string {
   return html
 }
 
+/**
+ * 判断结果卡中是否已经渲染了综合结论。
+ *
+ * 结果卡里的结论与正文（msg.content）取自同一份 final_answer，
+ * 两者同时展示会让同一个问题返回两段内容相同、仅样式不同的结论。
+ */
+function resultCardHasConclusion(result: any): boolean {
+  if (!result) return false
+  // Skill 结果卡固定渲染综合评估结论
+  if (result.type === 'skill') return true
+  // 其余结果卡仅在需要结论且存在文案时渲染结论区
+  if (['air_superiority', 'combat_effectiveness', 'general', 'data_query'].includes(result.type)) {
+    return Boolean(result.need_conclusion && result.final_answer)
+  }
+  return false
+}
+
 const dataSources = ref<Array<any>>([])
 const selectedDataSourceId = ref<string | null>(null)
 const selectedDataSourceName = ref<string>('')
@@ -820,7 +864,14 @@ let cancelRequested = false
 // ── 评估产物 → 态势页面 ──
 // 选择区内联在评估结果卡之后，默认收起；同一时刻只展开一条消息的选择区
 const artifactPanelIndex = ref<number | null>(null)
-const situationSheetLoading = ref(false)
+// 态势页面生成任务存放在全局 store 中，离开评估页再返回仍能恢复
+const situationTask = computed(() => interactiveStore.situationTask)
+const showSituationTask = computed(
+  () => !!situationTask.value && situationTask.value.evaluationSessionId === sessionId.value,
+)
+const situationSheetLoading = computed(
+  () => situationTask.value?.status === 'generating',
+)
 
 /** 某条评估消息生成态势页面时使用的上下文（问题、数据源、技能） */
 function artifactContextOf(msg: any): ArtifactContext {
@@ -883,12 +934,30 @@ function openArtifactSheet(index: number, msg: any) {
   artifactPanelIndex.value = artifactPanelIndex.value === index ? null : index
 }
 
-/** 确认生成：清空 ipage 旧会话上下文 → 发起生成 → 进入工作台 */
+/** 打开已生成的态势页面（点击卡片按钮才跳转） */
+function openSituationPage(pid?: string) {
+  if (!pid) return
+  router.push({ path: '/interactive', query: { pageId: pid } })
+}
+
+/**
+ * 确认生成：清空 ipage 旧会话上下文 → 发起生成。
+ * 不自动跳转；任务状态记录在全局 store 中，离开评估页再返回仍能恢复回执。
+ */
 async function onGenerateSituation(payload: EvaluationArtifactPayload) {
   if (situationSheetLoading.value) return
-  situationSheetLoading.value = true
+  if (interactiveStore.status === 'generating') {
+    ElMessage.info('已有态势页面正在生成，请稍候')
+    return
+  }
+  artifactPanelIndex.value = null
+  interactiveStore.startSituationTask({
+    evaluationSessionId: sessionId.value,
+    title: payload.title || '态势页面',
+  })
+  scrollToBottom()
   try {
-    // 丢弃上一轮 ipage 状态（不删除服务端旧任务），确保本次进入独立会话
+    // 丢弃上一轮 ipage 状态（不删除服务端旧任务），确保本次生成独立页面
     interactiveStore.resetRound()
     interactiveStore.messages.splice(0)
     interactiveStore.sessionId = ''
@@ -900,20 +969,28 @@ async function onGenerateSituation(payload: EvaluationArtifactPayload) {
         artifacts: payload,
       },
     )
+    // store 内部已在 POST 返回和 SSE 结束时同步任务；这里兜底处理同步失败
+    const task = interactiveStore.situationTask
+    if (!task) return
+    if (interactiveStore.pageId && !task.pageId) {
+      interactiveStore.updateSituationTask({ pageId: interactiveStore.pageId })
+    }
     if (interactiveStore.status === 'failed') {
-      ElMessage.error(interactiveStore.errorMsg || '态势页面生成失败')
-      return
+      interactiveStore.updateSituationTask({
+        status: 'failed',
+        error: interactiveStore.errorMsg || '态势页面生成失败',
+      })
+    } else if (!interactiveStore.pageId) {
+      interactiveStore.updateSituationTask({
+        status: 'failed',
+        error: '未获取到态势页面 ID，请稍后重试',
+      })
     }
-    if (!interactiveStore.pageId) {
-      ElMessage.error('未获取到态势页面 ID，请稍后重试')
-      return
-    }
-    artifactPanelIndex.value = null
-    router.push({ path: '/interactive', query: { pageId: interactiveStore.pageId } })
   } catch (error: any) {
-    ElMessage.error(error?.serverMessage || error?.message || '态势页面生成请求失败')
-  } finally {
-    situationSheetLoading.value = false
+    interactiveStore.updateSituationTask({
+      status: 'failed',
+      error: error?.serverMessage || error?.message || '态势页面生成请求失败',
+    })
   }
 }
 
@@ -1460,6 +1537,10 @@ const sendMessage = async () => {
     }
   }
 
+  // 新一轮评估开始：清理已完成的态势页面回执；仍在生成中的任务保留
+  if (interactiveStore.situationTask?.status !== 'generating') {
+    interactiveStore.clearSituationTask()
+  }
   invalidateSkillRecommendations()
   inputMessage.value = ''
   analyzing.value = true
@@ -1529,14 +1610,15 @@ const sendMessage = async () => {
     let buffer = ''
 
     const persistCompletedRun = (incomingSessionId: string) => {
-      const targetSessionId = sessionId.value || incomingSessionId
-      if (!sessionId.value) sessionId.value = incomingSessionId
+      // 后端返回的 session_id 是实际落库的 ID（已规范化为 32 位），以它为准，
+      // 避免本地存着带连字符的旧 ID 与历史记录列表中的 ID 不一致。
+      sessionId.value = incomingSessionId
       aiMessage.executionSteps = executionSteps.value.map(step => ({ ...step }))
       aiMessage.skillId = selectedSkillId.value
       aiMessage.databaseId = selectedDataSourceId.value || ''
       aiMessage.databaseName = selectedDataSourceName.value
-      sessionMessages.value[targetSessionId] = JSON.parse(JSON.stringify(messages.value))
-      saveHistory(targetSessionId, query, selectedSkillId.value)
+      sessionMessages.value[incomingSessionId] = JSON.parse(JSON.stringify(messages.value))
+      saveHistory(incomingSessionId, query, selectedSkillId.value)
       persistState()
     }
 
@@ -1560,8 +1642,10 @@ const sendMessage = async () => {
         const result = data.result || {}
         aiMessage.querying = false
         const answerText = result.final_answer || result.summary || result.answer || '分析完成'
-        // Skill 结果卡已经包含综合结论，正文不再重复显示。
-        aiMessage.content = result.type === 'skill' || result.need_conclusion === false ? '' : stripMapAnnotationBlock(answerText)
+        // 结果卡已经包含综合结论时，正文不再重复显示同一段内容。
+        aiMessage.content = result.need_conclusion === false || resultCardHasConclusion(result)
+          ? ''
+          : stripMapAnnotationBlock(answerText)
         aiMessage.result = result
         // 提取坐标并设置地图状态
         // 来源1: result.map_annotations（后端直接生成，优先级最高）
@@ -1734,7 +1818,7 @@ const loadHistory = async (item: any) => {
           { role: 'user', content: turn.question || item.title || '' },
           {
             role: 'assistant',
-            content: result?.type === 'skill' || result?.need_conclusion === false ? '' : answerText,
+            content: result?.need_conclusion === false || resultCardHasConclusion(result) ? '' : answerText,
             result,
             executionSteps: Array.isArray(turn.steps) ? turn.steps : [],
             skillId,
@@ -1787,6 +1871,10 @@ const newSession = async () => {
   // 立即中止可能正在运行的请求并清空状态
   stopAnalysis()
   _newSessionPending = true
+  // 新会话不再展示上一会话的态势页面生成回执
+  if (interactiveStore.situationTask?.status !== 'generating') {
+    interactiveStore.clearSituationTask()
+  }
   sessionId.value = ''
   messages.value = []
   executionSteps.value = []
@@ -1921,6 +2009,9 @@ onMounted(async () => {
   }
   const routePrompt = typeof route.query.prompt === 'string' ? route.query.prompt : ''
   if (routePrompt && !inputMessage.value) inputMessage.value = routePrompt
+  // 从其他模块返回时滚到最新，确保底部的态势页面生成回执可见
+  await nextTick()
+  if (messages.value.length || showSituationTask.value) scrollToBottom()
 })
 </script>
 
@@ -2875,6 +2966,24 @@ onMounted(async () => {
   border-top: 1px dashed #e2e8f0;
 }
 .situation-entry :deep(.artifact-panel) { width: 100%; }
+
+/* 评估产物生成态势页面：底部生成中/完成回执 */
+.situation-status-card {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #f8fbff;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.situation-status-card.ready { border-color: #a7f3d0; background: #f0fdf4; }
+.situation-status-card.failed { border-color: #fecaca; background: #fef2f2; color: #b91c1c; }
+.situation-status-card .el-button { margin-left: auto; }
 
 .execution-panel-toggle {
   display: flex;

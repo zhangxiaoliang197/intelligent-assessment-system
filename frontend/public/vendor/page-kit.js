@@ -39,6 +39,56 @@
     blue: '#1d4ed8', red: '#dc2626',
   };
 
+  // 页面级阵营筛选（宿主浮层下发）：空字符串 = 全部
+  var activeFaction = '';
+  var FACTION_ALIASES = { red: '红方', blue: '蓝方', '红方': '红方', '蓝方': '蓝方' };
+  // 逐机图层子项 → 全局组开关键
+  var TRACK_PART_GROUPS = {
+    track: 'trackLine',
+    reconSweep: 'reconSweep', strikeSweep: 'strikeSweep',
+    reconCircle: 'reconRange', strikeCircle: 'strikeRange',
+  };
+
+  function normalizeFaction(v) {
+    var s = String(v == null ? '' : v).trim();
+    return FACTION_ALIASES[s] || FACTION_ALIASES[s.toLowerCase()] || '';
+  }
+
+  // 阵营过滤：未选择阵营、元素无阵营（如静态设施）、或阵营一致时可见
+  function factionAllowed(faction) {
+    if (!activeFaction) return true;
+    var raw = String(faction == null ? '' : faction).trim();
+    if (!raw) return true;
+    return (normalizeFaction(raw) || raw) === activeFaction;
+  }
+
+  // 架次稳定键：任务编号优先，其次飞机编号，最后呼号
+  function trackKeyOf(t) {
+    t = t || {};
+    return String(t.missionId || t.id || t.name || '');
+  }
+
+  function defaultTrackParts() {
+    return {
+      all: true, aircraft: true, track: true,
+      reconCircle: true, strikeCircle: true,
+      reconSweep: true, strikeSweep: true,
+    };
+  }
+
+  function ensureLayerState(api) {
+    if (!api._layerState) {
+      api._layerState = {
+        groups: {
+          trackLine: true, reconSweep: true, strikeSweep: true,
+          reconRange: true, strikeRange: true,
+        },
+        tracks: {}, units: {}, circles: {},
+      };
+    }
+    return api._layerState;
+  }
+
   // 状态规范键 → 视觉（与后端 field_resolver.STATUS_KEYS 一一对应）。
   // 数据源注解把原始状态值映射到这些键时优先生效；未提供 statusKey 时走下方中文词匹配。
   var STATUS_STYLES = {
@@ -408,6 +458,73 @@
   // 未传 spec.timeline 的图表保持静态，不订阅时钟。
   // ────────────────────────────────────────────────────────────────
   var chartTimelineByEl = [];   // [el, unsubscribe]，重渲染时解除旧订阅
+  var chartEntries = [];        // [{ node, repaint }]，阵营切换时统一重绘
+
+  // ── 图表阵营过滤：系列名 / 类目轴 / 饼图项命中阵营时按当前阵营裁剪 ──
+  function isFactionValue(v) {
+    return !!normalizeFaction(v);
+  }
+
+  // 只保留当前阵营的系列；若一个系列都不剩则保持原样（避免整图空白）
+  function applyFactionFilter(option) {
+    if (!activeFaction || !option) return option;
+
+    // 1. 类目轴全部是阵营值（如阵营对比柱图）→ 裁剪类目与各系列数据
+    ['xAxis', 'yAxis'].forEach(function (key) {
+      var axis = option[key];
+      if (!axis || Array.isArray(axis)) return;
+      var data = axis.data;
+      if (!Array.isArray(data) || !data.length) return;
+      var allFaction = data.every(function (v) { return isFactionValue(v); });
+      if (!allFaction) return;
+      var keep = [];
+      data.forEach(function (v, i) {
+        if (normalizeFaction(v) === activeFaction) keep.push(i);
+      });
+      if (!keep.length) return;
+      axis.data = keep.map(function (i) { return data[i]; });
+      (option.series || []).forEach(function (s) {
+        if (Array.isArray(s.data)) s.data = keep.map(function (i) { return s.data[i]; });
+      });
+    });
+
+    // 2. 系列名是阵营 → 只保留当前阵营系列（类目轴规则已裁剪时跳过）
+    var series = option.series || [];
+    var factionSeries = series.filter(function (s) { return isFactionValue(s.name); });
+    if (factionSeries.length) {
+      option.series = series.filter(function (s) {
+        return !isFactionValue(s.name) || normalizeFaction(s.name) === activeFaction;
+      });
+    }
+
+    // 3. 饼图/单系列数据项名为阵营 → 只保留当前阵营项
+    series = option.series || [];
+    if (series.length === 1 && Array.isArray(series[0].data)) {
+      var items = series[0].data;
+      var factionItems = items.filter(function (d) {
+        return d && typeof d === 'object' && isFactionValue(d.name);
+      });
+      if (factionItems.length === items.length && items.length > 1) {
+        series[0].data = items.filter(function (d) {
+          return normalizeFaction(d.name) === activeFaction;
+        });
+      }
+    }
+
+    return option;
+  }
+
+  // 阵营切换后统一重绘所有已注册图表（时间轴图沿用最近一次 tick 的时刻）
+  function repaintCharts() {
+    chartEntries.slice().forEach(function (entry) {
+      try { entry.repaint(); } catch (e) { reportError('图表阵营重绘失败: ' + (e && e.message)); }
+    });
+  }
+
+  function registerChart(node, repaint) {
+    chartEntries = chartEntries.filter(function (e) { return e.node !== node; });
+    chartEntries.push({ node: node, repaint: repaint });
+  }
 
   function timelineBucketLabel(key) {
     var s = String(key == null ? '' : key);
@@ -583,7 +700,8 @@
         // 绑定页面时钟：只按桶索引变化重绘，避免每个 tick 空转 ECharts
         var paint = function (tick) {
           try {
-            inst.setOption(buildTimelineChartOption(renderSpec, model, tick && tick.t), true);
+            inst.setOption(applyFactionFilter(
+              buildTimelineChartOption(renderSpec, model, tick && tick.t)), true);
           } catch (e) { reportError('图表时间轴渲染失败: ' + e.message); }
         };
         var lastTickIndex = tl.current().index;
@@ -595,18 +713,26 @@
         };
         SitBus.on('timeline:tick', handler);
         chartTimelineByEl.push([node, function () { SitBus.off('timeline:tick', handler); }]);
+        // 阵营切换时按当前时刻重绘，保证与地图同刻
+        registerChart(node, function () { paint({ t: tl.current().t }); });
       } else if (model) {
         // 页面此时还没有时间轴（常见于 SitTimeline.render 写在脚本末尾）：
         // 先按"全部桶"静态展示避免空白，等时间轴创建后自动重绘并绑定
-        try { inst.setOption(buildTimelineChartOption(renderSpec, model, ''), true); }
-        catch (e) { reportError('图表渲染失败: ' + e.message); }
+        var paintAll = function () {
+          inst.setOption(applyFactionFilter(
+            buildTimelineChartOption(renderSpec, model, '')), true);
+        };
+        try { paintAll(); } catch (e) { reportError('图表渲染失败: ' + e.message); }
+        registerChart(node, paintAll);
         if (spec.timeline) {
           deferTimelineRebind(node, function () { SitChart.render(node, spec); });
         }
       } else {
-        try {
-          inst.setOption(buildOption(renderSpec), true);
-        } catch (e) { reportError('图表渲染失败: ' + e.message); }
+        var repaintStatic = function () {
+          inst.setOption(applyFactionFilter(buildOption(renderSpec)), true);
+        };
+        try { repaintStatic(); } catch (e) { reportError('图表渲染失败: ' + e.message); }
+        registerChart(node, repaintStatic);
       }
       return {
         on: function (event, fn) {
@@ -694,19 +820,29 @@
       '  border-radius:5px!important;color:#0f172a!important;font-size:11px!important;',
       '  box-shadow:0 1px 4px rgba(15,23,42,.2)!important;padding:1px 6px!important;}',
       '.sit-ic-tip::before{display:none!important}',
-      // 图例面板
+      // 图例 / 图层开关面板
       '.sit-legend{background:rgba(255,255,255,.94);border:1px solid #e2e8f0;border-radius:8px;',
       '  box-shadow:0 2px 10px rgba(15,23,42,.12);padding:8px 10px;font-size:12px;color:#1e293b;',
-      '  max-width:210px;max-height:60%;overflow:auto;}',
+      '  max-width:260px;max-height:70%;overflow:auto;}',
       '.sit-legend-title{font-weight:600;font-size:12px;margin-bottom:5px;display:flex;',
       '  justify-content:space-between;align-items:center;cursor:pointer;user-select:none;}',
-      '.sit-legend-title .sit-legend-toggle{color:#64748b;font-size:11px}',
+      '.sit-legend-actions{display:flex;align-items:center;gap:8px}',
+      '.sit-legend-title .sit-legend-toggle,.sit-legend-reset{color:#64748b;font-size:11px}',
+      '.sit-legend-reset{color:#1d4ed8;cursor:pointer}',
       '.sit-legend-group{margin-top:5px;padding-top:5px;border-top:1px dashed #e2e8f0}',
-      '.sit-legend-row{display:flex;align-items:center;gap:7px;padding:2px 0;white-space:nowrap}',
+      '.sit-legend-sub{color:#64748b;font-size:11px;margin:2px 0 3px;font-weight:600}',
+      '.sit-legend-row{display:flex;align-items:center;gap:6px;padding:2px 0;white-space:nowrap}',
+      '.sit-legend-row label{display:flex;align-items:center;gap:6px;cursor:pointer;min-width:0}',
+      '.sit-legend-cb{width:13px;height:13px;margin:0;accent-color:#1d4ed8;flex:none;cursor:pointer}',
       '.sit-legend-sw{width:20px;height:20px;flex:none;display:inline-flex;align-items:center;justify-content:center}',
       '.sit-legend-sw svg{width:20px;height:20px}',
       '.sit-legend-line{width:22px;height:0;border-top-style:solid;flex:none;margin:0 2px}',
       '.sit-legend-circle{width:16px;height:16px;border-radius:50%;flex:none;margin:0 3px}',
+      '.sit-legend-air-head{cursor:pointer}',
+      '.sit-legend-caret{width:12px;color:#94a3b8;font-size:10px;flex:none}',
+      '.sit-legend-name{overflow:hidden;text-overflow:ellipsis;max-width:118px}',
+      '.sit-legend-subs{padding-left:26px}',
+      '.sit-legend-subrow{padding:1px 0;color:#475569}',
       // 时间轴播放条（内置播放器）
       '.sit-playback{background:rgba(255,255,255,.94);border:1px solid #e2e8f0;border-radius:8px;',
       '  box-shadow:0 2px 10px rgba(15,23,42,.12);padding:6px 9px;display:flex;align-items:center;',
@@ -894,103 +1030,219 @@
     return html;
   }
 
-  // ── 图例：按地图上实际出现的类别自动生成 ──
-  function buildLegendItems(spec) {
-    var seen = {}, units = [];
-    function addUnit(u) {
-      var v = resolveUnitVisual(u, true);
-      var key = v.kind + '|' + v.shape + '|' + v.color + '|' + v.label;
-      if (!seen[key]) { seen[key] = 1; units.push({ v: v }); }
-    }
-    (spec.units || spec.points || []).forEach(addUnit);
-    (spec.tracks || []).forEach(function (t) {
-      // 航迹终点即当前机位，纳入符号图例
-      var last = (t.points || [])[(t.points || []).length - 1];
-      if (last) addUnit({ unitKind: 'aircraft', type: t.category, faction: t.faction,
-                          factionColor: t.factionColor, symbol: t.symbol,
-                          name: t.name, heading: last.heading });
-    });
-    var trackColors = {};
-    (spec.tracks || []).forEach(function (t) {
-      var c = t.factionColor || FACTION_COLORS[t.faction] || hashColor(t.name);
-      trackColors[t.faction || '其它'] = c;
-    });
-    var rangeItems = [];
-    function addRange(label, faction, dashed, color) {
-      var key = label + '|' + (faction || '');
-      if (seen[key]) return;
-      seen[key] = 1;
-      rangeItems.push({
-        label: label,
-        color: color || FACTION_COLORS[faction] || (dashed ? '#d97706' : '#dc2626'),
-        dashed: !!dashed,
-      });
-    }
-    (spec.circles || []).forEach(function (c) {
-      var isRecon = c.kind === 'recon' || (c.rangeType || '').indexOf('侦察') >= 0;
-      addRange(c.rangeType || (c.kind === 'strike' ? '打击范围' : '侦察范围'),
-               c.faction, isRecon, c.factionColor);
-    });
-    // 动态能力圈（随飞机运动）单独出图例，与静态范围圈区分
-    if (spec.playback) {
-      var pb = spec.playback === true ? {} : (spec.playback || {});
-      var mode = pb.radius || 'both';
-      (spec.tracks || []).forEach(function (t) {
-        var sv = toNum(t.strikeRadiusKm), rv = toNum(t.reconRadiusKm);
-        if (mode !== 'recon' && sv !== null && sv > 0) {
-          addRange('打击范围（动态）', t.faction, false, t.factionColor);
-        }
-        if (mode !== 'strike' && rv !== null && rv > 0) {
-          addRange('侦察范围（动态）', t.faction, true, t.factionColor);
-        }
-      });
-    }
-    return { units: units, trackColors: trackColors, ranges: rangeItems };
+  // ── 图例：按地图上实际出现的要素生成可交互图层开关 ──
+  function circleMetaOf(c) {
+    var isRecon = c.kind === 'recon' || String(c.rangeType || '').indexOf('侦察') >= 0;
+    var label = c.rangeType || (isRecon ? '侦察范围' : '打击范围');
+    return {
+      key: ['circle', label, String(c.faction || ''), isRecon ? 'recon' : 'strike'].join('|'),
+      label: label, isRecon: isRecon,
+      color: c.factionColor || FACTION_COLORS[c.faction] || (isRecon ? '#d97706' : '#dc2626'),
+    };
   }
 
-  function addLegendControl(L, map, spec) {
-    var data = buildLegendItems(spec);
-    if (!data.units.length && !data.ranges.length && !Object.keys(data.trackColors).length) return;
+  function buildLegendModel(spec, playbackOn) {
+    var pb = spec.playback === true ? {} : (spec.playback || {});
+    var radiusMode = pb.radius || 'both';
+    var trailOn = playbackOn && pb.trail !== false && !!window.turf;
+    var aircraft = [];
+    var seenTracks = {};
+    (spec.tracks || []).forEach(function (t) {
+      if ((t.points || []).length < 2) return;
+      var key = trackKeyOf(t);
+      if (!key || seenTracks[key]) return;
+      seenTracks[key] = 1;
+      var sv = toNum(t.strikeRadiusKm), rv = toNum(t.reconRadiusKm);
+      var parts = defaultTrackParts();
+      parts.reconCircle = playbackOn && radiusMode !== 'strike' && rv !== null && rv > 0;
+      parts.strikeCircle = playbackOn && radiusMode !== 'recon' && sv !== null && sv > 0;
+      parts.reconSweep = trailOn && parts.reconCircle;
+      parts.strikeSweep = trailOn && parts.strikeCircle;
+      var last = (t.points || [])[(t.points || []).length - 1] || {};
+      aircraft.push({
+        key: key, name: t.name || key,
+        color: t.factionColor || FACTION_COLORS[t.faction] || hashColor(t.name),
+        visual: resolveUnitVisual({
+          unitKind: 'aircraft', type: t.category, faction: t.faction,
+          factionColor: t.factionColor, symbol: t.symbol,
+          name: t.name, heading: last.heading,
+        }, true),
+        parts: parts,
+      });
+    });
+
+    var units = [], seenUnits = {};
+    (spec.units || spec.points || []).forEach(function (u) {
+      var v = resolveUnitVisual(u, true);
+      var key = [v.kind, v.label, String(u.faction || ''), v.color].join('|');
+      var row = seenUnits[key];
+      if (!row) {
+        row = seenUnits[key] = {
+          key: key, label: v.label, visual: v, count: 0,
+        };
+        units.push(row);
+      }
+      row.count += 1;
+    });
+
+    var circles = [], seenCircles = {};
+    (spec.circles || []).forEach(function (c) {
+      var meta = circleMetaOf(c);
+      if (!seenCircles[meta.key]) {
+        seenCircles[meta.key] = 1;
+        circles.push(meta);
+      }
+    });
+
+    // 全局组只在确实存在对应要素时出现
+    var hasReconCircle = circles.some(function (c) { return c.isRecon; })
+      || aircraft.some(function (a) { return a.parts.reconCircle; });
+    var hasStrikeCircle = circles.some(function (c) { return !c.isRecon; })
+      || aircraft.some(function (a) { return a.parts.strikeCircle; });
+    var groups = [];
+    if (aircraft.length || circles.length) groups.push({ key: 'trackLine', label: '航迹线' });
+    if (aircraft.some(function (a) { return a.parts.reconSweep; })) {
+      groups.push({ key: 'reconSweep', label: '侦察扫掠区域' });
+    }
+    if (aircraft.some(function (a) { return a.parts.strikeSweep; })) {
+      groups.push({ key: 'strikeSweep', label: '打击扫掠区域' });
+    }
+    if (hasReconCircle) groups.push({ key: 'reconRange', label: '侦察范围圈' });
+    if (hasStrikeCircle) groups.push({ key: 'strikeRange', label: '打击范围圈' });
+    return { groups: groups, aircraft: aircraft, units: units, circles: circles };
+  }
+
+  function addLayerControl(L, map, spec, api, playbackOn) {
+    var model = buildLegendModel(spec, playbackOn);
+    if (!model.groups.length && !model.units.length && !model.aircraft.length && !model.circles.length) return null;
+    var state = ensureLayerState(api);
+
+    function trackState(key) {
+      if (!state.tracks[key]) state.tracks[key] = defaultTrackParts();
+      return state.tracks[key];
+    }
+    function unitSw(v) {
+      return '<span class="sit-legend-sw" style="background:transparent">'
+        + '<svg viewBox="0 0 24 24"><g transform="translate(2,2) scale(0.84)">'
+        + '<circle cx="12" cy="12" r="11.4" fill="' + v.color + '" stroke="#fff" stroke-width="1.6"/>'
+        + (SIT_SHAPES[v.shape] || SIT_SHAPES.dot) + '</g></svg></span>';
+    }
+    function cb(scope, key, part, checked) {
+      var attrs = ' type="checkbox" data-scope="' + scope + '" data-key="' + esc(key) + '"';
+      if (part) attrs += ' data-part="' + esc(part) + '"';
+      return '<input class="sit-legend-cb"' + attrs + (checked ? ' checked' : '') + '>';
+    }
+    function circleSw(c) {
+      return '<span class="sit-legend-circle" style="background:' + c.color
+        + '22;border:1.6px ' + (c.isRecon ? 'dashed' : 'solid') + ' ' + c.color + '"></span>';
+    }
+
+    var groupRows = model.groups.map(function (g) {
+      return '<div class="sit-legend-row"><label>' + cb('group', g.key, '', state.groups[g.key] !== false)
+        + '<span>' + esc(g.label) + '</span></label></div>';
+    }).join('');
+
+    var airRows = model.aircraft.map(function (a) {
+      var st = trackState(a.key);
+      var subs = [];
+      subs.push({ part: 'aircraft', label: '飞机图标' });
+      subs.push({ part: 'track', label: '航迹线' });
+      if (a.parts.reconCircle) subs.push({ part: 'reconCircle', label: '侦察范围圈' });
+      if (a.parts.strikeCircle) subs.push({ part: 'strikeCircle', label: '打击范围圈' });
+      if (a.parts.reconSweep) subs.push({ part: 'reconSweep', label: '侦察扫掠带' });
+      if (a.parts.strikeSweep) subs.push({ part: 'strikeSweep', label: '打击扫掠带' });
+      var subRows = subs.map(function (s) {
+        return '<div class="sit-legend-row sit-legend-subrow"><label>'
+          + cb('track', a.key, s.part, st[s.part] !== false)
+          + '<span>' + esc(s.label) + '</span></label></div>';
+      }).join('');
+      return '<div class="sit-legend-air">'
+        + '<div class="sit-legend-row sit-legend-air-head">'
+        + cb('track', a.key, 'all', st.all !== false)
+        + '<span class="sit-legend-caret">▶</span>' + unitSw(a.visual)
+        + '<span class="sit-legend-name">' + esc(a.name) + '</span>'
+        + '</div>'
+        + '<div class="sit-legend-subs" style="display:none">' + subRows + '</div>'
+        + '</div>';
+    }).join('');
+
+    var unitRows = model.units.map(function (u) {
+      return '<div class="sit-legend-row"><label>'
+        + cb('unit', u.key, '', state.units[u.key] !== false)
+        + unitSw(u.visual) + '<span>' + esc(u.label) + '</span>'
+        + '</label></div>';
+    }).join('');
+
+    var circleRows = model.circles.map(function (c) {
+      return '<div class="sit-legend-row"><label>'
+        + cb('circle', c.key, '', state.circles[c.key] !== false)
+        + circleSw(c) + '<span>' + esc(c.label) + '</span>'
+        + '</label></div>';
+    }).join('');
+
     var LegendCtl = L.Control.extend({
       options: { position: 'bottomright' },
       onAdd: function () {
         var box = L.DomUtil.create('div', 'sit-legend');
-        var unitSw = function (v) {
-          return '<span class="sit-legend-sw" style="background:transparent">'
-            + '<svg viewBox="0 0 24 24"><g transform="translate(2,2) scale(0.84)">'
-            + '<circle cx="12" cy="12" r="11.4" fill="' + v.color + '" stroke="#fff" stroke-width="1.6"/>'
-            + (SIT_SHAPES[v.shape] || SIT_SHAPES.dot) + '</g></svg></span>';
-        };
-        var rows = '';
-        data.units.forEach(function (it) {
-          rows += '<div class="sit-legend-row">' + unitSw(it.v) + '<span>' + esc(it.v.label) + '</span></div>';
-        });
-        var trackRows = Object.keys(data.trackColors).map(function (name) {
-          return '<div class="sit-legend-row"><span class="sit-legend-line" style="border-top:3px solid '
-            + data.trackColors[name] + '"></span><span>' + esc(name === '其它' ? '航迹' : name + '航迹')
-            + '</span></div>';
-        }).join('');
-        var rangeRows = data.ranges.map(function (r) {
-          return '<div class="sit-legend-row"><span class="sit-legend-circle" style="background:'
-            + r.color + '22;border:1.6px ' + (r.dashed ? 'dashed' : 'solid') + ' ' + r.color
-            + '"></span><span>' + esc(r.label) + '</span></div>';
-        }).join('');
         box.innerHTML =
-          '<div class="sit-legend-title"><span>图例</span>'
-          + '<span class="sit-legend-toggle">收起 ▼</span></div>'
-          + '<div class="sit-legend-body">' + rows
-          + (trackRows ? '<div class="sit-legend-group">' + trackRows + '</div>' : '')
-          + (rangeRows ? '<div class="sit-legend-group">' + rangeRows + '</div>' : '')
+          '<div class="sit-legend-title"><span>图层 / 图例</span>'
+          + '<span class="sit-legend-actions">'
+          + '<span class="sit-legend-reset" title="全部显示">全显</span>'
+          + '<span class="sit-legend-toggle">收起 ▼</span></span></div>'
+          + '<div class="sit-legend-body">'
+          + (groupRows ? '<div class="sit-legend-group"><div class="sit-legend-sub">图层开关</div>' + groupRows + '</div>' : '')
+          + (airRows ? '<div class="sit-legend-group"><div class="sit-legend-sub">飞机（逐架次）</div>' + airRows + '</div>' : '')
+          + (unitRows ? '<div class="sit-legend-group"><div class="sit-legend-sub">其它要素</div>' + unitRows + '</div>' : '')
+          + (circleRows ? '<div class="sit-legend-group"><div class="sit-legend-sub">范围圈</div>' + circleRows + '</div>' : '')
           + '</div>';
-        var titleEl = box.querySelector('.sit-legend-title');
         var bodyEl = box.querySelector('.sit-legend-body');
         var toggleEl = box.querySelector('.sit-legend-toggle');
         L.DomEvent.disableClickPropagation(box);
         L.DomEvent.disableScrollPropagation(box);
-        titleEl.addEventListener('click', function () {
+        box.querySelector('.sit-legend-title').addEventListener('click', function (e) {
+          if (e.target && e.target.classList.contains('sit-legend-reset')) return;
           var hidden = bodyEl.style.display === 'none';
           bodyEl.style.display = hidden ? '' : 'none';
           toggleEl.textContent = hidden ? '收起 ▼' : '展开 ▲';
+        });
+        // 全显：恢复所有开关与勾选状态
+        box.querySelector('.sit-legend-reset').addEventListener('click', function () {
+          Object.keys(state.groups).forEach(function (k) { state.groups[k] = true; });
+          Object.keys(state.tracks).forEach(function (k) {
+            var parts = defaultTrackParts();
+            Object.keys(parts).forEach(function (p) { state.tracks[k][p] = parts[p]; });
+          });
+          Object.keys(state.units).forEach(function (k) { state.units[k] = true; });
+          Object.keys(state.circles).forEach(function (k) { state.circles[k] = true; });
+          Array.prototype.forEach.call(box.querySelectorAll('input[type="checkbox"]'), function (el) {
+            el.checked = true;
+          });
+          api._applyVisibility();
+        });
+        // 逐机展开/收起（点复选框本身不触发）
+        box.addEventListener('click', function (e) {
+          var head = e.target && e.target.closest ? e.target.closest('.sit-legend-air-head') : null;
+          if (!head || (e.target.tagName === 'INPUT')) return;
+          var subs = head.parentNode.querySelector('.sit-legend-subs');
+          var caret = head.querySelector('.sit-legend-caret');
+          var open = subs.style.display === 'none';
+          subs.style.display = open ? '' : 'none';
+          if (caret) caret.textContent = open ? '▼' : '▶';
+        });
+        box.addEventListener('change', function (e) {
+          var t = e.target;
+          if (!t || t.tagName !== 'INPUT') return;
+          var scope = t.getAttribute('data-scope');
+          var key = t.getAttribute('data-key');
+          var part = t.getAttribute('data-part');
+          var on = !!t.checked;
+          if (scope === 'group') state.groups[key] = on;
+          else if (scope === 'track') {
+            var st = trackState(key);
+            if (part === 'all') st.all = on; else st[part] = on;
+          } else if (scope === 'unit') state.units[key] = on;
+          else if (scope === 'circle') state.circles[key] = on;
+          api._applyVisibility();
         });
         return box;
       },
@@ -1015,6 +1267,8 @@
       ly.startMarkers = [];
       if (ly.cluster) { try { map.removeLayer(ly.cluster); } catch (e) { } ly.cluster = null; }
       if (ly.legendControl) { try { map.removeControl(ly.legendControl); } catch (e) { } ly.legendControl = null; }
+      // 图层引用只对本次渲染有效；可见性状态 api._layerState 保留（重渲染不丢开关）
+      api._refs = { units: [], tracks: [], circles: [] };
       // 页面时间轴订阅需先解除，避免重渲染后旧地图实例继续接收 tick
       if (api._timelineOff) { try { api._timelineOff(); } catch (e) { } api._timelineOff = null; }
       // 播放器需先销毁：停止计时器并移除动态能力圈/扫掠走廊/播放条
@@ -1028,7 +1282,7 @@
   // 时间轴回放：内置播放器 + 动态能力圈 + turf 扫掠留痕
   //
   // 由 spec.playback 开启（缺省时行为与历史版本完全一致）：
-  //   playback: { speed, interval, radius:'strike'|'recon'|'both',
+  //   playback: { interval, radius:'strike'|'recon'|'both',
   //               trail:true, trailSteps:16, showBar:true, dayNormalize:auto }
   // 开启后**不再预画整条航迹**（静态 polyline/起点点/终点图标全部由本播放器接管）：
   //   1. 每个在空架次画一个飞机图标（按机型象形符号 + 机头朝航向）随播放移动；
@@ -1041,18 +1295,9 @@
   // 日期）+ 日内毫秒"显示完整年月日时分秒，航迹弹窗仍显示真实日期（数据不篡改）。
   // 生命周期：当前时刻早于首点（未出动）或晚于末点（已返航）→ 该架次不画图标不留航迹、
   // 不画圈不留带，已创建的图层即时从地图移除（"有多少在空飞机就有多少圈"）。
-  // 播放条：播放/暂停、进度拖动、完整时间标签、0.5×/1×/2×/4× 倍速、重置。
+  // 播放条：播放/暂停、进度拖动、完整时间标签、重置（不提供倍速）。
+  // 回放为逐帧离散显示：每帧对齐一条真实航迹采样点，不做插值。
   // ────────────────────────────────────────────────────────────────
-
-  function lerp(a, b, r) { return a + (b - a) * r; }
-
-  // 航向插值：按最短弧跨越 0/360 边界
-  function lerpHeading(a, b, r) {
-    if (a === null) return b;
-    if (b === null) return a;
-    var d = ((b - a + 540) % 360) - 180;
-    return (a + d * r + 360) % 360;
-  }
 
   // 时间字符串 → 毫秒（空值/非法值返回 null）
   function parseTime(s) {
@@ -1127,15 +1372,12 @@
     var steps = Math.max(4, toNum(cfg.trailSteps) || 16);
     var interval = Math.max(80, toNum(cfg.interval) || 500);
     var THROTTLE = 250;   // 扫掠多边形重算节流（turf.buffer 基于 JSTS，逐帧调用会卡顿）
-    // 倍速档位（播放条按钮循环切换）；初始值取 cfg.speed 最接近的一档
-    var SPEEDS = [0.5, 1, 2, 4];
-    var wantSpeed = Math.max(0.25, toNum(cfg.speed) || 1);
-    var speedIdx = 0;
-    SPEEDS.forEach(function (s, i) {
-      if (Math.abs(s - wantSpeed) < Math.abs(SPEEDS[speedIdx] - wantSpeed)) speedIdx = i;
-    });
-    var speed = SPEEDS[speedIdx];
-    function speedLabel(v) { return (v === Math.floor(v) ? String(v) : v.toFixed(1)) + '×'; }
+
+    // 逐架次图层开关查询（由 SitMap 注入 api._partVisible；缺失时视为全显）
+    function allow(it, part) {
+      if (!factionAllowed(it.track && it.track.faction)) return false;
+      return api._partVisible ? api._partVisible(it.track, part) : true;
+    }
 
     // 逐架次预解析时间戳，避免播放中反复 Date.parse
     var items = [];
@@ -1253,31 +1495,26 @@
     var lastBuffer = 0;
     var listeners = [];
 
-    // 当前时刻沿航迹的插值位置（无时间字段的航迹固定停在最后一点）
-    // 使用生效时刻 et（归一化时为虚拟日内毫秒），两端仍 clamp 供航迹末端符号使用
+    // 当前帧对应的真实航迹采样点：取不晚于 t 的最后一个有效点，不做插值。
+    // 使用生效时刻 et（归一化时为虚拟日内毫秒）；无时间字段的航迹固定停在最后一点。
+    // 早于首点的位置仍返回首点，是否在空由 airborneAt() 判定。
     function posAt(it, t) {
       var pts = it.pts, ts = it.et, n = pts.length;
-      function at(i, frac) {
+      function at(i) {
         return {
           lng: toNum(pts[i].lng), lat: toNum(pts[i].lat),
-          heading: toNum(pts[i].heading), index: i, frac: frac,
+          heading: toNum(pts[i].heading), index: i,
         };
       }
-      if (!it.hasTime) return at(n - 1, 1);
-      if (t <= ts[0]) return at(0, 0);
-      if (t >= ts[n - 1]) return at(n - 1, 1);
-      for (var i = 0; i < n - 1; i++) {
-        var a = ts[i], b = ts[i + 1];
-        if (a === null || b === null || a > t || t > b) continue;
-        var r = b > a ? (t - a) / (b - a) : 0;
-        return {
-          lng: lerp(toNum(pts[i].lng), toNum(pts[i + 1].lng), r),
-          lat: lerp(toNum(pts[i].lat), toNum(pts[i + 1].lat), r),
-          heading: lerpHeading(toNum(pts[i].heading), toNum(pts[i + 1].heading), r),
-          index: i, frac: r,
-        };
+      if (!it.hasTime) return at(n - 1);
+      if (t <= ts[0]) return at(0);
+      var lo = 0, hi = n - 1, hit = 0;
+      while (lo <= hi) {
+        var mid = (lo + hi) >> 1;
+        if (ts[mid] !== null && ts[mid] <= t) { hit = mid; lo = mid + 1; }
+        else { hi = mid - 1; }
       }
-      return at(n - 1, 1);
+      return at(hit);
     }
 
     // 生命周期判定：当前时刻早于首点（未出动）或晚于末点（已返航）→ 不在空；
@@ -1293,11 +1530,6 @@
       for (var i = 0; i <= pos.index && i < it.pts.length; i++) {
         var lng = toNum(it.pts[i].lng), lat = toNum(it.pts[i].lat);
         if (lng !== null && lat !== null) coords.push([lng, lat]);
-      }
-      // 补上插值后的当前位置，使走廊尾端始终跟着飞机
-      if (pos.frac > 0 && pos.index < it.pts.length - 1
-          && pos.lng !== null && pos.lat !== null) {
-        coords.push([pos.lng, pos.lat]);
       }
       if (coords.length < 2) return null;
       try {
@@ -1320,39 +1552,42 @@
       return track.factionColor || FACTION_COLORS[track.faction] || hashColor(track.name);
     }
 
-    // 已飞航段的 Leaflet 坐标：起点 → 当前索引点，并补上插值位置使线尾贴住机头
+    // 已飞航段的 Leaflet 坐标：起点 → 当前帧对应的真实采样点（不做插值补点）
     function flownCoords(it, pos) {
       var out = [];
       for (var i = 0; i <= pos.index && i < it.pts.length; i++) {
         var lng = toNum(it.pts[i].lng), lat = toNum(it.pts[i].lat);
         if (lng !== null && lat !== null) out.push(toLatLng(lng, lat));
       }
-      if (pos.frac > 0 && pos.index < it.pts.length - 1
-          && pos.lng !== null && pos.lat !== null) {
-        out.push(toLatLng(pos.lng, pos.lat));
-      }
       return out;
     }
 
-    // 移除单个架次的飞机图标与渐进航迹层
-    function clearItemVis(it) {
+    function clearPlane(it) {
       var vis = it.vis;
       if (vis.plane) {
         try { map.removeLayer(vis.plane); } catch (e) { }
         vis.plane = null; vis.rot = null;
       }
+    }
+
+    function clearLine(it) {
+      var vis = it.vis;
       if (vis.line) {
         try { map.removeLayer(vis.line); } catch (e) { }
         vis.line = null; vis.weight = null;
       }
     }
 
-    // 飞机图标 + 渐进航迹："飞机到哪航迹画到哪"，从不预画整条航迹
-    function renderItemVis(it, pos) {
+    // 移除单个架次的飞机图标与渐进航迹层
+    function clearItemVis(it) {
+      clearPlane(it);
+      clearLine(it);
+    }
+
+    // 飞机图标：机型象形符号、机头朝当前航向；只更新位置与朝向，不重建 DOM
+    function renderPlane(it, pos) {
       var vis = it.vis;
       var ll = toLatLng(pos.lng, pos.lat);
-
-      // 飞机图标：机型象形符号、机头朝当前航向；只更新位置与朝向，不重建 DOM
       if (!vis.plane) {
         vis.plane = L.marker(ll, {
           icon: createUnitIcon(L, {
@@ -1371,11 +1606,14 @@
         vis.plane.setLatLng(ll);
         vis.rot = applyHeading(vis.plane, pos.heading, vis.rot);
       }
+    }
 
-      // 渐进航迹：不足 2 点时（刚起飞 / 重置回起点）只留飞机图标，不画线
+    // 渐进航迹："飞机到哪航迹画到哪"，从不预画整条航迹
+    function renderTrackLine(it, pos) {
+      var vis = it.vis;
       var coords = flownCoords(it, pos);
       if (coords.length < 2) {
-        if (vis.line) { try { map.removeLayer(vis.line); } catch (e) { } vis.line = null; vis.weight = null; }
+        clearLine(it);
         return;
       }
       var w = trackWeight(map.getZoom());
@@ -1414,26 +1652,41 @@
       ref.shown = visible;
     }
 
+    // 事件点可见性 = 时间门控 && 阵营匹配 && 所属要素分组开关
+    function eventAllowed(ref) {
+      if (ref.faction && !factionAllowed(ref.faction)) return false;
+      if (ref.unitKey && api._unitVisible && !api._unitVisible(ref.unitKey)) return false;
+      return true;
+    }
+
     // 按当前播放时刻刷新全部事件点显隐（回退/重置时未到时刻的事件点会重新隐藏）
     function applyEventVisibility(t) {
-      eventRefs.forEach(function (ref) { setEventShown(ref, t >= ref.et); });
+      eventRefs.forEach(function (ref) {
+        setEventShown(ref, t >= ref.et && eventAllowed(ref));
+      });
     }
 
     // 由 SitMap.render 的 units 渲染调用：把事件点交给播放器按时刻显隐
-    function registerEvent(marker, timeText, container) {
+    // meta: { faction, unitKey } —— 供阵营筛选与图例分组开关使用
+    function registerEvent(marker, timeText, container, meta) {
       var v = parseTime(timeText);
+      var info = meta || {};
       if (v === null) {
-        // 时间缺失/不可解析：常显（与历史行为一致）
-        if (container) container.addLayer(marker); else marker.addTo(map);
+        // 时间缺失/不可解析：常显（与历史行为一致），但仍受阵营/分组开关控制
+        var ref0 = { marker: marker, et: null, container: container || null, shown: false,
+                     faction: info.faction || '', unitKey: info.unitKey || '' };
+        eventRefs.push(ref0);
+        setEventShown(ref0, eventAllowed(ref0));
         return;
       }
       var ref = {
         marker: marker, et: dayNorm ? (v - dayStartMs(v)) : v,
         container: container || null, shown: false,
+        faction: info.faction || '', unitKey: info.unitKey || '',
       };
       eventRefs.push(ref);
       // 播放器创建时已渲染过首帧，这里按当前时刻立即判定，避免首帧闪出未到时刻的事件
-      setEventShown(ref, axis[idx].t >= ref.et);
+      setEventShown(ref, axis[idx].t >= ref.et && eventAllowed(ref));
     }
 
     function renderAt(t, force) {
@@ -1443,8 +1696,8 @@
 
       items.forEach(function (it) {
         var pos = posAt(it, t);
-        // 生命周期：未出动/已返航或坐标缺失 → 图标/航迹/能力圈/扫掠带一并移除
-        var airborne = airborneAt(it, t)
+        // 生命周期：未出动/已返航、坐标缺失或阵营不匹配 → 全部图层一并移除
+        var airborne = airborneAt(it, t) && factionAllowed(it.track && it.track.faction)
           && pos.lng !== null && pos.lat !== null;
 
         if (!airborne) {
@@ -1457,8 +1710,9 @@
           return;
         }
 
-        // 飞机图标 + 渐进航迹：与能力半径无关，无机型半径的架次同样显示
-        renderItemVis(it, pos);
+        // 飞机图标 + 渐进航迹：逐项受图层开关控制（关闭时即时移除已建图层）
+        if (allow(it, 'aircraft')) renderPlane(it, pos); else clearPlane(it);
+        if (allow(it, 'track')) renderTrackLine(it, pos); else clearLine(it);
         if (!it.defs.length) return;
 
         var ll = toLatLng(pos.lng, pos.lat);
@@ -1466,10 +1720,14 @@
           var slot = it.slots[i];
           if (!slot) slot = it.slots[i] = { circle: null, trail: null };
           var color = rangeColor(it.track, def.kind);
+          var isRecon = def.kind === 'recon';
+          var circlePart = isRecon ? 'reconCircle' : 'strikeCircle';
+          var sweepPart = isRecon ? 'reconSweep' : 'strikeSweep';
 
           // 动态能力圈：圆心=飞机当前位置；侦察虚线、打击实线
-          if (!slot.circle) {
-            var isRecon = def.kind === 'recon';
+          if (!allow(it, circlePart)) {
+            if (slot.circle) { try { map.removeLayer(slot.circle); } catch (e) { } slot.circle = null; }
+          } else if (!slot.circle) {
             slot.circle = L.circle(ll, {
               pane: 'sitRangePane',
               radius: Math.abs(def.r) * 1000,
@@ -1484,6 +1742,10 @@
           }
 
           // 扫掠留痕：已飞航段的 buffer 走廊（节流重算，暂停拖动时强制重算）
+          if (!allow(it, sweepPart)) {
+            if (slot.trail) { try { map.removeLayer(slot.trail); } catch (e) { } slot.trail = null; }
+            return;
+          }
           if (!doBuffer) return;
           var latlngs = trailLatLngs(it, pos, def.r);
           if (!latlngs) return;
@@ -1523,7 +1785,6 @@
         ratio: total > 1 ? idx / (total - 1) : 0,
         time: axis[idx] ? axis[idx].label : '',
         playing: playing,
-        speed: speed,
       };
       listeners.forEach(function (fn) {
         try { fn(payload); } catch (e) { reportError('播放器事件处理异常: ' + e.message); }
@@ -1534,20 +1795,10 @@
       if (timer) { clearInterval(timer); timer = null; }
     }
 
-    // 按当前倍速重启计时器（倍速切换时调用；仅在播放中生效）
+    // 固定节奏逐帧前进（不提供倍速）
     function startTimer() {
       stopTimer();
-      timer = setInterval(step, Math.max(80, interval / speed));
-    }
-
-    // 切换播放倍速（0.5×/1×/2×/4×）：播放中即时生效
-    function setSpeed(v) {
-      var i = SPEEDS.indexOf(v);
-      if (i < 0) return;
-      speedIdx = i;
-      speed = SPEEDS[i];
-      if (playing) startTimer();
-      emit();
+      timer = setInterval(step, Math.max(80, interval));
     }
 
     function step() {
@@ -1611,6 +1862,8 @@
       },
       // 把事件类点交给播放器按事件时刻显隐（由 units 渲染调用）
       registerEvent: registerEvent,
+      // 图层开关/阵营变化后按当前帧重绘（不改变播放状态）
+      refresh: function () { renderAt(axis[idx].t, true); emit(); },
       // 整图重渲染前销毁：停止计时器、移除播放条与全部动态图层
       destroy: function () {
         stopTimer();
@@ -1640,21 +1893,14 @@
             '<button class="sit-pb-btn" data-act="toggle">▶ 播放</button>'
             + '<input class="sit-pb-range" type="range" min="0" max="1000" step="1" value="0">'
             + '<span class="sit-pb-time">—</span>'
-            + '<button class="sit-pb-btn sit-pb-speed" data-act="speed" title="切换播放倍速">'
-            + speedLabel(speed) + '</button>'
             + '<button class="sit-pb-btn" data-act="reset">重置</button>';
           L.DomEvent.disableClickPropagation(box);
           L.DomEvent.disableScrollPropagation(box);
           var btn = box.querySelector('[data-act="toggle"]');
           var range = box.querySelector('.sit-pb-range');
           var label = box.querySelector('.sit-pb-time');
-          var speedBtn = box.querySelector('[data-act="speed"]');
           btn.addEventListener('click', function () { playback.toggle(); });
           box.querySelector('[data-act="reset"]').addEventListener('click', function () { reset(); });
-          // 倍速按钮：循环切换 0.5×/1×/2×/4×，播放中即时生效
-          speedBtn.addEventListener('click', function () {
-            setSpeed(SPEEDS[(speedIdx + 1) % SPEEDS.length]);
-          });
           range.addEventListener('input', function () {
             // 必须先取值再 pause()：pause 会 emit 一次并把滑块重置回当前进度，
             // 若先 pause 再读 range.value，拖动会被"还原"成原地不动（seek 失效）。
@@ -1665,7 +1911,6 @@
           playback.on(function (s) {
             range.value = Math.round(s.ratio * 1000);
             label.textContent = s.time || '—';
-            speedBtn.textContent = speedLabel(s.speed);
             btn.textContent = s.playing ? '⏸ 暂停' : '▶ 播放';
           });
           return box;
@@ -1683,8 +1928,9 @@
   // ────────────────────────────────────────────────────────────────
   // SitTimeline —— 页面级时间轴（与 SitChart / SitMap / SitTable 同级）
   //
-  // 页面唯一时钟：负责刻度、播放/暂停/倍速/拖动，并通过 SitBus 广播
-  // 'timeline:tick'（payload 含 index/total/ratio/time/t/playing/speed）。
+  // 页面唯一时钟：负责刻度、播放/暂停/拖动，并通过 SitBus 广播
+  // 'timeline:tick'（payload 含 index/total/ratio/time/t/playing）。
+  // 逐帧回放：固定 1 秒/帧，不提供倍速；每帧对齐一条真实采样时刻。
   // **无头时钟**：控件由宿主页面（PageSandbox 底部浮层）渲染，这里只维护状态，
   // 不再生成播放条 DOM，避免页内与宿主出现两套控件、两个时钟源。
   // 地图与图表只订阅事件，不再各自维护时钟：
@@ -1695,9 +1941,8 @@
   // ────────────────────────────────────────────────────────────
 
   var timelineInstance = null;
-  // 默认 4×，另提供 6×/8× 档位（页级时间轴）
-  var TIMELINE_SPEEDS = [0.5, 1, 2, 4, 6, 8];
-  var TIMELINE_DEFAULT_SPEED = 4;
+  // 固定帧间隔：逐帧回放，不提供倍速
+  var TIMELINE_FRAME_MS = 1000;
 
   // 延迟绑定队列：页面常把 SitTimeline.render 写在脚本末尾（先画图表/地图），
   // 此时 SitChart/SitMap 取不到页面时钟，会退化为静态渲染。这里记下待重绑的渲染调用，
@@ -1721,7 +1966,7 @@
       window.parent.postMessage({
         type: 'ipage:timeline',
         index: s.index, total: s.total, ratio: s.ratio,
-        time: s.time, t: s.t, playing: s.playing, speed: s.speed,
+        time: s.time, t: s.t, playing: s.playing,
       }, '*');
     } catch (e) { }
   }
@@ -1743,12 +1988,10 @@
     return normalizeTimelineAxis(buckets);
   }
 
-  function createTimelineInstance(axis, spec) {
+  function createTimelineInstance(axis) {
     var idx = 0;
     var playing = false;
     var timer = null;
-    var speed = TIMELINE_DEFAULT_SPEED;
-    var interval = Math.max(120, toNum(spec.interval) || 500);
     var listeners = [];
     var node = null;
 
@@ -1761,7 +2004,7 @@
         ratio: total > 1 ? idx / (total - 1) : 0,
         time: axis[idx] ? axis[idx].label : '',
         t: axis[idx] ? fmtDateTime(axis[idx].t) : '',
-        playing: playing, speed: speed,
+        playing: playing,
       };
     }
 
@@ -1775,7 +2018,8 @@
     }
 
     function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
-    function startTimer() { stopTimer(); timer = setInterval(step, Math.max(80, interval / speed)); }
+    // 固定 1 秒/帧：逐帧回放，不提供倍速
+    function startTimer() { stopTimer(); timer = setInterval(step, TIMELINE_FRAME_MS); }
 
     function step() {
       if (idx >= total - 1) { pause(); return; }
@@ -1810,14 +2054,6 @@
       seekIndex(Math.round(r * (total - 1)));
     }
 
-    function setSpeed(v) {
-      var i = TIMELINE_SPEEDS.indexOf(v);
-      if (i < 0) return;
-      speed = TIMELINE_SPEEDS[i];
-      if (playing) startTimer();
-      notify();
-    }
-
     function reset() {
       pause();
       idx = 0;
@@ -1833,12 +2069,9 @@
       play: play, pause: pause, reset: reset, seek: seek, seekIndex: seekIndex,
       toggle: function () { if (playing) pause(); else play(); },
       isPlaying: function () { return playing; },
-      setSpeed: setSpeed,
       total: total,
       current: payload,
       axis: function () { return axisOut.slice(); },
-      interval: function () { return interval; },
-      speed: function () { return speed; },
       on: function (fn) {
         if (typeof fn === 'function') listeners.push(fn);
         return function () {
@@ -1870,7 +2103,7 @@
         node.innerHTML = '';
         return null;
       }
-      if (!timelineInstance) timelineInstance = createTimelineInstance(axis, spec);
+      if (!timelineInstance) timelineInstance = createTimelineInstance(axis);
       timelineInstance.attach(node);
       timelineInstance.postState();
       // 时间轴创建前已渲染的图表/地图在这里补绑，保证拖动立刻生效
@@ -1881,7 +2114,7 @@
     destroy: function () { if (timelineInstance) timelineInstance.destroy(); },
   };
 
-  // 宿主浮层下发的时间轴操作（播放/暂停/seek/倍速/重置）→ 驱动唯一时钟
+  // 宿主浮层下发的时间轴操作（播放/暂停/seek/重置）→ 驱动唯一时钟
   function applyTimelineCommand(msg) {
     var inst = timelineInstance;
     if (!inst) return;
@@ -1893,8 +2126,24 @@
       // 拖动进度先暂停（与原页内播放条行为一致），避免播放计时器覆盖用户拖动位置
       else if (msg.action === 'seek') { inst.pause(); inst.seek(msg.value); }
       else if (msg.action === 'seekIndex') inst.seekIndex(msg.value);
-      else if (msg.action === 'speed') inst.setSpeed(msg.value);
     } catch (e) { reportError('时间轴命令执行失败: ' + (e && e.message)); }
+  }
+
+  // 页面级阵营筛选：宿主浮层下发后同时作用于地图与图表
+  function applyFaction(value) {
+    var next = normalizeFaction(value) || String(value || '').trim();
+    if (next === activeFaction) return;
+    activeFaction = next;
+    mapByEl.forEach(function (pair) {
+      var api = pair[1];
+      try {
+        if (api._applyVisibility) api._applyVisibility();
+      } catch (e) { reportError('阵营筛选应用失败: ' + (e && e.message)); }
+    });
+    repaintCharts();
+    // 通知业务页面：KPI/表格等可自行订阅做扩展联动
+    SitBus.emit('filter', { faction: activeFaction });
+    SitBus.emit('faction:change', activeFaction);
   }
 
   // 宿主下发可视高度：写入 --ipage-vh 供页面做"一屏"布局，并重排图表
@@ -1940,9 +2189,12 @@
           _map: map,
           _layers: { featureLayers: [], trackLines: [], startMarkers: [], cluster: null,
                      legendControl: null, playback: null },
+          _refs: { units: [], tracks: [], circles: [] },
           _clickFns: [],
           _userInteracted: false,
         };
+        // 图层可见性状态在同一容器重渲染间保留（默认全显）
+        ensureLayerState(api);
         // 用户一旦交互（拖动/缩放/双击），永久锁定视图，后续重渲染不再自动适配
         map.on('mousedown touchstart wheel dblclick', function () { api._userInteracted = true; });
         mapByEl.push([node, api]);
@@ -1953,8 +2205,64 @@
       var featureLayers = api._layers.featureLayers = [];
       var trackLines = api._layers.trackLines = [];
       var startMarkers = api._layers.startMarkers = [];
+      var refs = api._refs = { units: [], tracks: [], circles: [] };
+      var layerState = ensureLayerState(api);
       var bounds = [];
       function pushBounds(ll) { bounds.push(ll); }
+
+      // 逐机图层可见性：阵营 && 总开关 && 全局组 && 子项
+      api._partVisible = function (track, part) {
+        if (!factionAllowed(track && track.faction)) return false;
+        var key = trackKeyOf(track);
+        var st = layerState.tracks[key];
+        if (!st) st = layerState.tracks[key] = defaultTrackParts();
+        if (st.all === false) return false;
+        var group = TRACK_PART_GROUPS[part];
+        if (group && layerState.groups[group] === false) return false;
+        return st[part] !== false;
+      };
+      api._unitVisible = function (key) {
+        return !key || layerState.units[key] !== false;
+      };
+      // 统一应用静态图层显隐，并刷新回放当前帧
+      api._applyVisibility = function () {
+        refs.units.forEach(function (ref) {
+          var show = factionAllowed(ref.faction) && layerState.units[ref.key] !== false;
+          try {
+            if (ref.cluster) {
+              if (show) ref.cluster.addLayer(ref.layer); else ref.cluster.removeLayer(ref.layer);
+            } else if (show) {
+              if (!map.hasLayer(ref.layer)) ref.layer.addTo(map);
+            } else if (map.hasLayer(ref.layer)) {
+              map.removeLayer(ref.layer);
+            }
+          } catch (e) { }
+        });
+        refs.tracks.forEach(function (ref) {
+          var showLine = api._partVisible(ref.track, 'track');
+          var showPlane = api._partVisible(ref.track, 'aircraft');
+          function setLayer(layer, show) {
+            if (!layer) return;
+            try {
+              if (show) { if (!map.hasLayer(layer)) layer.addTo(map); }
+              else if (map.hasLayer(layer)) map.removeLayer(layer);
+            } catch (e) { }
+          }
+          setLayer(ref.line, showLine);
+          setLayer(ref.startMarker, showLine);
+          setLayer(ref.endMarker, showPlane);
+        });
+        refs.circles.forEach(function (ref) {
+          var groupOk = layerState.groups[ref.isRecon ? 'reconRange' : 'strikeRange'] !== false;
+          var show = factionAllowed(ref.faction) && groupOk
+            && layerState.circles[ref.key] !== false;
+          try {
+            if (show) { if (!map.hasLayer(ref.layer)) ref.layer.addTo(map); }
+            else if (map.hasLayer(ref.layer)) map.removeLayer(ref.layer);
+          } catch (e) { }
+        });
+        if (api.playback) { try { api.playback.refresh(); } catch (e) { } }
+      };
 
       // ── 时间轴回放（内置播放器 + 动态能力圈 + 扫掠留痕 + 事件点按时刻显隐）──
       // 新契约：spec.timeline=true 时绑定页面级 SitTimeline，只按 tick 重绘，不建地图内播放条；
@@ -2028,14 +2336,18 @@
           clickFns.forEach(function (fn) { fn(feat); });
         });
         featureLayers.push({ layer: marker, feature: feat });
+        // 单位分组开关键：与图例 buildLegendModel 的口径保持一致
+        var unitKey = [visual.kind, visual.label, String(unit.faction || ''), visual.color].join('|');
         // 事件语义判定复用 normalizeUnitKind，避免与符号解析各自维护一套类别映射
         var eventGated = playbackOn && normalizeUnitKind(unit).indexOf('event_') === 0;
         if (eventGated) {
-          api.playback.registerEvent(marker, unit.time, cluster);
-        } else if (cluster) {
-          cluster.addLayer(marker);
+          api.playback.registerEvent(marker, unit.time, cluster,
+            { faction: unit.faction || '', unitKey: unitKey });
         } else {
-          marker.addTo(map);
+          refs.units.push({ layer: marker, key: unitKey, faction: unit.faction || '', cluster: cluster });
+          var unitShow = factionAllowed(unit.faction) && layerState.units[unitKey] !== false;
+          if (cluster) { if (unitShow) cluster.addLayer(marker); }
+          else if (unitShow) marker.addTo(map);
         }
       });
       if (cluster) map.addLayer(cluster);
@@ -2107,6 +2419,9 @@
         endMarker.on('click', function () { clickFns.forEach(function (fn) { fn(feat); }); });
         endMarker.addTo(map);
         featureLayers.push({ layer: endMarker, feature: feat });
+        refs.tracks.push({
+          track: track, line: line, startMarker: startMarker, endMarker: endMarker,
+        });
       });
       // 缩放档位变化时统一切换航迹线宽；监听器只绑定一次（复用地图实例避免重复注册）
       if (!api._zoomBound) {
@@ -2146,10 +2461,17 @@
         circle.on('click', function () { clickFns.forEach(function (fn) { fn(feat); }); });
         circle.addTo(map);
         featureLayers.push({ layer: circle, feature: feat });
+        var circleMeta = circleMetaOf(c);
+        refs.circles.push({
+          layer: circle, key: circleMeta.key, faction: c.faction || '',
+          isRecon: circleMeta.isRecon,
+        });
       });
 
-      // ── 图例（按实际出现的单位/航迹/范围自动生成，可折叠）──
-      api._layers.legendControl = addLegendControl(L, map, spec);
+      // ── 图例 / 图层开关（全局组 + 逐机子项 + 单位组 + 静态圈）──
+      api._layers.legendControl = addLayerControl(L, map, spec, api, playbackOn);
+      // 应用当前图层状态（含阵营与历史开关）
+      api._applyVisibility();
 
       // ── 视野：仅首次渲染自动适配；重渲染时保留用户视图 ──
       // 时间轴播放反复调用 render，若每次都 fitBounds 会导致地图不断缩放。
@@ -2415,6 +2737,7 @@
     var msg = e.data || {};
     if (msg.type === 'ipage:viewport') { applyViewportHeight(msg.height); return; }
     if (msg.type === 'ipage:timeline-cmd') { applyTimelineCommand(msg); return; }
+    if (msg.type === 'ipage:faction') { applyFaction(msg.value); return; }
     if (msg.type !== 'ipage:data' || !msg.payload) return;
     state = msg.payload;
     tileLayers = state.tileLayers || [];
