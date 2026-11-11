@@ -23,21 +23,79 @@
   var booted = false;
   var echartsInstances = [];    // 全部图表实例（resize / dispose 用）
   var chartByEl = [];           // [el, inst]，重渲染时先销毁旧实例
+  var chartObservers = [];      // [{node, ro}]，容器尺寸变化时自动 resize
   var mapByEl = [];             // [el, mapApi]
   var tileLayers = [];
   var fallbackTileLayers = [];  // 底图瓦片不可达时的备用图层（GeoWebCache）
 
-  // 专业态势配色：蓝为主，红/橙/绿/紫/青为辅
-  var PALETTE = ['#1d4ed8', '#dc2626', '#d97706', '#059669', '#7c3aed', '#0891b2', '#be185d', '#65a30d'];
-  var KIND_COLORS = {
-    target: '#1d4ed8', threat: '#dc2626', base: '#059669', event: '#d97706', other: '#64748b',
-    strike: '#dc2626', recon: '#d97706', facility: '#7c3aed',
+  // ────────────────────────────────────────────────────────────────
+  // 主题层：standard（项目当前风格）/ military（深色战术配色）
+  // standard 分支的取值必须与改造前逐项一致，保证默认视觉零变化。
+  // 阵营语义固定：红方=我方、蓝方=敌方（两套主题都遵守）。
+  // ────────────────────────────────────────────────────────────────
+  var THEMES = {
+    standard: {
+      pageBg: '#f4f6fa', cardBg: '#ffffff', soft: '#f8fafc', softAlt: '#fafbfc',
+      ink: '#1e293b', inkStrong: '#0f172a', muted: '#64748b',
+      border: '#e2e8f0', accent: '#1d4ed8',
+      red: '#dc2626', blue: '#1d4ed8', green: '#059669', purple: '#7c3aed', cyan: '#0891b2',
+      palette: ['#1d4ed8', '#dc2626', '#d97706', '#059669', '#7c3aed', '#0891b2', '#be185d', '#65a30d'],
+      kind: {
+        target: '#1d4ed8', threat: '#dc2626', base: '#059669', event: '#d97706', other: '#64748b',
+        strike: '#dc2626', recon: '#d97706', facility: '#7c3aed',
+      },
+      event: { event_strike: '#ea580c', event_damage: '#dc2626', event_recon: '#0891b2' },
+      badge: { light: '#f59e0b', heavy: '#ea580c', critical: '#ef4444' },
+      chartAxis: '#475569', chartGrid: '#eef2f7', chartBorder: '#e2e8f0',
+      chartAxisLine: '#cbd5e1',
+      tooltipBg: 'rgba(255,255,255,.96)', zoomFiller: 'rgba(29,78,216,.12)',
+      overlayBg: 'rgba(255,255,255,.94)', overlayInk: '#0f172a',
+      tileFilter: 'none',
+    },
+    military: {
+      pageBg: '#0A0D11', cardBg: '#10151B', soft: '#151C24', softAlt: '#131A22',
+      ink: '#D9E2EC', inkStrong: '#F2F7FB', muted: '#8494A4',
+      border: '#1E2A36', accent: '#28B3A0',
+      red: '#E2453A', blue: '#3E8FD0', green: '#4FB07B', purple: '#8B7BD8', cyan: '#4FC3D9',
+      palette: ['#28B3A0', '#E2453A', '#D9A441', '#3E8FD0', '#4FB07B', '#8B7BD8', '#8494A4', '#4FC3D9'],
+      kind: {
+        target: '#3E8FD0', threat: '#E2453A', base: '#4FB07B', event: '#D9A441', other: '#8494A4',
+        strike: '#E2453A', recon: '#D9A441', facility: '#8B7BD8',
+      },
+      event: { event_strike: '#E8954A', event_damage: '#E2453A', event_recon: '#28B3A0' },
+      badge: { light: '#F0B429', heavy: '#E8823C', critical: '#E2453A' },
+      chartAxis: '#8494A4', chartGrid: '#1E2A36', chartBorder: '#1E2A36',
+      chartAxisLine: '#2A3946',
+      tooltipBg: 'rgba(10,14,18,.95)', zoomFiller: 'rgba(40,179,160,.18)',
+      overlayBg: 'rgba(10,14,18,.92)', overlayInk: '#D9E2EC',
+      tileFilter: 'brightness(.55) saturate(.55) contrast(1.05)',
+    },
   };
+  var activeTheme = 'standard';
+  function theme() { return THEMES[activeTheme] || THEMES.standard; }
+
+  // 专业态势配色（随主题热切换）：蓝为主，红/橙/绿/紫/青为辅
+  var PALETTE = THEMES.standard.palette.slice();
+  var KIND_COLORS = Object.assign({}, THEMES.standard.kind);
   var FACTION_COLORS = {
-    '蓝方': '#1d4ed8', '红方': '#dc2626',
+    '蓝方': THEMES.standard.blue, '红方': THEMES.standard.red,
     // 数据源注解把阵营值规范化为英文键时同样吃语义色（与后端 field_resolver 口径一致）
-    blue: '#1d4ed8', red: '#dc2626',
+    blue: THEMES.standard.blue, red: THEMES.standard.red,
   };
+
+  // 把当前主题的颜色写回上述可变表：调用方无需改动，切换主题即时生效
+  function applyColorTables() {
+    var t = theme();
+    PALETTE.length = 0;
+    Array.prototype.push.apply(PALETTE, t.palette);
+    Object.assign(KIND_COLORS, t.kind);
+    Object.assign(EVENT_COLORS, t.event);
+    Object.assign(BADGE_COLORS, t.badge);
+    FACTION_COLORS['红方'] = t.red;
+    FACTION_COLORS['蓝方'] = t.blue;
+    FACTION_COLORS.red = t.red;
+    FACTION_COLORS.blue = t.blue;
+  }
 
   // 页面级阵营筛选（宿主浮层下发）：空字符串 = 全部
   var activeFaction = '';
@@ -253,11 +311,12 @@
     };
   }
   function axisCommon(compact) {
+    var t = theme();
     return {
-      axisLine: { lineStyle: { color: '#cbd5e1' } },
+      axisLine: { lineStyle: { color: t.chartAxisLine } },
       axisTick: { show: false },
-      axisLabel: { color: '#475569', fontSize: compact ? 10 : 12 },
-      splitLine: { lineStyle: { color: '#eef2f7' } },
+      axisLabel: { color: t.chartAxis, fontSize: compact ? 10 : 12 },
+      splitLine: { lineStyle: { color: t.chartGrid } },
     };
   }
   function legend(series, compact) {
@@ -266,26 +325,28 @@
       type: 'scroll', top: compact ? 0 : 8, left: 8, right: 8,
       icon: 'roundRect', itemWidth: compact ? 10 : 12, itemHeight: compact ? 6 : 8,
       itemGap: compact ? 8 : 12, pageIconSize: 8,
-      textStyle: { color: '#475569', fontSize: compact ? 10 : 12 },
+      textStyle: { color: theme().chartAxis, fontSize: compact ? 10 : 12 },
     };
   }
   function tooltip(extra) {
+    var t = theme();
     return Object.assign({
       trigger: 'axis',
-      backgroundColor: 'rgba(255,255,255,.96)',
-      borderColor: '#e2e8f0', textStyle: { color: '#1e293b', fontSize: 12 },
+      backgroundColor: t.tooltipBg,
+      borderColor: t.chartBorder, textStyle: { color: t.ink, fontSize: 12 },
       confine: true,
     }, extra || {});
   }
 
   function buildOption(spec) {
     var type = spec.type;
+    var T = theme();
     var option = { color: PALETTE, title: undefined, tooltip: undefined, grid: baseGrid(spec) };
     var compact = !!spec._compact;
     if (spec.title) {
       option.title = {
         text: spec.title, left: 8, top: 4,
-        textStyle: { fontSize: compact ? 12 : 14, color: '#0f172a', fontWeight: 600 },
+        textStyle: { fontSize: compact ? 12 : 14, color: T.inkStrong, fontWeight: 600 },
       };
     }
     var series = spec.series || [];
@@ -294,7 +355,7 @@
       var horizontal = !!spec.horizontal;
       var xAxis, yAxis, xData = spec.xData || [];
       if (!horizontal) {
-        xAxis = Object.assign({ type: 'category', data: xData, axisLabel: { color: '#475569', interval: 0 } }, axisCommon(compact));
+        xAxis = Object.assign({ type: 'category', data: xData, axisLabel: { color: T.chartAxis, interval: 0 } }, axisCommon(compact));
         yAxis = Object.assign({ type: 'value', name: spec.yName || '' }, axisCommon(compact));
       } else {
         xAxis = Object.assign({ type: 'value', name: spec.yName || '' }, axisCommon(compact));
@@ -327,7 +388,7 @@
       });
       if (spec.showDataZoom) {
         option.dataZoom = [
-          { type: 'slider', height: 16, bottom: 14, borderColor: '#e2e8f0', fillerColor: 'rgba(29,78,216,.12)' },
+          { type: 'slider', height: 16, bottom: 14, borderColor: T.chartBorder, fillerColor: T.zoomFiller },
           { type: 'inside' },
         ];
       }
@@ -337,8 +398,9 @@
     if (type === 'line') {
       option.tooltip = tooltip({ trigger: 'axis' });
       option.legend = legend(series, compact);
-      option.xAxis = Object.assign({ type: 'category', boundaryGap: false, data: spec.xData || [], axisLabel: { color: '#475569' } }, axisCommon(compact));
-      option.yAxis = Object.assign({ type: 'value', name: spec.yName || '' }, axisCommon(compact));
+      option.xAxis = Object.assign({ type: 'category', boundaryGap: false, data: spec.xData || [], axisLabel: { color: T.chartAxis } }, axisCommon(compact));
+      // 折线不强制从 0 起算：高位波动（如活动强度）否则会被压成一条直线
+      option.yAxis = Object.assign({ type: 'value', name: spec.yName || '', scale: true }, axisCommon(compact));
       option.series = series.map(function (s, idx) {
         var color = factionColor(s.name, PALETTE[idx % PALETTE.length]);
         return {
@@ -352,7 +414,7 @@
       });
       if (spec.showDataZoom) {
         option.dataZoom = [
-          { type: 'slider', height: 16, bottom: 14, borderColor: '#e2e8f0', fillerColor: 'rgba(29,78,216,.12)' },
+          { type: 'slider', height: 16, bottom: 14, borderColor: T.chartBorder, fillerColor: T.zoomFiller },
           { type: 'inside' },
         ];
       }
@@ -372,14 +434,14 @@
       option.legend = {
         orient: 'vertical', right: compact ? 4 : 10, top: 'middle', icon: 'circle',
         itemWidth: compact ? 8 : 14, itemGap: compact ? 6 : 10,
-        textStyle: { color: '#475569', fontSize: compact ? 10 : 12 },
+        textStyle: { color: T.chartAxis, fontSize: compact ? 10 : 12 },
       };
       option.series = [{
         name: (series[0] || {}).name || '占比', type: 'pie',
         radius: compact ? ['36%', '58%'] : ['42%', '68%'],
         center: ['42%', '54%'], avoidLabelOverlap: true,
-        itemStyle: { borderColor: '#fff', borderWidth: 2, borderRadius: 4 },
-        label: { color: '#475569', fontSize: compact ? 10 : 12, show: !compact },
+        itemStyle: { borderColor: T.cardBg, borderWidth: 2, borderRadius: 4 },
+        label: { color: T.chartAxis, fontSize: compact ? 10 : 12, show: !compact },
         data: pieData,
       }];
       return option;
@@ -398,9 +460,9 @@
         indicator: (spec.indicators || []).map(function (n) { return { name: n, max: spec.max }; }),
         radius: compact ? '56%' : '62%',
         center: ['50%', compact ? '50%' : '55%'],
-        axisName: { color: '#475569', fontSize: compact ? 10 : 12 },
-        splitLine: { lineStyle: { color: '#e2e8f0' } },
-        splitArea: { areaStyle: { color: ['#fff', '#f8fafc'] } },
+        axisName: { color: T.chartAxis, fontSize: compact ? 10 : 12 },
+        splitLine: { lineStyle: { color: T.chartBorder } },
+        splitArea: { areaStyle: { color: [T.cardBg, T.soft] } },
       };
       option.series = [{
         type: 'radar',
@@ -630,7 +692,7 @@
       if (current >= 0 && opt.series && opt.series.length) {
         opt.series[0].markLine = {
           symbol: 'none', silent: true, label: { show: false },
-          lineStyle: { color: '#1d4ed8', type: 'dashed', width: 1.5 },
+          lineStyle: { color: theme().accent, type: 'dashed', width: 1.5 },
           data: [{ xAxis: current }],
         };
       }
@@ -661,11 +723,34 @@
     return buildOption(Object.assign({}, base, { xData: xData, series: series }));
   }
 
+  // 容器尺寸变化后自动重排：Grid 行拉伸、左栏滚动、窗口缩放都会触发，
+  // 避免画布停留在初始化时的小尺寸（表现为卡片很高、图只占顶部一条）。
+  function ensureChartResizeObserver(node, inst) {
+    if (!window.ResizeObserver) return;
+    for (var i = 0; i < chartObservers.length; i++) {
+      if (chartObservers[i].node === node) return;
+    }
+    var rafId = 0;
+    var ro = new ResizeObserver(function () {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(function () {
+        rafId = 0;
+        try { inst.resize(); } catch (e) { }
+      });
+    });
+    ro.observe(node);
+    chartObservers.push({ node: node, ro: ro });
+  }
+
   var SitChart = {
     render: function (el, spec) {
       var node = resolveEl(el);
       if (!node || !window.echarts) { reportError('图表容器或 ECharts 运行时不可用'); return null; }
       spec = spec || {};
+      // 容器被 CSS 压成 0 或极小高度时给一个兜底下限，防止画布在错误尺寸上初始化
+      if (!node.clientHeight || node.clientHeight < 80) {
+        node.style.minHeight = '220px';
+      }
       var existing = chartByEl.filter(function (pair) { return pair[0] === node; })[0];
       var inst;
       if (existing) {
@@ -675,6 +760,7 @@
         chartByEl.push([node, inst]);
         echartsInstances.push(inst);
       }
+      ensureChartResizeObserver(node, inst);
       // 解除同一容器的旧时间轴订阅（重渲染不叠加监听）
       var oldTl = chartTimelineByEl.filter(function (pair) { return pair[0] === node; })[0];
       if (oldTl) {
@@ -734,6 +820,8 @@
         try { repaintStatic(); } catch (e) { reportError('图表渲染失败: ' + e.message); }
         registerChart(node, repaintStatic);
       }
+      // 首次绘制后布局可能继续变化（--ipage-vh 注入、字体加载），下一帧再对齐一次
+      requestAnimationFrame(function () { try { inst.resize(); } catch (e) { } });
       return {
         on: function (event, fn) {
           inst.on(event, function (params) {
@@ -854,6 +942,96 @@
       '.sit-playback .sit-pb-time{color:#475569;white-space:nowrap;font-variant-numeric:tabular-nums}',
     ].join('');
     document.head.appendChild(style);
+  }
+
+  // ── 主题样式表：标准主题不产生任何覆盖；军事主题通过根属性启用深色覆盖 ──
+  var THEME_STYLE_ID = 'ipage-theme-style';
+  function ensureThemeStyle() {
+    if (document.getElementById(THEME_STYLE_ID)) return;
+    var dark = 'html[data-ipage-theme="military"]';
+    var style = document.createElement('style');
+    style.id = THEME_STYLE_ID;
+    style.textContent = [
+      ':root{--ip-bg:' + THEMES.standard.pageBg + ';--ip-surface:' + THEMES.standard.cardBg,
+      ';--ip-soft:' + THEMES.standard.soft + ';--ip-ink:' + THEMES.standard.ink,
+      ';--ip-ink-strong:' + THEMES.standard.inkStrong + ';--ip-muted:' + THEMES.standard.muted,
+      ';--ip-border:' + THEMES.standard.border + ';--ip-accent:' + THEMES.standard.accent,
+      ';--ip-overlay:' + THEMES.standard.overlayBg + ';--ip-tile-filter:none;}',
+      dark + ' body{background:var(--ip-bg)!important;color:var(--ip-ink)!important}',
+      dark + ' .ip-card{background:var(--ip-surface)!important;border:1px solid var(--ip-border)!important;',
+      '  box-shadow:none!important}',
+      dark + ' .ip-title,' + dark + ' h1,' + dark + ' h2,' + dark + ' h3,' + dark + ' h4,',
+      dark + ' strong{color:var(--ip-ink-strong)!important}',
+      dark + ' .ip-kpi{background:var(--ip-soft)!important}',
+      dark + ' .ip-kpi .v{color:var(--ip-accent)!important}',
+      dark + ' .ip-kpi .l{color:var(--ip-muted)!important}',
+      dark + ' .ip-table,' + dark + ' .ip-table td{color:var(--ip-ink)!important}',
+      dark + ' .ip-table th{background:var(--ip-soft)!important;color:var(--ip-ink-strong)!important;',
+      '  border-bottom-color:var(--ip-border)!important}',
+      dark + ' .ip-table td{border-bottom-color:var(--ip-border)!important}',
+      dark + ' .ip-table tr:hover td{background:rgba(40,179,160,.06)!important}',
+      dark + ' .ip-table-wrap{border-color:var(--ip-border)!important}',
+      dark + ' .ip-pager{background:var(--ip-soft)!important;color:var(--ip-muted)!important}',
+      dark + ' .ip-pager button{background:var(--ip-surface)!important;color:var(--ip-ink)!important;',
+      '  border-color:var(--ip-border)!important}',
+      dark + ' .ip-table-empty{color:var(--ip-muted)!important}',
+      dark + ' .sit-legend{background:var(--ip-overlay)!important;border-color:var(--ip-border)!important;',
+      '  color:var(--ip-ink)!important;box-shadow:none!important}',
+      dark + ' .sit-legend-title .sit-legend-toggle{color:var(--ip-muted)!important}',
+      dark + ' .sit-legend-reset{color:var(--ip-accent)!important}',
+      dark + ' .sit-legend-group{border-top-color:var(--ip-border)!important}',
+      dark + ' .sit-legend-sub{color:var(--ip-muted)!important}',
+      dark + ' .sit-legend-cb{accent-color:var(--ip-accent)!important}',
+      dark + ' .sit-legend-subrow{color:#B9C6D3!important}',
+      dark + ' .sit-legend-caret{color:var(--ip-muted)!important}',
+      dark + ' .sit-ic-tip{background:var(--ip-overlay)!important;border-color:var(--ip-border)!important;',
+      '  color:var(--ip-ink)!important;box-shadow:none!important}',
+      dark + ' .sit-playback{background:var(--ip-overlay)!important;border-color:var(--ip-border)!important;',
+      '  color:var(--ip-ink)!important;box-shadow:none!important}',
+      dark + ' .sit-playback .sit-pb-btn{background:var(--ip-surface)!important;',
+      '  border-color:var(--ip-border)!important;color:var(--ip-ink)!important}',
+      dark + ' .sit-playback .sit-pb-btn:hover{background:#1B242E!important}',
+      dark + ' .sit-playback .sit-pb-range{accent-color:var(--ip-accent)!important}',
+      dark + ' .sit-playback .sit-pb-time{color:var(--ip-muted)!important}',
+      dark + ' .leaflet-popup-content-wrapper,' + dark + ' .leaflet-popup-tip{',
+      '  background:var(--ip-surface)!important;color:var(--ip-ink)!important;',
+      '  box-shadow:0 2px 10px rgba(0,0,0,.5)!important}',
+      dark + ' .leaflet-popup-content{color:var(--ip-ink)!important}',
+      dark + ' .leaflet-control-zoom a{background:var(--ip-surface)!important;',
+      '  color:var(--ip-ink)!important;border-color:var(--ip-border)!important}',
+      dark + ' .leaflet-control-attribution{background:rgba(10,14,18,.75)!important;',
+      '  color:var(--ip-muted)!important}',
+      dark + ' .leaflet-control-attribution a{color:var(--ip-accent)!important}',
+      dark + ' .leaflet-tile-pane{filter:var(--ip-tile-filter)}',
+    ].join('');
+    document.head.appendChild(style);
+  }
+
+  // 把当前主题的变量写到根节点（标准主题下这些变量也等于现值，不产生视觉变化）
+  function applyThemeVars() {
+    var t = theme();
+    var root = document.documentElement;
+    var vars = {
+      '--ip-bg': t.pageBg, '--ip-surface': t.cardBg, '--ip-soft': t.soft,
+      '--ip-ink': t.ink, '--ip-ink-strong': t.inkStrong, '--ip-muted': t.muted,
+      '--ip-border': t.border, '--ip-accent': t.accent,
+      '--ip-overlay': t.overlayBg, '--ip-tile-filter': t.tileFilter,
+    };
+    Object.keys(vars).forEach(function (k) { root.style.setProperty(k, vars[k]); });
+  }
+
+  // 切换主题：颜色表 → 兜底样式 → 图表重绘 → 地图重着色（不重置任何交互状态）
+  function setTheme(value) {
+    activeTheme = value === 'military' ? 'military' : 'standard';
+    applyColorTables();
+    ensureThemeStyle();
+    applyThemeVars();
+    document.documentElement.setAttribute('data-ipage-theme', activeTheme);
+    repaintCharts();
+    mapByEl.forEach(function (pair) {
+      var api = pair[1];
+      try { if (api._applyTheme) api._applyTheme(); } catch (e) { }
+    });
   }
 
   // SVG 内部图形（viewBox 0 0 24 24，白色绘于阵营色圆底上）
@@ -1017,6 +1195,15 @@
       html: unitIconHtml(v, size, heading),
       iconSize: [size, size], iconAnchor: [size / 2, size / 2],
     });
+  }
+
+  // 换主题时只改 divIcon 内部圆底颜色，不重建 marker（避免闪烁与 tooltip 丢失）
+  function recolorUnitMarker(marker, color) {
+    try {
+      var el = marker && marker.getElement ? marker.getElement() : null;
+      var ic = el && el.querySelector ? el.querySelector('.sit-ic') : null;
+      if (ic && color) ic.style.background = color;
+    } catch (e) { }
   }
 
   function unitPopupHtml(u, v) {
@@ -1838,8 +2025,27 @@
       emit();
     }
 
+    // 换主题后就地重着色：飞机图标改圆底、能力圈/扫掠带改描边与填充
+    function restyle() {
+      items.forEach(function (it) {
+        recolorUnitMarker(it.vis.plane, trackColorOf(it.track));
+        it.defs.forEach(function (def, i) {
+          var slot = it.slots[i];
+          if (!slot) return;
+          var c = rangeColor(it.track, def.kind);
+          if (slot.circle) {
+            try { slot.circle.setStyle({ color: c, fillColor: c }); } catch (e) { }
+          }
+          if (slot.trail) {
+            try { slot.trail.setStyle({ fillColor: c }); } catch (e) { }
+          }
+        });
+      });
+    }
+
     var playback = {
       play: play, pause: pause, reset: reset, seek: seek,
+      restyle: restyle,
       toggle: function () { if (playing) pause(); else play(); },
       isPlaying: function () { return playing; },
       total: total,
@@ -2264,6 +2470,28 @@
         if (api.playback) { try { api.playback.refresh(); } catch (e) { } }
       };
 
+      // 主题切换后就地重着色（不重建图层、不重置视野与开关）
+      api._applyTheme = function () {
+        refs.tracks.forEach(function (ref) {
+          var color = ref.track.factionColor || FACTION_COLORS[ref.track.faction]
+            || hashColor(ref.track.name);
+          try { ref.line.setStyle({ color: color }); } catch (e) { }
+          try { ref.startMarker.setStyle({ fillColor: color }); } catch (e) { }
+          recolorUnitMarker(ref.endMarker, color);
+        });
+        refs.units.forEach(function (ref) {
+          var visual = resolveUnitVisual(ref.unit || {});
+          recolorUnitMarker(ref.layer, visual.color);
+        });
+        refs.circles.forEach(function (ref) {
+          var meta = circleMetaOf(ref.data || {});
+          try { ref.layer.setStyle({ color: meta.color, fillColor: meta.color }); } catch (e) { }
+        });
+        if (api.playback && api.playback.restyle) {
+          try { api.playback.restyle(); } catch (e) { }
+        }
+      };
+
       // ── 时间轴回放（内置播放器 + 动态能力圈 + 扫掠留痕 + 事件点按时刻显隐）──
       // 新契约：spec.timeline=true 时绑定页面级 SitTimeline，只按 tick 重绘，不建地图内播放条；
       // 兼容：spec.playback 仍走旧式地图内播放器，历史页面行为不变。
@@ -2344,7 +2572,8 @@
           api.playback.registerEvent(marker, unit.time, cluster,
             { faction: unit.faction || '', unitKey: unitKey });
         } else {
-          refs.units.push({ layer: marker, key: unitKey, faction: unit.faction || '', cluster: cluster });
+          refs.units.push({ layer: marker, key: unitKey, faction: unit.faction || '',
+                            cluster: cluster, unit: unit });
           var unitShow = factionAllowed(unit.faction) && layerState.units[unitKey] !== false;
           if (cluster) { if (unitShow) cluster.addLayer(marker); }
           else if (unitShow) marker.addTo(map);
@@ -2387,10 +2616,10 @@
         var missionInfo = track.missionId ? '<br/>任务：' + esc(track.missionId) : '';
         var radiusInfo = '';
         if (track.strikeRadiusKm != null) {
-          radiusInfo += '<br/>打击半径：' + esc(track.strikeRadiusKm) + ' km';
+          radiusInfo += '<br/>打击半径：' + esc(track.strikeRadiusKm) + '公里';
         }
         if (track.reconRadiusKm != null) {
-          radiusInfo += '<br/>侦察半径：' + esc(track.reconRadiusKm) + ' km';
+          radiusInfo += '<br/>侦察半径：' + esc(track.reconRadiusKm) + '公里';
         }
         line.bindPopup('<b>' + esc(track.name || '航迹') + '</b>'
           + (track.faction ? '（' + esc(track.faction) + '）' : '')
@@ -2457,14 +2686,14 @@
         circle.bindPopup('<b>' + esc(c.name || '范围') + '</b>'
           + (c.faction ? '（' + esc(c.faction) + '）' : '')
           + '<br/>' + esc(c.rangeType || (isRecon ? '侦察范围' : '打击范围'))
-          + '<br/>半径 ' + esc(c.radiusKm) + ' km');
+          + '<br/>半径 ' + esc(c.radiusKm) + '公里');
         circle.on('click', function () { clickFns.forEach(function (fn) { fn(feat); }); });
         circle.addTo(map);
         featureLayers.push({ layer: circle, feature: feat });
         var circleMeta = circleMetaOf(c);
         refs.circles.push({
           layer: circle, key: circleMeta.key, faction: c.faction || '',
-          isRecon: circleMeta.isRecon,
+          isRecon: circleMeta.isRecon, data: c,
         });
       });
 
@@ -2580,6 +2809,7 @@
   // SitTable —— 分页明细表（自带样式，不依赖外部框架）
   // ────────────────────────────────────────────────────────────────
   var TABLE_STYLE_ID = 'ipage-table-style';
+  var TABLE_MAX_PAGE_SIZE = 10;   // 全局约束：所有明细表每页最多 10 行
   function ensureTableStyle() {
     if (document.getElementById(TABLE_STYLE_ID)) return;
     var style = document.createElement('style');
@@ -2609,7 +2839,8 @@
         return typeof c === 'string' ? { key: c, label: c } : { key: c.key, label: c.label || c.key };
       });
       var rows = spec.rows || [];
-      var pageSize = Math.max(1, toNum(spec.pageSize) || 10);
+      // 全局硬约束：无论页面传多少，每页最多 10 行；不足 10 行只渲染真实数据行，不补空行
+      var pageSize = Math.min(TABLE_MAX_PAGE_SIZE, Math.max(1, toNum(spec.pageSize) || TABLE_MAX_PAGE_SIZE));
       var page = 0;
       var maxHeight = spec.maxHeight ? 'max-height:' + spec.maxHeight + 'px;overflow:auto;' : '';
 
@@ -2635,12 +2866,16 @@
           html += '</tr>';
         });
         html += '</tbody></table></div>';
-        html += '<div class="ip-pager">'
-          + '<span>共 ' + rows.length + ' 行</span>'
-          + '<button data-ip-page="prev"' + (page === 0 ? ' disabled' : '') + '>上一页</button>'
-          + '<span>' + (page + 1) + ' / ' + totalPages + '</span>'
-          + '<button data-ip-page="next"' + (page >= totalPages - 1 ? ' disabled' : '') + '>下一页</button>'
-          + '</div></div>';
+        // 只有超过一页才显示分页器；不足 10 行时不出现「共 N 行 1/1」的噪音
+        if (totalPages > 1) {
+          html += '<div class="ip-pager">'
+            + '<span>共 ' + rows.length + ' 行</span>'
+            + '<button data-ip-page="prev"' + (page === 0 ? ' disabled' : '') + '>上一页</button>'
+            + '<span>' + (page + 1) + ' / ' + totalPages + '</span>'
+            + '<button data-ip-page="next"' + (page >= totalPages - 1 ? ' disabled' : '') + '>下一页</button>'
+            + '</div>';
+        }
+        html += '</div>';
         node.innerHTML = html;
         var btns = node.querySelectorAll('[data-ip-page]');
         btns.forEach(function (b) {
@@ -2738,6 +2973,7 @@
     if (msg.type === 'ipage:viewport') { applyViewportHeight(msg.height); return; }
     if (msg.type === 'ipage:timeline-cmd') { applyTimelineCommand(msg); return; }
     if (msg.type === 'ipage:faction') { applyFaction(msg.value); return; }
+    if (msg.type === 'ipage:theme') { setTheme(msg.value); return; }
     if (msg.type !== 'ipage:data' || !msg.payload) return;
     state = msg.payload;
     tileLayers = state.tileLayers || [];
@@ -2753,6 +2989,9 @@
   Object.defineProperty(window, 'SitTimeline', { value: SitTimeline, writable: false, configurable: false });
   Object.defineProperty(window, 'SitUtil', { value: SitUtil, writable: false, configurable: false });
   Object.defineProperty(window, 'SitTable', { value: SitTable, writable: false, configurable: false });
+
+  // 初始主题：标准（与改造前完全一致）；宿主就绪后会按页面记忆重放
+  setTheme('standard');
 
   if (document.readyState !== 'loading') sendReady();
   else document.addEventListener('DOMContentLoaded', sendReady);

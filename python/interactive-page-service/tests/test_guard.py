@@ -5,7 +5,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent.guard import validate_page
+from agent.guard import validate_layout, validate_page
 
 VALID_HTML = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>测试页</title></head>
@@ -119,6 +119,60 @@ class GuardTest(unittest.TestCase):
         html = "```html\n" + VALID_HTML + "\n```"
         issues = validate_page(html, BUNDLE)
         self.assertTrue(any("围栏" in i for i in issues))
+
+    def test_english_visible_text_rejected(self):
+        """界面文案出现英文单词必须被判为不合规。"""
+        html = VALID_HTML.replace("<body>", "<body><h1>THREAT OVERVIEW</h1>", 1)
+        issues = validate_page(html, BUNDLE)
+        self.assertTrue(any("中文" in i for i in issues), issues)
+
+    def test_units_and_codes_are_allowed(self):
+        """单位符号与含数字的编号/型号不算英文。"""
+        html = VALID_HTML.replace(
+            "<body>",
+            "<body><p>打击半径 120km，侦察时长 2h，机型 BT-03，任务 M-BL-0001</p>", 1)
+        self.assertEqual(validate_page(html, BUNDLE), [])
+
+
+class LayoutGuardTest(unittest.TestCase):
+    """无地理数据时的版式校验：禁止左右分栏、内部滚动与固定一屏高度。"""
+
+    NO_GEO_BUNDLE = {
+        "datasets": [{
+            "id": "q1",
+            "rows": [{"阵营": "红方", "数量": 3}],
+            "geoFeatures": {"tracks": [], "points": [], "units": [], "circles": []},
+        }]
+    }
+
+    def test_geo_page_allows_split_layout(self):
+        """有地理要素时左右分栏属于正常版式，不报错。"""
+        html = "<style>.main{grid-template-columns:minmax(0,var(--ipage-left,44%)) 1fr}</style>"
+        self.assertEqual(validate_layout(html, BUNDLE), [])
+
+    def test_no_geo_split_layout_rejected(self):
+        """无地理数据时使用 --ipage-left 左右分栏必须报错。"""
+        html = "<style>.main{grid-template-columns:minmax(0,var(--ipage-left,44%)) 1fr}</style>"
+        issues = validate_layout(html, self.NO_GEO_BUNDLE)
+        self.assertTrue(any("左右分栏" in i for i in issues), issues)
+
+    def test_no_geo_inner_scroll_rejected(self):
+        """无地理数据时图表容器内部滚动必须报错。"""
+        html = "<style>.chart-col{overflow-y:auto;overscroll-behavior:contain}</style>"
+        issues = validate_layout(html, self.NO_GEO_BUNDLE)
+        self.assertTrue(any("内部滚动" in i for i in issues), issues)
+
+    def test_no_geo_fixed_viewport_rejected(self):
+        """无地理数据时固定一屏高度必须报错。"""
+        html = "<style>.single{height:var(--ipage-vh,720px)}</style>"
+        issues = validate_layout(html, self.NO_GEO_BUNDLE)
+        self.assertTrue(any("一屏高度" in i for i in issues), issues)
+
+    def test_no_geo_flat_layout_passes(self):
+        """无地理数据时平铺版式（自适应列 + 自然滚动）通过校验。"""
+        html = ("<style>.chart-grid{display:grid;"
+                "grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px}</style>")
+        self.assertEqual(validate_layout(html, self.NO_GEO_BUNDLE), [])
 
 
 if __name__ == "__main__":

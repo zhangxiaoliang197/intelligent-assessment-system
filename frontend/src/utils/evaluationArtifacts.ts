@@ -69,6 +69,8 @@ export interface EvaluationArtifactPayload {
 export interface ArtifactContext {
   question: string
   dataSourceId: string
+  /** 数据源名称（仅用于弹窗展示，不进入请求体） */
+  dataSourceName?: string
   sourceSessionId?: string
   skillId?: string
   skillName?: string
@@ -79,6 +81,23 @@ export interface ArtifactSelection {
   includeConclusion: boolean
   presentation: { kpi: boolean; chart: boolean; map: boolean; table: boolean }
   title: string
+}
+
+/** 多轮对话中的一轮评估（按出现顺序编号，1 起） */
+export interface EvaluationArtifactRound {
+  roundIndex: number
+  question: string
+  context: ArtifactContext
+  result: any
+}
+
+/** 用户在弹窗中对某一轮的勾选结果 */
+export interface RoundSelection {
+  round: EvaluationArtifactRound
+  /** 该轮勾选的产物 id（归一化后的原始 id，未加轮次前缀） */
+  itemIds: string[]
+  /** 是否带入该轮综合结论 */
+  includeConclusion: boolean
 }
 
 /** 单元格最大字符数（与后端 _MAX_TEXT_LEN 对齐） */
@@ -490,6 +509,32 @@ export function hasUsableArtifacts(result: any): boolean {
   return items.length > 0
 }
 
+/**
+ * 把「没有可用产物」的原因说清楚，便于排查是取数失败还是确实无数据。
+ *
+ * 用于弹窗里对不可选轮次的说明，以及点击入口时的中文提示。
+ */
+export function describeNoArtifacts(result: any): string {
+  const type = String(result?.type || '')
+  const reasonOf = (entry: any) => String(entry?.error || entry?.insight || '').trim()
+  if (type === 'skill') {
+    const steps = Array.isArray(result.queryResults) ? result.queryResults : []
+    const failed = steps.filter((s: any) => String(s?.status || '') !== 'completed')
+    const reason = failed.map(reasonOf).find(Boolean)
+    return `本次评估 ${steps.length} 个步骤均无可用数据${reason ? '：' + reason.slice(0, 60) : ''}`
+  }
+  if (type === 'air_superiority' || type === 'combat_effectiveness') {
+    const entries = Array.isArray(result.results) ? result.results : []
+    const empty = entries.filter((e: any) => !(Array.isArray(e?.rows) && e.rows.length))
+    const reason = empty.map(reasonOf).find(Boolean)
+    return `本次评估 ${entries.length} 个查询均未返回数据${reason ? '：' + reason.slice(0, 60) : ''}`
+  }
+  const rows = Array.isArray(result?.rawResults) ? result.rawResults : []
+  return rows.length
+    ? '评估结果未包含可展示的数据列'
+    : '本次评估没有返回可展示的数据行'
+}
+
 /** 默认勾选：全部可用数据项 */
 export function defaultSelectedIds(items: EvaluationArtifactItem[]): string[] {
   return items.filter((item) => item.rows.length > 0).map((item) => item.artifactId)
@@ -519,5 +564,88 @@ export function buildArtifactPayload(
       map: selection.presentation.map && mapAvailable,
     },
     items: selectedItems,
+  }
+}
+
+/** 合并结论的最大字符数（后端字段上限 50000，留出余量） */
+const MAX_CONCLUSION_CHARS = 20000
+/** 多轮问题拼接后的最大字符数（后端字段上限 2000） */
+const MAX_QUESTION_CHARS = 800
+
+/** 文本截断，超出时以省略号结尾 */
+function truncateText(text: string, limit: number): string {
+  return text.length > limit ? `${text.slice(0, limit)}…` : text
+}
+
+/**
+ * 构建多轮评估产物请求体：把多轮勾选的产物统一合并为一次生成请求。
+ *
+ * 合并口径（与方案文档一致）：
+ *  - 产物按轮次顺序拼接，artifactId 加 `r{轮次}_` 前缀，避免跨轮 id 冲突；
+ *  - 仅带入勾选了结论的轮次，按轮序用空行拼接为一段总结；
+ *  - 单轮问题直接使用，多轮问题用「；」拼接并截断；
+ *  - 技能在选中轮次中完全一致时才填写，否则留空；
+ *  - 数据源取首个选中轮次（仅用于溯源），不限制跨数据源合并。
+ *
+ * Args:
+ *   selections: 各轮的勾选结果（顺序不限，函数内部按轮次排序）
+ *   options: 全局呈现偏好与页面标题
+ *
+ * Returns:
+ *   后端可直接消费的评估产物请求体
+ */
+export function buildMultiRoundPayload(
+  selections: RoundSelection[],
+  options: {
+    title: string
+    presentation: { kpi: boolean; chart: boolean; map: boolean; table: boolean }
+  },
+): EvaluationArtifactPayload {
+  const ordered = [...selections].sort((a, b) => a.round.roundIndex - b.round.roundIndex)
+  const items: EvaluationArtifactItem[] = []
+  const conclusions: string[] = []
+  const questions: string[] = []
+  const skillIds = new Set<string>()
+  const skillNames = new Set<string>()
+  let dataSourceId = ''
+  let sourceSessionId = ''
+
+  for (const selection of ordered) {
+    const { round } = selection
+    const normalized = normalizeEvaluationResult(round.result, round.context)
+    const selectedIds = new Set(selection.itemIds)
+    for (const item of normalized.items) {
+      if (!selectedIds.has(item.artifactId)) continue
+      items.push({ ...item, artifactId: `r${round.roundIndex}_${item.artifactId}` })
+    }
+    if (selection.includeConclusion && normalized.conclusion.trim()) {
+      conclusions.push(normalized.conclusion.trim())
+    }
+    if (round.question.trim()) questions.push(round.question.trim())
+    if (!dataSourceId) dataSourceId = round.context.dataSourceId || ''
+    if (!sourceSessionId) sourceSessionId = round.context.sourceSessionId || ''
+    if (round.context.skillId) skillIds.add(round.context.skillId)
+    if (round.context.skillName) skillNames.add(round.context.skillName)
+  }
+
+  const question = questions.length > 1
+    ? truncateText(questions.join('；'), MAX_QUESTION_CHARS)
+    : (questions[0] || '基于评估分析结果生成态势页面')
+  // 已勾选产物都没有坐标时关闭地图，避免生成空白地图
+  const mapAvailable = items.some((item) => itemCapabilities(item).map)
+
+  return {
+    sourceSessionId,
+    question,
+    title: options.title.trim(),
+    dataSourceId,
+    skillId: skillIds.size === 1 ? [...skillIds][0] : '',
+    skillName: skillNames.size === 1 ? [...skillNames][0] : '',
+    conclusion: truncateText(conclusions.join('\n\n'), MAX_CONCLUSION_CHARS),
+    presentation: {
+      ...options.presentation,
+      map: options.presentation.map && mapAvailable,
+    },
+    items,
   }
 }

@@ -212,5 +212,90 @@ class PlanPresentationTest(unittest.TestCase):
         self.assertIn(plan["sections"][0]["kind"], ("chart", "table"))
 
 
+class ChartCapTest(unittest.TestCase):
+    """多轮产物合并后的图表数量上限：有地图 4 张、无地图 8 张。"""
+
+    @staticmethod
+    def _chart_items(count: int):
+        """构造指定数量的可图表聚合产物。"""
+        return [numeric_item(f"q{i}", f"统计{i}") for i in range(1, count + 1)]
+
+    @staticmethod
+    def _geo_item():
+        """构造一条带坐标的明细产物，用于触发地图区块。"""
+        return ArtifactItem(
+            artifactId="geo1",
+            name="空间分布",
+            mode="detail",
+            columns=["名称", "经度", "纬度"],
+            rows=[{"名称": "阵地A", "经度": 120.0, "纬度": 30.0}],
+            totalRows=1,
+            geo={"markers": [{"name": "阵地A", "lng": 120.0, "lat": 30.0}]},
+        )
+
+    def test_no_map_allows_eight_charts(self):
+        """无地图数据时图表上限放宽到 8 张。"""
+        artifacts = make_artifacts(self._chart_items(10))
+        _, plan, _ = build_bundle_and_plan(artifacts, "多轮评估")
+        charts = [s for s in plan["sections"] if s["kind"] == "chart"]
+        self.assertEqual(len(charts), 8)
+        self.assertFalse(any(s["kind"] == "map" for s in plan["sections"]))
+
+    def test_with_map_limits_four_charts(self):
+        """有地图数据时图表上限收紧到 4 张。"""
+        items = self._chart_items(10) + [self._geo_item()]
+        artifacts = make_artifacts(items)
+        _, plan, _ = build_bundle_and_plan(artifacts, "多轮评估")
+        charts = [s for s in plan["sections"] if s["kind"] == "chart"]
+        self.assertEqual(len(charts), 4)
+        self.assertTrue(any(s["kind"] == "map" for s in plan["sections"]))
+
+    def test_map_switch_off_allows_eight_charts(self):
+        """有坐标产物但用户关闭地图时，按无地图处理，图表上限仍为 8 张。"""
+        items = self._chart_items(10) + [self._geo_item()]
+        presentation = {"kpi": True, "chart": True, "map": False, "table": False}
+        artifacts = make_artifacts(items, presentation=presentation)
+        _, plan, _ = build_bundle_and_plan(artifacts, "多轮评估")
+        charts = [s for s in plan["sections"] if s["kind"] == "chart"]
+        self.assertEqual(len(charts), 8)
+        self.assertFalse(any(s["kind"] == "map" for s in plan["sections"]))
+
+
+class PlanCoverageTest(unittest.TestCase):
+    """勾选的产物必须至少被一个区块引用，避免数据在页面上凭空消失。"""
+
+    def test_unreferenced_detail_gets_table_section(self):
+        """明细表开关关闭时，未被引用的明细产物仍会补一张明细表。"""
+        detail = ArtifactItem(
+            artifactId="r2_q1", name="红方当前在空飞机数", mode="detail",
+            columns=["red_in_air_count"],
+            rows=[{"red_in_air_count": 12}],
+        )
+        artifacts = make_artifacts([numeric_item("r1_q1"), detail])
+        bundle, plan, _ = build_bundle_and_plan(artifacts, "红蓝对比")
+
+        self.assertEqual([d["id"] for d in bundle["datasets"]], ["r1_q1", "r2_q1"])
+        refs = {s.get("ref") for s in plan["sections"] if s.get("ref")}
+        self.assertIn("r2_q1", refs)
+        self.assertTrue(any(
+            s["kind"] == "table" and s.get("ref") == "r2_q1"
+            for s in plan["sections"]
+        ))
+
+    def test_detail_already_referenced_not_duplicated(self):
+        """已作为主明细表引用的产物不会重复补表。"""
+        detail = ArtifactItem(
+            artifactId="r2_q1", name="明细", mode="detail",
+            columns=["区域", "数量"],
+            rows=[{"区域": "A", "数量": 1}],
+        )
+        presentation = {"kpi": True, "chart": True, "map": True, "table": True}
+        artifacts = make_artifacts([numeric_item(), detail], presentation=presentation)
+        _, plan, _ = build_bundle_and_plan(artifacts, "")
+
+        tables = [s for s in plan["sections"] if s["kind"] == "table"]
+        self.assertEqual(len(tables), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

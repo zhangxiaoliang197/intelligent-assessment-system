@@ -72,6 +72,72 @@ _PLACEHOLDER_PATTERNS = [
     r"数据待补充", r"待填充", r"TODO", r"lorem ipsum",
 ]
 
+# 单位符号允许英文（用户口径：单位不算英文）；含数字的编号/型号一律放行
+_ALLOWED_UNIT_WORDS = {
+    "km", "cm", "mm", "m", "kg", "g", "t", "h", "min", "s", "ms", "kt", "kts",
+    "ft", "nmi", "mach", "kph", "mps", "kmh", "rpm", "hz", "khz", "mhz", "ghz",
+    "kw", "mw", "kwh", "v", "a", "ma", "db", "px", "kb", "mb", "gb",
+}
+
+
+def _visible_text(html: str) -> str:
+    """提取页面可见文本：去掉 script/style 块、注释、标签与 HTML 实体。"""
+    text = re.sub(r"<!--.*?-->", " ", html or "", flags=re.S)
+    text = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", " ", text, flags=re.I | re.S)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&#?\w+;", " ", text)
+    return text
+
+
+def _english_words(html: str) -> List[str]:
+    """找出可见文本中的英文单词（单位与含数字的编号/型号放行）。"""
+    found: List[str] = []
+    for match in re.finditer(r"[A-Za-z][A-Za-z0-9_\-]*", _visible_text(html)):
+        word = match.group(0)
+        if len(word) < 2:
+            continue
+        if any(ch.isdigit() for ch in word):
+            continue
+        if word.lower() in _ALLOWED_UNIT_WORDS:
+            continue
+        found.append(word)
+    return list(dict.fromkeys(found))
+
+
+def validate_layout(html: str, bundle: Dict[str, Any]) -> List[str]:
+    """无地理数据时的版式校验（仅用于 LLM 生成页，模板兜底不走这里）。
+
+    无地图页面必须采用「KPI 整行 + 图表平铺 + 页面自然滚动」版式。
+    以下三类写法说明模型仍在套用「左图表 / 右侧栏」的一屏分栏结构，必须重写：
+    1. 使用 --ipage-left 双列主区；
+    2. 图表/内容容器内部滚动（overflow:auto、overflow-y:auto、overscroll-behavior）；
+    3. 用 --ipage-vh 把内容区固定为一屏高度。
+
+    Args:
+        html: LLM 产出的完整 HTML
+        bundle: 数据包（用于判断是否存在地理要素）
+
+    Returns:
+        中文问题列表（空列表表示版式合规）
+    """
+    if _bundle_has_geo_features(bundle):
+        return []
+    text = html or ""
+    issues: List[str] = []
+
+    if re.search(r"--ipage-left\s*:", text) or re.search(r"var\(\s*--ipage-left", text):
+        issues.append("无地理数据时禁止左右分栏（不要使用 --ipage-left），KPI 与图表应整行平铺")
+    if (re.search(r"overflow\s*:\s*(?:auto|scroll)", text, re.I)
+            or re.search(r"overflow-y\s*:\s*(?:auto|scroll)", text, re.I)
+            or re.search(r"overscroll-behavior", text, re.I)):
+        issues.append("无地理数据时禁止容器内部滚动（不要设置 overflow:auto），页面应随内容自然滚动")
+    if re.search(r"height\s*:\s*var\(--ipage-vh", text):
+        issues.append("无地理数据时禁止固定一屏高度（不要用 --ipage-vh），图表平铺后页面自然滚动")
+    if re.search(r"ip-chart-col|ip-main", text):
+        issues.append("无地理数据时禁止使用双列布局基础类（.ip-main/.ip-chart-col）")
+
+    return issues
+
 
 def validate_page(html: str, bundle: Dict[str, Any]) -> List[str]:
     """校验 LLM 页面，返回中文问题列表。
@@ -144,6 +210,11 @@ def validate_page(html: str, bundle: Dict[str, Any]) -> List[str]:
     for pattern in _PLACEHOLDER_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
             issues.append(f"存在未替换的占位内容：{pattern}")
+
+    # 界面语言：可见文案必须为中文（单位与含数字的编号/型号放行）
+    english = _english_words(text)
+    if english:
+        issues.append("页面可见文字必须为中文，检测到英文：" + "、".join(english[:8]))
 
     # 数据包非空时，页面不应引用不存在的数据集 id
     datasets = {str(d.get("id")) for d in (bundle.get("datasets") or []) if d.get("id")}

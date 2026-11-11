@@ -67,6 +67,38 @@ class TemplateTest(unittest.TestCase):
         self.assertNotIn("https://", self.html)
         self.assertNotIn("<script src", self.html.lower())
 
+    def test_table_paginates_at_most_10_rows(self):
+        """明细表每页最多 10 行，超过由 SitTable 分页。"""
+        self.assertIn("pageSize: 10", self.html)
+        self.assertNotIn("pageSize: rows.length", self.html)
+
+    def test_chart_cards_equal_width(self):
+        """单列图表不允许固定 max-width，卡片等宽铺满图表列。"""
+        self.assertNotIn("max-width: 520px", self.html)
+        self.assertNotIn(".chart-card.wide { max-width: 900px", self.html)
+        self.assertIn("grid-auto-rows: minmax(320px, 1fr)", self.html)
+        self.assertIn("overflow-y: auto", self.html)
+
+    def test_no_geo_flat_layout(self):
+        """无地理数据时模板取消单屏高度与内部滚动，图表平铺后页面自然滚动。"""
+        bundle = {
+            "question": "无地图对比",
+            "generatedAt": "2024-01-01 00:00:00",
+            "datasets": [{
+                "id": "q1", "name": "机型数量", "mode": "aggregate",
+                "columns": ["阵营", "数量"],
+                "rows": [{"阵营": "红方", "数量": 3}],
+                "totalRows": 1, "truncated": False,
+                "geo": {"kind": "none"}, "summary": "行数：1",
+                "geoFeatures": {"tracks": [], "points": [], "circles": []},
+                "warnings": [],
+            }],
+        }
+        html = render_template_page(bundle)
+        self.assertIn("repeat(auto-fit,minmax(360px,1fr))", html)
+        self.assertIn("chartCol.style.overflow = 'visible'", html)
+        self.assertIn("screen.style.height = 'auto'", html)
+
 
 class StripFenceTest(unittest.TestCase):
     def test_strip_html_fence(self):

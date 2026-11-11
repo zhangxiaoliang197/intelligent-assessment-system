@@ -129,7 +129,7 @@ class TimelineGuardTest(unittest.TestCase):
 
     HTML = """<!DOCTYPE html><html><head></head><body>
 <p>页面级时间轴验证用静态文本，用于满足最小页面长度校验。时间轴应由页面唯一时钟驱动，
-地图与图表都订阅同一条 timeline:tick 事件，不得各自维护播放器。该段文字需要足够长，
+地图与图表都订阅同一条时间轴事件，不得各自维护播放器。该段文字需要足够长，
 避免触发"页面内容过短"的守门规则。</p>
 <script>
 SitApp.bootstrap(function(data){

@@ -2,8 +2,9 @@
 
 当 PageWriter 多次失败时，用固定模板把 dataBundle 渲染成
 「单屏态势区（图表+地图）+ 平铺明细/结论」：页头 → KPI → 主区 → 明细表 → 结论。
-单屏区高度取宿主注入的 --ipage-vh；明细表与结论自然向下平铺，不设滚动条。
-模板内只有通用映射逻辑，不编造业务结论；同样严格遵守 page-kit 运行时契约，可通过 Guard。
+单屏区高度取宿主注入的 --ipage-vh；图表卡片等宽且带最小可读高度，超出时图表列内滚动；
+明细表每页最多 10 行，超过由组件分页。模板内只有通用映射逻辑，不编造业务结论；
+同样严格遵守 page-kit 运行时契约，可通过 Guard。
 """
 from typing import Any, Dict
 
@@ -34,15 +35,20 @@ _TEMPLATE = """<!DOCTYPE html>
   .kpi .l { font-size: 12px; color: #64748b; margin-top: 2px; }
   /* 主区：左图表 / 右地图，整体吸收单屏区剩余高度 */
   .main { flex: 1; min-height: 0; display: grid;
-          grid-template-columns: minmax(320px, var(--ipage-left,42%)) 1fr; gap: 12px; }
-  .chart-col { display: grid; gap: 10px; min-height: 0; }
+          grid-template-columns: minmax(0, var(--ipage-left,44%)) minmax(0, 1fr); gap: 12px; }
+  /* 图表列：卡片等宽铺满；总高超出时只在列内滚动，地图保持满高 */
+  .chart-col { display: grid; gap: 10px; min-height: 0; min-width: 0;
+               grid-template-columns: minmax(0, 1fr);
+               grid-auto-rows: minmax(320px, 1fr);
+               overflow-y: auto; overscroll-behavior: contain; align-content: start; }
   .card { background: #fff; border-radius: 10px; padding: 10px 12px;
           box-shadow: 0 1px 4px rgba(15,23,42,.08); min-width: 0; min-height: 0;
           display: flex; flex-direction: column; }
-  .chart-card { max-width: 520px; max-height: 420px; }
-  .chart-card.wide { max-width: 900px; max-height: 420px; grid-column: 1 / -1; }
+  .chart-card { width: 100%; max-width: none; min-width: 0; min-height: 0;
+                display: flex; flex-direction: column; }
+  .chart-card.wide { max-width: none; grid-column: 1 / -1; }
   .card h3 { flex: none; font-size: 13px; margin-bottom: 6px; color: #0f172a; }
-  .chart { flex: 1; min-height: 0; }
+  .chart { flex: 1; width: 100%; min-height: 240px; }
   .map-card { padding: 10px 12px; }
   .map { flex: 1; min-height: 0; border-radius: 8px; overflow: hidden; }
   /* 平铺区：明细表与结论不设固定高度、不出现内部滚动条 */
@@ -53,8 +59,9 @@ _TEMPLATE = """<!DOCTYPE html>
     .screen { height: auto; }
     .main { grid-template-columns: 1fr; grid-auto-rows: minmax(220px, auto); }
     .chart-col { grid-template-columns: 1fr !important; grid-template-rows: none !important;
-                 grid-auto-rows: minmax(220px, auto); }
+                 grid-auto-rows: minmax(240px, auto); overflow: visible; }
     .chart-card, .chart-card.wide { max-width: none; grid-column: auto !important; }
+    .chart { min-height: 220px; }
     .map-card { min-height: 320px; }
   }
 </style>
@@ -141,14 +148,19 @@ SitApp.bootstrap(function (data) {
     }
   }
 
-  // ── 图表排列：1~3 单列；4 两列两行；5 上四下通栏；6+ 两列均分 ──
+  // ── 图表排列：1~3 单列；4~6+ 两列；5 张时底部通栏 ──
+  // 单列每张卡片至少 320px，双列至少 280px；总高超出时图表列内滚动，地图保持满高
   var n = items.length;
-  var cols = 1, rows = Math.max(1, n), wideLast = false;
-  if (n === 4) { cols = 2; rows = 2; }
-  else if (n === 5) { cols = 2; rows = 3; wideLast = true; }
-  else if (n >= 6) { cols = 2; rows = Math.ceil(n / 2); }
+  var cols = 1, wideLast = false;
+  if (n === 4) { cols = 2; }
+  else if (n === 5) { cols = 2; wideLast = true; }
+  else if (n >= 6) { cols = 2; }
+  var rowMin = cols === 1 ? 320 : 280;
   chartCol.style.gridTemplateColumns = 'repeat(' + cols + ', minmax(0,1fr))';
-  chartCol.style.gridTemplateRows = 'repeat(' + rows + ', minmax(0,1fr))';
+  chartCol.style.gridAutoRows = 'minmax(' + rowMin + 'px, 1fr)';
+  // 左栏宽度随图表数增加，单列至少 44%，保证折线图横向空间
+  var leftPct = Math.max(cols === 1 ? 44 : 36, Math.min(54, 30 + 4 * Math.max(1, n)));
+  main.style.setProperty('--ipage-left', leftPct + '%');
 
   items.forEach(function (item, idx) {
     var ds = item.ds;
@@ -159,6 +171,7 @@ SitApp.bootstrap(function (data) {
       : (ds.name || '数据') + ' · ' + item.valueCols.join(' / ');
     card.appendChild(el('h3', null, SitUtil.escapeHtml(title)));
     var chartEl = el('div', 'chart');
+    chartEl.style.minHeight = (cols === 1 ? 240 : 200) + 'px';
     card.appendChild(chartEl);
     chartCol.appendChild(card);
 
@@ -201,11 +214,15 @@ SitApp.bootstrap(function (data) {
       timeline: !!tl,
     });
   } else {
-    // 无地理数据：主区退化为单列全宽图表，不虚构地图
+    // 无地理数据：取消单屏固定高度与图表列内部滚动，图表平铺，页面随内容自然滚动
     main.style.gridTemplateColumns = '1fr';
+    chartCol.style.gridTemplateColumns = 'repeat(auto-fit,minmax(360px,1fr))';
+    chartCol.style.gridAutoRows = 'minmax(300px,auto)';
+    chartCol.style.overflow = 'visible';
+    screen.style.height = 'auto';
   }
 
-  // ── 平铺区：明细表向下展开，不分页、不滚动 ──
+  // ── 平铺区：明细表每页最多 10 行，超过由组件分页 ──
   var detailDs = datasets.filter(function (ds) { return ds.mode === 'detail' && ds.rows && ds.rows.length; })[0];
   if (detailDs) {
     var tableCard = el('div', 'card table-card');
@@ -217,7 +234,7 @@ SitApp.bootstrap(function (data) {
     SitTable.render(tableEl, {
       columns: (detailDs.columns || []).slice(0, 8),
       rows: rows,
-      pageSize: rows.length,
+      pageSize: 10,
     });
   }
 

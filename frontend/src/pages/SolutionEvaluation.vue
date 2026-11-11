@@ -100,6 +100,18 @@
               <el-icon><Grid /></el-icon>
               Skills 库
             </el-button>
+            <!-- 多轮评估产物 → 态势页面：入口固定在顶部，选择在弹窗内完成 -->
+            <el-button
+              size="small"
+              type="primary"
+              plain
+              :icon="MapLocation"
+              :disabled="!hasArtifactRounds || situationSheetLoading"
+              :title="situationEntryTitle"
+              @click="situationDialogVisible = true"
+            >
+              生成态势页面
+            </el-button>
           </div>
           <div class="data-source-selector">
             <span class="label">数据源：</span>
@@ -493,28 +505,6 @@
                           <li v-for="(ref, idx) in msg.result.knowledgeReference" :key="idx">{{ ref }}</li>
                         </ul>
                       </div>
-
-                      <!-- 基于本次评估产物生成态势页面：非强制，展开后就地选择，不弹层 -->
-                      <div v-if="showsSituationEntry(msg)" class="situation-entry">
-                        <el-button
-                          v-if="artifactPanelIndex !== index"
-                          type="primary"
-                          plain
-                          size="small"
-                          @click="openArtifactSheet(index, msg)"
-                        >
-                          <el-icon><MapLocation /></el-icon>
-                          生成态势页面（可选）
-                        </el-button>
-                        <SituationArtifactSheet
-                          v-else
-                          :result="msg.result"
-                          :context="artifactContextOf(msg)"
-                          :loading="situationSheetLoading"
-                          @confirm="onGenerateSituation"
-                          @cancel="artifactPanelIndex = null"
-                        />
-                      </div>
                     </div>
                     <!-- 分析建议（2-3条） -->
                     <div v-if="msg.content" class="message-text" v-html="renderMarkdown(msg.content)"></div>
@@ -708,6 +698,13 @@
         :skill="selectedSkill"
         @saved="handleSkillMarkdownSaved"
       />
+      <!-- 多轮评估产物选择：确认后由 onGenerateSituation 发起生成 -->
+      <SituationArtifactDialog
+        v-model="situationDialogVisible"
+        :rounds="artifactRounds"
+        :loading="situationSheetLoading"
+        @confirm="onGenerateSituation"
+      />
 
     </div>
   </Layout>
@@ -745,11 +742,15 @@ import AssistantAvatar from '@/components/AssistantAvatar.vue'
 import ToolSwitchBar from '@/components/ToolSwitchBar.vue'
 import SkillsLibrary from '@/pages/SkillsLibrary.vue'
 import SkillMarkdownDialog from '@/components/evaluation/SkillMarkdownDialog.vue'
-import SituationArtifactSheet from '@/components/evaluation/SituationArtifactSheet.vue'
+import SituationArtifactDialog from '@/components/evaluation/SituationArtifactDialog.vue'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData, extractGeoFromResults } from '@/composables/useMapPrompt'
 import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
-import { hasUsableArtifacts, type ArtifactContext, type EvaluationArtifactPayload } from '@/utils/evaluationArtifacts'
+import {
+  hasUsableArtifacts,
+  type EvaluationArtifactPayload,
+  type EvaluationArtifactRound,
+} from '@/utils/evaluationArtifacts'
 import { useInteractiveStore } from '@/stores/interactive'
 import api from '@/services/api'
 import {
@@ -862,8 +863,8 @@ let activeAbortController: AbortController | null = null
 let cancelRequested = false
 
 // ── 评估产物 → 态势页面 ──
-// 选择区内联在评估结果卡之后，默认收起；同一时刻只展开一条消息的选择区
-const artifactPanelIndex = ref<number | null>(null)
+// 顶部按钮打开多轮产物选择弹窗，选中内容统一合并为一次生成请求
+const situationDialogVisible = ref(false)
 // 态势页面生成任务存放在全局 store 中，离开评估页再返回仍能恢复
 const situationTask = computed(() => interactiveStore.situationTask)
 const showSituationTask = computed(
@@ -873,66 +874,47 @@ const situationSheetLoading = computed(
   () => situationTask.value?.status === 'generating',
 )
 
-/** 某条评估消息生成态势页面时使用的上下文（问题、数据源、技能） */
-function artifactContextOf(msg: any): ArtifactContext {
-  return {
-    question: String(msg?.question || ''),
-    dataSourceId: String(msg?.databaseId || ''),
-    sourceSessionId: sessionId.value,
-    skillId: String(msg?.skillId || selectedSkillId.value || ''),
-    skillName: String(msg?.result?.skill?.name || selectedSkill.value?.name || ''),
-  }
-}
-
-/** 评估结果类型中可能带数据产物的形态（用于决定是否展示入口） */
-const ARTIFACT_RESULT_TYPES = new Set([
-  'skill', 'air_superiority', 'combat_effectiveness',
-  'indicator_calculation', 'general', 'data_query',
-])
-
 /**
- * 是否展示「生成态势页面（可选）」入口。
- * 只按结果类型判断，不看缓存字段——历史会话恢复的本地快照没有 hasArtifacts，
- * 若用缓存字段会把入口隐藏掉。真正是否可生成在点击时用 hasUsableArtifacts 兜底提示。
+ * 当前会话的多轮评估产物（按 assistant 消息出现顺序编号）。
+ * 历史会话恢复后同样适用：服务端 turns 已带回 result / question / skillId / databaseId。
  */
-function showsSituationEntry(msg: any): boolean {
-  return ARTIFACT_RESULT_TYPES.has(String(msg?.result?.type || ''))
-}
+const artifactRounds = computed<EvaluationArtifactRound[]>(() => {
+  const rounds: EvaluationArtifactRound[] = []
+  messages.value.forEach((msg: any) => {
+    if (msg?.role !== 'assistant' || !msg?.result) return
+    const skillName = String(
+      msg.result?.skill?.name
+      || evaluationSkills.value.find(skill => skill.id === msg.skillId)?.name
+      || ''
+    )
+    rounds.push({
+      roundIndex: rounds.length + 1,
+      question: String(msg.question || ''),
+      context: {
+        question: String(msg.question || ''),
+        dataSourceId: String(msg.databaseId || ''),
+        dataSourceName: String(msg.databaseName || ''),
+        sourceSessionId: sessionId.value,
+        skillId: String(msg.skillId || ''),
+        skillName,
+      },
+      result: msg.result,
+    })
+  })
+  return rounds
+})
 
-/** 把「没有可用产物」的原因说清楚，便于排查是取数失败还是确实无数据 */
-function describeNoArtifacts(result: any): string {
-  const type = String(result?.type || '')
-  const reasonOf = (entry: any) => String(entry?.error || entry?.insight || '').trim()
-  if (type === 'skill') {
-    const steps = Array.isArray(result.queryResults) ? result.queryResults : []
-    const failed = steps.filter((s: any) => String(s?.status || '') !== 'completed')
-    const reason = failed.map(reasonOf).find(Boolean)
-    return `本次评估 ${steps.length} 个步骤均无可用数据${reason ? '：' + reason.slice(0, 60) : ''}`
-  }
-  if (type === 'air_superiority' || type === 'combat_effectiveness') {
-    const entries = Array.isArray(result.results) ? result.results : []
-    const empty = entries.filter((e: any) => !(Array.isArray(e?.rows) && e.rows.length))
-    const reason = empty.map(reasonOf).find(Boolean)
-    return `本次评估 ${entries.length} 个查询均未返回数据${reason ? '：' + reason.slice(0, 60) : ''}`
-  }
-  const rows = Array.isArray(result?.rawResults) ? result.rawResults : []
-  return rows.length
-    ? '评估结果未包含可展示的数据列'
-    : '本次评估没有返回可展示的数据行'
-}
+/** 是否至少有一轮存在可用产物，决定顶部入口是否可点 */
+const hasArtifactRounds = computed(
+  () => artifactRounds.value.some(round => hasUsableArtifacts(round.result)),
+)
 
-/** 就地展开产物选择区（仅当存在可展示的数据产物） */
-function openArtifactSheet(index: number, msg: any) {
-  if (!msg?.result) {
-    ElMessage.info('本次评估还没有结果，稍后再试')
-    return
-  }
-  if (!hasUsableArtifacts(msg.result)) {
-    ElMessage.info(`无法生成态势页面：${describeNoArtifacts(msg.result)}`)
-    return
-  }
-  artifactPanelIndex.value = artifactPanelIndex.value === index ? null : index
-}
+/** 顶部入口按钮的悬停提示 */
+const situationEntryTitle = computed(() => {
+  if (situationSheetLoading.value) return '已有态势页面正在生成，请稍候'
+  if (!hasArtifactRounds.value) return '当前会话还没有可用于态势页面的评估产物'
+  return '从多轮评估产物中选择内容生成态势页面'
+})
 
 /** 打开已生成的态势页面（点击卡片按钮才跳转） */
 function openSituationPage(pid?: string) {
@@ -950,7 +932,7 @@ async function onGenerateSituation(payload: EvaluationArtifactPayload) {
     ElMessage.info('已有态势页面正在生成，请稍候')
     return
   }
-  artifactPanelIndex.value = null
+  situationDialogVisible.value = false
   interactiveStore.startSituationTask({
     evaluationSessionId: sessionId.value,
     title: payload.title || '态势页面',
@@ -1744,8 +1726,7 @@ const sendMessage = async () => {
     activeAbortController = null
     activeRunId.value = ''
     cancelRequested = false
-    // 评估产物选择区不自动弹出：结果卡下方常驻「生成态势页面（可选）」按钮，由用户按需展开。
-    // 结果内容与入口都在消息末尾，收尾后滚到最新，避免用户以为没有入口。
+    // 结果内容在消息末尾，收尾后滚到最新；入口已固定到顶部，无需等待入口出现。
     setTimeout(() => scrollToBottom(), 120)
   }
 }
@@ -2955,17 +2936,7 @@ onMounted(async () => {
   color: #64748b;
 }
 
-/* 评估产物 → 态势页面入口：按钮右对齐，展开后选择区内联占满整行 */
-.situation-entry {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px dashed #e2e8f0;
-}
-.situation-entry :deep(.artifact-panel) { width: 100%; }
+/* 多轮评估产物选择改由顶部弹窗完成 */
 
 /* 评估产物生成态势页面：底部生成中/完成回执 */
 .situation-status-card {

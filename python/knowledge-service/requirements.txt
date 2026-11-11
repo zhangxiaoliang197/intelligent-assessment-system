@@ -6,4 +6,6 @@ python-docx==1.1.0
 python-dotenv>=1.0.0
 python-json-logger>=2.0.8
 sentence-transformers>=3.0.0
+# 锁定 huggingface-hub 主版本：transformers 5.x 与 tokenizers 均要求 <2.0，避免检索时模型加载失败
+huggingface-hub>=1.5.0,<2.0
 qdrant-client>=1.11.0

@@ -18,16 +18,28 @@
       role="region"
       aria-label="页面级控制条"
     >
-      <!-- 阵营行：控制地图与图表；未检测到多于一个阵营时不显示 -->
-      <div v-if="factionOptions.length" class="dock-faction">
-        <span class="dock-label">阵营</span>
-        <button
-          v-for="opt in factionButtons"
-          :key="opt.value"
-          type="button"
-          :class="['dock-chip', { active: activeFaction === opt.value }]"
-          @click="pickFaction(opt.value)"
-        >{{ opt.label }}</button>
+      <!-- 阵营行（有多个阵营时）+ 风格选择（常驻），同一行右侧 -->
+      <div class="dock-faction">
+        <template v-if="factionOptions.length">
+          <span class="dock-label">阵营</span>
+          <button
+            v-for="opt in factionButtons"
+            :key="opt.value"
+            type="button"
+            :class="['dock-chip', { active: activeFaction === opt.value }]"
+            @click="pickFaction(opt.value)"
+          >{{ opt.label }}</button>
+        </template>
+        <span class="dock-style">
+          <span class="dock-label">风格</span>
+          <button
+            v-for="opt in styleOptions"
+            :key="opt.value"
+            type="button"
+            :class="['dock-chip', { active: activeStyle === opt.value }]"
+            @click="pickStyle(opt.value)"
+          >{{ opt.label }}</button>
+        </span>
       </div>
       <div v-if="dockState" class="dock-panel">
         <button type="button" class="dock-btn" @click="togglePlay">
@@ -131,15 +143,39 @@ const factionButtons = computed(() => [
   ...factionOptions.value.map((f) => ({ value: f, label: f })),
 ])
 
+// ── 风格选项：标准（项目当前风格）/ 军事（深色战术配色），按页面记忆 ──
+type StyleMode = 'standard' | 'military'
+const styleOptions: { value: StyleMode; label: string }[] = [
+  { value: 'standard', label: '标准' },
+  { value: 'military', label: '军事' },
+]
+const activeStyle = ref<StyleMode>('standard')
+// 以"问题 + 生成时间"作为页面身份，切换页面时各自记住自己的风格
+const styleStorageKey = computed(() => {
+  const q = String(props.bundle?.question || '')
+  const t = String(props.bundle?.generatedAt || '')
+  return 'ipage.styleMode::' + (q + '|' + t).slice(0, 160)
+})
+function readStoredStyle(): StyleMode {
+  try {
+    return localStorage.getItem(styleStorageKey.value) === 'military' ? 'military' : 'standard'
+  } catch {
+    return 'standard'
+  }
+}
+function persistStyle(value: StyleMode) {
+  try { localStorage.setItem(styleStorageKey.value, value) } catch { /* 隐私模式下忽略 */ }
+}
+
 // 数据包带 2 个以上时间桶时，页面一定存在页面级时间轴
 const hasTimeline = computed(() => {
   const buckets = props.bundle?.timeline?.buckets
   return Array.isArray(buckets) && buckets.length >= 2
 })
-// 有阵营行或时间轴时都需要浮层
-const dockVisible = computed(() => hasTimeline.value || factionOptions.value.length > 0)
+// 浮层常驻（风格选择常驻），高度 = 风格/阵营行 + 可选时间轴行
+const dockVisible = computed(() => !!props.html)
 const dockHeightPx = computed(() =>
-  (factionOptions.value.length ? FACTION_ROW_HEIGHT : 0) + (hasTimeline.value ? DOCK_HEIGHT : 0),
+  FACTION_ROW_HEIGHT + (hasTimeline.value ? DOCK_HEIGHT : 0),
 )
 const dockRatio = computed(() =>
   dragging.value ? dragRatio.value : Number(dockState.value?.ratio ?? 0),
@@ -157,7 +193,21 @@ const BASE_STYLE = `
   .ip-kpi .v{font-size:24px;font-weight:700;color:#1d4ed8}
   .ip-kpi .l{font-size:12px;color:#64748b;margin-top:4px}
   .ip-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
-  @media(max-width:900px){.ip-grid{grid-template-columns:1fr}}
+  /* 图表主区契约：左图表列等宽铺满，超出时列内滚动；地图保持满高 */
+  .ip-main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,var(--ipage-left,44%)) minmax(0,1fr);gap:12px}
+  .ip-chart-col{display:grid;gap:12px;min-height:0;min-width:0;grid-template-columns:minmax(0,1fr);
+    grid-auto-rows:minmax(320px,1fr);overflow-y:auto;overscroll-behavior:contain;align-content:start}
+  .ip-chart-card{display:flex;flex-direction:column;width:100%;max-width:none;min-width:0;min-height:0}
+  .ip-chart-box{flex:1;width:100%;min-height:240px}
+  .ip-chart-col.ip-cols-2{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:minmax(280px,1fr)}
+  .ip-chart-col.ip-cols-2 .ip-chart-box{min-height:200px}
+  @media(max-width:900px){
+    .ip-grid{grid-template-columns:1fr}
+    .ip-main{grid-template-columns:1fr}
+    .ip-chart-col{overflow:visible;grid-auto-rows:minmax(240px,auto)}
+    .ip-chart-col.ip-cols-2{grid-template-columns:1fr}
+    .ip-chart-box{min-height:220px}
+  }
 `
 
 // ── 视口基准与时间轴命令：iframe 自动撑高时页内 100vh 等于内容高，不能用来算"一屏" ──
@@ -233,6 +283,18 @@ function pickFaction(value: string) {
   sendFaction(value)
 }
 
+// ── 风格切换：下发到 iframe，图表与地图按同一套配色 token 重绘 ──
+function sendTheme(value: StyleMode) {
+  frameRef.value?.contentWindow?.postMessage({ type: 'ipage:theme', value }, '*')
+}
+
+function pickStyle(value: StyleMode) {
+  if (activeStyle.value === value) return
+  activeStyle.value = value
+  persistStyle(value)
+  sendTheme(value)
+}
+
 // ── 归一化 LLM 产物：剥离寒暄前言/Markdown 围栏，截取完整文档窗口 ──
 function normalizePageHtml(raw: string): string {
   let t = (raw || '').trim()
@@ -283,7 +345,7 @@ function buildSrcdoc(rawHtml: string): string {
     // turf 必须在 page-kit 之前：page-kit 的能力圈扫掠留痕依赖 window.turf.buffer
     + `<script src="${origin}/vendor/turf.min.js"><\/script>`
     // 版本号用于强制刷新运行时缓存：新增图例图层开关与阵营联动后，旧缓存会缺失接口
-    + `<script src="${origin}/vendor/page-kit.js?v=20261109-3"><\/script>`
+    + `<script src="${origin}/vendor/page-kit.js?v=20261110-2"><\/script>`
 
   const headMatch = pageHtml.match(/<head[^>]*>/i)
   if (headMatch) {
@@ -310,6 +372,8 @@ function onMessage(e: MessageEvent) {
     updateDockLeft()
     scheduleSyncViewport()
     if (activeFaction.value) sendFaction(activeFaction.value)
+    // 风格：每次就绪都重放，保证 iframe 重建后按记忆恢复
+    sendTheme(activeStyle.value)
   } else if (msg.type === 'ipage:height' && typeof msg.height === 'number') {
     const h = Math.max(Math.ceil(msg.height), 480)
     if (frameRef.value) frameRef.value.style.height = h + 'px'
@@ -343,6 +407,8 @@ async function rebuild() {
   dragRatio.value = 0
   // 换页即重置阵营筛选（新页面默认"全部"）
   activeFaction.value = ''
+  // 风格按页面记忆：同一页面恢复上次选择，新页面回到标准
+  activeStyle.value = readStoredStyle()
   if (!props.html) {
     srcdoc.value = ''
     return
@@ -439,6 +505,13 @@ onBeforeUnmount(() => {
 .dock-label {
   color: #64748b;
   margin-right: 2px;
+}
+/* 风格选择固定在同行右侧；无阵营时独占一行 */
+.dock-style {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .dock-chip {
   padding: 2px 10px;

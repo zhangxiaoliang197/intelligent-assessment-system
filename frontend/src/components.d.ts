@@ -60,6 +60,7 @@ declare module 'vue' {
     PageSandbox: typeof import('./components/interactive/PageSandbox.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SituationArtifactDialog: typeof import('./components/evaluation/SituationArtifactDialog.vue')['default']
     SituationArtifactSheet: typeof import('./components/evaluation/SituationArtifactSheet.vue')['default']
     SkillEditorDialog: typeof import('./components/evaluation/SkillEditorDialog.vue')['default']
     SkillMarkdownDialog: typeof import('./components/evaluation/SkillMarkdownDialog.vue')['default']

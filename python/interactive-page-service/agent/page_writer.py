@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Tuple
 import config
 from llm_client import call_llm, LLMTruncatedText
 from agent import prompts
-from agent.guard import validate_page
+from agent.guard import validate_layout, validate_page
 from agent.template_render import render_template_page
 
 logger = logging.getLogger("ipage-service")
@@ -94,8 +94,10 @@ def _llm_write(messages: List[Dict[str, str]]) -> Tuple[str, bool]:
 
 
 def _check_page(html: str, bundle: Dict[str, Any], truncated: bool) -> List[str]:
-    """Guard 校验 + 截断原因合并。"""
+    """Guard 校验 + 无地图版式校验 + 截断原因合并。"""
     issues = validate_page(html, bundle)
+    # 版式校验只针对 LLM 生成页：模板兜底自带无地图平铺逻辑，不参与该校验
+    issues.extend(validate_layout(html, bundle))
     if truncated:
         issues.append(_TRUNCATED_ISSUE)
     return issues

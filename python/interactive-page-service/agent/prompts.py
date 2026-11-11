@@ -273,7 +273,8 @@ RUNTIME_API_GUIDE = """
     饼图：series 只给一个 [{name, data:[{name:'类别', value:10}]}]
     雷达：spec = {type:'radar', title, indicators:['维度A','维度B'], series:[{name:'蓝方',data:[80,90]}]}
     散点：spec = {type:'scatter', title, series:[{name, data:[[x,y],...]}]}
-    返回 chart 对象（一般无需持有）。容器 div 必须有明确高度（CSS 给高度，如 .ip-card 内 320px）。
+    返回 chart 对象（一般无需持有）。容器 div 必须可计算高度：卡片内用 flex:1 + min-height:240px，
+    不要写死 height，也不要让容器高度为 0。
 
     **时间轴联动（可选）**：data.timeline 存在、且数据来自 mode=timeseries 的时序数据集时，
     给 chart spec 增加 timeline 配置并显式传 rows（页面端只筛选/透视，不做业务聚合）：
@@ -375,8 +376,10 @@ RUNTIME_API_GUIDE = """
     SitUtil.groupBy(rows, key)     -> {类别: [行]}
     SitUtil.sum(rows, key) / avg(rows, key) / countBy(rows, key)
     SitUtil.unique(rows, key)      去重值列表
-    SitTable.render(el, {columns:[{key,label}], rows, pageSize:rows.length})  明细表；
-        页面下部的明细表要平铺展示，pageSize 传全部行数、不传 maxHeight，不要分页或内部滚动
+    SitTable.render(el, {columns:[{key,label}], rows})  明细表；
+        pageSize 固定为 10（可省略，默认 10），严禁传 rows.length 或任何大于 10 的值；
+        超过 10 行由组件自动分页，不足 10 行只显示真实数据行，不补空行；
+        明细表必须用 SitTable 渲染，禁止自绘 <table>，也不要另写分页器或内部滚动
 
 六、SitApp 其它
     SitApp.reportError(msg)        页面内业务异常可上报（父界面据此提示，不影响其它区块）
@@ -395,31 +398,64 @@ PAGE_SYSTEM_HEADER = """
    "蓝方"渲染为蓝色(#1d4ed8)，无需在 spec 中指定 color；series 顺序可任意，颜色不随顺序变化；
    地图航迹的 faction 字段同样自动上色；**数据项自带 factionColor 时以它为准**（数据源注解
    已算出规范色，直接透传即可，不要自行覆盖）；其它系列按专业配色自动分配；
-2. 版式：页头 → KPI 行 → 主区（左图表 / 右地图）→ 明细表 → 结论，分「单屏区」与「平铺区」两部分：
+2. 版式：先判断 data.mapAvailable 与「页面规划」sections 中是否存在 kind="map" 区块，
+   据此在下面两套互斥版式中选择；不得混用：
+   【有地图版式】页头 → KPI 行 → 主区（左图表 / 右地图）→ 明细表 → 结论，分「单屏区」与「平铺区」：
    - 单屏区（页头 + KPI + 主区）高度固定为宿主注入的 var(--ipage-vh,720px)：
      纵向 flex，页头/KPI 为 auto，主区 flex:1;min-height:0；
      **不要用 100vh 计算高度**（iframe 自动撑高时 100vh 等于内容高，会形成反馈循环）；
-   - 明细表（如战损明细记录）与结论放在单屏区之外，向下自然平铺，页面总高可以超过一屏：
-     不要给它们设固定高度/max-height/overflow 滚动条，也不要分页（SitTable 的 pageSize 传全部行数）；
+   - 明细表（如战损明细记录）与结论放在单屏区之外，向下自然平铺，页面总高可以超过一屏；
+     明细表每页最多 10 行，超过由 SitTable 分页器翻页，不要设固定高度/内部滚动条；
    - 时间轴浮层常驻底部，--ipage-vh 已扣除其高度，页面无需再额外预留底部空间；
-   主区左右分栏，左宽用 --ipage-left（脚本按图表数设置，不要直接写内联 grid-template-columns）：
-   leftPct = clamp(32, 28 + 4 * 图表数, 58)；
-   左栏图表排列按数量决定（脚本设置网格列数与行轨道）：
-   - 1~3 张：单列纵向均分；
-   - 4 张：2 列 × 2 行；
-   - 5 张：上方 2×2、下方通栏一张（优先放可拉宽的折线图，卡片 grid-column:1/-1）；
-   - 6 张及以上：2 列，行数按 ceil(图表数/2)；
-   单个图表卡片限制尺寸：max-width:520px、max-height:420px（通栏折线图例外，占满左栏但
-   max-width:900px），高度由行轨道均分且不要设 min-height（避免小屏挤压溢出），
-   宽高比不固定但受这两个上限约束；图表容器 height:100%；
+   主区左右分栏，必须使用下面的 CSS 契约（脚本只设置 --ipage-left 与列数/行轨道，不要写死列宽）：
+     .main{flex:1;min-height:0;display:grid;
+           grid-template-columns:minmax(0,var(--ipage-left,44%)) minmax(0,1fr);gap:12px}
+     .chart-col{display:grid;gap:12px;min-height:0;min-width:0;
+                grid-template-columns:minmax(0,1fr);
+                grid-auto-rows:minmax(320px,1fr);
+                overflow-y:auto;overscroll-behavior:contain;align-content:start}
+     .chart-card{display:flex;flex-direction:column;width:100%;max-width:none;
+                 min-width:0;min-height:0}
+     .chart-box{flex:1;width:100%;min-height:240px}
+     .map-card{height:100%;min-height:420px}
+     .map-box{flex:1;min-height:0;width:100%}
+   左栏宽度由脚本按图表数设置：leftPct = clamp(36, 30 + 4 * 图表数, 54)，单列时取 44%~48%；
+   图表排列按数量决定（脚本设置 --ipage-left、grid-template-columns 与 grid-auto-rows）：
+   - 1~3 张：单列，所有卡片宽度完全一致并铺满图表列，grid-auto-rows:minmax(320px,1fr)；
+   - 4 张：2 列 × 2 行，各列等宽，grid-auto-rows:minmax(280px,1fr)；
+   - 5 张：上方 2×2、下方通栏一张（优先放折线图，卡片 grid-column:1/-1），minmax(280px,1fr)；
+   - 6 张及以上：2 列，行数按 ceil(图表数/2)，minmax(280px,1fr)；
+   **只有 2 列布局才允许通栏**；1~3 张的单列布局禁止 max-width、通栏或"宽图例外"，
+   所有卡片宽度必须完全相同，不得写 max-width:520px 之类的固定宽度；
+   图表列内容超出可视高度时在图表列内纵向滚动，地图保持满高，不要让整页随之滚动；
    右栏地图容器 height:100%，不要再写死 420-520px；
-   无地理数据时主区退化为单列全宽图表，不得虚构地图；窗口窄于 900px 时上下堆叠、
-   取消固定高度并恢复自然滚动；
+   窗口窄于 900px 时上下堆叠、取消固定高度与图表最小高度、恢复自然滚动；
+   【无地图版式】页头 → KPI 行 → 图表平铺区 → 明细表 → 结论，整页随内容自然滚动：
+   - 禁止左右分栏与侧栏：不出现 --ipage-left、不写第二列、不把数字统计单独放到右侧，
+     也不使用 .ip-main/.ip-chart-col 等双列布局类；
+   - 禁止固定一屏高度与内部滚动：不要使用 height:var(--ipage-vh)、overflow-y:auto、
+     overflow:auto、overscroll-behavior，图表区随内容自然撑开，由页面整体滚动；
+   - KPI 行保持页头下方整行展示，不得挪进右侧栏；
+   - 图表平铺：按图表数量与可读性自行选择 1~2 列，推荐
+     grid-template-columns:repeat(auto-fit,minmax(360px,1fr))，卡片等宽对齐、
+     单卡最小高度 280~320px，禁止固定 max-width 与通栏例外；
+   - 明细表与结论紧跟图表区向下平铺；明细表用 SitTable 分页，不设内部滚动；
+   - 不得虚构地图、地图标题或 SitMap 调用；除规划中的 kpi/chart/table/text 区块外，
+     不得自行新增侧栏统计面板；
+   - 窗口窄于 900px 时单列堆叠；
 3. 图表选型匹配数据：比较/排名用 bar，时间趋势用 line，占比（≤8 类）用 pie，
-   多维能力对比用 radar，两数值维度分布用 scatter；每个图表有中文标题与一句话结论（可放卡片下方）；
+   多维能力对比用 radar，两数值维度分布用 scatter；同一张图内多个系列量级差超过一个数量级时，
+   拆成多张图，不要硬叠在一张图里导致小量级曲线被压平；折线图 Y 轴由运行时启用 scale
+   （不必从 0 起算），柱状图仍从 0 起算；每个图表有中文标题与一句话结论（可放卡片下方）；
    图表标题一律用卡片内的 HTML 标题（.ip-title/h3），**调用 SitChart 时不要再传 title**，
    否则画布内会重复画一遍标题并与图例、坐标轴文字互相压字；
-4. 可交互：阵营筛选由运行时宿主浮层统一提供（同时控制地图与图表），**页面不要再自绘阵营按钮**；
+4. 【界面语言】页面所有可见文字必须是中文：标题、标签、按钮、图例、坐标轴名、提示文案、
+   说明文字一律中文，不出现英文单词或缩写（如 KPI、MAP、TOTAL、COUNT、STATUS、EVENT）。
+   单位允许使用通用符号（km、m、h、s 等）；数据本身的编号/型号/名称照原值展示；
+   【配色约束】页面不得写死背景、文字、边框颜色（如 style="background:#fff" 或 CSS 里写 #rrggbb），
+   只能使用注入的基础类（.ip-card/.ip-title/.ip-kpi 等）或 CSS 变量 var(--ip-*)，
+   以保证"军事"配色风格可以整体切换；**不生成密级条，也不预留密级条位置**；
+5. 可交互：阵营筛选由运行时宿主浮层统一提供（同时控制地图与图表），**页面不要再自绘阵营按钮**；
    地图图例/图层开关（逐架飞机、航迹线、范围圈、扫掠区域）同样由运行时地图控件生成，
    页面不要自绘图例；其它维度（类别/状态等）可提供筛选按钮并通过 SitBus 联动
    KPI、图表、地图（地图用 mapApi.highlight）；**data.timeline 存在时必须有 timeline 区块**，
@@ -427,20 +463,20 @@ PAGE_SYSTEM_HEADER = """
    地图传 timeline:true；图表**按需绑定**：只有数据本身按时间桶聚合、且与地图时间刻度一致的图表
    才传 timeline 配置，其余图表保持静态，不要为了联动强行绑定或改造数据；
    不要自己写播放器、不要自己画航迹折线；至少让页面上的关键控件真正生效，禁止摆设按钮；
-5. KPI 必须用 SitUtil 从 data.datasets 的 rows 实时计算（如总数、平均值、分类计数），
+6. KPI 必须用 SitUtil 从 data.datasets 的 rows 实时计算（如总数、平均值、分类计数），
    不得硬编码任何数字；所有数字、名称只能来自数据包，严禁编造；数据为空的区块显示
    「暂无相关数据」空态，不得留白或造假；
-6. 每个图表/地图容器必须有明确高度；脚本在拿到数据后渲染，并做必要的空值与类型保护；
-7. 只允许一个业务 <script>；禁止 <script src>、外链 CDN、<link>、<iframe>、
+7. 每个图表/地图容器必须有明确高度；脚本在拿到数据后渲染，并做必要的空值与类型保护；
+8. 只允许一个业务 <script>；禁止 <script src>、外链 CDN、<link>、<iframe>、
    fetch/XMLHttpRequest/WebSocket/eval/new Function/localStorage/document.cookie；
    禁止直接操作 echarts 与 L 全局对象，一切渲染走 SitChart/SitMap/SitTable；
-8. 代码健壮：rows 可能比样例多/字段缺失/值为 null，须做防御；解析时间用字符串比较或 Date 构造均可；
-9. 【篇幅约束】单页 HTML 目标不超过 3 万字符（含样式与脚本）。为控制篇幅：
+9. 代码健壮：rows 可能比样例多/字段缺失/值为 null，须做防御；解析时间用字符串比较或 Date 构造均可；
+10. 【篇幅约束】单页 HTML 目标不超过 3 万字符（含样式与脚本）。为控制篇幅：
    - 优先复用注入的 .ip-card/.ip-title/.ip-kpi 等基础类与 Sit* 组件，禁止重复内联同一样式；
    - 只保留必要的行内注释，禁止大段说明性注释与装饰性分隔；
    - 禁止把数据行复制进 HTML/脚本（数据一律从 SitApp.bootstrap 的 data 取）；
    - 若内容过多，合并同类区块、精简文案，优先保证页面结构完整（有闭合 </html>）；
-10. 直接输出 <!DOCTYPE html> 开头的完整 HTML，不要 markdown 代码围栏、不要解释文字。
+11. 直接输出 <!DOCTYPE html> 开头的完整 HTML，不要 markdown 代码围栏、不要解释文字。
 """ + RUNTIME_API_GUIDE
 
 
@@ -556,6 +592,9 @@ EVALUATION_PAGE_GUIDE = """
 - 地图渲染硬约束：仅当 data.mapAvailable === true 且「页面规划」sections 中存在 kind="map"
   的区块时，才创建地图容器并调用 SitMap.render；否则禁止输出任何地图 DIV、地图标题或
   SitMap 调用，不要生成空白地图；
+- 版式硬约束：data.mapAvailable 为 false 时使用「无地图版式」——KPI 整行、图表平铺、
+  页面自然滚动；禁止左右分栏、禁止侧栏数字面板、禁止图表容器内部滚动（overflow/--ipage-vh）；
+- 只呈现规划 sections 声明的区块，不得把未被区块引用的产物自行做成右侧统计面板；
 - 不得输出「数据待补充」「TODO」等占位内容。
 """
 

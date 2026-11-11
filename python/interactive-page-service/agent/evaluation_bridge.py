@@ -22,7 +22,9 @@ from models import EvaluationArtifacts
 logger = logging.getLogger("ipage-service")
 
 # 单页最多展示的图表区块数量（避免评估步骤过多导致首屏拥挤）
-MAX_CHART_SECTIONS = 4
+# 有地图时地图占首屏，图表最多 4 张；无地图时放宽到 8 张，容纳多轮评估产物
+MAX_CHART_SECTIONS_WITH_MAP = 4
+MAX_CHART_SECTIONS_NO_MAP = 8
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
 
@@ -230,10 +232,15 @@ def _build_plan(
     sections: List[Dict[str, Any]] = []
     aggregate_entries = [e for e in entries if e.get("mode") == "aggregate" and e.get("rows")]
     detail_entries = [e for e in entries if e.get("mode") == "detail" and e.get("rows")]
+    geo_entry = next((e for e in entries if _has_geo(e)), None)
+    # 有地图时地图占首屏，图表上限收紧；无地图时放宽上限
+    chart_cap = (
+        MAX_CHART_SECTIONS_WITH_MAP if (want_map and geo_entry)
+        else MAX_CHART_SECTIONS_NO_MAP
+    )
     chart_entries = [
         e for e in aggregate_entries if _is_chartable(e, chart_hints.get(e["id"]))
-    ][:MAX_CHART_SECTIONS]
-    geo_entry = next((e for e in entries if _has_geo(e)), None)
+    ][:chart_cap]
 
     # KPI：优先引用有数值列的数据条目
     if want_kpi:
@@ -260,6 +267,16 @@ def _build_plan(
         table_entry = detail_entries[0] if detail_entries else (entries[0] if entries else None)
         if table_entry:
             _append_section(sections, "table", "评估数据明细", table_entry["id"])
+
+    # 未被任何区块引用的明细产物：补一张明细表，避免用户勾选的数据被静默丢弃。
+    # 明细表开关关闭时仍会补，因为「开关关闭」只代表不要主明细表，
+    # 而这些产物若不出区块就会既不上图也不上表，页面上完全看不到。
+    referenced = {s.get("ref") for s in sections if s.get("ref")}
+    for entry in detail_entries:
+        if entry["id"] in referenced:
+            continue
+        _append_section(sections, "table", f"{entry.get('name') or '评估数据'}（明细）", entry["id"])
+        referenced.add(entry["id"])
 
     if (artifacts.conclusion or "").strip():
         _append_section(sections, "text", "评估结论")
