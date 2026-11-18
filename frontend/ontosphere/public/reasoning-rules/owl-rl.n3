@@ -1,0 +1,141 @@
+@prefix list: <http://www.w3.org/2000/10/swap/list#>.
+@prefix log: <http://www.w3.org/2000/10/swap/log#>.
+@prefix owl: <http://www.w3.org/2002/07/owl#>.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
+@prefix e: <http://eulersharp.sourceforge.net/2003/03swap/log-rules#>.
+
+#prp-domain
+{?A rdfs:domain ?B. ?X ?A ?Y} => {?X a ?B}.
+
+#prp-range
+{?A rdfs:range ?B. ?X ?A ?Y} => {?Y a ?B}.
+
+#prp-spo1
+{?A rdfs:subPropertyOf ?B. ?X ?A ?Y} => {?X ?B ?Y}.
+
+#prp-inv1
+{?A owl:inverseOf ?B. ?X ?A ?Y} => {?Y ?B ?X}.
+
+#prp-inv2
+{?A owl:inverseOf ?B. ?X ?B ?Y} => {?Y ?A ?X}.
+
+#prp-symp
+{?A a owl:SymmetricProperty. ?X ?A ?Y} => {?Y ?A ?X}.
+
+#prp-trp
+{?A a owl:TransitiveProperty. ?X ?A ?Y. ?Y ?A ?Z} => {?X ?A ?Z}.
+
+#cls-svf1
+{
+    ?A owl:someValuesFrom ?B.
+    ?A owl:onProperty ?C.
+    ?X ?C ?Y.
+    ?Y a ?B.
+} => {
+    ?X a ?A.
+}.
+
+#cls-svf2
+{
+    ?A owl:someValuesFrom owl:Thing.
+    ?A owl:onProperty ?C.
+    ?X ?C ?Y.
+} => {
+    ?X a ?A.
+}.
+
+#cls-avf
+{
+    ?A owl:allValuesFrom ?B.
+    ?A owl:onProperty ?C.
+    ?X a ?A.
+    ?X ?C ?Y.
+} => {
+    ?Y a ?B.
+}.
+
+#cls-hv1
+{
+    ?A owl:hasValue ?B.
+    ?A owl:onProperty ?C.
+    ?X a ?A.
+} => {
+    ?X ?C ?B.
+}.
+
+#cls-hv2
+{
+    ?A owl:hasValue ?B.
+    ?A owl:onProperty ?C.
+    ?X ?C ?B.
+} => {
+    ?X a ?A.
+}.
+
+#cls-nothing2
+{?A a owl:Nothing} => false.
+
+#cax-sco
+{?A rdfs:subClassOf ?B. ?X a ?A} => {?X a ?B}.
+
+#cax-eqc1
+{?A owl:equivalentClass ?B. ?X a ?A} => {?X a ?B}.
+
+#cax-eqc2
+{?A owl:equivalentClass ?B. ?X a ?B} => {?X a ?A}.
+
+#cax-dw
+{?A owl:disjointWith ?B. ?X a ?A. ?X a ?B} => false.
+
+#scm-sco
+{
+    ?C rdfs:subClassOf ?D.
+    ?D rdfs:subClassOf ?E.
+}
+=>
+{
+    ?C rdfs:subClassOf ?E.
+}.
+
+#scm-eqc1
+{
+    ?A owl:equivalentClass ?B.
+}
+=>
+{
+    ?A rdfs:subClassOf ?B.
+    ?B rdfs:subClassOf ?A.
+}.
+
+#scm-eqc2
+{
+    ?A rdfs:subClassOf ?B.
+    ?B rdfs:subClassOf ?A.
+}
+=>
+{
+    ?A owl:equivalentClass ?B.
+}.
+
+#scm-svf1
+{
+    ?C1 owl:someValuesFrom ?Y1.
+    ?C1 owl:onProperty ?P.
+    ?C2 owl:someValuesFrom ?Y2.
+    ?C2 owl:onProperty ?P.
+    ?Y1 rdfs:subClassOf ?Y2.
+} => {
+    ?C1 rdfs:subClassOf ?C2.
+}.
+
+#scm-svf2
+{
+    ?C1 owl:someValuesFrom ?Y.
+    ?C1 owl:onProperty ?P1.
+    ?C2 owl:someValuesFrom ?Y.
+    ?C2 owl:onProperty ?P2.
+    ?P1 rdfs:subPropertyOf ?P2.
+} => {
+    ?C1 rdfs:subClassOf ?C2.
+}.

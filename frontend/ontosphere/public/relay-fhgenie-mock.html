@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en" style="--background:#1f2023;color-scheme:dark;">
+<head>
+  <meta charset="UTF-8">
+  <title>Ontosphere Relay — FhGenie mock</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background:#1f2023; color:#fff; font-family:system-ui,sans-serif; font-size:14px; }
+    /* Mimic FhGenie chat stream class names exactly */
+    ._chatMessageStream_c6udf_108 { padding:16px; display:flex; flex-direction:column; gap:16px; }
+    ._chatMessageGpt_c6udf_126 { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px 16px; }
+    ._body_1gd8t_67 { white-space:pre-wrap; font-size:13px; line-height:1.6; }
+    ._body_1gd8t_67 p { margin-bottom:8px; }
+    ._body_1gd8t_67 code { background:#0d1117; padding:1px 4px; border-radius:3px; font-family:monospace; }
+    ._body_1gd8t_67 pre { background:#0d1117; padding:8px; border-radius:4px; overflow:auto; }
+
+    /* Progress indicator — simulates FhGenie's loading % counter */
+    #progress-indicator {
+      position:fixed; top:8px; left:50%; transform:translateX(-50%);
+      background:#161b22; border:1px solid #30363d; border-radius:4px;
+      padding:4px 10px; font-size:11px; color:#8b949e;
+      display:none;
+    }
+
+    #scenario-bar { background:#161b22; border-bottom:1px solid #21262d; padding:8px 12px; display:flex; gap:8px; flex-wrap:wrap; }
+    #scenario-bar span { color:#8b949e; font-size:12px; }
+    button.scenario { background:#21262d; border:1px solid #30363d; border-radius:4px; color:#c9d1d9; cursor:pointer; font-size:12px; padding:4px 10px; }
+    button.scenario:hover { background:#30363d; }
+    #status { font-size:11px; color:#8b949e; background:#0d1117; padding:4px 12px; border-top:1px solid #21262d; position:fixed; bottom:0; width:100%; }
+    #user-input { position:fixed; bottom:20px; left:-9999px; width:1px; height:1px; opacity:0; }
+    #result-stream { padding:8px 16px 28px; }
+    .msg-user { background:#2d333b; border-radius:8px; padding:8px 12px; margin-bottom:8px; font-size:13px; white-space:pre-wrap; }
+  </style>
+</head>
+<body>
+
+<div id="progress-indicator">Loading… <span id="progress-pct">0</span>%</div>
+
+<div id="scenario-bar">
+  <span>FhGenie scenarios:</span>
+  <button class="scenario" data-scenario="single">addNode (single)</button>
+  <button class="scenario" data-scenario="batch">addNode (batch 3)</button>
+  <button class="scenario" data-scenario="prefixed">Prefixed IRIs</button>
+  <button class="scenario" data-scenario="progress-indicator">addNode + progress indicator</button>
+  <button class="scenario" data-scenario="partial-json">Partial JSON → complete</button>
+  <button class="scenario" data-scenario="clear" style="border-color:#f85149;color:#f85149;">Clear</button>
+</div>
+
+<!-- FhGenie uses this exact class hierarchy for AI messages -->
+<div class="_chatMessageStream_c6udf_108" id="chat-stream">
+</div>
+
+<!-- Hidden textarea that the bookmarklet injects results into -->
+<textarea id="user-input"></textarea>
+
+<!-- Submitted result messages rendered here (read by E2E tests) -->
+<div id="result-stream"></div>
+
+<div id="status">Ready. Load the bookmarklet, then click a scenario.</div>
+
+<script>
+var stream = document.getElementById('chat-stream');
+var status = document.getElementById('status');
+var resultStream = document.getElementById('result-stream');
+var userInput = document.getElementById('user-input');
+var progressEl = document.getElementById('progress-indicator');
+var progressPct = document.getElementById('progress-pct');
+var progressTimer = null;
+
+// Mirror the relay-mock-chat.html submit pattern so E2E tests can observe results.
+function submitUserInput() {
+  var text = userInput.value.trim();
+  if (!text) return;
+  userInput.value = '';
+  var div = document.createElement('div');
+  div.className = 'msg-user';
+  div.textContent = text;
+  resultStream.appendChild(div);
+  status.textContent = 'Submitted: ' + text.slice(0, 60) + (text.length > 60 ? '…' : '');
+}
+userInput.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitUserInput(); }
+});
+document.addEventListener('submit', function(e) { e.preventDefault(); submitUserInput(); });
+
+// Hidden send button for bookmarklet submit path
+var fakeBtn = document.createElement('button');
+fakeBtn.id = 'send-btn';
+fakeBtn.style.display = 'none';
+fakeBtn.addEventListener('click', submitUserInput);
+document.body.appendChild(fakeBtn);
+
+function lockInput()   { fakeBtn.disabled = true;  userInput.disabled = true; }
+function unlockInput() { fakeBtn.disabled = false; userInput.disabled = false; }
+
+// Scenarios: all use JSON-RPC format that the bookmarklet can dispatch.
+var SCENARIOS = {
+  'single': {
+    label: 'Single addNode',
+    html: '<p>Sure, I\'ll add that node:</p><p><code>' +
+      '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"addNode","arguments":{"iri":"http://example.org/Alice","label":"Alice","typeIri":"http://example.org/Person"}}}' +
+      '</code></p>',
+  },
+
+  'batch': {
+    label: 'Batch 3 addNode',
+    html: '<p>Adding three nodes:</p>' +
+      '<p><code>{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"addNode","arguments":{"iri":"http://example.org/Alice","label":"Alice","typeIri":"http://example.org/Person"}}}</code></p>' +
+      '<p><code>{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"addNode","arguments":{"iri":"http://example.org/Bob","label":"Bob","typeIri":"http://example.org/Person"}}}</code></p>' +
+      '<p><code>{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"addNode","arguments":{"iri":"http://example.org/Carol","label":"Carol","typeIri":"http://example.org/Person"}}}</code></p>',
+  },
+
+  'prefixed': {
+    label: 'Prefixed IRIs',
+    html: '<p><code>{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"addNode","arguments":{"iri":"ex:PrefixedNode","label":"PrefixedNode","typeIri":"owl:Class"}}}</code></p>',
+  },
+
+  // Key regression test: progress indicator updating every 100ms while a valid
+  // tool call is visible. Old bookmarklet (stability-window) would never dispatch
+  // because body.innerText kept changing. New bookmarklet dispatches immediately.
+  'progress-indicator': {
+    label: 'addNode + progress indicator',
+    html: '<p><code>{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"addNode","arguments":{"iri":"http://example.org/Progress","label":"Progress","typeIri":"http://example.org/Person"}}}</code></p>',
+    startProgress: true,
+  },
+
+  // Regression test: partial (truncated) JSON must not dispatch; complete JSON must.
+  // Implemented via a two-phase inject — first partial (no dispatch expected),
+  // then complete (dispatch expected within 1s).
+  'partial-json': {
+    label: 'Partial JSON → complete',
+    html: null, // handled specially in addAiMessage
+  },
+};
+
+function startProgressIndicator() {
+  var pct = 0;
+  progressEl.style.display = 'block';
+  progressTimer = setInterval(function() {
+    pct = (pct + 1) % 101;
+    progressPct.textContent = String(pct);
+  }, 100);
+}
+
+function stopProgressIndicator() {
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+  progressEl.style.display = 'none';
+}
+
+function addAiMessage(scenario) {
+  var s = SCENARIOS[scenario];
+  if (!s) return;
+
+  if (scenario === 'partial-json') {
+    // Phase 1: inject a truncated (invalid) JSON fragment — should NOT dispatch
+    var outer1 = document.createElement('div');
+    outer1.className = '_chatMessageGpt_c6udf_126';
+    var body1 = document.createElement('div');
+    body1.className = '_body_1gd8t_67';
+    body1.id = 'partial-json-body';
+    body1.textContent = 'Here is a partial call: {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"addNode","arg';
+    outer1.appendChild(body1);
+    stream.appendChild(outer1);
+    lockInput();
+    status.textContent = 'Phase 1: partial JSON visible (should NOT dispatch)';
+
+    // Phase 2: after 1.5s, complete the JSON — should dispatch immediately
+    setTimeout(function() {
+      body1.textContent = 'Here is the complete call: {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"addNode","arguments":{"iri":"http://example.org/PartialTest","label":"PartialTest","typeIri":"http://example.org/Person"}}}';
+      unlockInput();
+      status.textContent = 'Phase 2: complete JSON visible — relay should dispatch now.';
+    }, 1500);
+    return;
+  }
+
+  var outer = document.createElement('div');
+  outer.className = '_chatMessageGpt_c6udf_126';
+
+  var label = document.createElement('div');
+  label.style.cssText = 'font-size:11px;color:#8b949e;margin-bottom:6px;';
+  label.textContent = 'AI (' + s.label + ')';
+  outer.appendChild(label);
+
+  var body = document.createElement('div');
+  body.className = '_body_1gd8t_67';
+  var tmp = document.createElement('div');
+  tmp.innerHTML = s.html;
+  Array.from(tmp.childNodes).forEach(function(n) { body.appendChild(n); });
+  outer.appendChild(body);
+
+  stream.appendChild(outer);
+  stream.scrollTop = stream.scrollHeight;
+
+  lockInput();
+  status.textContent = 'AI done "' + s.label + '" — relay should detect calls now.';
+  unlockInput();
+
+  if (s.startProgress) { startProgressIndicator(); }
+}
+
+document.querySelectorAll('button.scenario').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    var s = btn.dataset.scenario;
+    if (s === 'clear') {
+      stream.innerHTML = '';
+      stopProgressIndicator();
+      status.textContent = 'Cleared.';
+      return;
+    }
+    addAiMessage(s);
+  });
+});
+</script>
+</body>
+</html>

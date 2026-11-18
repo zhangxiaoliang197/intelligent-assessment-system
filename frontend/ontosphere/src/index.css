@@ -1,0 +1,550 @@
+@config "../tailwind.config.ts";
+@import 'tailwindcss';
+@import './styles/reactodia-theme.css';
+
+/* Theme tokens (keep variables as single source of truth for light/dark) */
+:root {
+  /* Core Background */
+  --background: oklch(98.4% 0.002 247.8);
+  --foreground: oklch(25% 0.045 256.8);
+  /* Stable dark foreground token for bright-button text (keeps same value across themes) */
+  --text-foreground-dark: oklch(25% 0.045 256.8);
+  /* Surface Colors */
+  --card: oklch(100.0% 0 0);
+  --card-foreground: oklch(37.5% 0.039 256.8);
+  --popover: oklch(100.0% 0 0);
+  --popover-foreground: oklch(37.5% 0.039 256.8);
+  /* Brand Colors */
+  --primary: oklch(67.5% 0.123 290.4);
+  --primary-foreground: oklch(100.0% 0 0);
+  --primary-hover: oklch(62.0% 0.145 289.1);
+  --secondary: oklch(90.6% 0.035 173.4);
+  --secondary-foreground: oklch(40.9% 0.049 170.3);
+  --secondary-hover: oklch(87.5% 0.046 172.9);
+  --accent: oklch(89.3% 0.056 57.5);
+  --accent-foreground: oklch(38.3% 0.054 55.9);
+  --accent-hover: oklch(85.9% 0.075 57.1);
+  --muted: oklch(96.1% 0.004 247.9);
+  --muted-foreground: oklch(58.3% 0.039 256.8);
+  --destructive: oklch(75.8% 0.109 9.2);
+  --destructive-foreground: oklch(100.0% 0 0);
+  --border: oklch(90.6% 0.008 247.9);
+  --input: oklch(93.7% 0.005 247.9);
+  --ring: oklch(67.5% 0.123 290.4);
+  --radius: 0.75rem;
+
+  /* Canvas tokens */
+  --canvas-bg: oklch(44.6% 0.03 256.802);
+  --canvas-grid: oklch(92.9% 0.03 186.9);
+  /* Node tokens */
+  --node-bg: oklch(100.0% 0 0);
+  --node-foreground: oklch(37.5% 0.039 256.8);
+  --node-border: oklch(90.6% 0.008 247.9);
+  --node-muted: oklch(93.7% 0.005 247.9);
+  --node-shadow: 0 4px 20px oklch(0.3752 0.0394 256.8 / 0.1);
+  --node-leftbar-width: 8px;
+
+  /* Edge tokens */
+  --edge-default: oklch(86.7% 0.041 256.8);
+  --edge-selected: oklch(56.6% 0.166 287.5);
+  /* Edge sizing (themeable) */
+  --edge-width: 2.0px;
+  --edge-marker-size: 16;
+  /* Glassmorphism / animation variables */
+  --glass-shadow: 0 8px 32px oklch(0.3752 0.0394 256.8 / 0.08);
+  --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  /* Glass surface tokens */
+  --glass-surface: rgba(255, 255, 255, 0.55);
+  --glass-border-color: rgba(255, 255, 255, 0.7);
+  --glass-blur: blur(14px);
+
+  /* Reactodia node template variables — light mode */
+  --reactodia-paper-bg: #ffffff;
+  --reactodia-paper-fg: #111827;
+  --reactodia-paper-border: #d1d5db;
+  --reactodia-paper-fg-muted: #6b7280;
+}
+
+.dark {
+  --background: oklch(18.7% 0.017 256.8);
+  --foreground: oklch(96.1% 0.004 247.9);
+  --card: oklch(23.0% 0.02 256.8);
+  --card-foreground: oklch(96.1% 0.004 247.9);
+  --popover: oklch(23.0% 0.02 256.8);
+  --popover-foreground: oklch(96.1% 0.004 247.9);
+  --primary: oklch(62.0% 0.145 289.1);
+  --primary-foreground: oklch(100.0% 0 0);
+  --muted: oklch(26.1% 0.024 256.8);
+  --muted-foreground: oklch(82.3% 0.016 256.7);
+  --border: oklch(38.8% 0.029 256.8);
+  --input: oklch(29.2% 0.022 256.8);
+  --canvas-bg: oklch(17.5% 0.008 186.6);
+  --canvas-grid: oklch(22.4% 0.011 186.5);
+  --node-bg: oklch(23.0% 0.02 256.8);
+  --node-foreground: oklch(96.1% 0.004 247.9);
+  --node-border: oklch(31.1% 0.025 256.8);
+  --node-muted: oklch(26.1% 0.024 256.8);
+  --node-shadow: 0 4px 20px oklch(0.1906 0.0105 248.4 / 0.12);
+  --glass-surface: rgba(30, 35, 50, 0.65);
+  --glass-border-color: rgba(255, 255, 255, 0.09);
+  --glass-shadow: 0 4px 24px rgba(0, 0, 0, 0.35), 0 1.5px 6px rgba(0, 0, 0, 0.2);
+
+  /* Reactodia node template variables — dark mode */
+  --reactodia-paper-bg: #1e2130;
+  --reactodia-paper-fg: #e2e8f0;
+  --reactodia-paper-border: #374151;
+  --reactodia-paper-fg-muted: #9ca3af;
+}
+
+/* Minimal base layer: keep only what is required globally */
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    /* @reference bg-background text-foreground; */
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    color: var(--foreground);
+    background-color: var(--background);
+  }
+
+  a {
+    color: var(--primary);
+  }
+  a:hover {
+    color: var(--primary-hover);
+  }
+
+  /* Utility: explicit dark foreground for use on bright buttons / surfaces where text-foreground
+     reads too light. This token intentionally does not change in .dark mode. */
+  .text-foreground-dark { color: var(--text-foreground-dark); }
+
+  /* Ensure Radix UI Tooltip portal renders above everything */
+  [data-radix-popper-content-wrapper] {
+    z-index: 99999 !important;
+  }
+
+  /* Ensure tooltip content is always visible */
+  [role="tooltip"] {
+    z-index: 99999 !important;
+  }
+}
+
+/* Low-level React Flow rules that are structural / interaction-critical and
+   not practical to move into component-level Tailwind classes. These are
+   intentionally minimal: keep SVG overflow visible and ensure controls positioning. */
+
+/* Allow custom edge paths to render outside the SVG box */
+.react-flow__edges svg {
+  overflow: visible;
+  position: absolute;
+}
+
+/* Keep controls visible above canvas; UI layer should use Tailwind classes where possible */
+.react-flow__controls {
+  z-index: 60;
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  pointer-events: auto;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: var(--radius);
+  background: transparent;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* Minimal handle defaults kept here to avoid breaking pointer behavior.
+   Visual styles (color, size) should be applied via Tailwind classes on node renderers
+   or via CSS variables on the node elements. */
+.react-flow__handle {
+  transition: var(--transition-smooth);
+}
+
+
+/* Edge label renderer: keep transitions but remove flying animation from top-left */
+.edge-label-renderer__custom-edge {
+  position: absolute;
+  /* Remove transition to prevent labels flying in from top-left corner */
+  /* transition: opacity 120ms linear, transform 120ms linear; */
+}
+
+.node-bg {
+  background: var(--node-bg);
+}
+
+.react-flow__node > * {
+  /* background: var(--node-bg); */
+  color: var(--node-foreground);
+  /* border-color: var(--node-border); */
+  /* box-shadow: var(--node-shadow); */
+}
+
+/* Keep react-flow markers positioned */
+.react-flow__marker {
+  position: absolute;
+}
+
+/* Node badge helper: use the exact node-provided color (hex) via --node-color.
+   The node renderer sets --node-color to the provided hex value so badges and left-bars
+   reflect the node data exactly. Consumers that need derived tones should set additional
+   CSS variables from JavaScript if required. */
+.node-badge {
+  background: var(--node-color, transparent);
+  border: 1px solid var(--node-color, transparent);
+
+  /* badge text color is set per-node with --node-badge-foreground (computed in JS) */
+  color: var(--node-badge-foreground, var(--node-foreground));
+}
+
+/* Namespace dot: use exact namespace color provided via --ns-color (hex), fallback to transparent.
+   This ensures legend swatches match node colors exactly. */
+[data-ns-dot] {
+  background: var(--ns-color, transparent);
+  border: 1px solid color-mix(in srgb, var(--ns-color) 20%, var(--border));
+}
+
+/* Edge container fallback: allows using currentColor on SVG children for theme-aware strokes/fills */
+.edge-container {
+  color: var(--edge-default);
+}
+
+/* Visual "halo" for edges when hovered (applies to path, markers and connection circles).
+   We toggle the class vg-edge--hover on the SVG group wrapper in FloatingEdge so the
+   path/markers and the label can share the same visual state. Uses --edge-selected token
+   so the glow follows theme tokens. */
+
+/* Edge hover styling (stronger visible color + single, stronger drop-shadow).
+   Rather than stacking many shadows, increase the stroke prominence and use one
+   stronger drop-shadow so the edge appears more vivid and intense. */
+.edge-container.vg-edge--hover {
+  color: var(--edge-selected);
+}
+
+/* Make the visible stroke thicker + fully opaque when hovered so color reads stronger.
+   Apply a single stronger drop-shadow for a clearer glow without multiple layered shadows. */
+.edge-container.vg-edge--hover path.react-flow__edge-path {
+  stroke: var(--edge-selected) !important;
+  stroke-width: calc(var(--edge-width) * 2.5) !important;
+  stroke-opacity: 1 !important;
+  filter: drop-shadow(0 0 14px var(--edge-selected));
+  transition: stroke-width 160ms ease, filter 220ms cubic-bezier(0.2,0.8,0.2,1);
+}
+
+/* Keep the interaction path wide for pointer targeting but visually transparent;
+   still apply the same single drop-shadow so the halo follows pointer area. */
+.edge-container.vg-edge--hover path.react-flow__edge-interaction {
+  stroke-opacity: 0;
+  filter: drop-shadow(0 0 14px var(--edge-selected));
+  transition: filter 220ms cubic-bezier(0.2,0.8,0.2,1);
+}
+
+/* Make markers clearly use the selected color and receive the same single glow. */
+.edge-container.vg-edge--hover .react-flow__arrowhead,
+.edge-container.vg-edge--hover marker.react-flow__arrowhead {
+  fill: var(--edge-selected) !important;
+  stroke: var(--edge-selected) !important;
+  filter: drop-shadow(0 0 10px var(--edge-selected));
+  transition: filter 220ms cubic-bezier(0.2,0.8,0.2,1);
+}
+
+/* Ensure label-based hover also exposes pointer affordance and doesn't block events */
+.edge-label-renderer__custom-edge button {
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+
+/* Selected node halo: React Flow marks nodes with .react-flow__node.selected.
+   Provide an additional glow so selection reads clearly on the canvas. */
+.react-flow__node.selected > * {
+  /* Keep existing ring/outline but add a blue glow */
+  /* box-shadow: 0 8px 28px rgba(59,130,246,0.12), 0 0 18px rgba(59,130,246,0.12); */
+  filter: drop-shadow(0 0 12px var(--edge-selected));
+  transition: box-shadow 160ms ease, filter 160ms ease, border-color 160ms ease;
+}
+
+/* FloatingConnectionLine visuals: use currentColor and theme tokens for stroke/size */
+.edge-container path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: var(--edge-width);
+}
+
+.edge-container .edge-connection-circle {
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: calc(var(--edge-width) * 0.75);
+}
+
+
+/* .react-flow__handle.connectionindicator {
+	opacity: 0;
+}
+.react-flow__handle-left {
+  opacity: 0;
+} */
+.react-flow__panel {
+  border-radius: var(--radius-md);
+}
+
+/* Viewport controls: use centralized --foreground color to match ghost button variant
+   This ensures consistency with all transparent buttons throughout the app (TopBar, ReasoningIndicator, etc.) */
+.react-flow__controls button.react-flow__controls-button {
+  color: var(--foreground) !important;
+  border: none !important;
+  background-color: transparent !important;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.react-flow__controls button.react-flow__controls-button:hover {
+  background-color: var(--accent-hover) !important;
+  color: var(--foreground) !important;
+}
+
+/* SVG icon color inheritance: ensure icons use the same --foreground color */
+.react-flow__controls button.react-flow__controls-button > svg,
+.react-flow__controls button.react-flow__controls-button > svg > path,
+.react-flow__controls button * {
+  fill: var(--foreground) !important;
+  color: var(--foreground) !important;
+}
+.react-flow__minimap {
+  border: 1px solid var(--border);
+  background-color: transparent !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.react-flow__minimap-svg {
+  border-radius: var(--radius);
+}
+
+.react-flow__panel.bottom {
+  /* bottom: 50px !important; */
+}
+
+.react-flow__attribution {
+	visibility: hidden;
+}
+
+
+/* Scope changes to the app canvas so these overrides are local and safe */
+.knowledge-graph-canvas .react-flow__node.draggable {
+  cursor: default; /* don't show grab cursor for whole node body */
+}
+
+/* Ensure node content sits above handles by default so hover events reach the node.
+   This keeps handles available for pointerdown but allows pointerenter/hover on the
+   visible node content so tooltips and hover behaviors work. */
+.knowledge-graph-canvas .react-flow__node > * {
+  z-index: 3;
+}
+
+/* Prefer showing pointer on handles so users can spot where to start a connection.
+   Use !important sparingly to overcome inline utility classes that may set
+   pointer-events or transparency. */
+
+
+   .knowledge-graph-canvas .react-flow__handle {
+  cursor: pointer !important;
+  width: 100%;
+  height: 100%;
+  background: #00f;
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: var(--radius-md);
+  transform: none;
+  border: none;
+  opacity: 0;
+
+  /* DEBUG: outline handles was removed after debugging. */
+  z-index: 2;
+}
+
+/* Slightly enlarge and highlight handle on node hover to make it discoverable */
+.knowledge-graph-canvas .react-flow__node:hover .react-flow__handle {
+  transform: scale(1.05);
+  background: rgba(34,34,34,0.08);
+  opacity: 1 !important;
+}
+
+/* Make sure connection-in-progress indicator remains obvious */
+.knowledge-graph-canvas .react-flow__handle.connectionindicator {
+  background: rgba(34,34,34,0.14) !important;
+  border-color: rgba(34,34,34,0.2) !important;
+}
+
+/* Optional: extend clickable area without visually changing layout by using a pseudo element.
+   This makes it easier to start a drag without changing node visuals. */
+.knowledge-graph-canvas .react-flow__handle::after {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: -6px;
+  right: -6px;
+  bottom: -6px;
+  border-radius: inherit;
+  pointer-events: none; /* leave events to the handle itself */
+}
+
+.react-flow .react-flow__edges {
+	z-index: 1;
+}
+.react-flow .react-flow__nodes {
+	z-index: 2;
+}
+.react-flow__edgelabel-renderer {
+	z-index: 2;
+}
+
+/* Glass utilities */
+
+/* Base glass surface — apply to panels and containers */
+.glass {
+  background: var(--glass-surface);
+  border: 1px solid var(--glass-border-color);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-shadow);
+}
+
+/* Glass button — replaces reactodia-btn-default */
+.glass-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border-color);
+  background: var(--glass-surface);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.07);
+  color: var(--foreground);
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+}
+
+.glass-btn:hover {
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  transform: translateY(-0.5px);
+}
+
+.dark .glass-btn:hover {
+  background: rgba(60, 70, 100, 0.75);
+}
+
+/* Active/primary state — used for A-Box/T-Box active toggle */
+.glass-btn--active {
+  background: rgba(124, 92, 228, 0.15);
+  border-color: rgba(124, 92, 228, 0.35);
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px rgba(124, 92, 228, 0.2);
+}
+
+.dark .glass-btn--active {
+  background: rgba(140, 110, 240, 0.22);
+  border-color: rgba(140, 110, 240, 0.4);
+}
+
+/* Status ok — used for Ready/Valid reasoning state */
+.glass-btn--status-ok {
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.3);
+  color: #16a34a;
+}
+
+.dark .glass-btn--status-ok {
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+}
+
+/* Status warning */
+.glass-btn--status-warn {
+  background: rgba(234, 179, 8, 0.1);
+  border-color: rgba(234, 179, 8, 0.3);
+  color: #a16207;
+}
+
+.dark .glass-btn--status-warn {
+  color: #fbbf24;
+}
+
+/* Status error */
+.glass-btn--status-error {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #dc2626;
+}
+
+.dark .glass-btn--status-error {
+  color: #f87171;
+}
+
+/* Rail button — icon + label stacked, used in LeftSidebar collapsed and expanded */
+.rail-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+  padding: 5px 4px;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--foreground);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.rail-btn:hover {
+  background: rgba(124, 92, 228, 0.1);
+  border-color: rgba(124, 92, 228, 0.2);
+  color: var(--primary);
+}
+
+.dark .rail-btn:hover {
+  background: rgba(140, 110, 240, 0.15);
+}
+
+/* Touch device support for Reactodia validation indicators.
+   Native title tooltips don't fire on mobile — show via ::after on tap. */
+@media (hover: none) {
+  .reactodia-authoring-state__item-validation {
+    position: relative;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .reactodia-authoring-state__item-validation:hover::after,
+  .reactodia-authoring-state__item-validation:active::after {
+    content: attr(title);
+    position: absolute;
+    bottom: calc(100% + 4px);
+    right: 0;
+    background: var(--popover);
+    color: var(--popover-foreground);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    max-width: 240px;
+    min-width: 120px;
+    z-index: 1000;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+}

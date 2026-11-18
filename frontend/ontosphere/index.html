@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<!-- Modified: base-relative icon assets. See ASSESSMENT-INTEGRATION.md. -->
+<html lang="en">
+  <head>
+    <!-- Cross-Origin Isolation via service worker — required for SharedArrayBuffer
+         (Konclude WASM) on static hosts like GitHub Pages that cannot set headers. -->
+    <script src="%BASE_URL%coi-serviceworker.js"></script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>Ontosphere - Knowledge Graph Builder</title>
+
+
+    <!-- Inline theme preloader: apply persisted theme (light/dark/system) before React mounts to avoid FOUC.
+         Also supports forcing theme via the "theme" URL query parameter (e.g. ?theme=dark) for dev/testing. -->
+    <script>
+      try {
+        (function() {
+          var key = 'ontosphere-theme';
+          var raw = null;
+          try { raw = localStorage.getItem(key); } catch(e) { raw = null; }
+          // Allow overriding via ?theme=dark or ?theme=light in the URL for testing
+          var urlTheme = null;
+          try {
+            var params = new URLSearchParams(window.location.search);
+            var t = params.get('theme');
+            if (t === 'dark' || t === 'light' || t === 'system') urlTheme = t;
+          } catch (_) { urlTheme = null; }
+
+          var prefersDark = false;
+          try { prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches; } catch(e) { prefersDark = false; }
+
+          var theme = (urlTheme !== null) ? urlTheme : (raw === 'light' || raw === 'dark' || raw === 'system' ? raw : null);
+          var isDark = theme === 'dark' || (theme === 'system' && prefersDark) || (!theme && prefersDark);
+
+          try {
+            if (isDark) document.documentElement.classList.add('dark');
+            else document.documentElement.classList.remove('dark');
+            document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+          } catch (e) { /* ignore */ }
+        })();
+      } catch (e) { /* ignore */ }
+    </script>
+    <meta name="description" content="Build beautiful knowledge graphs with ontologies - A modern, lightweight web application for semantic data visualization" />
+    <meta name="author" content="Ontosphere" />
+
+    <meta property="og:title" content="Ontosphere - Knowledge Graph Builder" />
+    <meta property="og:description" content="Build beautiful knowledge graphs with ontologies - A modern, lightweight web application for semantic data visualization" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/ontosphere.svg" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="/ontosphere.svg" />
+    <link rel="icon" href="%BASE_URL%ontosphere.svg" type="image/svg+xml" />
+    <link rel="mask-icon" href="%BASE_URL%ontosphere.svg" color="#7c63e0" />
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

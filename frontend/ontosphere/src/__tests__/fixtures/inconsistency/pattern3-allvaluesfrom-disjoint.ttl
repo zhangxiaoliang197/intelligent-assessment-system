@@ -1,0 +1,15 @@
+@prefix : <http://example.org/reasoner-test#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+# Pattern 3 (OWL 2 DL): allValuesFrom + disjoint class violation
+# :device1 must be locatedIn only :CleanRoom, but :room9 is :DirtyRoom (disjoint with :CleanRoom) → inconsistent
+
+:CleanRoom a owl:Class .
+:DirtyRoom a owl:Class ; owl:disjointWith :CleanRoom .
+:locatedIn a owl:ObjectProperty .
+:CleanRoomOnlyDevice a owl:Class ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :locatedIn ; owl:allValuesFrom :CleanRoom ] .
+:device1 a owl:NamedIndividual , :CleanRoomOnlyDevice ; :locatedIn :room9 .
+:room9 a owl:NamedIndividual , :DirtyRoom .

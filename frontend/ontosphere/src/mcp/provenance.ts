@@ -1,0 +1,633 @@
+// src/mcp/provenance.ts
+import { rdfManager } from '@/utils/rdfManager';
+//
+// PROV-O provenance of agent edits.
+//
+// Every mutating MCP tool (addNode/updateNode/removeNode/addTriple/removeLink,
+// and loadRdf at batch granularity) records the concrete triples it added and
+// removed as a PROV-O Activity in a dedicated sidecar named graph
+// `urn:vg:provenance`. That graph is EXCLUDED from reasoning / consistency /
+// SHACL / data export, so attribution metadata never pollutes the ontology.
+//
+// PROV-O shape written per batch (full IRIs, no prefix registration required):
+//
+//   <activity> a prov:Activity ;
+//              prov:wasAssociatedWith <agent> ;
+//              prov:startedAtTime "<ISO-8601>"^^xsd:dateTime ;
+//              vg:tool "addTriple" ;
+//              vg:batchId "<batchId>" ;
+//              vg:addedCount   N ;
+//              vg:removedCount M ;
+//              vg:changeRecord "<json>" .   # {added:[{s,p,o,g}],removed:[...]}
+//   <agent> a prov:Agent, prov:SoftwareAgent ;
+//           rdfs:label "mcp-agent" .
+//
+// On revert the activity is additionally annotated:
+//   <activity> prov:wasInvalidatedBy <revertActivity> ;  (a prov:Activity)
+//              vg:reverted true ;
+//              vg:revertedAtTime "<ISO>"^^xsd:dateTime .
+//
+// LIFETIME / VOLATILITY: the underlying N3 store is in-memory and volatile —
+// reloading the page clears both urn:vg:data and urn:vg:provenance. The batch
+// index below is an in-memory journal MIRRORED into urn:vg:provenance; it is
+// the source of truth for diff/revert during a session and does not survive a
+// reload. This matches the zero-backend design (the data itself is volatile).
+
+export const PROVENANCE_GRAPH = 'urn:vg:provenance';
+
+const PROV = 'http://www.w3.org/ns/prov#';
+const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+const RDFS_LABEL = 'http://www.w3.org/2000/01/rdf-schema#label';
+const XSD_DATETIME = 'http://www.w3.org/2001/XMLSchema#dateTime';
+const XSD_INTEGER = 'http://www.w3.org/2001/XMLSchema#integer';
+const XSD_BOOLEAN = 'http://www.w3.org/2001/XMLSchema#boolean';
+const VG = 'urn:vg:prov#'; // VocabGraph provenance terms (tool, batchId, counts, changeRecord, reverted)
+
+const PROV_ACTIVITY = `${PROV}Activity`;
+const PROV_AGENT = `${PROV}Agent`;
+const PROV_SOFTWARE_AGENT = `${PROV}SoftwareAgent`;
+const PROV_ASSOCIATED_WITH = `${PROV}wasAssociatedWith`;
+const PROV_STARTED_AT = `${PROV}startedAtTime`;
+const PROV_INVALIDATED_BY = `${PROV}wasInvalidatedBy`;
+
+const VG_TOOL = `${VG}tool`;
+const VG_BATCH_ID = `${VG}batchId`;
+const VG_ADDED_COUNT = `${VG}addedCount`;
+const VG_REMOVED_COUNT = `${VG}removedCount`;
+const VG_CHANGE_RECORD = `${VG}changeRecord`;
+const VG_REVERTED = `${VG}reverted`;
+const VG_REVERTED_AT = `${VG}revertedAtTime`;
+
+export const DEFAULT_AGENT = 'urn:vg:agent:mcp-agent';
+export const DEFAULT_AGENT_LABEL = 'mcp-agent';
+
+/**
+ * Maximum number of edit batches retained in the in-memory journal (and mirrored
+ * into urn:vg:provenance). A long autonomous agent session doing thousands of
+ * mutations would otherwise grow memory — and the provenance graph — without
+ * bound. When the cap is exceeded the OLDEST batches are evicted: dropped from
+ * the index/order AND their PROV-O quads are deleted from urn:vg:provenance.
+ *
+ * Eviction is irreversible: an evicted batch can no longer be listed, diffed or
+ * reverted (revertBatch returns notFound). Only the most recent MAX_BATCHES
+ * edits are undoable. Change this single constant to tune retention.
+ */
+export const MAX_BATCHES = 5000;
+
+/** A concrete changed triple. `g` is the data graph the change targeted. */
+export interface ProvQuad {
+  s: string;
+  p: string;
+  o: string;
+  /** objectType lets revert re-apply literals vs IRIs faithfully. */
+  ot?: 'iri' | 'literal' | 'bnode';
+  g?: string;
+  /**
+   * BUG D — datatype IRI of a literal object (e.g. xsd:integer). Captured at
+   * record time so revert reconstructs the EXACT typed literal instead of a
+   * plain xsd:string. Only meaningful when ot === 'literal'.
+   */
+  dt?: string;
+  /** BUG D — language tag of a literal object (e.g. 'en'). */
+  lang?: string;
+}
+
+export interface RecordEditInput {
+  tool: string;
+  agent?: string;
+  added?: ProvQuad[];
+  removed?: ProvQuad[];
+  /** Optional human note (e.g. the loadRdf source URL or a summary). */
+  note?: string;
+}
+
+export interface BatchRecord {
+  batchId: string;
+  tool: string;
+  agent: string;
+  timestamp: string; // ISO-8601
+  added: ProvQuad[];
+  removed: ProvQuad[];
+  reverted: boolean;
+  revertedAt?: string;
+  note?: string;
+}
+
+export interface EditSummary {
+  batchId: string;
+  tool: string;
+  agent: string;
+  timestamp: string;
+  addedCount: number;
+  removedCount: number;
+  reverted: boolean;
+  note?: string;
+}
+
+export interface RevertResult {
+  success: boolean;
+  alreadyReverted?: boolean;
+  notFound?: boolean;
+  reverted: {
+    addedRemoved: number;
+    removedRestored: number;
+  };
+  /** Counts requested vs what we could account for (honest partial-revert reporting). */
+  requested: {
+    addedToRemove: number;
+    removedToRestore: number;
+  };
+}
+
+/**
+ * Structured warning emitted whenever eviction drops at least one batch that
+ * was still revertible (i.e. had not yet been marked reverted). Consumers can
+ * inspect this to warn the user that one-click reversal history was truncated.
+ */
+export interface EvictionWarning {
+  /** Number of batches evicted in this eviction pass. */
+  evictedCount: number;
+  /**
+   * Number of those evicted batches that were still revertible (not yet
+   * reverted). Non-zero means revert history was silently truncated.
+   */
+  revertibleDropped: number;
+  /** batchIds of the dropped revertible batches (for diagnostics/logging). */
+  droppedBatchIds: string[];
+}
+
+/**
+ * Snapshot of the provenance recorder's journal state, including any pending
+ * eviction warning from the most-recent recordEdit call.
+ */
+export interface ProvenanceState {
+  journalSize: number;
+  cap: number;
+  /**
+   * Set when the most-recent recordEdit triggered eviction of at least one
+   * still-revertible batch. Cleared (undefined) once acknowledged or on the
+   * next successful recordEdit that caused NO revertible evictions.
+   */
+  evictionWarning?: EvictionWarning;
+}
+
+/**
+ * Minimal store surface the recorder needs. The real rdfManager satisfies this;
+ * tests can inject an in-memory fake. All graph-targeting goes through the
+ * second `graphName` argument of applyBatch.
+ */
+export interface ProvStore {
+  /**
+   * Apply a batch and (optionally) report the ACTUAL store delta. The real
+   * rdfManager returns `{added, removed}` — the count of quads that genuinely
+   * changed the store after match resolution / de-duplication. Revert uses
+   * these real numbers for honest partial-revert reporting; a store that
+   * returns void is treated as "delta unknown" and revert falls back to the
+   * requested counts.
+   */
+  applyBatch(
+    changes: { adds?: unknown[]; removes?: unknown[] },
+    graphName?: string,
+  ): Promise<{ added: number; removed: number } | void>;
+}
+
+const DATA_GRAPH = 'urn:vg:data';
+
+// ---------------------------------------------------------------------------
+// Lightweight change emitter so UI panels (AgentEditsPanel) can auto-refresh
+// when a batch is recorded or reverted. Kept tiny and dependency-free; it does
+// not alter any existing export signature.
+// ---------------------------------------------------------------------------
+type EditsChangedListener = () => void;
+const editsChangedListeners = new Set<EditsChangedListener>();
+
+/** Subscribe to provenance journal changes (record/revert). Returns an unsubscribe fn. */
+export function onEditsChanged(cb: EditsChangedListener): () => void {
+  editsChangedListeners.add(cb);
+  return () => {
+    editsChangedListeners.delete(cb);
+  };
+}
+
+function emitEditsChanged(): void {
+  for (const cb of editsChangedListeners) {
+    try {
+      cb();
+    } catch (err) {
+      console.error('[provenance] editsChanged listener failed', err);
+    }
+  }
+}
+
+let counter = 0;
+function makeBatchId(): string {
+  counter += 1;
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `batch-${Date.now().toString(36)}-${counter.toString(36)}-${rand}`;
+}
+
+function dedupeQuads(quads: ProvQuad[] | undefined): ProvQuad[] {
+  if (!Array.isArray(quads) || quads.length === 0) return [];
+  const seen = new Set<string>();
+  const out: ProvQuad[] = [];
+  for (const q of quads) {
+    if (!q || typeof q.s !== 'string' || typeof q.p !== 'string' || typeof q.o !== 'string') continue;
+    const g = q.g ?? DATA_GRAPH;
+    const key = `${q.s} ${q.p} ${q.o} ${q.ot ?? ''} ${g}`;
+    // BUG D: datatype/language are part of a literal's identity — fold them into
+    // the dedupe key so "42"^^xsd:integer and "42"^^xsd:string stay distinct.
+    const fullKey = `${key} dt=${q.dt ?? ''} lang=${q.lang ?? ''}`;
+    if (seen.has(fullKey)) continue;
+    seen.add(fullKey);
+    out.push({
+      s: q.s,
+      p: q.p,
+      o: q.o,
+      ...(q.ot ? { ot: q.ot } : {}),
+      ...(q.dt ? { dt: q.dt } : {}),
+      ...(q.lang ? { lang: q.lang } : {}),
+      g,
+    });
+  }
+  return out;
+}
+
+/** Build the worker add-entry for a ProvQuad in the data graph (object-type aware). */
+function toDataAdd(q: ProvQuad): Record<string, unknown> {
+  const g = q.g ?? DATA_GRAPH;
+  if (q.ot === 'literal') {
+    // BUG D: reconstruct the EXACT typed/lang literal so a removed
+    // "42"^^xsd:integer is restored as xsd:integer, not a plain xsd:string.
+    const object: Record<string, unknown> = { value: q.o, type: 'literal' };
+    if (q.dt) object.datatype = q.dt;
+    if (q.lang) object.language = q.lang;
+    return { subject: q.s, predicate: q.p, object, graph: g };
+  }
+  if (q.ot === 'bnode') {
+    return { subject: q.s, predicate: q.p, object: { value: q.o, type: 'bnode' }, graph: g };
+  }
+  return { subject: q.s, predicate: q.p, object: q.o, graph: g };
+}
+
+function toDataRemove(q: ProvQuad): Record<string, unknown> {
+  return toDataAdd(q);
+}
+
+/** A literal object-value descriptor for the provenance graph itself. */
+function lit(value: string, datatype?: string): Record<string, unknown> {
+  return datatype ? { value, type: 'literal', datatype } : { value, type: 'literal' };
+}
+
+export class ProvenanceRecorder {
+  private store: ProvStore;
+  private index = new Map<string, BatchRecord>();
+  private order: string[] = []; // batchIds in insertion order
+  private maxBatches: number;
+  private lastEvictionWarning: EvictionWarning | undefined = undefined;
+
+  constructor(store: ProvStore, maxBatches: number = MAX_BATCHES) {
+    this.store = store;
+    this.maxBatches = maxBatches > 0 ? Math.floor(maxBatches) : MAX_BATCHES;
+  }
+
+  /** Replace the backing store (used when the singleton is wired after construction). */
+  setStore(store: ProvStore): void {
+    this.store = store;
+  }
+
+  /**
+   * Record a mutation batch. No-op batches (no added and no removed) are
+   * ignored and return null so we never create empty PROV activities.
+   */
+  async recordEdit(input: RecordEditInput): Promise<string | null> {
+    const added = dedupeQuads(input.added);
+    const removed = dedupeQuads(input.removed);
+    if (added.length === 0 && removed.length === 0) return null;
+
+    const batchId = makeBatchId();
+    const agent = input.agent && input.agent.trim() ? input.agent.trim() : DEFAULT_AGENT;
+    const timestamp = new Date().toISOString();
+    const record: BatchRecord = {
+      batchId,
+      tool: input.tool,
+      agent,
+      timestamp,
+      added,
+      removed,
+      reverted: false,
+      ...(input.note ? { note: input.note } : {}),
+    };
+    this.index.set(batchId, record);
+    this.order.push(batchId);
+
+    await this.writeActivity(record);
+    // Enforce the journal cap: evict oldest batches beyond MAX_BATCHES so a long
+    // agent session cannot grow memory (or urn:vg:provenance) without bound.
+    await this.evictOverflow();
+    emitEditsChanged();
+    return batchId;
+  }
+
+  /**
+   * Drop the oldest batches once the journal exceeds the cap. Removes them from
+   * the in-memory index/order AND deletes their PROV-O quads from
+   * urn:vg:provenance so the sidecar graph stays bounded too. Evicted batches
+   * become unlistable / unrevertable (revert → notFound) — accepted by design.
+   *
+   * When any of the evicted batches were still revertible (not yet reverted),
+   * this sets `lastEvictionWarning` with a structured description so consumers
+   * can surface the truncation rather than discovering it silently.
+   */
+  private async evictOverflow(): Promise<void> {
+    let evictedCount = 0;
+    const droppedRevertibleIds: string[] = [];
+    while (this.order.length > this.maxBatches) {
+      const oldest = this.order.shift();
+      if (!oldest) break;
+      const record = this.index.get(oldest);
+      this.index.delete(oldest);
+      evictedCount += 1;
+      if (record) {
+        if (!record.reverted) {
+          droppedRevertibleIds.push(oldest);
+        }
+        await this.deleteActivityQuads(record);
+      }
+    }
+    if (evictedCount > 0) {
+      this.lastEvictionWarning =
+        droppedRevertibleIds.length > 0
+          ? {
+              evictedCount,
+              revertibleDropped: droppedRevertibleIds.length,
+              droppedBatchIds: droppedRevertibleIds,
+            }
+          : {
+              evictedCount,
+              revertibleDropped: 0,
+              droppedBatchIds: [],
+            };
+    } else {
+      // No eviction this pass: clear any stale warning from a previous cycle.
+      this.lastEvictionWarning = undefined;
+    }
+  }
+
+  /** Most-recent-first list of edit summaries. */
+  listEdits(limit?: number): EditSummary[] {
+    const ids = [...this.order].reverse();
+    const sliced = typeof limit === 'number' && limit > 0 ? ids.slice(0, limit) : ids;
+    const out: EditSummary[] = [];
+    for (const id of sliced) {
+      const r = this.index.get(id);
+      if (!r) continue;
+      out.push({
+        batchId: r.batchId,
+        tool: r.tool,
+        agent: r.agent,
+        timestamp: r.timestamp,
+        addedCount: r.added.length,
+        removedCount: r.removed.length,
+        reverted: r.reverted,
+        ...(r.note ? { note: r.note } : {}),
+      });
+    }
+    return out;
+  }
+
+  getBatch(batchId: string): BatchRecord | undefined {
+    return this.index.get(batchId);
+  }
+
+  /**
+   * Revert a batch: re-remove the quads it added and re-add the quads it
+   * removed, in the data graph. Idempotent — a second revert of the same batch
+   * is a safe no-op. Honest about partial reverts via the `requested` counts;
+   * because the store may have changed since, the inverse ops are best-effort
+   * (the worker silently ignores removes that match nothing and de-dupes adds).
+   */
+  async revertBatch(batchId: string): Promise<RevertResult> {
+    const record = this.index.get(batchId);
+    if (!record) {
+      return {
+        success: false,
+        notFound: true,
+        reverted: { addedRemoved: 0, removedRestored: 0 },
+        requested: { addedToRemove: 0, removedToRestore: 0 },
+      };
+    }
+    if (record.reverted) {
+      return {
+        success: true,
+        alreadyReverted: true,
+        reverted: { addedRemoved: 0, removedRestored: 0 },
+        requested: {
+          addedToRemove: record.added.length,
+          removedToRestore: record.removed.length,
+        },
+      };
+    }
+
+    // Inverse ops grouped by target data graph.
+    const removesByGraph = new Map<string, Record<string, unknown>[]>();
+    const addsByGraph = new Map<string, Record<string, unknown>[]>();
+    for (const q of record.added) {
+      const g = q.g ?? DATA_GRAPH;
+      if (!removesByGraph.has(g)) removesByGraph.set(g, []);
+      removesByGraph.get(g)!.push(toDataRemove(q));
+    }
+    for (const q of record.removed) {
+      const g = q.g ?? DATA_GRAPH;
+      if (!addsByGraph.has(g)) addsByGraph.set(g, []);
+      addsByGraph.get(g)!.push(toDataAdd(q));
+    }
+
+    const graphs = new Set<string>([...removesByGraph.keys(), ...addsByGraph.keys()]);
+    // L2 (latent, single-graph today): this loop applies the inverse ops per
+    // graph sequentially and is NOT transactional across multiple graphs — if a
+    // later graph's applyBatch threw, earlier graphs would already be mutated.
+    // Today every mutation tool targets a single data graph (urn:vg:data), so a
+    // batch only ever spans one graph and the multi-graph case cannot arise. If
+    // a future tool writes to multiple data graphs in one batch, wrap this in a
+    // worker-side transaction (or snapshot+rollback) before relying on it.
+    // Accumulate the ACTUAL store delta across every targeted graph. The
+    // inverse op re-REMOVES the quads the batch added (so the store's `removed`
+    // delta == how many of the batch's adds were really present and got pulled)
+    // and re-ADDS the quads the batch removed (so `added` == how many were
+    // genuinely restored, i.e. not already present). A later edit may have
+    // already removed some adds / re-added some removes, so these can be lower
+    // than the requested counts — that is the honest partial-revert signal.
+    let actualAddedRemoved = 0; // batch.added quads that were really removed now
+    let actualRemovedRestored = 0; // batch.removed quads that were really re-added now
+    let deltaKnown = true; // false if any store call returned void (delta unknown)
+    for (const g of graphs) {
+      const delta = await this.store.applyBatch(
+        {
+          adds: addsByGraph.get(g) ?? [],
+          removes: removesByGraph.get(g) ?? [],
+        },
+        g,
+      );
+      if (delta && typeof delta === 'object') {
+        actualAddedRemoved += typeof delta.removed === 'number' ? delta.removed : 0;
+        actualRemovedRestored += typeof delta.added === 'number' ? delta.added : 0;
+      } else {
+        deltaKnown = false;
+      }
+    }
+
+    record.reverted = true;
+    record.revertedAt = new Date().toISOString();
+    await this.writeRevertAnnotation(record);
+    emitEditsChanged();
+
+    // If the store could not report a delta (returned void), fall back to the
+    // requested counts so we never under-report a revert we cannot measure.
+    return {
+      success: true,
+      reverted: {
+        addedRemoved: deltaKnown ? actualAddedRemoved : record.added.length,
+        removedRestored: deltaKnown ? actualRemovedRestored : record.removed.length,
+      },
+      requested: {
+        addedToRemove: record.added.length,
+        removedToRestore: record.removed.length,
+      },
+    };
+  }
+
+  /** Test/utility hook: drop all in-memory journal state. Does not touch the store. */
+  reset(): void {
+    this.index.clear();
+    this.order = [];
+    this.lastEvictionWarning = undefined;
+  }
+
+  /**
+   * Returns a snapshot of the current journal state. `evictionWarning` is set
+   * when the most-recent recordEdit call evicted at least one batch that was
+   * still revertible — meaning one-click reversal history was truncated. A
+   * consumer (e.g. the listAgentEdits tool handler) should surface this to the
+   * user rather than letting the truncation go unnoticed.
+   */
+  getState(): ProvenanceState {
+    return {
+      journalSize: this.order.length,
+      cap: this.maxBatches,
+      ...(this.lastEvictionWarning ? { evictionWarning: this.lastEvictionWarning } : {}),
+    };
+  }
+
+  // -- internal: PROV-O serialization into urn:vg:provenance ----------------
+
+  private activityIri(batchId: string): string {
+    return `urn:vg:activity:${batchId}`;
+  }
+
+  /**
+   * Build the PROV-O quads for an activity (excluding the shared agent
+   * description, which is reused across batches and must not be evicted). Used
+   * both to WRITE the activity and to REMOVE it on eviction with exact
+   * subject+predicate+object — a subject-only remove is not supported by the
+   * worker, so we reconstruct the precise quads.
+   */
+  private activityQuads(record: BatchRecord): Record<string, unknown>[] {
+    const activity = this.activityIri(record.batchId);
+    const changeRecord = JSON.stringify({ added: record.added, removed: record.removed });
+    const quads: Record<string, unknown>[] = [
+      { subject: activity, predicate: RDF_TYPE, object: PROV_ACTIVITY },
+      { subject: activity, predicate: PROV_ASSOCIATED_WITH, object: record.agent },
+      { subject: activity, predicate: PROV_STARTED_AT, object: lit(record.timestamp, XSD_DATETIME) },
+      { subject: activity, predicate: VG_TOOL, object: lit(record.tool) },
+      { subject: activity, predicate: VG_BATCH_ID, object: lit(record.batchId) },
+      { subject: activity, predicate: VG_ADDED_COUNT, object: lit(String(record.added.length), XSD_INTEGER) },
+      { subject: activity, predicate: VG_REMOVED_COUNT, object: lit(String(record.removed.length), XSD_INTEGER) },
+      { subject: activity, predicate: VG_CHANGE_RECORD, object: lit(changeRecord) },
+    ];
+    if (record.note) {
+      quads.push({ subject: activity, predicate: `${VG}note`, object: lit(record.note) });
+    }
+    return quads;
+  }
+
+  /** The agent-description quads (shared; written on first activity, never evicted). */
+  private agentQuads(record: BatchRecord): Record<string, unknown>[] {
+    return [
+      { subject: record.agent, predicate: RDF_TYPE, object: PROV_AGENT },
+      { subject: record.agent, predicate: RDF_TYPE, object: PROV_SOFTWARE_AGENT },
+      { subject: record.agent, predicate: RDFS_LABEL, object: lit(DEFAULT_AGENT_LABEL) },
+    ];
+  }
+
+  /** The revert-annotation quads written when a batch is reverted. */
+  private revertQuads(record: BatchRecord): Record<string, unknown>[] {
+    const activity = this.activityIri(record.batchId);
+    const revertActivity = `urn:vg:activity:${record.batchId}:revert`;
+    const revertedAt = record.revertedAt ?? new Date().toISOString();
+    return [
+      { subject: revertActivity, predicate: RDF_TYPE, object: PROV_ACTIVITY },
+      { subject: revertActivity, predicate: PROV_STARTED_AT, object: lit(revertedAt, XSD_DATETIME) },
+      { subject: activity, predicate: PROV_INVALIDATED_BY, object: revertActivity },
+      { subject: activity, predicate: VG_REVERTED, object: lit('true', XSD_BOOLEAN) },
+      { subject: activity, predicate: VG_REVERTED_AT, object: lit(revertedAt, XSD_DATETIME) },
+    ];
+  }
+
+  private async writeActivity(record: BatchRecord): Promise<void> {
+    const adds = [...this.activityQuads(record), ...this.agentQuads(record)];
+    try {
+      await this.store.applyBatch({ adds }, PROVENANCE_GRAPH);
+    } catch (err) {
+      // Provenance must never break the actual mutation; log and continue.
+      console.error('[provenance] writeActivity failed', err);
+    }
+  }
+
+  private async writeRevertAnnotation(record: BatchRecord): Promise<void> {
+    try {
+      await this.store.applyBatch({ adds: this.revertQuads(record) }, PROVENANCE_GRAPH);
+    } catch (err) {
+      console.error('[provenance] writeRevertAnnotation failed', err);
+    }
+  }
+
+  /**
+   * Remove every PROV-O quad written for an evicted batch from urn:vg:provenance,
+   * keeping the sidecar graph bounded. The quads are reconstructed with exact
+   * subject+predicate+object (the worker's remove path needs at least a
+   * predicate; a subject-only remove is a no-op). The shared prov:Agent
+   * description is intentionally left intact (it is referenced by other,
+   * still-live activities). Revert-annotation quads are removed too if present.
+   */
+  private async deleteActivityQuads(record: BatchRecord): Promise<void> {
+    const removes: Record<string, unknown>[] = [...this.activityQuads(record)];
+    if (record.reverted) {
+      removes.push(...this.revertQuads(record));
+    }
+    try {
+      await this.store.applyBatch({ removes }, PROVENANCE_GRAPH);
+    } catch (err) {
+      console.error('[provenance] deleteActivityQuads failed', err);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Singleton wired to the real rdfManager. Tools import `provenanceRecorder`.
+// Lazy store binding keeps this module import-safe in tests (which mock the
+// rdfManager) without forcing a circular import at module-eval time.
+// ---------------------------------------------------------------------------
+
+let singleton: ProvenanceRecorder | null = null;
+
+export function getProvenanceRecorder(): ProvenanceRecorder {
+  if (!singleton) {
+    singleton = new ProvenanceRecorder(rdfManager as unknown as ProvStore);
+  }
+  return singleton;
+}
+
+/** Test hook: install a recorder backed by a custom store. */
+export function __setProvenanceRecorder(recorder: ProvenanceRecorder | null): void {
+  singleton = recorder;
+}

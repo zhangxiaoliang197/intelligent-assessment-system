@@ -1,0 +1,11 @@
+@prefix : <http://example.org/reasoner-test#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+# Pattern 1 (OWL 2 EL): individual in two disjoint classes
+# alice is declared both :Person and :Organization, which are disjoint → inconsistent
+
+:Person a owl:Class .
+:Organization a owl:Class ; owl:disjointWith :Person .
+:alice a owl:NamedIndividual , :Person , :Organization .

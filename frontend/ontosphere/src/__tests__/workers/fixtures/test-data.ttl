@@ -1,0 +1,26 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex: <http://example.org/> .
+
+# Named class WITH label and comment — should conform
+ex:Person a owl:Class ;
+  rdfs:label "Person" ;
+  rdfs:comment "A human being" .
+
+# Named class WITHOUT label — should trigger ClassLabel warning
+ex:Organization a owl:Class ;
+  rdfs:comment "An organization" .
+
+# Named class WITHOUT comment — should trigger ClassComment info
+ex:Animal a owl:Class ;
+  rdfs:label "Animal" .
+
+# Blank-node class (OWL restriction) — should NOT trigger violations
+_:restriction1 a owl:Class .
+
+# Object property WITHOUT label — should trigger ObjectPropertyLabel warning
+ex:knows a owl:ObjectProperty .
+
+# Object property WITH label — should conform
+ex:worksAt a owl:ObjectProperty ;
+  rdfs:label "works at" .

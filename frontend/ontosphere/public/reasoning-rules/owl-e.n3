@@ -1,0 +1,409 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#>.
+@prefix list: <http://www.w3.org/2000/10/swap/list#>.
+@prefix log: <http://www.w3.org/2000/10/swap/log#>.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
+@prefix e: <http://eulersharp.sourceforge.net/2003/03swap/log-rules#>.
+
+# Extended OWL rules from the EYE lib-owl rule library.
+#
+# IMPORTANT — N3.js Reasoner limitation:
+# Rules that use e:findall, list:in, log:notEqualTo, or other EYE/SWAP
+# builtins are SILENTLY IGNORED by the N3.js BGP-only Reasoner.
+# Those rules are commented out below and marked [REQUIRES EYE].
+# For full OWL-RL (intersectionOf, unionOf, cardinality, hasKey, etc.)
+# migrate to eyereasoner (WASM):
+#   see docs/plans/2026-04-28-006-feat-migrate-eyereasoner-plan.md
+#
+# Rules removed vs. original:
+#   - FunctionalProperty / InverseFunctionalProperty → sameAs  (generates
+#     owl:sameAs → explosive eq-* closure)
+#   - maxCardinality / maxQualifiedCardinality → sameAs  (same reason)
+#   - eq-rep-s/p/o, eq-sym, eq-trans  (sameAs substitution — explosive)
+#   - scm-avf1/2  (allValuesFrom schema inference — was removed from owl-rl.n3)
+#   - scm-eqp (equivalentProperty hierarchy — was removed from owl-rl.n3)
+#   - scm-hv (hasValue schema inference — was removed from owl-rl.n3)
+#   - AsymmetricProperty / IrreflexiveProperty checks  (removed from owl-rl.n3)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# [REQUIRES EYE] owl:AllDifferent members
+# {
+#     ?U_0 a owl:AllDifferent.
+#     ?U_0 owl:members ?U_1.
+#     ?U_2 list:in ?U_1.
+#     ?U_3 list:in ?U_1.
+#     ?U_2 log:notEqualTo ?U_3.
+#     ?U_2 owl:sameAs ?U_3.
+# } => false.
+#
+# {
+#     ?U_4 a owl:AllDifferent.
+#     ?U_4 owl:distinctMembers ?U_5.
+#     ?U_6 list:in ?U_5.
+#     ?U_7 list:in ?U_5.
+#     ?U_6 log:notEqualTo ?U_7.
+#     ?U_6 owl:sameAs ?U_7.
+# } => false.
+#
+# [REQUIRES EYE] owl:AllDisjointClasses
+# {
+#     ?U_8 a owl:AllDisjointClasses.
+#     ?U_8 owl:members ?U_9.
+#     ?U_10 list:in ?U_9.
+#     ?U_11 list:in ?U_9.
+#     ?U_10 log:notEqualTo ?U_11.
+#     ?U_12 a ?U_10.
+#     ?U_12 a ?U_11.
+# } => false.
+#
+# [REQUIRES EYE] owl:AllDisjointProperties
+# {
+#     ?U_13 a owl:AllDisjointProperties.
+#     ?U_13 owl:members ?U_14.
+#     ?U_15 list:in ?U_14.
+#     ?U_16 list:in ?U_14.
+#     ?U_15 log:notEqualTo ?U_16.
+#     ?U_17 ?U_15 ?U_18.
+#     ?U_17 ?U_16 ?U_18.
+# } => false.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# cls-nothing2
+{
+    ?U_48 a owl:Nothing.
+} => false.
+
+# prp-symp
+{
+    ?U_49 a owl:SymmetricProperty.
+    ?U_50 ?U_49 ?U_51.
+} => {
+    ?U_51 ?U_49 ?U_50.
+}.
+
+# prp-trp
+{
+    ?U_52 a owl:TransitiveProperty.
+    ?U_53 ?U_52 ?U_54.
+    ?U_54 ?U_52 ?U_55.
+} => {
+    ?U_53 ?U_52 ?U_55.
+}.
+
+# cls-avf
+{
+    ?U_56 owl:allValuesFrom ?U_57.
+    ?U_56 owl:onProperty ?U_58.
+    ?U_59 a ?U_56.
+    ?U_59 ?U_58 ?U_60.
+} => {
+    ?U_60 a ?U_57.
+}.
+
+# owl:complementOf — symmetry
+{
+    ?U_71 owl:complementOf ?U_72.
+} => {
+    ?U_72 owl:complementOf ?U_71.
+}.
+
+# owl:complementOf → disjointWith
+{
+    ?U_73 owl:complementOf ?U_74.
+} => {
+    ?U_74 owl:disjointWith ?U_73.
+}.
+
+# owl:complementOf membership violation
+{
+    ?U_75 owl:complementOf ?U_76.
+    ?U_77 a ?U_75.
+    ?U_77 a ?U_76.
+} => false.
+
+# owl:differentFrom symmetry
+{
+    ?U_78 owl:differentFrom ?U_79.
+} => {
+    ?U_79 owl:differentFrom ?U_78.
+}.
+
+# ──────────────────────────────────────────────────────────────────────────────
+# [REQUIRES EYE] owl:disjointUnionOf
+# {
+#     ?U_80 owl:disjointUnionOf ?U_81.
+#     ?U_82 list:in ?U_81.
+#     ?U_83 list:in ?U_81.
+#     ?U_82 log:notEqualTo ?U_83.
+# } => {
+#     ?U_82 owl:disjointWith ?U_83.
+#     ?U_80 owl:unionOf ?U_81.
+# }.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# owl:disjointWith members → owl:differentFrom
+{
+    ?U_84 owl:disjointWith ?U_85.
+    ?U_86 a ?U_84.
+    ?U_87 a ?U_85.
+} => {
+    ?U_86 owl:differentFrom ?U_87.
+}.
+
+# cax-dw
+{
+    ?U_88 owl:disjointWith ?U_89.
+    ?U_90 a ?U_88.
+    ?U_90 a ?U_89.
+} => false.
+
+# ──────────────────────────────────────────────────────────────────────────────
+# [REQUIRES EYE] owl:distinctMembers
+# {
+#     ?U_91 owl:distinctMembers ?U_92.
+#     ?U_93 list:in ?U_92.
+#     ?U_94 list:in ?U_92.
+#     ?U_93 log:notEqualTo ?U_94.
+# } => {
+#     ?U_93 owl:differentFrom ?U_94.
+# }.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# cax-eqc1
+{
+    ?U_95 owl:equivalentClass ?U_96.
+    ?U_97 a ?U_95.
+} => {
+    ?U_97 a ?U_96.
+}.
+
+# cax-eqc2
+{
+    ?U_98 owl:equivalentClass ?U_99.
+    ?U_100 a ?U_99.
+} => {
+    ?U_100 a ?U_98.
+}.
+
+# owl:equivalentClass symmetry
+{
+    ?U_101 owl:equivalentClass ?U_102.
+} => {
+    ?U_102 owl:equivalentClass ?U_101.
+}.
+
+# owl:equivalentClass transitivity
+{
+    ?U_103 owl:equivalentClass ?U_104.
+    ?U_104 owl:equivalentClass ?U_105.
+} => {
+    ?U_103 owl:equivalentClass ?U_105.
+}.
+
+# scm-eqc1
+{
+    ?U_106 owl:equivalentClass ?U_107.
+} => {
+    ?U_106 rdfs:subClassOf ?U_107.
+    ?U_107 rdfs:subClassOf ?U_106.
+}.
+
+# scm-eqc2
+{
+    ?U_108 rdfs:subClassOf ?U_109.
+    ?U_109 rdfs:subClassOf ?U_108.
+} => {
+    ?U_108 owl:equivalentClass ?U_109.
+}.
+
+# ──────────────────────────────────────────────────────────────────────────────
+# [REQUIRES EYE] owl:hasKey
+# {
+#     ?U_127 owl:hasKey ?U_128.
+#     ?U_129 a ?U_127.
+#     ?U_130 a ?U_127.
+#     ?U_129 log:notEqualTo ?U_130.
+#     (?U_131 {
+#         ?U_131 list:in ?U_128.
+#         ?U_129 ?U_131 ?U_132.
+#         ?U_130 ?U_131 ?U_132.
+#     } ?U_133) log:collectAllIn ?U_134.
+#     ?U_133 list:setEqualTo ?U_128.
+# } => {
+#     ?U_129 owl:sameAs ?U_130.
+# }.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# cls-hv1
+{
+    ?U_135 owl:hasValue ?U_136.
+    ?U_135 owl:onProperty ?U_137.
+    ?U_138 a ?U_135.
+} => {
+    ?U_138 ?U_137 ?U_136.
+}.
+
+# cls-hv2
+{
+    ?U_139 owl:hasValue ?U_140.
+    ?U_139 owl:onProperty ?U_141.
+    ?U_142 ?U_141 ?U_140.
+} => {
+    ?U_142 a ?U_139.
+}.
+
+# owl:hasValue consistency (hasValue filler differentFrom actual value → false)
+{
+    ?U_143 owl:hasValue ?U_144.
+    ?U_143 owl:onProperty ?U_145.
+    ?U_146 ?U_145 ?U_147.
+    ?U_146 a ?U_143.
+    ?U_144 owl:differentFrom ?U_147.
+} => false.
+
+# ──────────────────────────────────────────────────────────────────────────────
+# [REQUIRES EYE] owl:intersectionOf — class membership
+# {
+#     ?U_153 owl:intersectionOf ?U_154.
+#     ?U_155 a ?U_153.
+#     ?U_156 list:in ?U_154.
+# } => {
+#     ?U_155 a ?U_156.
+# }.
+#
+# [REQUIRES EYE] owl:intersectionOf — forward membership via e:findall
+# {
+#     ?U_157 owl:intersectionOf ?U_158.
+#     ?U_158 rdf:first ?U_159.
+#     ?U_160 a ?U_159.
+#     ?U_158 rdf:rest ?U_161.
+#     ?U_162 e:findall (?U_163 {
+#         ?U_163 list:in ?U_161.
+#         ?U_160 a ?U_163.
+#     } ?U_161).
+# } => {
+#     ?U_160 a ?U_157.
+# }.
+#
+# [REQUIRES EYE] owl:intersectionOf → rdfs:subClassOf
+# {
+#     ?U_164 owl:intersectionOf ?U_165.
+#     ?U_166 list:in ?U_165.
+# } => {
+#     ?U_164 rdfs:subClassOf ?U_166.
+# }.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# prp-inv1
+{
+    ?U_167 owl:inverseOf ?U_168.
+    ?U_169 ?U_167 ?U_170.
+} => {
+    ?U_170 ?U_168 ?U_169.
+}.
+
+# prp-inv2
+{
+    ?U_171 owl:inverseOf ?U_172.
+    ?U_173 ?U_172 ?U_174.
+} => {
+    ?U_174 ?U_171 ?U_173.
+}.
+
+# owl:inverseOf symmetry
+{
+    ?U_175 owl:inverseOf ?U_176.
+} => {
+    ?U_176 owl:inverseOf ?U_175.
+}.
+
+# ──────────────────────────────────────────────────────────────────────────────
+# [REQUIRES EYE] owl:oneOf → rdf:type
+# {
+#     ?U_210 owl:oneOf ?U_211.
+#     ?U_212 list:in ?U_211.
+# } => {
+#     ?U_212 a ?U_210.
+# }.
+#
+# [REQUIRES EYE] owl:propertyChainAxiom
+# {
+#     ?U_213 owl:propertyChainAxiom ?U_214.
+#     ?U_214 e:propertyChainExtension (?U_215 ?U_216).
+# } => {
+#     ?U_215 ?U_213 ?U_216.
+# }.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# owl:propertyDisjointWith violation
+{
+    ?U_217 owl:propertyDisjointWith ?U_218.
+    ?U_219 ?U_217 ?U_220.
+    ?U_219 ?U_218 ?U_220.
+} => false.
+
+# Consistency: sameAs + differentFrom → false
+{
+    ?U_230 owl:sameAs ?U_231.
+    ?U_230 owl:differentFrom ?U_231.
+} => false.
+
+# cls-svf1
+{
+    ?U_240 owl:someValuesFrom ?U_241.
+    ?U_240 owl:onProperty ?U_242.
+    ?U_243 ?U_242 ?U_244.
+    ?U_244 a ?U_241.
+} => {
+    ?U_243 a ?U_240.
+}.
+
+# cls-svf2
+{
+    ?U_245 owl:someValuesFrom owl:Thing.
+    ?U_245 owl:onProperty ?U_246.
+    ?U_247 ?U_246 ?U_248.
+} => {
+    ?U_247 a ?U_245.
+}.
+
+# scm-svf1
+{
+    ?U_249 owl:someValuesFrom ?U_250.
+    ?U_249 owl:onProperty ?U_251.
+    ?U_252 owl:someValuesFrom ?U_253.
+    ?U_252 owl:onProperty ?U_251.
+    ?U_250 rdfs:subClassOf ?U_253.
+} => {
+    ?U_249 rdfs:subClassOf ?U_252.
+}.
+
+# scm-svf2
+{
+    ?U_254 owl:someValuesFrom ?U_255.
+    ?U_254 owl:onProperty ?U_256.
+    ?U_257 owl:someValuesFrom ?U_255.
+    ?U_257 owl:onProperty ?U_258.
+    ?U_256 rdfs:subPropertyOf ?U_258.
+} => {
+    ?U_254 rdfs:subClassOf ?U_257.
+}.
+
+# ──────────────────────────────────────────────────────────────────────────────
+# [REQUIRES EYE] owl:unionOf — class membership
+# {
+#     ?U_259 owl:unionOf ?U_260.
+#     ?U_261 list:in ?U_260.
+#     ?U_262 a ?U_261.
+# } => {
+#     ?U_262 a ?U_259.
+# }.
+#
+# [REQUIRES EYE] owl:unionOf → rdfs:subClassOf
+# {
+#     ?U_263 owl:unionOf ?U_264.
+#     ?U_265 list:in ?U_264.
+# } => {
+#     ?U_265 rdfs:subClassOf ?U_263.
+# }.
+# ──────────────────────────────────────────────────────────────────────────────

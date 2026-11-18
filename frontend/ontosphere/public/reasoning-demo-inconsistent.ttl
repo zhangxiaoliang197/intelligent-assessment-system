@@ -1,0 +1,24 @@
+@prefix inc: <http://example.com/reasoning-demo-inconsistent#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# ── Ontology declaration ──────────────────────────────────────────────────────
+<http://example.com/reasoning-demo-inconsistent> a owl:Ontology ;
+    rdfs:label "Inconsistency Demo" ;
+    rdfs:comment "Intentionally inconsistent ontology: inc:frank is a member of two disjoint classes (Employee and Contractor), creating a logical contradiction detectable by OWL DL consistency checking. Namespace is fully isolated from reasoning-demo.ttl." .
+
+# ── Disjointness clash ────────────────────────────────────────────────────────
+# inc:frank is asserted as both Employee and Contractor, which are disjoint.
+# Employee ∩ Contractor = ∅  →  frank's membership in both creates a contradiction.
+
+inc:Employee a owl:Class ;
+    rdfs:label "Employee" .
+
+inc:Contractor a owl:Class ;
+    rdfs:label "Contractor" ;
+    owl:disjointWith inc:Employee .
+
+# Contradiction: frank typed to two disjoint classes simultaneously
+inc:frank a owl:NamedIndividual, inc:Employee, inc:Contractor .

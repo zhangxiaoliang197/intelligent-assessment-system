@@ -36,6 +36,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from literature import router as literature_router
+app.include_router(literature_router)
+
 # ── 路径配置 ──
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
@@ -47,7 +50,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # ── Qdrant 配置 ──
-QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_URL = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
 QDRANT_COLLECTION = "knowledge_chunks"
 
 # ── 嵌入模型（延迟加载）──
@@ -122,19 +125,23 @@ def get_qdrant_client():
     if _qdrant_client is None:
         from qdrant_client import QdrantClient
         from qdrant_client.models import Distance, VectorParams
+        from urllib.parse import urlparse
         logger.info(f"正在连接 Qdrant: {QDRANT_URL}")
-        _qdrant_client = QdrantClient(url=QDRANT_URL, timeout=30)
+        # Local vector traffic must not be routed through a desktop HTTP proxy.
+        local_endpoint = urlparse(QDRANT_URL).hostname in {"localhost", "127.0.0.1", "::1"}
+        candidate = QdrantClient(url=QDRANT_URL, timeout=30, trust_env=not local_endpoint)
         # 确保集合存在
-        if not _qdrant_client.collection_exists(QDRANT_COLLECTION):
+        if not candidate.collection_exists(QDRANT_COLLECTION):
             model = get_embedding_model()
             dim = model.get_sentence_embedding_dimension()
-            _qdrant_client.create_collection(
+            candidate.create_collection(
                 collection_name=QDRANT_COLLECTION,
                 vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
             )
             logger.info(f"已创建 Qdrant 集合 '{QDRANT_COLLECTION}'，维度: {dim}")
         # 确保 payload 索引存在（幂等，已存在则跳过）
-        _ensure_payload_indexes(_qdrant_client)
+        _ensure_payload_indexes(candidate)
+        _qdrant_client = candidate
     return _qdrant_client
 
 
@@ -369,7 +376,8 @@ def upsert_chunks_to_qdrant(chunks: List[Chunk]):
 
 def chunk_id_to_int(chunk_id: str) -> int:
     """将 chunk_id（如 kb_abc123_c5）转为整数（用于 Qdrant point id）"""
-    return abs(hash(chunk_id)) % (2 ** 63 - 1)
+    import hashlib
+    return int.from_bytes(hashlib.sha256(chunk_id.encode("utf-8")).digest()[:8], "big") & (2 ** 63 - 1)
 
 
 def _chunk_id_to_index(chunk_id: str) -> Optional[int]:
@@ -623,7 +631,8 @@ async def search_knowledge(request: KnowledgeSearchRequest):
 
         # 构建 BM25 的索引排序列表（按分数降序，截断）
         bm25_ranked = sorted(
-            range(len(bm25_scores)), key=lambda i: bm25_scores[i], reverse=True
+            (i for i, score in enumerate(bm25_scores) if score > 0 and (not request.category or chunks_db[i].category == request.category)),
+            key=lambda i: bm25_scores[i], reverse=True
         )[:merge_limit]
 
         # ── RRF 融合 ──
@@ -653,7 +662,10 @@ async def search_knowledge(request: KnowledgeSearchRequest):
                 "content": chunk.text,
                 "score": round(vector_scores.get(idx, 0), 4),
                 "category": chunk.category,
-                "tags": chunk.tags
+                "tags": chunk.tags,
+                "literature": doc.get("literature"),
+                "source_url": (doc.get("literature") or {}).get("source_url", ""),
+                "content_level": (doc.get("literature") or {}).get("content_level", ""),
             })
 
             if len(results) >= request.top_k:

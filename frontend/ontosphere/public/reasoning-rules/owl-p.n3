@@ -1,0 +1,109 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+
+# Safe BGP-only OWL property and class rules.
+# Rules removed vs. original: eq-ref/sym/trans/rep-* (sameAs explosion),
+# prp-fp/prp-ifp (FunctionalProperty → sameAs), scm-cls (fires on every
+# owl:Class, quadratic cascade), scm-op/scm-dp/scm-eqp (fires on every
+# property declaration). All removed rules are unsafe under N3.js Reasoner
+# and caused multi-second reasoning on typical ontologies.
+# For full OWL-RL including sameAs closure and cardinality restrictions,
+# migrate to eyereasoner (see docs/plans/2026-04-28-006-feat-migrate-eyereasoner-plan.md).
+
+# Consistency check: sameAs and differentFrom contradiction
+{
+    ?Q owl:sameAs ?R .
+    ?Q owl:differentFrom ?R .
+}
+=> false .
+
+# prp-inv1
+{
+    ?P1 owl:inverseOf ?P2 .
+    ?Q ?P1 ?R .
+}
+=>
+{
+    ?R ?P2 ?Q .
+} .
+
+# prp-inv2
+{
+    ?P1 owl:inverseOf ?P2 .
+    ?Q ?P2 ?R .
+}
+=>
+{
+    ?R ?P1 ?Q .
+} .
+
+# prp-symp
+{
+    ?P rdf:type owl:SymmetricProperty .
+    ?X ?P ?Y .
+}
+=>
+{
+    ?Y ?P ?X .
+} .
+
+# prp-trp
+{
+    ?P rdf:type owl:TransitiveProperty .
+    ?X ?P ?Y .
+    ?Y ?P ?Z .
+}
+=>
+{
+    ?X ?P ?Z .
+} .
+
+# cax-eqc1
+{
+    ?A owl:equivalentClass ?B .
+    ?X rdf:type ?A .
+}
+=>
+{
+    ?X rdf:type ?B .
+} .
+
+# cax-eqc2
+{
+    ?A owl:equivalentClass ?B .
+    ?X rdf:type ?B .
+}
+=>
+{
+    ?X rdf:type ?A .
+} .
+
+# cax-dw
+{
+    ?A owl:disjointWith ?B .
+    ?X rdf:type ?A .
+    ?X rdf:type ?B .
+}
+=> false .
+
+# scm-eqc1
+{
+    ?A owl:equivalentClass ?B .
+}
+=>
+{
+    ?A rdfs:subClassOf ?B .
+    ?B rdfs:subClassOf ?A .
+} .
+
+# scm-eqc2
+{
+    ?A rdfs:subClassOf ?B .
+    ?B rdfs:subClassOf ?A .
+}
+=>
+{
+    ?A owl:equivalentClass ?B .
+} .

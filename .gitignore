@@ -147,3 +147,8 @@ python/ontology-service/data/ontologies/
 # mytest
 mytest/
 
+# Reproducible Ontosphere build and copied WASM runtime assets.
+frontend/public/ontosphere/
+frontend/ontosphere/public/rdf-reasoner-konclude/
+frontend/ontosphere/public/coi-serviceworker.js
+

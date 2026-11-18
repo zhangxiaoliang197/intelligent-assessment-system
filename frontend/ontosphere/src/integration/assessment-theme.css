@@ -1,0 +1,51 @@
+/* Intelligent Assessment System theme. Color tokens match frontend/src/styles/index.css. */
+:root.assessment-embed {
+  color-scheme: light;
+  --background: #f8fafc; --foreground: #0f172a;
+  --text-foreground-dark: #0f172a;
+  --card: #ffffff; --card-foreground: #475569;
+  --popover: #ffffff; --popover-foreground: #0f172a;
+  --primary: #3b82f6; --primary-hover: #2563eb; --primary-foreground: #ffffff;
+  --secondary: #eff6ff; --secondary-foreground: #2563eb; --secondary-hover: #dbeafe;
+  --accent: #eff6ff; --accent-foreground: #1d4ed8; --accent-hover: #dbeafe;
+  --muted: #f1f5f9; --muted-foreground: #64748b;
+  --destructive: #ef4444; --destructive-foreground: #ffffff;
+  --border: #e2e8f0; --input: #ffffff; --ring: #3b82f6;
+  --canvas-bg: #f8fafc; --canvas-grid: #e2e8f0;
+  --node-bg: #ffffff; --node-foreground: #0f172a; --node-border: #cbd5e1;
+  --node-muted: #f1f5f9; --node-shadow: 0 2px 8px rgb(15 23 42 / 6%);
+  --edge-default: #94a3b8; --edge-selected: #2563eb;
+  --glass-surface: #ffffff; --glass-border-color: #e2e8f0;
+  --glass-shadow: 0 2px 8px rgb(15 23 42 / 5%);
+  --reactodia-paper-bg: #ffffff; --reactodia-paper-fg: #0f172a;
+  --reactodia-paper-border: #cbd5e1; --reactodia-paper-fg-muted: #64748b;
+  font-family: "Microsoft YaHei", "PingFang SC", Inter, sans-serif;
+}
+:root.assessment-embed .reactodia-workspace {
+  --reactodia-background-color: #f8fafc;
+  --reactodia-button-default-background-color: #ffffff;
+  --reactodia-button-default-border-color: #e2e8f0;
+  --reactodia-button-default-background-color-active: #eff6ff;
+  --reactodia-button-default-background-color-focus: #f1f5f9;
+  --reactodia-button-default-color: #475569;
+  --reactodia-button-default-color-focus: #1d4ed8;
+  --reactodia-color-primary: #3b82f6;
+  --reactodia-color-primary-light: #60a5fa; --reactodia-color-primary-lighter: #bfdbfe;
+  --reactodia-color-primary-lightest: #eff6ff; --reactodia-color-primary-dark: #2563eb;
+  --reactodia-color-primary-darker: #1d4ed8; --reactodia-color-primary-darkest: #1e40af;
+  --reactodia-input-background-color: #ffffff; --reactodia-input-border-color: #e2e8f0;
+  --reactodia-navigator-background-fill: #ffffff;
+  --reactodia-navigator-viewport-stroke-color: #3b82f6;
+  --reactodia-tree-background-color-focus: #eff6ff;
+  --vg-inferred-color: #d97706;
+}
+.assessment-embed .reactodia-btn-primary { background: #3b82f6; border-color: #3b82f6; color: white; }
+.assessment-embed .reactodia-link { color: #475569; }
+.assessment-embed .reactodia-link-label { color: #475569; }
+.assessment-embed .rail-btn { color: #475569; }
+.assessment-embed .rail-btn:hover { background: #eff6ff; color: #2563eb; }
+.assessment-embed .vg-card { box-shadow: 0 2px 6px rgb(15 23 42 / 5%); }
+.assessment-embed .reactodia-btn-group .glass-btn.glass-btn--active { background: #eff6ff !important; border-color: #bfdbfe !important; color: #2563eb !important; }
+.assessment-embed .reactodia-toolbar__menu .reactodia-dropdown__content .reactodia-btn:hover,
+.assessment-embed .reactodia-selection-action:hover { background-color: #eff6ff !important; }
+.assessment-embed .rail-btn > span { white-space: nowrap; }

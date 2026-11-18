@@ -1,0 +1,363 @@
+/**
+ * @fileoverview Type definitions for canvas and diagram-related components
+ * Provides TypeScript interfaces for diagram nodes, links, and canvas interactions.
+ */
+
+import { LiteralProperty, AnnotationPropertyValue, EntityType, RDFType } from './ontology';
+
+/**
+ * Represents a node in the diagram payload used across the app.
+ *
+ * Canonical shape: diagram nodes must be driven by RDF. `rdfTypes` is authoritative
+ * and required. Legacy fields such as `classType` and `namespace` are optional and
+ * kept only for compatibility; UI should compute labels from `rdfTypes`.
+ */
+export interface NodeData {
+  [key: string]: any;
+
+  // Identity
+  /** Unique identifier for the node (UI key) — typically the same as iri */
+  key: string;
+  /** Full IRI of the entity represented by this node (or blank-node id like "_:b0") */
+  iri: string;
+
+  // RDF metadata (authoritative)
+  /** All rdf:type IRIs for this entity (authoritative; may be empty) */
+  rdfTypes: string[];
+  /** Primary / canonical rdf:type IRI (first / most-relevant), optional */
+  primaryTypeIri?: string | null;
+
+  // Display / presentation (computed by mapper where available)
+  /** Human-friendly label (preferred rdfs:label or fat-map label) */
+  label?: string;
+  /** Prefixed display form (e.g. ex:Person) computed from namespace registry when available */
+  displayPrefixed?: string;
+  /** Short/local name (short local part of the IRI) */
+  displayShort?: string;
+
+  // Fallback fields (kept for compatibility, but not authoritative)
+  /** Coarse namespace string (substring before last / or #) */
+  namespace?: string;
+  classType?: string;
+  displayclassType?: string;
+
+  // Properties
+  /** Merged properties: union of literalProperties and annotationProperties as { property, value } entries */
+  properties?: Array<{ property: string; value: any }>;
+  /** Literal properties (data properties) */
+  literalProperties?: LiteralProperty[];
+  /** Annotation properties (array of { property, value }) */
+  annotationProperties?: AnnotationPropertyValue[] | Array<{ property: string; value: any }>;
+  /** Properties inferred by the reasoner (from urn:vg:inferred graph) — rendered distinctly */
+  inferredProperties?: AnnotationPropertyValue[] | Array<{ property: string; value: any }>;
+
+  // Presentation metadata
+  /** Single color (hex) derived from namespace/type when available */
+  color?: string | null;
+  /** Whether color resolution failed / missing */
+  paletteMissing?: boolean;
+
+  // UI/runtime flags (transient; not persisted into RDF)
+  /** Whether the node should be visible according to viewMode / explicit flags */
+  visible?: boolean;
+  /**
+   * Which canvas views this node belongs to, derived from its rdf:type values:
+   *   "tbox" — has only W3C metaclass types (owl:Class, owl:ObjectProperty, …)
+   *   "abox" — has owl:NamedIndividual or domain-class types
+   *   "both" — OWL2 punned entity: has metaclass AND individual/domain types
+   * Nodes with "both" appear in ABox view AND TBox view simultaneously.
+   */
+  nodeLayer?: "tbox" | "abox" | "both";
+  /** @deprecated Use nodeLayer instead. Kept for backward compat: true when nodeLayer !== "abox" */
+  isTBox?: boolean;
+  /** Whether the node currently has reasoning errors (computed by reasoning store) */
+  hasReasoningError?: boolean;
+
+  // Collapse/expand state (computed by mapper based on config.collapsedNodes)
+  /** Number of outgoing edges from this node */
+  edgeCount?: number;
+  /** Number of hidden nodes this node connects to (when other nodes are collapsed) */
+  hiddenCount?: number;
+  /** Whether this node has enough edges to show collapse button (edgeCount >= threshold) */
+  isCollapsible?: boolean;
+  /** Whether this node is currently collapsed */
+  isCollapsed?: boolean;
+  /** Visual indicator for collapse button: "−" (can collapse), "n+" (has hidden), or null */
+  collapseIndicator?: string | null;
+
+  // Misc
+  /** UI/validation error messages (if any) */
+  errors?: string[];
+  /** Reasoning error messages (if any) */
+  reasoningErrors?: string[];
+  /** Custom node size used by layout / measurement */
+  size?: { width: number; height: number };
+
+  /** Internal meta bag for transient runtime-only fields (measurements, flags) */
+  __meta?: {
+    needsInitialLayout?: boolean;
+    measured?: { width?: number; height?: number };
+    [k: string]: any;
+  };
+
+  // Keep this catch-all for backwards-compatibility where callers expect arbitrary props.
+}
+
+/**
+ * Represents a link/edge in the diagram payload
+ */
+export interface LinkData {
+  [key: string]: any;
+  /** Unique identifier for the link */
+  key?: string;
+  /** Source node key */
+  from: string;
+  /** Target node key */
+  to: string;
+  /** Property URI this link represents */
+  propertyUri: string;
+  /** Prefixed property form (e.g. "rdfs:label" or "iof:hasQuality") produced by the mapper */
+  propertyPrefixed?: string;
+  /** Property type */
+  propertyType: string;
+  /** Display label for the link */
+  label: string;
+  /** Namespace of the property */
+  namespace: string;
+  /** RDF type of the property */
+  rdfType: string;
+  /** Link color */
+  color?: string;
+  /** Whether this edge was derived by the reasoner (urn:vg:inferred) — rendered with dashed line */
+  isInferred?: boolean;
+  /** Whether the link has reasoning errors */
+  hasReasoningError?: boolean;
+  /** Reasoning error messages */
+  reasoningErrors?: string[];
+  /** Link routing points */
+  points?: number[];
+}
+
+/**
+ * Canvas toolbar configuration
+ */
+export interface CanvasToolbarProps {
+  /** Callback for adding a new node */
+  onAddNode: (entityUri: string) => void;
+  /** Callback for toggling the namespace legend */
+  onToggleLegend: () => void;
+  /** Whether the legend is currently shown */
+  showLegend: boolean;
+  /** Callback for exporting the graph */
+  onExport: (format: 'turtle' | 'owl-xml' | 'json-ld') => void;
+  /** Callback for loading a file */
+  onLoadFile?: (file: File | string) => void;
+  /** Current view mode */
+  viewMode: 'abox' | 'tbox';
+  /** Callback for changing view mode */
+  onViewModeChange: (mode: 'abox' | 'tbox') => void;
+  /** Available entities for autocomplete */
+  availableEntities: Array<{
+   iri: string;
+    label: string;
+    namespace: string;
+    rdfType: string;
+    description?: string;
+  }>;
+}
+
+/**
+ * Node property editor configuration
+ */
+export interface NodePropertyEditorProps {
+  /** Whether the editor is open */
+  open: boolean;
+  /** Callback for opening/closing the editor */
+  onOpenChange: (open: boolean) => void;
+  /** Node data being edited */
+  nodeData: NodeData | null;
+  /** Callback for saving node properties.
+   * Note: editor currently provides the full updated node payload to the callback.
+   * Signature kept intentionally permissive to avoid tight coupling during migration.
+   */
+  onSave: (updatedData: any) => void;
+}
+
+/**
+ * Canvas state management
+ */
+export interface CanvasState {
+  /** Current view mode */
+  viewMode: 'abox' | 'tbox';
+  /** Whether the legend is visible */
+  showLegend: boolean;
+  /** Whether currently loading */
+  isLoading: boolean;
+  /** Loading progress (0-100) */
+  loadingProgress: number;
+  /** Loading message */
+  loadingMessage: string;
+  /** Whether reasoning report is open */
+  showReasoningReport: boolean;
+  /**
+   * True once the current view's initial clustering/layout cycle has completed.
+   * Reset to false on every view-mode switch. Used by search navigation to know
+   * when EntityGroups are fully populated and safe to look up.
+   */
+  isClustered: boolean;
+  /**
+   * True once the canvas for the current view mode is fully ready — initial
+   * layout or clustering has finished and elements are positioned. Reset to
+   * false on every view-mode switch. Safe to navigate/zoom once this is true.
+   */
+  canvasReady: boolean;
+}
+
+/**
+ * Canvas actions
+ */
+export interface CanvasActions {
+  /** Set the view mode */
+  setViewMode: (mode: 'abox' | 'tbox') => void;
+  /** Toggle legend visibility */
+  toggleLegend: () => void;
+  /** Set loading state */
+  setLoading: (loading: boolean, progress?: number, message?: string) => void;
+  /** Toggle reasoning report */
+  toggleReasoningReport: (show: boolean) => void;
+  /** Set the clustered state for the current view. */
+  setIsClustered: (clustered: boolean) => void;
+  /** Mark the current view's canvas as ready (layout/clustering complete). */
+  setCanvasReady: (ready: boolean) => void;
+}
+
+/**
+ * Diagram configuration options
+ */
+export interface DiagramConfig {
+  /** Whether to allow horizontal scrolling */
+  allowHorizontalScroll?: boolean;
+  /** Whether to allow vertical scrolling */
+  allowVerticalScroll?: boolean;
+  /** Whether to allow zooming */
+  allowZoom?: boolean;
+  /** Initial content alignment */
+  contentAlignment?: any;
+  /** Grid configuration */
+  grid?: {
+    visible: boolean;
+    gridCellSize: any;
+    gridOrigin: any;
+  };
+  /** Undo manager configuration */
+  undoManager?: {
+    isEnabled: boolean;
+    maxHistoryLength: number;
+  };
+}
+
+/**
+ * Node template configuration
+ */
+export interface NodeTemplateConfig {
+  /** Default node size */
+  defaultSize: { width: number; height: number };
+  /** Header height */
+  headerHeight: number;
+  /** Color scheme */
+  colors: {
+    background: string;
+    headerBackground: string;
+    headerText: string;
+    bodyText: string;
+    border: string;
+  };
+  /** Font configuration */
+  fonts: {
+    header: string;
+    body: string;
+  };
+}
+
+/**
+ * Link template configuration
+ */
+export interface LinkTemplateConfig {
+  /** Default stroke width */
+  strokeWidth: number;
+  /** Arrow size */
+  arrowSize: number;
+  /** Label configuration */
+  label: {
+    font: string;
+    background: string;
+    offset: any;
+  };
+  /** Color scheme */
+  colors: {
+    default: string;
+    hover: string;
+    selected: string;
+    error: string;
+  };
+}
+
+/**
+ * Namespace legend configuration
+ */
+export interface NamespaceLegendProps {
+  /** Namespace mappings to display */
+  namespaces: Record<string, string>;
+  /** Additional CSS classes */
+  className?: string;
+  /** Whether to show entity counts */
+  showCounts?: boolean;
+  /** Callback for namespace selection */
+  onNamespaceSelect?: (namespace: string) => void;
+}
+
+/**
+ * Canvas context type
+ */
+export interface CanvasContextType {
+  /** Canvas state */
+  state: CanvasState;
+  /** Canvas actions */
+  actions: CanvasActions;
+  /** Diagram instance */
+  diagram: any;
+  /** Set diagram instance */
+  setDiagram: (diagram: any) => void;
+}
+
+/**
+ * Event handler types for diagram interactions
+ */
+export interface DiagramEventHandlers {
+  /** Node selection changed */
+  onNodeSelectionChanged: (node: NodeData | null) => void;
+  /** Link selection changed */
+  onLinkSelectionChanged: (link: LinkData | null) => void;
+  /** Node double clicked */
+  onNodeDoubleClick: (node: NodeData) => void;
+  /** Link double clicked */
+  onLinkDoubleClick: (link: LinkData) => void;
+  /** Background clicked */
+  onBackgroundClick?: () => void;
+  /** Diagram model changed */
+  onModelChanged?: (changes: any) => void;
+}
+
+/**
+ * Graph layout configuration
+ */
+export interface GraphLayoutConfig {
+  /** Layout type */
+  type: 'horizontal' | 'vertical';
+  /** Layout-specific options */
+  options: Record<string, any>;
+  /** Whether to animate layout changes */
+  animate: boolean;
+  /** Animation duration in milliseconds */
+  animationDuration: number;
+}

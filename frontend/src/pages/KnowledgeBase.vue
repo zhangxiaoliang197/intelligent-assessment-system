@@ -102,6 +102,10 @@
             <el-option label="已完成" value="已完成" />
             <el-option label="待处理" value="待解析" />
           </el-select>
+          <el-select v-model="filterLevel" placeholder="文献内容" clearable style="width: 140px">
+            <el-option label="全文论文" value="fulltext" />
+            <el-option label="论文摘要" value="abstract" />
+          </el-select>
           <div class="toolbar-spacer" />
           <el-button @click="showCategoryDialog = true" :icon="FolderOpened">
             分类管理
@@ -118,8 +122,25 @@
           </el-tooltip>
         </div>
 
-        <el-table :data="filteredKnowledge" style="width: 100%" stripe v-loading="loading">
-          <el-table-column prop="title" label="文档名称" min-width="200" />
+        <el-table :data="pagedKnowledge" style="width: 100%" stripe v-loading="loading">
+          <el-table-column prop="title" label="文档名称" min-width="260" show-overflow-tooltip />
+          <el-table-column label="文献内容" width="110">
+            <template #default="scope">
+              <el-tag v-if="scope.row.literature" size="small" :type="scope.row.literature.content_level === 'fulltext' ? 'success' : 'info'">
+                {{ ({ fulltext: '开放全文', abstract: '论文摘要', metadata: '仅题录' } as Record<string, string>)[scope.row.literature.content_level] }}
+              </el-tag>
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="来源" width="100">
+            <template #default="scope">
+              <a v-if="scope.row.literature?.source_url" :href="scope.row.literature.source_url" target="_blank" rel="noopener noreferrer" style="color: #2563eb">
+                {{ scope.row.literature.language === 'zh' ? '中文文献' : '英文文献' }} ↗
+              </a>
+              <a v-if="scope.row.literature?.content_level === 'fulltext'" :href="`/api/knowledge/literature/${scope.row.id.slice(3)}/pdf`" target="_blank" rel="noopener noreferrer" style="display: block; color: #059669; margin-top: 4px">全文 PDF ↗</a>
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="file_type" label="类型" width="120" />
           <el-table-column prop="category" label="分类" width="150" />
           <el-table-column label="状态" width="110">
@@ -149,6 +170,7 @@
             </template>
           </el-table-column>
         </el-table>
+        <el-pagination v-model:current-page="currentPage" :page-size="pageSize" :total="filteredKnowledge.length" layout="total, prev, pager, next" class="knowledge-pagination" />
       </div>
 
       <!-- 上传对话框 -->
@@ -339,7 +361,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import {
   Document, Files, Folder, Connection, Cpu, Coin,
   Refresh, Upload, RefreshRight, Monitor, UploadFilled, FolderOpened
@@ -351,6 +373,7 @@ import api from '@/services/api'
 const searchQuery = ref('')
 const filterCategory = ref('')
 const filterStatus = ref('')
+const filterLevel = ref('')
 const showUploadDialog = ref(false)
 const showEditDialog = ref(false)
 const saving = ref(false)
@@ -379,6 +402,8 @@ const editForm = ref({
 
 const viewData = ref<any>(null)
 const knowledgeList = ref<any[]>([])
+const currentPage = ref(1)
+const pageSize = 20
 
 const categoryOptions = ref(['评估标准', '方法论', '案例库', '技术文档', '作战数据', '未分类'])
 
@@ -395,9 +420,13 @@ const filteredKnowledge = computed(() => {
     const matchSearch = !searchQuery.value || item.title.toLowerCase().includes(searchQuery.value.toLowerCase())
     const matchCategory = !filterCategory.value || item.category === filterCategory.value
     const matchStatus = !filterStatus.value || item.status === filterStatus.value
-    return matchSearch && matchCategory && matchStatus
+    const matchLevel = !filterLevel.value || item.literature?.content_level === filterLevel.value
+    return matchSearch && matchCategory && matchStatus && matchLevel
   })
 })
+const pagedKnowledge = computed(() => filteredKnowledge.value.slice((currentPage.value - 1) * pageSize, currentPage.value * pageSize))
+watch([searchQuery, filterCategory, filterStatus, filterLevel], () => { currentPage.value = 1 })
+watch(() => filteredKnowledge.value.length, total => { currentPage.value = Math.min(currentPage.value, Math.max(1, Math.ceil(total / pageSize))) })
 
 const getStatusType = (status: string) => {
   const typeMap: Record<string, 'success' | 'warning' | 'info' | 'danger'> = {
@@ -452,10 +481,17 @@ const loadData = async () => {
   try {
     const res = await api.get('/knowledge/list?page_size=200')
     if (res.items) {
-      knowledgeList.value = res.items
+      const items = [...res.items]
+      // Fetch every page so local title/category filters cover the whole library.
+      for (let page = 2; items.length < res.total; page += 1) {
+        const next = await api.get(`/knowledge/list?page_size=200&page=${page}`)
+        if (!next.items?.length) break
+        items.push(...next.items)
+      }
+      knowledgeList.value = items
       // 动态更新分类选项
       const cats = new Set(categoryOptions.value)
-      res.items.forEach((item: any) => {
+      items.forEach((item: any) => {
         if (item.category) cats.add(item.category)
       })
       categoryOptions.value = Array.from(cats)
@@ -761,6 +797,11 @@ onMounted(() => {
 
 .toolbar-spacer {
   flex: 1;
+}
+
+.knowledge-pagination {
+  margin-top: 20px;
+  justify-content: flex-end;
 }
 
 .chunk-count {

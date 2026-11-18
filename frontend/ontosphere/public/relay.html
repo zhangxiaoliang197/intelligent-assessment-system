@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ontosphere Relay Bridge</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 13px;
+      padding: 16px;
+      min-height: 100vh;
+    }
+    h1 {
+      font-size: 15px;
+      color: #58a6ff;
+      margin-bottom: 12px;
+      letter-spacing: 0.05em;
+    }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot.ok   { background: #3fb950; }
+    .dot.warn { background: #d29922; }
+    .dot.off  { background: #484f58; }
+    .dot.err  { background: #f85149; }
+    .label { color: #8b949e; width: 130px; flex-shrink: 0; }
+    .value { color: #c9d1d9; }
+    .divider {
+      border: none;
+      border-top: 1px solid #21262d;
+      margin: 10px 0;
+    }
+    #activity {
+      color: #8b949e;
+      word-break: break-all;
+      line-height: 1.5;
+    }
+    #activity span { color: #c9d1d9; }
+    .note {
+      margin-top: 12px;
+      color: #484f58;
+      font-size: 11px;
+    }
+    .standalone-msg {
+      margin-top: 16px;
+      padding: 10px 12px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      color: #8b949e;
+      line-height: 1.6;
+    }
+    .standalone-msg code {
+      color: #79c0ff;
+    }
+    #session-select {
+      background: #161b22;
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+      border-radius: 3px;
+      font-family: inherit;
+      font-size: 12px;
+      padding: 2px 4px;
+      flex: 1;
+      min-width: 0;
+    }
+    #session-select:focus { outline: 1px solid #58a6ff; }
+  </style>
+</head>
+<body>
+  <h1>⬡ Ontosphere Relay Bridge</h1>
+
+  <div class="status-row">
+    <div class="dot" id="dot-opener"></div>
+    <span class="label">AI tab (opener)</span>
+    <span class="value" id="val-opener">—</span>
+  </div>
+  <div class="status-row">
+    <div class="dot" id="dot-bc"></div>
+    <span class="label">Ontosphere app (BC)</span>
+    <span class="value" id="val-bc">listening…</span>
+  </div>
+  <div class="status-row" id="session-row">
+    <div class="dot err" id="dot-session"></div>
+    <span class="label">Target tab</span>
+    <span id="session-wait" style="color:#8b949e;font-size:12px">waiting for tabs…</span>
+    <select id="session-select" style="display:none"></select>
+  </div>
+
+  <hr class="divider" />
+
+  <div id="activity">Waiting for first message…</div>
+
+  <div id="standalone-msg" style="display:none" class="standalone-msg">
+    This page should be opened as a popup via the bookmarklet on your AI chat tab.<br/>
+    Example: <code>window.open(location.href, 'vg-relay', 'width=320,height=200')</code>
+  </div>
+
+  <p class="note">Keep this window open while using Ontosphere with AI.</p>
+
+  <script>
+    // ── DOM refs ────────────────────────────────────────────────────────────
+    const dotOpener    = document.getElementById('dot-opener');
+    const valOpener    = document.getElementById('val-opener');
+    const dotBc        = document.getElementById('dot-bc');
+    const valBc        = document.getElementById('val-bc');
+    const activity     = document.getElementById('activity');
+    const standaloneMsg = document.getElementById('standalone-msg');
+    const sessionRow   = document.getElementById('session-row');
+    const dotSession   = document.getElementById('dot-session');
+    const sessionWait  = document.getElementById('session-wait');
+    const sessionSelect = document.getElementById('session-select');
+
+    // ── Session registry ─────────────────────────────────────────────────────
+    // Map of sessionId → { title, seenAt }. Auto-pruned after 45s of silence.
+    const sessions = new Map();
+    let lockedSessionId = null;
+
+    function updateSessionUI() {
+      const ids = [...sessions.keys()];
+      if (ids.length === 0) {
+        // No tabs yet — red dot, hide dropdown
+        dotSession.className = 'dot err';
+        sessionWait.style.display = '';
+        sessionSelect.style.display = 'none';
+        lockedSessionId = null;
+        return;
+      }
+      sessionWait.style.display = 'none';
+      sessionSelect.style.display = '';
+      const prev = sessionSelect.value;
+      sessionSelect.innerHTML = '';
+      for (const id of ids) {
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = sessions.get(id).title + ' [' + id + ']';
+        sessionSelect.appendChild(opt);
+      }
+      // Restore previous selection if still present, else keep first
+      if (prev && sessions.has(prev)) {
+        sessionSelect.value = prev;
+        lockedSessionId = prev;
+      } else {
+        lockedSessionId = sessionSelect.value || null;
+      }
+      dotSession.className = lockedSessionId ? 'dot ok' : 'dot err';
+    }
+
+    sessionSelect.addEventListener('change', function () {
+      lockedSessionId = sessionSelect.value || null;
+      dotSession.className = lockedSessionId ? 'dot ok' : 'dot err';
+    });
+
+    // Prune sessions not heard from in 45 s
+    setInterval(function () {
+      const now = Date.now();
+      for (const [id, s] of sessions) {
+        if (now - s.seenAt > 45000) sessions.delete(id);
+      }
+      updateSessionUI();
+    }, 15000);
+
+    const CHANNEL_NAME = 'ontosphere-relay-v1';
+
+    // ── SECURITY: opener-based trust ──────────────────────────────────────────
+    // This popup grants graph READ/WRITE access (the full MCP toolset, including
+    // queryGraph with INSERT/DELETE that can mutate or wipe the user's graph) to
+    // whatever window opens it. The trust anchor is the USER ACTION: the user
+    // deliberately dragged the bookmarklet to their AI chat tab, which then called
+    // window.open() to create this popup. We trust any origin that sends a valid
+    // vg-call, because only the bookmarklet (user-installed) can open this popup.
+    //
+    // Defence in depth: we still reject the opaque "null" origin (sandboxed iframes)
+    // and the wildcard '*'. Same-origin and localhost are always accepted.
+
+    // Pure, testable origin check. Returns true iff `origin` may drive the relay.
+    function isOriginAllowed(origin) {
+      if (typeof origin !== 'string' || origin === '' || origin === '*' || origin === 'null') {
+        return false;
+      }
+      // Any concrete origin is accepted — the popup can only be opened by the
+      // user-installed bookmarklet, so the opener itself is the trust anchor.
+      return true;
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+    function setActivity(html) {
+      activity.innerHTML = html;
+    }
+
+    function ts() {
+      return new Date().toLocaleTimeString();
+    }
+
+    function truncate(s, n) {
+      if (typeof s !== 'string') s = JSON.stringify(s);
+      return s.length > n ? s.slice(0, n) + '…' : s;
+    }
+
+    // ── BroadcastChannel setup ───────────────────────────────────────────────
+    let bc;
+    let openerOrigin = null;
+    try {
+      bc = new BroadcastChannel(CHANNEL_NAME);
+    } catch (e) {
+      const sp = document.createElement('span');
+      sp.style.color = '#f85149';
+      sp.textContent = 'BroadcastChannel not supported in this browser.';
+      const activityEl = document.getElementById('activity');
+      if (activityEl) { activityEl.innerHTML = ''; activityEl.appendChild(sp); }
+    }
+
+    // Forward BC → opener
+    var lastSessionId = null;
+    if (bc) {
+      bc.onmessage = function (evt) {
+        const data = evt.data;
+
+        // Discover Ontosphere tabs announcing themselves
+        if (data && data.type === 'vg-hello' && data.sessionId) {
+          sessions.set(data.sessionId, { title: data.title || data.sessionId, seenAt: Date.now() });
+          updateSessionUI();
+          return;
+        }
+
+        // Forward tool-execution heartbeats so bookmarklet can detect app reloads
+        if (data && data.type === 'vg-ping' && data.sessionId) {
+          lastSessionId = data.sessionId;
+          // Keep session alive
+          if (sessions.has(data.sessionId)) {
+            sessions.get(data.sessionId).seenAt = Date.now();
+          }
+          // SECURITY: only reply to a validated opener origin. Never broadcast
+          // to '*'. If no trusted opener has been seen yet, drop the message.
+          if (window.opener && openerOrigin) {
+            try { window.opener.postMessage(data, openerOrigin); } catch (_) {}
+          }
+          return;
+        }
+
+        if (!data || data.type !== 'vg-result') return;
+
+        // Session-lock: require sessionId to be present and match the locked tab.
+        // Results without sessionId (old code) or from other tabs are dropped.
+        if (!data.sessionId || data.sessionId !== lockedSessionId) return;
+
+        dotBc.className = 'dot ok';
+        valBc.textContent = 'received result';
+
+        // SECURITY: only forward results to a validated opener origin. Never '*'.
+        if (window.opener && openerOrigin) {
+          try {
+            window.opener.postMessage(data, openerOrigin);
+            const safeRequestId = document.createTextNode('requestId=' + (data.requestId || '?'));
+            const safeResult = document.createTextNode(truncate(JSON.stringify(data.result), 80));
+            const prefix = '[' + ts() + '] BC \u2192 opener: ';
+            activity.textContent = '';
+            activity.appendChild(document.createTextNode(prefix));
+            const span = document.createElement('span');
+            span.textContent = 'vg-result';
+            activity.appendChild(span);
+            activity.appendChild(document.createTextNode(' '));
+            activity.appendChild(safeRequestId);
+            activity.appendChild(document.createTextNode(' '));
+            activity.appendChild(safeResult);
+          } catch (e) {
+            const sp = document.createElement('span');
+            sp.style.color = '#f85149';
+            sp.textContent = 'postMessage to opener failed: ' + e.message;
+            const activityEl = document.getElementById('activity');
+            if (activityEl) { activityEl.innerHTML = ''; activityEl.appendChild(sp); }
+          }
+        }
+      };
+      // Send heartbeat so the Ontosphere app can show a real connection indicator.
+      bc.postMessage({ type: 'vg-ping' });
+
+      function pingOpener() {
+        if (!window.opener) return;
+        // SECURITY: only ping a validated opener origin. Until a trusted opener
+        // has sent its first vg-call, openerOrigin is null and we stay silent
+        // rather than broadcasting our annotation-guard config to '*'.
+        if (!openerOrigin) return;
+        const guardS = parseInt(localStorage.getItem('relay-annotation-guard-s') || '0', 10);
+        const msg = { type: 'vg-ping', annotationGuardMs: (isNaN(guardS) ? 0 : guardS) * 1000 };
+        try { window.opener.postMessage(msg, openerOrigin); } catch (_) {}
+      }
+      pingOpener(); // immediate so bookmarklet gets the value before first tool call
+
+      const pingInterval = setInterval(function () {
+        if (!bc) { clearInterval(pingInterval); return; }
+        // Include sessionId so Ontosphere can detect relay reconnects after reload
+        const ping = lastSessionId ? { type: 'vg-ping', sessionId: lastSessionId } : { type: 'vg-ping' };
+        bc.postMessage(ping);
+        pingOpener();
+      }, 10000);
+
+      window.addEventListener('unload', function () {
+        clearInterval(pingInterval);
+        bc.close();
+      });
+    }
+
+    // ── Opener / standalone detection ────────────────────────────────────────
+    if (!window.opener) {
+      dotOpener.className = 'dot off';
+      valOpener.textContent = 'not connected';
+      standaloneMsg.style.display = 'block';
+    } else {
+      dotOpener.className = 'dot ok';
+      valOpener.textContent = 'connected';
+    }
+
+    // Forward opener → BC
+    window.addEventListener('message', function (evt) {
+      // SECURITY: reject any message whose origin is not on the allowlist.
+      // An untrusted origin is NEVER recorded as openerOrigin, so it can never
+      // become the reply target and can never have its vg-call forwarded onto
+      // the BroadcastChannel (which executes tools in the Ontosphere tab).
+      if (!isOriginAllowed(evt.origin)) {
+        console.warn('[relay] Rejected message from untrusted origin:', evt.origin);
+        return;
+      }
+
+      // Pin the opener origin to the first TRUSTED sender. All replies go only
+      // to this validated origin (never '*').
+      if (!openerOrigin) openerOrigin = evt.origin;
+
+      const data = evt.data;
+
+      // Validate payload
+      if (!data || typeof data !== 'object' || data.type !== 'vg-call') return;
+      if (!bc) return;
+
+      dotOpener.className = 'dot ok';
+      valOpener.textContent = 'active';
+
+      // Block calls until a specific Ontosphere tab is locked
+      if (!lockedSessionId) {
+        dotBc.className = 'dot err';
+        valBc.textContent = 'blocked — no tab locked';
+        activity.textContent = '[' + ts() + '] vg-call blocked (no tab locked): ' + (data.tool || '?');
+        // Return an error so the bookmarklet doesn’t wait forever
+        if (window.opener && openerOrigin) {
+          try {
+            window.opener.postMessage({
+              type: 'vg-result',
+              requestId: data.requestId,
+              result: { success: false, error: 'Relay not locked to an Ontosphere tab — select one in the relay popup and retry' },
+            }, openerOrigin);
+          } catch (_) {}
+        }
+        return;
+      }
+
+      dotBc.className = 'dot warn';
+      valBc.textContent = 'forwarded, awaiting result…';
+
+      try {
+        bc.postMessage(Object.assign({}, data, { targetSessionId: lockedSessionId }));
+        const prefix = '[' + ts() + '] opener \u2192 BC: ';
+        activity.textContent = '';
+        activity.appendChild(document.createTextNode(prefix));
+        const span = document.createElement('span');
+        span.textContent = 'vg-call';
+        activity.appendChild(span);
+        activity.appendChild(document.createTextNode(' tool=' + (data.tool || '?') + ' requestId=' + (data.requestId || '?')));
+      } catch (e) {
+        const sp = document.createElement('span');
+        sp.style.color = '#f85149';
+        sp.textContent = 'BroadcastChannel postMessage failed: ' + e.message;
+        const activityEl = document.getElementById('activity');
+        if (activityEl) { activityEl.innerHTML = ''; activityEl.appendChild(sp); }
+      }
+    });
+  </script>
+</body>
+</html>

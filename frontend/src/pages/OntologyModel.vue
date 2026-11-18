@@ -4,10 +4,11 @@
       <!-- 页面头部 -->
       <div class="page-header">
         <div class="header-left">
-          <h2>本体</h2>
-          <el-tag type="primary" size="small" effect="dark" class="engine-badge">ECharts 知识图谱</el-tag>
+          <h2>动态本体</h2>
+          <el-tag type="primary" size="small" effect="dark" class="engine-badge">RDF / OWL 语义工作台</el-tag>
         </div>
         <div class="header-actions">
+          <el-button @click="$router.push('/ontology')">装备协同推演</el-button>
           <el-button @click="refreshData" :icon="Refresh">刷新</el-button>
           <el-button type="primary" @click="showCreateMethodDialog = true" :icon="Plus">新建本体</el-button>
         </div>

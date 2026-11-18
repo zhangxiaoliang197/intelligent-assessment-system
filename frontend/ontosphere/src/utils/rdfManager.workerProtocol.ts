@@ -1,0 +1,1112 @@
+import type { ReasoningResult } from "./reasoningTypes.ts";
+import type { WorkerQuad, WorkerQuadUpdate, WorkerTerm } from "./rdfSerialization.ts";
+import { isWorkerQuad, isWorkerQuadUpdate, isWorkerTerm } from "./rdfSerialization.ts";
+import {
+  assertArray,
+  assertBoolean,
+  assertNumber,
+  assertPlainObject,
+  assertString,
+  invariant,
+  isPlainObject,
+  isStringRecord,
+} from "./guards.ts";
+
+export interface SyncNamespacesPayload {
+  namespaces: Record<string, string>;
+  replace?: boolean;
+}
+
+export interface SyncBlacklistPayload {
+  prefixes: string[];
+  uris: string[];
+}
+
+export interface SyncBatchPayload {
+  graphName: string;
+  adds: WorkerQuad[];
+  removes: WorkerQuadUpdate[];
+  options?: { suppressSubjects?: boolean };
+}
+
+export interface SyncLoadPayload {
+  quads: WorkerQuad[];
+  graphName: string;
+  prefixes?: Record<string, string>;
+  parsingMeta?: Record<string, unknown>;
+}
+
+export interface SyncRemoveGraphPayload {
+  graphName: string;
+}
+
+export interface SyncRemoveAllQuadsForIriPayload {
+  iri: string;
+  graphName?: string;
+  includePredicate?: boolean;
+}
+
+export interface ImportSerializedPayload {
+  content: string;
+  graphName?: string;
+  contentType?: string;
+  filename?: string;
+  baseIri?: string;
+  /** If true, remap all quads (including named-graph quads) into graphName. */
+  forceGraph?: boolean;
+  /** When set and graphName is urn:vg:ontologies, injects vg:loadedFrom annotations for each subject. */
+  ontologyUrl?: string;
+  /** Further documents in the same format, loaded in the same worker step as `content`. */
+  additionalContents?: string[];
+  /** Write only into an empty target graph. The check and the writes happen in one worker step. */
+  onlyIfEmpty?: boolean;
+}
+
+export interface ExportGraphPayload {
+  graphName?: string;
+  format?: string;
+}
+
+export interface RemoveQuadsByNamespacePayload {
+  graphName: string;
+  namespaceUris: string[];
+}
+
+export interface PurgeNamespacePayload {
+  prefixOrUri: string;
+}
+
+export interface RenameNamespaceUriPayload {
+  oldUri: string;
+  newUri: string;
+  allNamespaceUris: string[];
+}
+
+export interface FetchQuadsPagePayload {
+  graphName: string;
+  offset: number;
+  limit: number;
+  serialize?: boolean;
+  filter?: { subject?: string; predicate?: string; object?: string };
+}
+
+export interface GetQuadsPayload {
+  subject?: string | null;
+  predicate?: string | null;
+  object?: WorkerTerm | null;
+  graphName?: string | null;
+}
+
+export interface TriggerSubjectsPayload {
+  subjects: string[];
+}
+
+export interface EmitAllSubjectsPayload {
+  graphName?: string;
+}
+
+export type RDFWorkerCommandPayloads = {
+  ping: undefined;
+  clear: undefined;
+  getGraphCounts: undefined;
+  getNamespaces: undefined;
+  setNamespaces: SyncNamespacesPayload;
+  setBlacklist: SyncBlacklistPayload;
+  getBlacklist: undefined;
+  syncBatch: SyncBatchPayload;
+  syncLoad: SyncLoadPayload;
+  syncRemoveGraph: SyncRemoveGraphPayload;
+  syncRemoveAllQuadsForIri: SyncRemoveAllQuadsForIriPayload;
+  fetchQuadsPage: FetchQuadsPagePayload;
+  getQuads: GetQuadsPayload;
+  emitAllSubjects: EmitAllSubjectsPayload;
+  triggerSubjects: TriggerSubjectsPayload;
+  runReasoning: {
+    reasoningId: string;
+    quads?: WorkerQuad[];
+    rulesets?: string[];
+    baseUrl?: string;
+    emitSubjects?: boolean;
+    reasonerBackend?: 'konclude' | 'n3';
+    shaclEnabled?: boolean;
+  };
+  importSerialized: ImportSerializedPayload;
+  exportGraph: ExportGraphPayload;
+  removeQuadsByNamespace: RemoveQuadsByNamespacePayload;
+  purgeNamespace: PurgeNamespacePayload;
+  renameNamespaceUri: RenameNamespaceUriPayload;
+  sparqlQuery: {
+    sparql: string;
+    graphName?: string;
+    limit?: number;
+  };
+  setDebug: { enabled: boolean };
+  runShaclValidation: undefined;
+  explainInconsistency: { maxJustifications?: number };
+  validate: undefined;
+  /**
+   * Repair suggestions from the reasoner's repair() and weaken() (rdf-reasoner-konclude >= 0.9.0).
+   * `justifications` are the caller's justification triples; `justificationsCovered` of each
+   * suggestion indexes into them. Never mutates the store. Returns SuggestRepairsResult.
+   */
+  suggestRepairs: {
+    justifications?: {
+      subject: string;
+      predicate: string;
+      object: string;
+      objectTermType?: string;
+      objectDatatype?: string;
+      objectLanguage?: string;
+      graph?: string;
+    }[][];
+    unsatisfiableClasses?: string[];
+    maxJustifications?: number;
+    timeoutMs?: number;
+    /** Also offer weakenings of rdfs:subClassOf culprits (default true). */
+    weaken?: boolean;
+  };
+  /**
+   * Search existing ontology terms (classes / properties / individuals) by
+   * label (rdfs:label, skos:prefLabel, skos:altLabel) or IRI local-name across
+   * ALL graphs — especially urn:vg:ontologies (loaded ontologies). Pure store
+   * query, no reasoner. Returns ranked candidates so agents REUSE an existing
+   * IRI instead of minting a new one. `kinds` defaults to classes + properties.
+   */
+  searchTerms: {
+    query: string;
+    kinds?: ("class" | "objectProperty" | "datatypeProperty" | "property" | "individual")[];
+    limit?: number;
+  };
+  /**
+   * Explain why an entailed axiom (subjectIri predicateIri objectIri) holds:
+   * Horridge-style justifications for an ARBITRARY entailed axiom (not just
+   * inconsistency). Uses an entailment-as-unsatisfiability reduction over the
+   * EXISTING Konclude consistency oracle. Supported shapes: rdfs:subClassOf and
+   * rdf:type with an IRI object. READ-ONLY — never mutates urn:vg:data.
+   * Returns { isEntailed, justifications: {subject,predicate,object}[][] }.
+   */
+  explainEntailment: {
+    subjectIri: string;
+    predicateIri: string;
+    objectIri: string;
+    /** Set true only when the object is a literal value (default: IRI object). */
+    objectIsLiteral?: boolean;
+    maxJustifications?: number;
+    /**
+     * "exact" (default): guaranteed-minimal justifications, can take seconds. "fast": one verified candidate
+     * from the reasoner's cache, or justificationUnavailable.
+     */
+    justificationMode?: "fast" | "exact";
+    /** Wall-clock limit of the exact search in milliseconds (default 60000). */
+    timeoutMs?: number;
+  };
+  getOntologyStats: undefined;
+  syncRemoveBatchSubjectsFromGraph: { subjects: string[]; graphName?: string };
+  unloadOntologySubjects: { ontologyUrl: string };
+  stopReasoning: undefined;
+};
+
+export const RDF_WORKER_COMMANDS = [
+  "ping",
+  "clear",
+  "getGraphCounts",
+  "getNamespaces",
+  "setNamespaces",
+  "setBlacklist",
+  "getBlacklist",
+  "syncBatch",
+  "syncLoad",
+  "syncRemoveGraph",
+  "syncRemoveAllQuadsForIri",
+  "syncRemoveBatchSubjectsFromGraph",
+  "unloadOntologySubjects",
+  "fetchQuadsPage",
+  "getQuads",
+  "emitAllSubjects",
+  "triggerSubjects",
+  "runReasoning",
+  "importSerialized",
+  "exportGraph",
+  "removeQuadsByNamespace",
+  "purgeNamespace",
+  "renameNamespaceUri",
+  "sparqlQuery",
+  "setDebug",
+  "runShaclValidation",
+  "explainInconsistency",
+  "validate",
+  "suggestRepairs",
+  "searchTerms",
+  "explainEntailment",
+  "getOntologyStats",
+  "stopReasoning",
+] as const;
+
+export type RDFWorkerCommandName = (typeof RDF_WORKER_COMMANDS)[number];
+
+type PayloadFor<C extends RDFWorkerCommandName> = RDFWorkerCommandPayloads[C];
+
+export type RDFWorkerCommand<C extends RDFWorkerCommandName = RDFWorkerCommandName> =
+  PayloadFor<C> extends undefined
+    ? { type: "command"; id: string; command: C; payload?: undefined }
+    : { type: "command"; id: string; command: C; payload: PayloadFor<C> };
+
+type CommandValidator = (payload: unknown) => void;
+
+function assertWorkerQuadArray(value: unknown, message: string): asserts value is WorkerQuad[] {
+  assertArray(value, message);
+  for (const entry of value as unknown[]) {
+    invariant(isWorkerQuad(entry), message, { entry });
+  }
+}
+
+function assertWorkerQuadUpdateArray(
+  value: unknown,
+  message: string,
+): asserts value is WorkerQuadUpdate[] {
+  assertArray(value, message);
+  for (const entry of value as unknown[]) {
+    invariant(isWorkerQuadUpdate(entry), message, { entry });
+  }
+}
+
+function assertOptionalStringRecord(value: unknown, message: string) {
+  if (typeof value === "undefined") return;
+  invariant(isStringRecord(value), message, { value });
+}
+
+function assertOptionalPlainObject(value: unknown, message: string) {
+  if (typeof value === "undefined") return;
+  assertPlainObject(value, message);
+}
+
+function assertOptionalStringArray(value: unknown, message: string) {
+  if (typeof value === "undefined" || value === null) return;
+  assertStringArray(value, message);
+}
+
+function assertStringArray(value: unknown, message: string): asserts value is string[] {
+  assertArray(value, message);
+  for (const entry of value as unknown[]) {
+    assertString(entry, message);
+  }
+}
+
+function assertOptionalString(value: unknown, message: string) {
+  if (typeof value === "undefined" || value === null) return;
+  assertString(value, message);
+}
+
+function assertOptionalFiniteNumber(value: unknown, message: string) {
+  if (typeof value === "undefined" || value === null) return;
+  assertNumber(value, message);
+}
+
+function assertWorkerQuadRecord(
+  value: unknown,
+  message: string,
+): asserts value is Record<string, WorkerQuad[]> {
+  assertPlainObject(value, message);
+  for (const [graphName, entries] of Object.entries(value as Record<string, unknown>)) {
+    assertString(graphName, `${message} (invalid graph key)`);
+    assertWorkerQuadArray(entries, `${message} (invalid quad array)`);
+  }
+}
+
+function assertWorkerSnapshotArray(
+  value: unknown,
+  message: string,
+): asserts value is WorkerReconcileSubjectSnapshotPayload[] {
+  assertArray(value, message);
+  for (const entry of value as unknown[]) {
+    assertPlainObject(entry, `${message} (invalid snapshot entry)`);
+    const record = entry as Record<string, unknown>;
+    assertString(record.iri, `${message} (snapshot iri must be a string)`);
+    assertStringArray(record.types, `${message} (snapshot types must be an array of strings)`);
+    if (typeof record.label !== "undefined") {
+      assertString(record.label, `${message} (snapshot label must be a string when provided)`);
+    }
+  }
+}
+
+function assertReasoningError(
+  value: unknown,
+  message: string,
+): asserts value is ReasoningResult["errors"][number] {
+  assertPlainObject(value, message);
+  const payload = value as Record<string, unknown>;
+  assertString(payload.message, `${message}.message must be a string`);
+  assertString(payload.rule, `${message}.rule must be a string`);
+  assertOptionalString(payload.nodeId, `${message}.nodeId must be a string when provided`);
+  assertOptionalString(payload.edgeId, `${message}.edgeId must be a string when provided`);
+  if (payload.severity !== "critical" && payload.severity !== "error") {
+    throw new Error(`${message}.severity must equal 'critical' or 'error'`);
+  }
+}
+
+function assertReasoningWarning(
+  value: unknown,
+  message: string,
+): asserts value is ReasoningResult["warnings"][number] {
+  assertPlainObject(value, message);
+  const payload = value as Record<string, unknown>;
+  assertString(payload.message, `${message}.message must be a string`);
+  assertString(payload.rule, `${message}.rule must be a string`);
+  assertOptionalString(payload.nodeId, `${message}.nodeId must be a string when provided`);
+  assertOptionalString(payload.edgeId, `${message}.edgeId must be a string when provided`);
+  if (typeof payload.severity !== "undefined") {
+    const severity = payload.severity;
+    if (severity !== "critical" && severity !== "warning" && severity !== "info") {
+      throw new Error(`${message}.severity must be one of 'critical' | 'warning' | 'info'`);
+    }
+  }
+}
+
+function assertReasoningInference(
+  value: unknown,
+  message: string,
+): asserts value is ReasoningResult["inferences"][number] {
+  assertPlainObject(value, message);
+  const payload = value as Record<string, unknown>;
+  if (payload.type !== "property" && payload.type !== "class" && payload.type !== "relationship") {
+    throw new Error(`${message}.type must be one of 'property' | 'class' | 'relationship'`);
+  }
+  assertString(payload.subject, `${message}.subject must be a string`);
+  assertString(payload.predicate, `${message}.predicate must be a string`);
+  assertString(payload.object, `${message}.object must be a string`);
+  assertNumber(payload.confidence, `${message}.confidence must be a finite number`);
+}
+
+function assertReasoningResult(
+  value: unknown,
+  message: string,
+): asserts value is ReasoningResult {
+  assertPlainObject(value, message);
+  const payload = value as Record<string, unknown>;
+  assertString(payload.id, `${message}.id must be a string`);
+  assertNumber(payload.timestamp, `${message}.timestamp must be a finite number`);
+  if (payload.status !== "running" && payload.status !== "completed" && payload.status !== "error") {
+    throw new Error(`${message}.status must be one of 'running' | 'completed' | 'error'`);
+  }
+  assertOptionalFiniteNumber(payload.duration, `${message}.duration must be a finite number when provided`);
+  assertArray(payload.errors, `${message}.errors must be an array`);
+  for (const entry of payload.errors as unknown[]) {
+    assertReasoningError(entry, `${message}.errors entry`);
+  }
+  assertArray(payload.warnings, `${message}.warnings must be an array`);
+  for (const entry of payload.warnings as unknown[]) {
+    assertReasoningWarning(entry, `${message}.warnings entry`);
+  }
+  assertArray(payload.inferences, `${message}.inferences must be an array`);
+  for (const entry of payload.inferences as unknown[]) {
+    assertReasoningInference(entry, `${message}.inferences entry`);
+  }
+  if (typeof payload.inferredQuads !== "undefined") {
+    assertArray(payload.inferredQuads, `${message}.inferredQuads must be an array when provided`);
+    for (const entry of payload.inferredQuads as unknown[]) {
+      assertPlainObject(entry, `${message}.inferredQuads entry must be an object`);
+      const quad = entry as Record<string, unknown>;
+      assertString(quad.subject, `${message}.inferredQuads entry.subject must be a string`);
+      assertString(quad.predicate, `${message}.inferredQuads entry.predicate must be a string`);
+      assertString(quad.object, `${message}.inferredQuads entry.object must be a string`);
+      if (typeof quad.graph !== "undefined") {
+        assertString(quad.graph, `${message}.inferredQuads entry.graph must be a string when provided`);
+      }
+    }
+  }
+  if (typeof payload.meta !== "undefined") {
+    assertPlainObject(payload.meta, `${message}.meta must be an object when provided`);
+    const meta = payload.meta as Record<string, unknown>;
+    if (typeof meta.usedReasoner !== "undefined") {
+      assertBoolean(meta.usedReasoner, `${message}.meta.usedReasoner must be a boolean when provided`);
+    }
+    if (typeof meta.workerDurationMs !== "undefined") {
+      assertNumber(
+        meta.workerDurationMs,
+        `${message}.meta.workerDurationMs must be a finite number when provided`,
+      );
+    }
+    if (typeof meta.totalDurationMs !== "undefined") {
+      assertNumber(
+        meta.totalDurationMs,
+        `${message}.meta.totalDurationMs must be a finite number when provided`,
+      );
+    }
+    if (typeof meta.addedCount !== "undefined") {
+      assertNumber(meta.addedCount, `${message}.meta.addedCount must be a finite number when provided`);
+    }
+    if (typeof meta.ruleQuadCount !== "undefined") {
+      assertNumber(
+        meta.ruleQuadCount,
+        `${message}.meta.ruleQuadCount must be a finite number when provided`,
+      );
+    }
+  }
+}
+
+const COMMAND_VALIDATORS: Record<RDFWorkerCommandName, CommandValidator> = {
+  ping(payload) {
+    invariant(typeof payload === "undefined", "ping payload must be undefined");
+  },
+  clear(payload) {
+    invariant(typeof payload === "undefined", "clear payload must be undefined");
+  },
+  getGraphCounts(payload) {
+    invariant(typeof payload === "undefined", "getGraphCounts payload must be undefined");
+  },
+  getNamespaces(payload) {
+    invariant(typeof payload === "undefined", "getNamespaces payload must be undefined");
+  },
+  setNamespaces(payload) {
+    assertPlainObject(payload, "setNamespaces payload must be an object");
+    const { namespaces, replace } = payload as unknown as SyncNamespacesPayload;
+    invariant(isStringRecord(namespaces), "setNamespaces.namespaces must be a string record", {
+      namespaces,
+    });
+    if (typeof replace !== "undefined") {
+      assertBoolean(replace, "setNamespaces.replace must be a boolean when provided");
+    }
+  },
+  setBlacklist(payload) {
+    assertPlainObject(payload, "setBlacklist payload must be an object");
+    const { prefixes, uris } = payload as unknown as SyncBlacklistPayload;
+    assertArray(prefixes, "setBlacklist.prefixes must be an array");
+    assertArray(uris, "setBlacklist.uris must be an array");
+    for (const prefix of prefixes as unknown[]) {
+      assertString(prefix, "setBlacklist.prefixes entries must be strings");
+    }
+    for (const uri of uris as unknown[]) {
+      assertString(uri, "setBlacklist.uris entries must be strings");
+    }
+  },
+  getBlacklist(payload) {
+    invariant(typeof payload === "undefined", "getBlacklist payload must be undefined");
+  },
+  syncBatch(payload) {
+    assertPlainObject(payload, "syncBatch payload must be an object");
+    const { graphName, adds, removes, options } = payload as unknown as SyncBatchPayload;
+    assertString(graphName, "syncBatch.graphName must be a string");
+    assertWorkerQuadArray(adds, "syncBatch.adds must contain WorkerQuad entries");
+    assertWorkerQuadUpdateArray(removes, "syncBatch.removes must contain WorkerQuadUpdate entries");
+    if (typeof options !== "undefined") {
+      assertPlainObject(options, "syncBatch.options must be an object");
+      if (typeof (options as { suppressSubjects?: unknown }).suppressSubjects !== "undefined") {
+        assertBoolean(
+          (options as { suppressSubjects?: unknown }).suppressSubjects,
+          "syncBatch.options.suppressSubjects must be a boolean",
+        );
+      }
+    }
+  },
+  syncLoad(payload) {
+    assertPlainObject(payload, "syncLoad payload must be an object");
+    const { quads, graphName, prefixes, parsingMeta } = payload as unknown as SyncLoadPayload;
+    assertWorkerQuadArray(quads, "syncLoad.quads must contain WorkerQuad entries");
+    assertString(graphName, "syncLoad.graphName must be a string");
+    assertOptionalStringRecord(prefixes, "syncLoad.prefixes must be a string record when provided");
+    assertOptionalPlainObject(parsingMeta, "syncLoad.parsingMeta must be an object when provided");
+  },
+  syncRemoveGraph(payload) {
+    assertPlainObject(payload, "syncRemoveGraph payload must be an object");
+    const { graphName } = payload as unknown as SyncRemoveGraphPayload;
+    assertString(graphName, "syncRemoveGraph.graphName must be a string");
+  },
+  syncRemoveAllQuadsForIri(payload) {
+    assertPlainObject(payload, "syncRemoveAllQuadsForIri payload must be an object");
+    const { iri, graphName, includePredicate } = payload as unknown as SyncRemoveAllQuadsForIriPayload;
+    assertString(iri, "syncRemoveAllQuadsForIri.iri must be a string");
+    if (typeof graphName !== "undefined") {
+      assertString(graphName, "syncRemoveAllQuadsForIri.graphName must be a string when provided");
+    }
+    if (typeof includePredicate !== "undefined") {
+      assertBoolean(
+        includePredicate,
+        "syncRemoveAllQuadsForIri.includePredicate must be a boolean when provided",
+      );
+    }
+  },
+  fetchQuadsPage(payload) {
+    assertPlainObject(payload, "fetchQuadsPage payload must be an object");
+    const { graphName, offset, limit, serialize, filter } = payload as unknown as FetchQuadsPagePayload;
+    assertString(graphName, "fetchQuadsPage.graphName must be a string");
+    assertNumber(offset, "fetchQuadsPage.offset must be a finite number");
+    assertNumber(limit, "fetchQuadsPage.limit must be a finite number");
+    if (typeof serialize !== "undefined") {
+      assertBoolean(serialize, "fetchQuadsPage.serialize must be a boolean when provided");
+    }
+    if (typeof filter !== "undefined") {
+      assertPlainObject(filter, "fetchQuadsPage.filter must be an object when provided");
+      const { subject, predicate, object } = filter as FetchQuadsPagePayload["filter"];
+      if (typeof subject !== "undefined") {
+        assertString(subject, "fetchQuadsPage.filter.subject must be a string when provided");
+      }
+      if (typeof predicate !== "undefined") {
+        assertString(predicate, "fetchQuadsPage.filter.predicate must be a string when provided");
+      }
+      if (typeof object !== "undefined") {
+        assertString(object, "fetchQuadsPage.filter.object must be a string when provided");
+      }
+    }
+  },
+  getQuads(payload) {
+    assertPlainObject(payload, "getQuads payload must be an object");
+    const { subject, predicate, object, graphName } = payload as GetQuadsPayload;
+    if (typeof subject !== "undefined" && subject !== null) {
+      assertString(subject, "getQuads.subject must be a string when provided");
+    }
+    if (typeof predicate !== "undefined" && predicate !== null) {
+      assertString(predicate, "getQuads.predicate must be a string when provided");
+    }
+    if (typeof object !== "undefined" && object !== null) {
+      invariant(isWorkerTerm(object), "getQuads.object must be a WorkerTerm when provided", {
+        object,
+      });
+    }
+    if (typeof graphName !== "undefined" && graphName !== null) {
+      assertString(graphName, "getQuads.graphName must be a string when provided");
+    }
+  },
+  emitAllSubjects(payload) {
+    if (typeof payload === "undefined") return;
+    assertPlainObject(payload, "emitAllSubjects payload must be an object when provided");
+    const { graphName } = payload as EmitAllSubjectsPayload;
+    if (typeof graphName !== "undefined") {
+      assertString(graphName, "emitAllSubjects.graphName must be a string when provided");
+    }
+  },
+  triggerSubjects(payload) {
+    assertPlainObject(payload, "triggerSubjects payload must be an object");
+    const { subjects } = payload as unknown as TriggerSubjectsPayload;
+    assertArray(subjects, "triggerSubjects.subjects must be an array");
+    for (const subject of subjects as unknown[]) {
+      assertString(subject, "triggerSubjects.subjects entries must be strings");
+    }
+  },
+  runReasoning(payload) {
+    assertPlainObject(payload, "runReasoning payload must be an object");
+    const { reasoningId, quads, rulesets, baseUrl, emitSubjects } =
+      payload as RDFWorkerCommandPayloads["runReasoning"];
+    assertString(reasoningId, "runReasoning.reasoningId must be a string");
+    if (typeof quads !== "undefined") {
+      assertWorkerQuadArray(quads, "runReasoning.quads must contain WorkerQuad entries");
+    }
+    if (typeof rulesets !== "undefined") {
+      assertArray(rulesets, "runReasoning.rulesets must be an array when provided");
+      for (const rule of rulesets as unknown[]) {
+        assertString(rule, "runReasoning.rulesets entries must be strings");
+      }
+    }
+    if (typeof baseUrl !== "undefined") {
+      assertString(baseUrl, "runReasoning.baseUrl must be a string when provided");
+    }
+    if (typeof emitSubjects !== "undefined") {
+      assertBoolean(emitSubjects, "runReasoning.emitSubjects must be a boolean when provided");
+    }
+    const { reasonerBackend, shaclEnabled } = payload as RDFWorkerCommandPayloads["runReasoning"];
+    if (typeof reasonerBackend !== "undefined") {
+      assertString(reasonerBackend, "runReasoning.reasonerBackend must be a string when provided");
+    }
+    if (typeof shaclEnabled !== "undefined") {
+      assertBoolean(shaclEnabled, "runReasoning.shaclEnabled must be a boolean when provided");
+    }
+  },
+  importSerialized(payload) {
+    assertPlainObject(payload, "importSerialized payload must be an object");
+    const { content, graphName, contentType, filename, baseIri, additionalContents, onlyIfEmpty } =
+      payload as unknown as ImportSerializedPayload;
+    assertString(content, "importSerialized.content must be a string");
+    assertOptionalStringArray(additionalContents, "importSerialized.additionalContents must be a string array when provided");
+    if (onlyIfEmpty !== undefined && typeof onlyIfEmpty !== "boolean") {
+      throw new TypeError("importSerialized.onlyIfEmpty must be a boolean when provided");
+    }
+    assertOptionalString(graphName, "importSerialized.graphName must be a string when provided");
+    assertOptionalString(contentType, "importSerialized.contentType must be a string when provided");
+    assertOptionalString(filename, "importSerialized.filename must be a string when provided");
+    assertOptionalString(baseIri, "importSerialized.baseIri must be a string when provided");
+  },
+  exportGraph(payload) {
+    assertPlainObject(payload, "exportGraph payload must be an object");
+    const { graphName, format } = payload as unknown as ExportGraphPayload;
+    assertOptionalString(graphName, "exportGraph.graphName must be a string when provided");
+    assertOptionalString(format, "exportGraph.format must be a string when provided");
+  },
+  removeQuadsByNamespace(payload) {
+    assertPlainObject(payload, "removeQuadsByNamespace payload must be an object");
+    const { graphName, namespaceUris } = payload as any as RemoveQuadsByNamespacePayload;
+    assertString(graphName, "removeQuadsByNamespace.graphName must be a string");
+    assertStringArray(
+      namespaceUris,
+      "removeQuadsByNamespace.namespaceUris must be an array of strings",
+    );
+  },
+  purgeNamespace(payload) {
+    assertPlainObject(payload, "purgeNamespace payload must be an object");
+    const { prefixOrUri } = payload as any as PurgeNamespacePayload;
+    assertString(prefixOrUri, "purgeNamespace.prefixOrUri must be a string");
+  },
+  renameNamespaceUri(payload) {
+    assertPlainObject(payload, "renameNamespaceUri payload must be an object");
+    const { oldUri, newUri, allNamespaceUris } = payload as any as RenameNamespaceUriPayload;
+    assertString(oldUri, "renameNamespaceUri.oldUri must be a string");
+    assertString(newUri, "renameNamespaceUri.newUri must be a string");
+    assertArray(allNamespaceUris, "renameNamespaceUri.allNamespaceUris must be an array");
+    for (const uri of allNamespaceUris as unknown[]) {
+      assertString(uri, "renameNamespaceUri.allNamespaceUris entries must be strings");
+    }
+  },
+  syncRemoveBatchSubjectsFromGraph(payload) {
+    assertPlainObject(payload, "syncRemoveBatchSubjectsFromGraph payload must be an object");
+    const { subjects, graphName } = payload as { subjects: unknown; graphName: unknown };
+    assertArray(subjects, "syncRemoveBatchSubjectsFromGraph.subjects must be an array");
+    if (typeof graphName !== "undefined") {
+      assertString(graphName as string, "syncRemoveBatchSubjectsFromGraph.graphName must be a string when provided");
+    }
+  },
+  unloadOntologySubjects(payload) {
+    assertPlainObject(payload, "unloadOntologySubjects payload must be an object");
+    const { ontologyUrl } = payload as { ontologyUrl: unknown };
+    assertString(ontologyUrl as string, "unloadOntologySubjects.ontologyUrl must be a string");
+  },
+  sparqlQuery(payload) {
+    assertPlainObject(payload, "sparqlQuery payload must be an object");
+    const { sparql, graphName, limit } = payload as { sparql: unknown; graphName: unknown; limit: unknown };
+    assertString(sparql, "sparqlQuery.sparql must be a string");
+    if (typeof graphName !== "undefined") {
+      assertString(graphName as string, "sparqlQuery.graphName must be a string when provided");
+    }
+    if (typeof limit !== "undefined") {
+      invariant(typeof limit === "number", "sparqlQuery.limit must be a number when provided");
+    }
+  },
+  setDebug(payload) {
+    assertPlainObject(payload, "setDebug payload must be an object");
+    assertBoolean((payload as { enabled: unknown }).enabled, "setDebug.enabled must be a boolean");
+  },
+  runShaclValidation() {
+    // No payload needed
+  },
+  explainInconsistency(payload) {
+    if (typeof payload === "undefined") return;
+    assertPlainObject(payload, "explainInconsistency payload must be an object when provided");
+    assertOptionalFiniteNumber(
+      (payload as { maxJustifications?: unknown }).maxJustifications,
+      "explainInconsistency.maxJustifications must be a number when provided",
+    );
+  },
+  validate(payload) {
+    invariant(typeof payload === "undefined", "validate payload must be undefined");
+  },
+  suggestRepairs(payload) {
+    if (typeof payload === "undefined") return;
+    assertPlainObject(payload, "suggestRepairs payload must be an object");
+    const p = payload as RDFWorkerCommandPayloads["suggestRepairs"];
+    if (typeof p.justifications !== "undefined") {
+      assertArray(p.justifications, "suggestRepairs.justifications must be an array when provided");
+      for (const j of p.justifications as unknown[]) {
+        assertArray(j, "suggestRepairs.justifications entry must be an array");
+        for (const t of j as unknown[]) {
+          assertPlainObject(t, "suggestRepairs.justifications triple must be an object");
+          const r = t as Record<string, unknown>;
+          assertString(r.subject, "suggestRepairs.justifications triple.subject must be a string");
+          assertString(r.predicate, "suggestRepairs.justifications triple.predicate must be a string");
+          assertString(r.object, "suggestRepairs.justifications triple.object must be a string");
+        }
+      }
+    }
+    if (typeof p.unsatisfiableClasses !== "undefined") {
+      assertStringArray(p.unsatisfiableClasses, "suggestRepairs.unsatisfiableClasses must be an array of strings when provided");
+    }
+    for (const k of ["maxJustifications", "timeoutMs"] as const) {
+      invariant(typeof p[k] === "undefined" || (typeof p[k] === "number" && Number.isFinite(p[k] as number)), `suggestRepairs.${k} must be a finite number when provided`);
+    }
+    invariant(typeof p.weaken === "undefined" || typeof p.weaken === "boolean", "suggestRepairs.weaken must be a boolean when provided");
+  },
+  searchTerms(payload) {
+    assertPlainObject(payload, "searchTerms payload must be an object");
+    const { query, kinds, limit } = payload as RDFWorkerCommandPayloads["searchTerms"];
+    assertString(query, "searchTerms.query must be a string");
+    invariant(query.trim().length > 0, "searchTerms.query must be a non-empty string", { query });
+    if (typeof kinds !== "undefined") {
+      assertStringArray(kinds, "searchTerms.kinds must be an array of strings when provided");
+      const VALID_KINDS = new Set([
+        "class",
+        "objectProperty",
+        "datatypeProperty",
+        "property",
+        "individual",
+      ]);
+      for (const kind of kinds) {
+        invariant(
+          VALID_KINDS.has(kind),
+          "searchTerms.kinds entries must be one of 'class' | 'objectProperty' | 'datatypeProperty' | 'property' | 'individual'",
+          { kind },
+        );
+      }
+    }
+    assertOptionalFiniteNumber(limit, "searchTerms.limit must be a number when provided");
+  },
+  explainEntailment(payload) {
+    assertPlainObject(payload, "explainEntailment payload must be an object");
+    const { subjectIri, predicateIri, objectIri, objectIsLiteral, maxJustifications, justificationMode, timeoutMs } =
+      payload as RDFWorkerCommandPayloads["explainEntailment"];
+    assertString(subjectIri, "explainEntailment.subjectIri must be a string");
+    assertString(predicateIri, "explainEntailment.predicateIri must be a string");
+    assertString(objectIri, "explainEntailment.objectIri must be a string");
+    invariant(subjectIri.trim().length > 0, "explainEntailment.subjectIri must be non-empty", { subjectIri });
+    invariant(predicateIri.trim().length > 0, "explainEntailment.predicateIri must be non-empty", { predicateIri });
+    invariant(objectIri.trim().length > 0, "explainEntailment.objectIri must be non-empty", { objectIri });
+    if (typeof objectIsLiteral !== "undefined") {
+      assertBoolean(objectIsLiteral, "explainEntailment.objectIsLiteral must be a boolean when provided");
+    }
+    assertOptionalFiniteNumber(
+      maxJustifications,
+      "explainEntailment.maxJustifications must be a number when provided",
+    );
+    invariant(
+      typeof justificationMode === "undefined" || justificationMode === "fast" || justificationMode === "exact",
+      'explainEntailment.justificationMode must be "fast" or "exact" when provided',
+      { justificationMode },
+    );
+    assertOptionalFiniteNumber(timeoutMs, "explainEntailment.timeoutMs must be a number when provided");
+  },
+  getOntologyStats(payload) {
+    invariant(typeof payload === "undefined", "getOntologyStats payload must be undefined");
+  },
+  stopReasoning(payload) {
+    invariant(typeof payload === "undefined", "stopReasoning payload must be undefined");
+  },
+};
+
+export function validateRdfWorkerCommandInput(
+  command: RDFWorkerCommandName,
+  payload: unknown,
+): asserts payload is RDFWorkerCommandPayloads[RDFWorkerCommandName] {
+  const validator = COMMAND_VALIDATORS[command];
+  invariant(typeof validator === "function", "No validator registered for command", {
+    command,
+  });
+  validator(payload);
+}
+
+export function assertRdfWorkerCommand(value: unknown): asserts value is RDFWorkerCommand {
+  assertPlainObject(value, "rdf-worker-command must be a plain object");
+  const message = value as Record<string, unknown>;
+
+  invariant(message.type === "command", "rdf-worker-command.type must equal 'command'", {
+    type: message.type,
+  });
+  assertString(message.id, "rdf-worker-command.id must be a string");
+  assertString(message.command, "rdf-worker-command.command must be a string");
+
+  invariant(
+    (RDF_WORKER_COMMANDS as readonly string[]).includes(message.command),
+    "rdf-worker-command.command is not recognised",
+    { command: message.command },
+  );
+
+  const validator = COMMAND_VALIDATORS[message.command as RDFWorkerCommandName];
+  invariant(typeof validator === "function", "No validator registered for command", {
+    command: message.command,
+  });
+  validator(message.payload);
+}
+
+export type RDFWorkerEventMap = {
+  change: { changeCount: number; meta?: Record<string, unknown> | null };
+  subjects: {
+    subjects: string[];
+    quads?: Record<string, WorkerQuad[]>;
+    snapshot?: WorkerReconcileSubjectSnapshotPayload[];
+    meta?: Record<string, unknown> | null;
+  };
+  reasoningStage: { id: string; stage: string; meta?: Record<string, unknown> };
+  reasoningResult: ReasoningResult;
+  reasoningError: { message: string; stack?: string };
+  // Streaming liveness signal during a large importSerialized: `loaded` is the
+  // running count of triples written to the store so far; `total` is included
+  // only when cheaply known (it usually is not for a streamed parse).
+  importProgress: { id: string; loaded: number; total?: number; graphName?: string };
+};
+
+export type RDFWorkerEventName = keyof RDFWorkerEventMap;
+
+export type RDFWorkerEvent = {
+  [K in RDFWorkerEventName]: {
+    type: "event";
+    event: K;
+    payload: RDFWorkerEventMap[K];
+  };
+}[RDFWorkerEventName];
+
+export type RDFWorkerResponse =
+  | { type: "response"; id: string; ok: true; result?: unknown }
+  | { type: "response"; id: string; ok: false; error: string; stack?: string };
+
+export interface RDFWorkerSubscriptionRequest {
+  type: "subscribe";
+  id: string;
+  event: RDFWorkerEventName;
+}
+
+export interface RDFWorkerUnsubscribeRequest {
+  type: "unsubscribe";
+  id: string;
+  event: RDFWorkerEventName;
+}
+
+export interface WorkerReconcileSubject {
+  subject: number;
+  types?: number[];
+  label?: number;
+}
+
+export interface WorkerReconcilePayload {
+  subjects: WorkerReconcileSubject[];
+}
+
+export interface WorkerReconcileSubjectSnapshotPayload {
+  iri: string;
+  types: string[];
+  label?: string;
+}
+
+export interface RDFWorkerRunReasoningMessage {
+  type: "runReasoning";
+  id: string;
+  quads?: WorkerQuad[];
+  rulesets?: string[];
+  baseUrl?: string;
+  emitSubjects?: boolean;
+  reasonerBackend?: 'konclude' | 'n3';
+  shaclEnabled?: boolean;
+}
+
+export type RDFWorkerInboundMessage =
+  | RDFWorkerCommand
+  | RDFWorkerSubscriptionRequest
+  | RDFWorkerUnsubscribeRequest
+  | RDFWorkerRunReasoningMessage;
+
+export type RDFWorkerOutboundMessage =
+  | RDFWorkerResponse
+  | RDFWorkerEvent;
+
+export type RDFWorkerMessage = RDFWorkerInboundMessage | RDFWorkerOutboundMessage;
+
+export function assertRdfWorkerSubscriptionRequest(
+  value: unknown,
+): asserts value is RDFWorkerSubscriptionRequest {
+  assertPlainObject(value, "rdf-worker-subscribe must be a plain object");
+  const message = value as Record<string, unknown>;
+  invariant(message.type === "subscribe", "subscription.type must equal 'subscribe'", {
+    type: message.type,
+  });
+  assertString(message.id, "subscription.id must be a string");
+  assertString(message.event, "subscription.event must be a string");
+  const validEvents = new Set<RDFWorkerEventName>([
+    "change",
+    "subjects",
+    "reasoningStage",
+    "reasoningResult",
+    "reasoningError",
+    "importProgress",
+  ]);
+  invariant(validEvents.has(message.event as RDFWorkerEventName), "Unknown subscription event", {
+    event: message.event,
+  });
+}
+
+export function assertRdfWorkerUnsubscribeRequest(
+  value: unknown,
+): asserts value is RDFWorkerUnsubscribeRequest {
+  assertPlainObject(value, "rdf-worker-unsubscribe must be a plain object");
+  const message = value as Record<string, unknown>;
+  invariant(message.type === "unsubscribe", "unsubscribe.type must equal 'unsubscribe'", {
+    type: message.type,
+  });
+  assertString(message.id, "unsubscribe.id must be a string");
+  assertString(message.event, "unsubscribe.event must be a string");
+}
+
+export function assertRdfWorkerResponse(value: unknown): asserts value is RDFWorkerResponse {
+  assertPlainObject(value, "rdf-worker-response must be a plain object");
+  const message = value as Record<string, unknown>;
+  invariant(message.type === "response", "response.type must equal 'response'", {
+    type: message.type,
+  });
+  assertString(message.id, "response.id must be a string");
+  assertBoolean(message.ok, "response.ok must be a boolean");
+  if (message.ok) {
+    return;
+  }
+  assertString(message.error, "response.error must be a string when ok is false");
+  if (typeof message.stack !== "undefined") {
+    assertString(message.stack, "response.stack must be a string when provided");
+  }
+}
+
+export function assertRdfWorkerEvent(value: unknown): asserts value is RDFWorkerEvent {
+  assertPlainObject(value, "rdf-worker-event must be a plain object");
+  const message = value as Record<string, unknown>;
+  invariant(message.type === "event", "event.type must equal 'event'", { type: message.type });
+  assertString(message.event, "event.event must be a string");
+
+  const payload = message.payload;
+  switch (message.event) {
+    case "change":
+      assertPlainObject(payload, "change payload must be an object");
+      assertNumber(
+        (payload as { changeCount: unknown }).changeCount,
+        "change payload.changeCount must be a finite number",
+      );
+      if (typeof (payload as { meta?: unknown }).meta !== "undefined") {
+        assertOptionalPlainObject(
+          (payload as { meta?: unknown }).meta,
+          "change payload.meta must be an object when provided",
+        );
+      }
+      return;
+    case "subjects":
+      assertPlainObject(payload, "subjects payload must be an object");
+      assertStringArray(
+        (payload as { subjects: unknown }).subjects,
+        "subjects payload.subjects must be an array of strings",
+      );
+      if (typeof (payload as { quads?: unknown }).quads !== "undefined") {
+        assertWorkerQuadRecord(
+          (payload as { quads?: unknown }).quads,
+          "subjects payload.quads must be a record of WorkerQuad arrays",
+        );
+      }
+      if (typeof (payload as { snapshot?: unknown }).snapshot !== "undefined") {
+        assertWorkerSnapshotArray(
+          (payload as { snapshot?: unknown }).snapshot,
+          "subjects payload.snapshot must be an array of snapshot entries",
+        );
+      }
+      if (typeof (payload as { meta?: unknown }).meta !== "undefined") {
+        const metaValue = (payload as { meta?: unknown }).meta;
+        if (metaValue !== null) {
+          assertOptionalPlainObject(
+            metaValue,
+            "subjects payload.meta must be an object when provided",
+          );
+        }
+      }
+      return;
+    case "reasoningStage":
+      assertPlainObject(payload, "reasoningStage payload must be an object");
+      assertString((payload as { id: unknown }).id, "reasoningStage payload.id must be a string");
+      assertString(
+        (payload as { stage: unknown }).stage,
+        "reasoningStage payload.stage must be a string",
+      );
+      if (typeof (payload as { meta?: unknown }).meta !== "undefined") {
+        assertOptionalPlainObject(
+          (payload as { meta?: unknown }).meta,
+          "reasoningStage payload.meta must be an object when provided",
+        );
+      }
+      return;
+    case "reasoningResult":
+      assertReasoningResult(payload, "reasoningResult payload");
+      return;
+    case "reasoningError":
+      assertPlainObject(payload, "reasoningError payload must be an object");
+      assertString(
+        (payload as { message: unknown }).message,
+        "reasoningError payload.message must be a string",
+      );
+      if (typeof (payload as { stack?: unknown }).stack !== "undefined") {
+        assertOptionalString(
+          (payload as { stack?: unknown }).stack,
+          "reasoningError payload.stack must be a string when provided",
+        );
+      }
+      return;
+    case "importProgress":
+      assertPlainObject(payload, "importProgress payload must be an object");
+      assertString(
+        (payload as { id: unknown }).id,
+        "importProgress payload.id must be a string",
+      );
+      assertNumber(
+        (payload as { loaded: unknown }).loaded,
+        "importProgress payload.loaded must be a finite number",
+      );
+      if (typeof (payload as { total?: unknown }).total !== "undefined") {
+        assertNumber(
+          (payload as { total?: unknown }).total,
+          "importProgress payload.total must be a finite number when provided",
+        );
+      }
+      if (typeof (payload as { graphName?: unknown }).graphName !== "undefined") {
+        assertOptionalString(
+          (payload as { graphName?: unknown }).graphName,
+          "importProgress payload.graphName must be a string when provided",
+        );
+      }
+      return;
+    default:
+      throw new Error(`Unknown rdf-worker event '${String(message.event)}'`);
+  }
+}
+
+export function assertRdfWorkerOutbound(value: unknown): asserts value is RDFWorkerOutboundMessage {
+  assertPlainObject(value, "rdf-worker-outbound message must be a plain object");
+  const message = value as Record<string, unknown>;
+  switch (message.type) {
+    case "response":
+      assertRdfWorkerResponse(message);
+      return;
+    case "event":
+      assertRdfWorkerEvent(message);
+      return;
+    default:
+      throw new Error(`Unrecognised rdf-worker outbound message type: ${String(message.type)}`);
+  }
+}
+
+export function assertRdfWorkerInbound(value: unknown): asserts value is RDFWorkerInboundMessage {
+  assertPlainObject(value, "rdf-worker-inbound message must be a plain object");
+  const message = value as Record<string, unknown>;
+  const type = message.type;
+
+  switch (type) {
+    case "command":
+      assertRdfWorkerCommand(message);
+      return;
+    case "subscribe":
+      assertRdfWorkerSubscriptionRequest(message);
+      return;
+    case "unsubscribe":
+      assertRdfWorkerUnsubscribeRequest(message);
+      return;
+    case "runReasoning":
+      assertString(message.id, "runReasoning.id must be a string");
+      if (typeof message.quads !== "undefined") {
+        assertWorkerQuadArray(message.quads, "runReasoning.quads must contain WorkerQuad entries");
+      }
+      if (typeof message.rulesets !== "undefined") {
+        assertArray(message.rulesets, "runReasoning.rulesets must be an array when provided");
+        for (const entry of message.rulesets as unknown[]) {
+          assertString(entry, "runReasoning.rulesets entries must be strings");
+        }
+      }
+      if (typeof message.baseUrl !== "undefined") {
+        assertString(message.baseUrl, "runReasoning.baseUrl must be a string when provided");
+      }
+      if (typeof message.emitSubjects !== "undefined") {
+        assertBoolean(message.emitSubjects, "runReasoning.emitSubjects must be a boolean when provided");
+      }
+      if (typeof message.reasonerBackend !== "undefined") {
+        assertString(message.reasonerBackend, "runReasoning.reasonerBackend must be a string when provided");
+      }
+      if (typeof message.shaclEnabled !== "undefined") {
+        assertBoolean(message.shaclEnabled, "runReasoning.shaclEnabled must be a boolean when provided");
+      }
+      return;
+    default:
+      throw new Error(`Unrecognised rdf-worker inbound message type: ${String(type)}`);
+  }
+}

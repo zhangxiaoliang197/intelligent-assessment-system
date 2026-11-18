@@ -1,0 +1,24 @@
+@prefix : <http://example.org/reasoner-test#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# Pattern 4 (OWL 2 DL): max qualified cardinality + differentFrom
+# :car1 has two distinct VINs but :Vehicle allows at most one → inconsistent
+# WARNING: owl:maxQualifiedCardinality hangs Konclude WASM in browser (Atomics.waitAsync bug).
+# This fixture is safe for node WASM (Atomics.wait). Skip in Playwright/browser E2E.
+
+:Vehicle a owl:Class .
+:VIN a owl:Class .
+:hasVIN a owl:ObjectProperty .
+:Vehicle rdfs:subClassOf [
+    a owl:Restriction ;
+    owl:onProperty :hasVIN ;
+    owl:onClass :VIN ;
+    owl:maxQualifiedCardinality "1"^^xsd:nonNegativeInteger
+] .
+:car1 a owl:NamedIndividual , :Vehicle ; :hasVIN :vinA , :vinB .
+:vinA a owl:NamedIndividual , :VIN .
+:vinB a owl:NamedIndividual , :VIN .
+:vinA owl:differentFrom :vinB .

@@ -52,7 +52,7 @@ const pageTitle = computed(() => {
     'SolutionEvaluation': '评估分析',
     'KnowledgeBase': '知识库',
     'OntologyModel': '本体',
-        'OntologyDetail': '本体详情',
+        'OntologyDetail': '动态本体工作台',
         'OntologyBuild': 'AI 构建',
         'SituationPageDialog': '态势页面',
         'InteractivePage': '态势页面',

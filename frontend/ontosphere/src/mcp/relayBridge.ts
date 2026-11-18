@@ -1,0 +1,359 @@
+// src/mcp/relayBridge.ts
+import { toast } from 'sonner';
+import type { McpResult } from './types';
+import { useAppConfigStore } from '../stores/appConfigStore';
+
+const CHANNEL_NAME = 'ontosphere-relay-v1';
+const RETRY_COUNT = 3;
+const RETRY_DELAY_MS = 200;
+
+// Unique token for this page load — changes on every reload so the relay can detect data loss
+const SESSION_ID = Math.random().toString(36).slice(2, 10);
+
+export interface RelayCallLogEntry {
+  tool: string;
+  success: boolean;
+  timestamp: number;
+}
+
+type CallLogCallback = (entry: RelayCallLogEntry) => void;
+const callLogListeners: CallLogCallback[] = [];
+
+export function onCallLogged(cb: CallLogCallback): () => void {
+  callLogListeners.push(cb);
+  return () => {
+    const idx = callLogListeners.indexOf(cb);
+    if (idx !== -1) callLogListeners.splice(idx, 1);
+  };
+}
+
+type ConnectionCallback = (connected: boolean) => void;
+const connectionListeners: ConnectionCallback[] = [];
+
+export function onConnectionChanged(cb: ConnectionCallback): () => void {
+  connectionListeners.push(cb);
+  return () => {
+    const idx = connectionListeners.indexOf(cb);
+    if (idx !== -1) connectionListeners.splice(idx, 1);
+  };
+}
+
+function notifyConnectionChanged(connected: boolean): void {
+  for (const cb of connectionListeners) {
+    try { cb(connected); } catch { /* ignore */ }
+  }
+}
+
+function notifyCallLog(entry: RelayCallLogEntry): void {
+  for (const cb of callLogListeners) {
+    try { cb(entry); } catch { /* ignore listener errors */ }
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function shortIri(iri: unknown): string | undefined {
+  return typeof iri === 'string' ? (iri.split(/[/#]/).filter(Boolean).pop() ?? iri) : undefined;
+}
+
+function toastLabel(tool: string, result: McpResult): string {
+  const d = (result as any).data as Record<string, unknown> | null | undefined;
+  if (!d) return tool;
+  switch (tool) {
+    case 'loadOntology':
+      if (typeof d.count === 'number') return `${tool} · ${d.count} results`;
+      return `${tool} · ${d.requestedAs ?? shortIri(d.loaded) ?? ''}`;
+    case 'loadRDF':
+      return `${tool} · ${shortIri(d.loaded) ?? ''}`;
+    case 'queryGraph': {
+      const n = d.total;
+      if (d.updated) return `${tool} · updated`;
+      if (typeof n === 'number') return `${tool} · ${n} ${Array.isArray(d.rows) ? 'rows' : 'triples'}`;
+      return tool;
+    }
+    case 'addNode':
+    case 'focusNode':
+    case 'getNodeDetails':
+      return `${tool} · ${shortIri(d.iri) ?? ''}`;
+    case 'removeNode':
+      return `${tool} · ${shortIri(d.removed) ?? ''}`;
+    case 'updateNode':
+      return `${tool} · ${shortIri(d.updated) ?? ''}`;
+    case 'expandAll':
+      return typeof d.expanded === 'number' ? `${tool} · ${d.expanded} nodes` : tool;
+    case 'addTriple': {
+      const rel = d.added as Record<string, unknown> | undefined;
+      return `${tool} · ${shortIri(rel?.p) ?? ''}`;
+    }
+    case 'removeLink': {
+      const rel = d.removed as Record<string, unknown> | undefined;
+      return `${tool} · ${shortIri(rel?.p) ?? ''}`;
+    }
+    case 'runLayout':
+    case 'setLayout':
+    case 'layout':
+      return typeof d.algorithm === 'string' ? `${tool} · ${d.algorithm}` : tool;
+    case 'setGraphMode':
+      return typeof d.mode === 'string' ? `${tool} · ${d.mode}` : tool;
+    default:
+      return tool;
+  }
+}
+
+async function waitForMcpTools(retries: number): Promise<Record<string, (params: unknown) => Promise<McpResult>> | null> {
+  for (let i = 0; i <= retries; i++) {
+    if (window.__mcpTools) return window.__mcpTools;
+    if (i < retries) await delay(RETRY_DELAY_MS);
+  }
+  return null;
+}
+
+/** Compact one-line store state string, e.g. "Store: 3 nodes (Alice, Bob, Carol), 2 links" */
+async function buildCanvasSummary(
+  tools: Record<string, (params: unknown) => Promise<McpResult>>
+): Promise<string | undefined> {
+  try {
+    const graphStateHandler = tools['getGraphState'];
+    if (!graphStateHandler) return undefined;
+
+    const stateResult = await graphStateHandler({ graphs: ['urn:vg:data', 'urn:vg:inferred'] });
+    if (!stateResult.success || !stateResult.data) return undefined;
+    const d = stateResult.data as { nodeCount?: number; linkCount?: number; nodes?: Array<{ iri: string; label?: string }> };
+
+    const nodeCount = d.nodeCount ?? 0;
+    const linkCount = d.linkCount ?? 0;
+    const nodes = d.nodes ?? [];
+
+    const MAX_LABELS = 8;
+    const labels = nodes
+      .slice(0, MAX_LABELS)
+      .map(n => n.label || n.iri.split(/[/#]/).pop() || n.iri)
+      .join(', ');
+    const more = nodeCount > MAX_LABELS ? ` +${nodeCount - MAX_LABELS} more` : '';
+    const viewMode = useAppConfigStore.getState().config.viewMode;
+    const viewLabel = viewMode === 'tbox' ? 'TBox' : 'ABox';
+    return `Canvas: ${nodeCount} node${nodeCount !== 1 ? 's' : ''} (${labels}${more}), ${linkCount} link${linkCount !== 1 ? 's' : ''} · view: ${viewLabel}`;
+  } catch {
+    return undefined;
+  }
+}
+
+async function handleCall(
+  channel: BroadcastChannel,
+  tool: string,
+  params: unknown,
+  requestId: string,
+  isLast: boolean,
+  onDone: () => void,
+): Promise<void> {
+  const tools = await waitForMcpTools(RETRY_COUNT);
+
+  if (!tools) {
+    const error = 'Ontosphere workspace not yet initialised';
+    channel.postMessage({ type: 'vg-result', requestId, result: { success: false, error }, sessionId: SESSION_ID });
+    channel.postMessage({ type: 'vg-ready', sessionId: SESSION_ID });
+    toast.error(`✗ ${tool}: ${error}`);
+    notifyCallLog({ tool, success: false, timestamp: Date.now() });
+    onDone();
+    return;
+  }
+
+  // SECURITY / trust boundary:
+  // This BroadcastChannel is same-origin by browser design — only same-origin
+  // contexts (the Ontosphere app and its relay.html popup, both served from this
+  // origin) can post here, so messages arriving on it are already origin-trusted.
+  // The ACTUAL trust gate for AI platforms lives in public/relay.html, which only
+  // forwards a vg-call onto this channel after validating evt.origin against an
+  // allowlist (see relay.html → isOriginAllowed / "Security model" in
+  // docs/relay-bridge.md). Do NOT add a postMessage path here that accepts
+  // cross-origin window messages and forwards them onto this channel without an
+  // equivalent origin check — that would re-open the relay to any tab.
+  const handler = tools[tool];
+  if (!handler) {
+    const error = `Unknown tool: ${tool}`;
+    console.error('[RelayBridge] Unknown tool:', tool);
+    channel.postMessage({ type: 'vg-result', requestId, result: { success: false, error }, sessionId: SESSION_ID });
+    channel.postMessage({ type: 'vg-ready', sessionId: SESSION_ID });
+    toast.error(`✗ ${tool}: ${error}`);
+    notifyCallLog({ tool, success: false, timestamp: Date.now() });
+    onDone();
+    return;
+  }
+
+  // Heartbeat: ping the AI tab every 10s while the tool runs (layout/reasoning can be slow)
+  const pingInterval = setInterval(() => {
+    channel.postMessage({ type: 'vg-ping', requestId, sessionId: SESSION_ID });
+  }, 10_000);
+
+  let result: McpResult;
+  try {
+    result = await handler(params);
+    console.info('[VG_RELAY] Tool result:', tool, JSON.stringify(result).slice(0, 300));
+  } catch (err) {
+    clearInterval(pingInterval);
+    const error = err instanceof Error ? err.message : String(err);
+    console.error('[RelayBridge] Tool error:', tool, JSON.stringify(params).slice(0, 200), error);
+    result = { success: false, error };
+    channel.postMessage({ type: 'vg-result', requestId, result, sessionId: SESSION_ID });
+    channel.postMessage({ type: 'vg-ready', sessionId: SESSION_ID });
+    toast.error(`✗ ${toastLabel(tool, { success: false, error })}: ${error}`);
+    notifyCallLog({ tool, success: false, timestamp: Date.now() });
+    onDone();
+    return;
+  }
+  clearInterval(pingInterval);
+
+  // Canvas summary — always included (cheap getGraphState call)
+  const summary = await buildCanvasSummary(tools);
+
+  // SVG export — only on the last call of a batch (avoids N-1 wasted exports)
+  let svg: string | undefined;
+  if (isLast && tool !== 'exportImage') {
+    try {
+      const exportHandler = tools['exportImage'];
+      if (exportHandler) {
+        const exportResult = await exportHandler({ format: 'svg', noCss: true });
+        if (exportResult.success) {
+          svg = exportResult.data as string;
+        }
+      }
+    } catch { /* svg export is best-effort */ }
+  }
+
+  channel.postMessage({
+    type: 'vg-result',
+    requestId,
+    result,
+    sessionId: SESSION_ID,
+    ...(summary !== undefined ? { summary } : {}),
+    ...(svg !== undefined ? { svg } : {}),
+  });
+
+  // Signal the relay popup that the app is idle
+  channel.postMessage({ type: 'vg-ready', sessionId: SESSION_ID });
+
+  if (result.success) {
+    toast.success(`✓ ${toastLabel(tool, result)}`);
+    notifyCallLog({ tool, success: true, timestamp: Date.now() });
+  } else {
+    toast.error(`✗ ${toastLabel(tool, result)}: ${(result as any).error}`);
+    notifyCallLog({ tool, success: false, timestamp: Date.now() });
+  }
+
+  // Signal internal queue to dispatch next pending call
+  onDone();
+}
+
+const PING_STALE_MS = 15000;
+const PING_CHECK_INTERVAL_MS = 5000;
+
+function announceSession(channel: BroadcastChannel): void {
+  channel.postMessage({
+    type: 'vg-hello',
+    sessionId: SESSION_ID,
+    title: document.title || location.hostname,
+  });
+}
+
+export function startRelayBridge(): () => void {
+  const channel = new BroadcastChannel(CHANNEL_NAME);
+  let lastPingAt = 0;
+  let isConnected = false;
+  let appReady = false;
+  const pendingCalls: Array<{ tool: string; params: unknown; requestId: string; isLast: boolean }> = [];
+
+  // Announce this tab so relay.html can populate its session selector
+  announceSession(channel);
+  const helloInterval = setInterval(() => announceSession(channel), 15_000);
+
+  // Ask the app if it's ready — workspaceContext responds with vg-ready if initialised
+  channel.postMessage({ type: 'vg-ping' });
+
+  const staleCheck = setInterval(() => {
+    const stale = lastPingAt > 0 && (Date.now() - lastPingAt > PING_STALE_MS);
+    if (stale && isConnected) {
+      isConnected = false;
+      notifyConnectionChanged(false);
+    }
+  }, PING_CHECK_INTERVAL_MS);
+
+  function dispatch(tool: string, params: unknown, requestId: string, isLast: boolean): void {
+    appReady = false;
+    handleCall(channel, tool, params, requestId, isLast, () => {
+      appReady = true;
+      if (pendingCalls.length > 0) {
+        const next = pendingCalls.shift()!;
+        console.info('[VG_RELAY] Dispatching next queued call:', next.tool, '(', pendingCalls.length, 'remaining)');
+        dispatch(next.tool, next.params, next.requestId, next.isLast);
+      }
+    }).catch(err => {
+      console.error('[RelayBridge] Unhandled error in handleCall:', err);
+      appReady = true;
+    });
+  }
+
+  channel.onmessage = (event: MessageEvent) => {
+    const msg = event.data;
+    console.info('[VG_RELAY] BC message received:', JSON.stringify(msg));
+
+    if (msg?.type === 'vg-ready') {
+      // Accept vg-ready from workspaceContext (no sessionId) or from ourselves.
+      // Ignore vg-ready from other Ontosphere tabs — their idle signal is not ours.
+      const readySession = (msg as { sessionId?: string }).sessionId;
+      if (readySession && readySession !== SESSION_ID) return;
+
+      if (!appReady) {
+        appReady = true;
+        if (pendingCalls.length > 0) {
+          const next = pendingCalls.shift()!;
+          console.info('[VG_RELAY] App ready — dispatching first queued call:', next.tool);
+          dispatch(next.tool, next.params, next.requestId, next.isLast);
+        }
+      }
+      return;
+    }
+
+    if (msg?.type === 'vg-ping') {
+      lastPingAt = Date.now();
+      if (!isConnected) {
+        isConnected = true;
+        notifyConnectionChanged(true);
+      }
+      // Reply immediately so a freshly-opened relay popup discovers this tab
+      // without waiting up to 15 s for the next scheduled vg-hello.
+      announceSession(channel);
+      return;
+    }
+
+    if (!msg || msg.type !== 'vg-call') { console.warn('[RelayBridge] Ignored (wrong type):', msg?.type); return; }
+    if (typeof msg.tool !== 'string' || typeof msg.requestId !== 'string') { console.warn('[RelayBridge] Ignored (bad shape):', msg); return; }
+
+    // Session-lock: only handle calls explicitly addressed to this tab.
+    // Calls without targetSessionId (e.g. from old relay code) are ignored —
+    // untagged broadcasts must not reach any tab.
+    const targetSessionId = (msg as { targetSessionId?: string }).targetSessionId;
+    if (!targetSessionId || targetSessionId !== SESSION_ID) return;
+
+    const { tool, params, requestId } = msg as { tool: string; params: unknown; requestId: string };
+    const isLast = (msg as { isLast?: boolean }).isLast === true;
+
+    if (!appReady) {
+      console.info('[VG_RELAY] App not ready — queuing call:', tool);
+      pendingCalls.push({ tool, params, requestId, isLast });
+      return;
+    }
+
+    dispatch(tool, params, requestId, isLast);
+  };
+
+  console.info('[VG_RELAY] Listening on BroadcastChannel:', CHANNEL_NAME);
+
+  return () => {
+    clearInterval(staleCheck);
+    clearInterval(helloInterval);
+    channel.close();
+    console.info('[VG_RELAY] Channel closed.');
+  };
+}

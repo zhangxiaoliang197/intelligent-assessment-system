@@ -1,0 +1,111 @@
+@base <https://thhanke.github.io/PyodideSemanticWorkflow/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix p-plan: <http://purl.org/net/p-plan#> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+@prefix spw: <https://thhanke.github.io/PyodideSemanticWorkflow#> .
+@prefix oa: <http://www.w3.org/ns/oa#> .
+@prefix : <http://example.com/> .
+
+################################################################################
+#
+# TEST FIXTURE: Workflow Input Resolution
+#
+# Represents the state after workflowInstantiator.ts creates an activity from
+# the Sum template. The activity has empty placeholder entities (no values)
+# linked via prov:used, plus candidate QuantityValue entities with actual data
+# that the user could select from a dropdown.
+#
+################################################################################
+
+
+################################################################################
+# TEMPLATE VARIABLE DEFINITIONS (from catalog)
+################################################################################
+
+spw:SumTemplate a p-plan:Plan, prov:Plan ;
+    rdfs:label "Sum QUDT Quantities"@en .
+
+spw:SumStep a p-plan:Step ;
+    p-plan:isStepOfPlan spw:SumTemplate ;
+    rdfs:label "Sum operation"@en .
+
+spw:SumInput1 a p-plan:Variable ;
+    p-plan:isVariableOfPlan spw:SumTemplate ;
+    p-plan:isInputVarOf spw:SumStep ;
+    rdfs:label "Input Quantity 1"@en ;
+    spw:expectedType qudt:QuantityValue ;
+    spw:required true .
+
+spw:SumInput2 a p-plan:Variable ;
+    p-plan:isVariableOfPlan spw:SumTemplate ;
+    p-plan:isInputVarOf spw:SumStep ;
+    rdfs:label "Input Quantity 2"@en ;
+    spw:expectedType qudt:QuantityValue ;
+    spw:required true .
+
+spw:SumOutput a p-plan:Variable ;
+    p-plan:isVariableOfPlan spw:SumTemplate ;
+    p-plan:isOutputVarOf spw:SumStep ;
+    rdfs:label "Sum Result"@en ;
+    spw:expectedType qudt:QuantityValue .
+
+
+################################################################################
+# ACTIVITY (run-scoped)
+#
+# Created by workflowInstantiator.ts — links to the template step and plan,
+# and uses the two empty placeholder entities as inputs.
+################################################################################
+
+:SumRun_1719000000000 a prov:Activity, p-plan:Activity ;
+    rdfs:label "Sum QUDT Quantities Run" ;
+    p-plan:correspondsToStep spw:SumStep ;
+    prov:hadPlan spw:SumTemplate ;
+    prov:used :SumInput1_1719000000000, :SumInput2_1719000000000 ;
+    prov:used spw:SumCode, spw:SumRequirements ;
+    prov:wasAssociatedWith spw:PyodideEngine .
+
+
+################################################################################
+# EMPTY INPUT PLACEHOLDERS (run-scoped)
+#
+# These have rdf:type qudt:QuantityValue (promoted from spw:expectedType) and
+# p-plan:correspondsToVariable links, but NO qudt:numericValue or qudt:unit.
+# This is the state that triggers the input resolution flow.
+################################################################################
+
+:SumInput1_1719000000000 a p-plan:Entity, prov:Entity, qudt:QuantityValue ;
+    rdfs:label "Input Quantity 1" ;
+    p-plan:correspondsToVariable spw:SumInput1 .
+
+:SumInput2_1719000000000 a p-plan:Entity, prov:Entity, qudt:QuantityValue ;
+    rdfs:label "Input Quantity 2" ;
+    p-plan:correspondsToVariable spw:SumInput2 .
+
+
+################################################################################
+# CANDIDATE QUANTITY VALUE ENTITIES (data in graph)
+#
+# These have actual values and could be selected by the user in the dropdown.
+# They are NOT linked to the activity via prov:used and do NOT have
+# p-plan:correspondsToVariable.
+################################################################################
+
+:Temperature_Measurement a qudt:QuantityValue, prov:Entity ;
+    rdfs:label "Temperature Measurement" ;
+    qudt:numericValue "42.5"^^xsd:decimal ;
+    qudt:unit unit:DEG_C .
+
+:Pressure_Measurement a qudt:QuantityValue, prov:Entity ;
+    rdfs:label "Pressure Measurement" ;
+    qudt:numericValue "101.3"^^xsd:decimal ;
+    qudt:unit unit:K_PA .
+
+:Length_Measurement a qudt:QuantityValue, prov:Entity ;
+    rdfs:label "Length Measurement" ;
+    qudt:numericValue "5.0"^^xsd:decimal ;
+    qudt:unit unit:MilliM .

@@ -1,0 +1,879 @@
+// src/mcp/tools/graph.ts
+import * as Reactodia from '@reactodia/workspace';
+import type { McpTool, McpResult } from '@/mcp/types';
+import { useShaclResultStore } from '@/stores/shaclResultStore';
+import { rdfManager } from '@/utils/rdfManager';
+import { getWorkspaceRefs, applyViewMode } from '@/mcp/workspaceContext';
+import { mcpManifest, mcpServerDescription } from '@/mcp/manifest';
+import { Parser as SparqlParser, Generator as SparqlGenerator } from 'sparqljs';
+import { resolveOntologyLoadUrl, searchWellKnownOntologies, searchOntologyPacks } from '@/utils/wellKnownOntologies';
+import { useOntologyStore } from '@/stores/ontologyStore';
+import { LOAD_RDF_PROPAGATION_DELAY_MS } from '@/utils/canvasConstants';
+import { BUILTIN_PREFIXES } from '@/mcp/tools/iriUtils';
+import { getProvenanceRecorder, type ProvQuad } from '@/mcp/provenance';
+
+const LOADRDF_PROV_CAPTURE_CAP = 2000;
+
+/** Classify an object value as iri / bnode / literal for faithful revert. */
+function classifyProvObjectType(value: string): ProvQuad['ot'] {
+  if (value.startsWith('_:')) return 'bnode';
+  if (/^[a-zA-Z][a-zA-Z0-9+\-.]*:/.test(value)) return 'iri';
+  return 'literal';
+}
+
+/** Fix PREFIX declarations where the IRI is bare (no angle brackets): PREFIX rdf: http://... → PREFIX rdf: <http://...> */
+function normalizePrefixIris(sparql: string): string {
+  return sparql.replace(
+    /(\bPREFIX\s+[^:\s]+:\s+)(https?:\/\/[^\s<>]*|urn:[^\s<>]*)/gi,
+    '$1<$2>',
+  );
+}
+
+/** Prepend PREFIX declarations from the namespace map for any prefix not already declared in the query. */
+function injectPrefixes(sparql: string): string {
+  const normalized = normalizePrefixIris(sparql);
+  const dynamicNamespaces = rdfManager.getNamespaces();
+  const declared = new Set<string>();
+  for (const m of normalized.matchAll(/(?:PREFIX|BASE)\s+(\S+)\s*:/gi)) declared.add(m[1].toLowerCase());
+  // Merge built-in prefixes (e.g. ex:, owl:) with dynamic registry, dynamic takes precedence.
+  const builtinEntries = Object.entries(BUILTIN_PREFIXES).map(([k, v]) => ({
+    prefix: k.replace(/:$/, ''),
+    uri: v,
+  }));
+  const merged = [...builtinEntries, ...dynamicNamespaces];
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const ns of merged) {
+    if (!ns.prefix || !ns.uri) continue;
+    const key = ns.prefix.toLowerCase();
+    if (seen.has(key) || declared.has(key)) continue;
+    seen.add(key);
+    lines.push(`PREFIX ${ns.prefix}: <${ns.uri}>`);
+  }
+  return lines.length ? `${lines.join('\n')}\n${normalized}` : normalized;
+}
+
+const RDFS_LABEL = 'http://www.w3.org/2000/01/rdf-schema#label';
+
+/** Shorten an IRI using registered prefixes. Blank-node skolem IRIs → "_:bnode". */
+export function abbreviateIri(iri: string): string {
+  if (typeof iri !== 'string') return iri;
+  if (iri.startsWith('urn:vg:bnode:')) return '_:bnode';
+  const dynamicNamespaces = rdfManager.getNamespaces();
+  const builtinEntries = Object.entries(BUILTIN_PREFIXES).map(([k, v]) => ({
+    prefix: k.replace(/:$/, ''),
+    uri: v,
+  }));
+  // longer namespaces first so more specific prefixes win
+  const all = [...builtinEntries, ...dynamicNamespaces].sort((a, b) => b.uri.length - a.uri.length);
+  for (const { prefix, uri } of all) {
+    if (uri && iri.startsWith(uri)) return `${prefix}:${iri.slice(uri.length)}`;
+  }
+  return iri;
+}
+
+/** Abbreviate all string values in a plain object (one level deep). */
+function abbreviateRow(row: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(row)) out[k] = abbreviateIri(v);
+  return out;
+}
+function getElementLabel(data: Reactodia.ElementModel | undefined): string {
+  return (data?.properties?.[RDFS_LABEL]?.[0] as { value?: string } | undefined)?.value ?? '';
+}
+
+function getCanvasIris(): string[] {
+  try {
+    const { ctx } = getWorkspaceRefs();
+    return ctx.model.elements
+      .filter(e => e instanceof Reactodia.EntityElement)
+      .map(e => (e as Reactodia.EntityElement).iri);
+  } catch { return []; }
+}
+
+// ---------------------------------------------------------------------------
+// loadRdf
+// ---------------------------------------------------------------------------
+
+/**
+ * Check the inline Turtle for common model-output mistakes and return a
+ * descriptive error string, or null if the snippet looks plausible.
+ * Does NOT attempt to parse Turtle — only catches obvious patterns before N3.js runs.
+ */
+function validateTurtleSnippet(turtle: string): string | null {
+  // Detect @prefix declarations whose IRI is missing (e.g. "@prefix owl: .")
+  for (const m of turtle.matchAll(/@prefix\s+(\w*)\s*:\s*\./g)) {
+    const pfx = m[1];
+    const builtin = BUILTIN_PREFIXES[pfx + ':'];
+    const hint = builtin
+      ? ` Either use '@prefix ${pfx}: <${builtin}> .' or omit @prefix lines entirely — ${pfx}:, owl:, rdf:, rdfs:, ex:, xsd: are auto-injected.`
+      : ` IRI is required: '@prefix ${pfx}: <https://...> .'`;
+    return `Invalid @prefix declaration '@prefix ${pfx}: .' — the namespace IRI is missing.${hint}`;
+  }
+  // Detect bare full IRIs used as subjects (http://... without angle brackets)
+  for (const m of turtle.matchAll(/^(https?:\/\/\S+)/mg)) {
+    const bare = m[1];
+    const exMatch = bare.match(/^https?:\/\/example\.org\/(.+)/);
+    const altHint = exMatch ? ` — or use prefix notation 'ex:${exMatch[1]}'` : '';
+    return `Bare IRI '${bare}' is not valid Turtle. Full IRIs must be wrapped in angle brackets: '<${bare}>'${altHint}.`;
+  }
+  return null;
+}
+
+/**
+ * Fix common qwen3 Turtle mistakes before parsing:
+ * 1. Remove malformed @prefix lines for pre-loaded prefixes (`< http://...>` is repaired by 2, a missing <iri> is dropped);
+ *    well-formed user declarations are kept, even when they rebind a built-in prefix name
+ * 2. Collapse whitespace inside angle brackets: `< http://... >` → `<http://...>`
+ */
+function sanitizeTurtle(turtle: string): string {
+  const preloaded = new Set(Object.keys(BUILTIN_PREFIXES).map(k => k.replace(/:$/, '')));
+  // Per declaration (several may share a line): a well-formed one is the user's choice and is kept, even
+  // when it rebinds a built-in prefix name (e.g. `ex:` for their own namespace). Only an exact copy of
+  // the built-in mapping is dropped, because the built-in is injected anyway.
+  const withoutDuplicates = turtle.replace(
+    /@prefix\s+(\w*)\s*:\s*<\s*([^>]*?)\s*>\s*\./gi,
+    (decl, name: string, iri: string) =>
+      preloaded.has(name) && BUILTIN_PREFIXES[`${name}:`] === iri ? '' : decl,
+  );
+  // A declaration of a built-in prefix without any <iri> is malformed: drop the line, the built-in is injected.
+  const lines = withoutDuplicates.split('\n').filter(line => {
+    const m = line.match(/^\s*@prefix\s+(\w*)\s*:\s*(?![\s<])/i);
+    return !(m && preloaded.has(m[1]));
+  });
+  return lines.join('\n').replace(/<\s+(https?:\/\/[^>]*?)\s*>/g, '<$1>');
+}
+
+/** Prepend BUILTIN_PREFIXES for any prefix not already declared in the turtle. */
+function injectTurtlePrefixes(turtle: string): string {
+  const declared = new Set<string>();
+  for (const m of turtle.matchAll(/@prefix\s+(\w*)\s*:/g)) declared.add(m[1]);
+  const missing = Object.entries(BUILTIN_PREFIXES)
+    .filter(([k]) => !declared.has(k.replace(/:$/, '')))
+    .map(([k, v]) => `@prefix ${k.replace(/:$/, '')}: <${v}> .`);
+  return missing.length > 0 ? missing.join('\n') + '\n' + turtle : turtle;
+}
+
+const loadRdf: McpTool = {
+  name: 'loadRdf',
+  description: 'Load RDF data into the graph from a URL or inline Turtle text. Common prefixes (owl:, rdf:, rdfs:, ex:, xsd:) are auto-injected when you do not declare them — you do not need to include @prefix declarations. A well-formed @prefix of your own, even for one of these names (e.g. ex:), is kept and wins.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'URL of an RDF document to fetch and load.' },
+      turtle: { type: 'string', description: 'Inline Turtle text to load. @prefix declarations are optional — owl:, rdf:, rdfs:, ex:, xsd: are available automatically unless you declare them yourself; your own well-formed @prefix declaration (even for ex:) is kept.' },
+    },
+    oneOf: [{ required: ['url'] }, { required: ['turtle'] }],
+  },
+  async handler(params): Promise<McpResult> {
+    try {
+      const p = params as { url?: string; turtle?: string };
+      if (p.url) {
+        await rdfManager.loadRDFFromUrl(p.url);
+        return { success: true, data: { loaded: p.url } };
+      }
+      if (p.turtle) {
+        const cleaned = sanitizeTurtle(p.turtle);
+        const snippetError = validateTurtleSnippet(cleaned);
+        if (snippetError) return { success: false, error: snippetError };
+        const canvasBefore = getCanvasIris();
+        const normalizedTurtle = injectTurtlePrefixes(cleaned);
+        await rdfManager.loadRDFIntoGraph(normalizedTurtle, 'urn:vg:data', 'text/turtle');
+        // Wait for the RDF worker change event to propagate to dataProvider.allSubjects
+        await new Promise(r => setTimeout(r, LOAD_RDF_PROPAGATION_DELAY_MS));
+        const { dataProvider } = getWorkspaceRefs();
+        const allItems = await dataProvider.lookupAll();
+        const canvasBeforeSet = new Set(canvasBefore);
+        const newItems = allItems.filter(item => !canvasBeforeSet.has(item.element.id));
+        const newEntities = newItems
+          .slice(0, 100)
+          .map(item => ({ iri: item.element.id, label: getElementLabel(item.element) || item.element.id }));
+
+        // Provenance: capture the data-graph quads of the newly-introduced
+        // subjects so the load is auditable and revertible at batch granularity.
+        // Bounded by LOADRDF_PROV_CAPTURE_CAP — huge loads are recorded but
+        // capped (the revert is then a best-effort partial, noted honestly).
+        try {
+          const provAdded: ProvQuad[] = [];
+          let truncated = false;
+          for (const item of newItems) {
+            if (provAdded.length >= LOADRDF_PROV_CAPTURE_CAP) { truncated = true; break; }
+            const page = await rdfManager.fetchQuadsPage({
+              graphName: 'urn:vg:data',
+              filter: { subject: item.element.id },
+              limit: 0,
+              serialize: true,
+            });
+            const quads = (page?.items ?? []) as Array<{
+              subject: { value: string } | string;
+              predicate: { value: string } | string;
+              object: { value: string; termType?: string } | string;
+            }>;
+            for (const q of quads) {
+              if (provAdded.length >= LOADRDF_PROV_CAPTURE_CAP) { truncated = true; break; }
+              const s = typeof q.subject === 'string' ? q.subject : q.subject.value;
+              const pr = typeof q.predicate === 'string' ? q.predicate : q.predicate.value;
+              const oVal = typeof q.object === 'string' ? q.object : q.object.value;
+              const termType = typeof q.object === 'string' ? undefined : q.object.termType;
+              const ot: ProvQuad['ot'] =
+                termType === 'Literal' ? 'literal'
+                : termType === 'BlankNode' ? 'bnode'
+                : termType === 'NamedNode' ? 'iri'
+                : classifyProvObjectType(oVal);
+              provAdded.push({ s, p: pr, o: oVal, ot });
+            }
+          }
+          if (provAdded.length > 0) {
+            await getProvenanceRecorder().recordEdit({
+              tool: 'loadRdf',
+              added: provAdded,
+              note: `inline turtle; ${newItems.length} new subject(s)${truncated ? `; capture truncated at ${LOADRDF_PROV_CAPTURE_CAP} triples` : ''}`,
+            });
+          }
+        } catch (err) {
+          console.error('[loadRdf] provenance capture failed', err);
+        }
+
+        return {
+          success: true,
+          data: {
+            loaded: 'inline turtle',
+            canvasNodesBefore: canvasBefore,
+            newEntitiesAvailable: newEntities,
+          },
+        };
+      }
+      return { success: false, error: 'Provide either url or turtle' };
+    } catch (e) {
+      return { success: false, error: String(e) };
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// loadOntology
+// ---------------------------------------------------------------------------
+const loadOntology: McpTool = {
+  name: 'loadOntology',
+  description:
+    'Discover or load well-known ontologies. ' +
+    'Pass url to load by prefix name (e.g. "ical", "mo", "bot", "gr") or by namespace/file URL. ' +
+    'Pass query to search by use-case keyword (e.g. "calendar", "music", "building", "e-commerce"). ' +
+    'Pass neither to list all ~55 registered ontologies. ' +
+    'OWL/RDFS/RDF/XSD are always pre-loaded.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      url: {
+        type: 'string',
+        description: 'Prefix name, namespace IRI, or direct ontology URL to load.',
+      },
+      query: {
+        type: 'string',
+        description: 'Keyword or use-case phrase to search the registry (e.g. "calendar", "IoT", "spatial").',
+      },
+    },
+  },
+  async handler(params): Promise<McpResult> {
+    const { url, query } = (params ?? {}) as { url?: string; query?: string };
+
+    // Search mode
+    if (!url?.trim()) {
+      const ontologies = searchWellKnownOntologies(query ?? '').map(e => ({
+        prefix: e.prefix,
+        name: e.name,
+        description: (e as any).description ?? '',
+        namespace: e.url,
+        loadUrl: resolveOntologyLoadUrl(e.prefix),
+      }));
+      return {
+        success: true,
+        data: { query: query || '(all)', count: ontologies.length, ontologies },
+      };
+    }
+
+    // Load mode — delegate to the store action so the ontology widget updates.
+    try {
+      const result = await useOntologyStore.getState().loadOntology(url);
+      if (!result.success) {
+        const suggestions = searchWellKnownOntologies(url)
+          .map(p => ({ prefix: p.prefix, description: (p as any).description ?? p.name }));
+        return {
+          success: false,
+          error: (result as any).error ?? 'Unknown error',
+          hint: 'Pass query instead of url to search the registry.',
+          ...(suggestions.length ? { suggestions } : {}),
+        } as McpResult;
+      }
+      return { success: true, data: { loaded: result.url, ...(result.canonicalUrl ? { canonicalUrl: result.canonicalUrl } : {}) } };
+    } catch (e) {
+      const suggestions = searchWellKnownOntologies(url)
+        .map(p => ({ prefix: p.prefix, description: (p as any).description ?? p.name }));
+      return {
+        success: false,
+        error: String(e),
+        hint: 'Pass query instead of url to search the registry.',
+        ...(suggestions.length ? { suggestions } : {}),
+      } as McpResult;
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// queryGraph
+// ---------------------------------------------------------------------------
+const queryGraph: McpTool = {
+  name: 'queryGraph',
+  description: 'Run a SPARQL query or update against asserted data (urn:vg:data). Namespace prefixes are injected automatically. Unscoped UPDATE patterns (without an explicit GRAPH clause) are automatically scoped to urn:vg:data. Supported: SELECT (return bindings), CONSTRUCT (return triples), ASK (return boolean), INSERT DATA, DELETE DATA, DELETE WHERE, DELETE...INSERT...WHERE. Inferred triples are in GRAPH urn:vg:inferred.',
+  inputSchema: {
+    type: 'object',
+    required: ['sparql'],
+    properties: {
+      sparql: { type: 'string', description: 'SPARQL query or update string.' },
+      limit: { type: 'integer', default: 200, description: 'Max rows/triples to return (default 200).' },
+    },
+  },
+  async handler(params): Promise<McpResult> {
+    try {
+      const { sparql: rawSparql, limit: rawLimit = 200 } = params as { sparql: string; limit?: number };
+      if (!rawSparql) return { success: false, error: 'sparql is required' };
+
+      const MAX_LIMIT = 1000;
+      const effectiveLimit = Math.min(Math.max(1, rawLimit), MAX_LIMIT);
+
+      const sparqlWithPrefixes = injectPrefixes(rawSparql);
+
+      // Validate parse before sending to worker (gives better error messages)
+      let parsed: any;
+      try {
+        parsed = new SparqlParser().parse(sparqlWithPrefixes);
+      } catch (e) {
+        return { success: false, error: `SPARQL parse error: ${String(e)}` };
+      }
+      // Inject LIMIT into the query planner if the query has none — avoids streaming
+      // the full result set through Comunica before the worker breaks the stream.
+      // ASK queries don't need a limit injected.
+      let sparql = sparqlWithPrefixes;
+      if (parsed.type === 'query' && parsed.queryType !== 'ASK' && parsed.limit == null) {
+        parsed.limit = effectiveLimit;
+        try { sparql = new SparqlGenerator().stringify(parsed); } catch (_) { /* keep original */ }
+      }
+
+      // Scope update operations to urn:vg:data when no GRAPH clause is present.
+      // Comunica follows the SPARQL spec strictly: bare DELETE/INSERT targets the
+      // default graph (empty in our N3 store), not the named graph where data lives.
+      if (parsed.type === 'update') {
+        const DATA_GRAPH = 'urn:vg:data';
+        const wrapBgps = (patterns: any[]) => patterns.map((p: any) => {
+          if (p.type === 'graph') return p; // already scoped — respect explicit GRAPH
+          if (p.type === 'bgp') return { type: 'graph', name: { termType: 'NamedNode', value: DATA_GRAPH }, patterns: [p] };
+          return p; // FILTER, OPTIONAL, UNION, VALUES, etc. — leave as-is
+        });
+        parsed.updates = (parsed.updates as any[]).map((u: any) => {
+          const out = { ...u };
+          if (Array.isArray(u.delete) && u.delete.length > 0) out.delete = wrapBgps(u.delete);
+          if (Array.isArray(u.insert) && u.insert.length > 0) out.insert = wrapBgps(u.insert);
+          if (Array.isArray(u.where)  && u.where.length  > 0) out.where  = wrapBgps(u.where);
+          return out;
+        });
+        try { sparql = new SparqlGenerator().stringify(parsed); } catch (_) { /* keep original */ }
+      }
+
+      const workerResult = await rdfManager.sparqlQuery(sparql, { limit: effectiveLimit });
+
+      if (workerResult.type === 'select') {
+        const rows: Array<Record<string, string>> = (workerResult.rows ?? []).map(abbreviateRow);
+        return { success: true, data: { rows, total: rows.length, truncated: rows.length >= effectiveLimit } };
+      }
+
+      if (workerResult.type === 'construct') {
+        const rawTriples: Array<{ s: string; p: string; o: string }> = workerResult.triples ?? [];
+        const triples = rawTriples.map(t => ({
+          s: abbreviateIri(t.s), p: abbreviateIri(t.p), o: abbreviateIri(t.o),
+        }));
+        return {
+          success: true,
+          data: {
+            triples,
+            total: triples.length,
+            truncated: triples.length >= effectiveLimit,
+            ...(triples.length === 0
+              ? { notice: 'CONSTRUCT matched 0 triples. Check that WHERE patterns match asserted data.' }
+              : {}),
+          },
+        };
+      }
+
+      if (workerResult.type === 'update') {
+        return { success: true, data: { updated: true } };
+      }
+
+      if (workerResult.type === 'ask') {
+        return { success: true, data: { type: 'ask', boolean: (workerResult as any).boolean } };
+      }
+
+      return { success: false, error: `Unexpected result type from worker: ${(workerResult as any)?.type}` };
+    } catch (e) {
+      return { success: false, error: String(e) };
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// exportGraph
+// ---------------------------------------------------------------------------
+const exportGraph: McpTool = {
+  name: 'exportGraph',
+  description:
+    'Export the current RDF graph in the requested serialisation format. ' +
+    'turtle | jsonld | rdfxml flatten the store into a single default graph (named-graph ' +
+    'structure is lost). nquads | trig are DATASET-FAITHFUL: they collect quads from every ' +
+    'urn:vg:* graph (data, inferred, shapes, ontologies, workflows) and preserve each graph ' +
+    'IRI, so the multi-graph partition round-trips on re-import.',
+  inputSchema: {
+    type: 'object',
+    required: ['format'],
+    properties: {
+      format: {
+        type: 'string',
+        enum: ['turtle', 'jsonld', 'rdfxml', 'nquads', 'trig'],
+        description:
+          'Serialisation format: turtle | jsonld | rdfxml (single-graph) | ' +
+          'nquads | trig (dataset-faithful, preserve named graphs)',
+      },
+    },
+  },
+  async handler(params): Promise<McpResult> {
+    try {
+      const { format } = params as { format: string };
+      let content: string;
+      if (format === 'turtle') {
+        content = await rdfManager.exportToTurtle();
+      } else if (format === 'jsonld') {
+        content = await rdfManager.exportToJsonLD();
+      } else if (format === 'rdfxml') {
+        content = await rdfManager.exportToRdfXml();
+      } else if (format === 'nquads') {
+        content = await rdfManager.exportToNQuads();
+      } else if (format === 'trig') {
+        content = await rdfManager.exportToTriG();
+      } else {
+        return { success: false, error: `Unknown format: ${format}` };
+      }
+      return { success: true, data: { content } };
+    } catch (e) {
+      return { success: false, error: String(e) };
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// exportImage  (SVG default — vector text, far fewer tokens than PNG base64)
+// ---------------------------------------------------------------------------
+const exportImage: McpTool = {
+  name: 'exportImage',
+  description: 'Export the current diagram canvas as SVG (default) or PNG. Use noCss: true to strip embedded CSS for smaller token-efficient output — recommended for AI relay use. Use focusIri to crop the export to a specific node and all its neighbours currently on canvas.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      format: {
+        type: 'string',
+        enum: ['svg', 'png'],
+        default: 'svg',
+        description: 'Image format: svg (default) | png',
+      },
+      noCss: {
+        type: 'boolean',
+        default: false,
+        description: 'Strip embedded CSS from SVG output to reduce token count. Nodes lose visual styling but topology remains readable.',
+      },
+      focusIri: {
+        type: 'string',
+        description: 'IRI of a node to crop the export around. The exported viewBox covers that node plus all its direct neighbours currently on canvas, plus padding.',
+      },
+      focusPadding: {
+        type: 'number',
+        default: 80,
+        description: 'Padding in canvas units around the focused neighbourhood (default 80).',
+      },
+    },
+  },
+  async handler(params): Promise<McpResult> {
+    try {
+      const { format = 'svg', noCss = false, focusIri, focusPadding = 80 } =
+        (params ?? {}) as { format?: string; noCss?: boolean; focusIri?: string; focusPadding?: number };
+      let canvas: Reactodia.CanvasApi | undefined;
+      let ctx: Reactodia.WorkspaceContext | undefined;
+      try {
+        ({ ctx } = getWorkspaceRefs());
+        canvas = ctx.view.findAnyCanvas();
+      } catch {
+        return { success: false, error: 'Canvas not available' };
+      }
+      if (!canvas) return { success: false, error: 'Canvas not available' };
+
+      let contentBox: { x: number; y: number; width: number; height: number } | undefined;
+      if (focusIri && ctx) {
+        // Collect the focal element + all elements it is connected to on canvas.
+        const elementById = new Map<string, Reactodia.Element>();
+        for (const el of ctx.model.elements) {
+          elementById.set(el.id, el);
+        }
+        const focalEl = ctx.model.elements.find(
+          e => e instanceof Reactodia.EntityElement && (e as Reactodia.EntityElement).iri === focusIri
+        ) as Reactodia.EntityElement | undefined;
+
+        if (focalEl) {
+          const neighbourhood = new Set<Reactodia.Element>([focalEl]);
+          for (const lk of ctx.model.links) {
+            const srcId = lk.sourceId as unknown as string;
+            const tgtId = lk.targetId as unknown as string;
+            if (srcId === focalEl.id) {
+              const tgt = elementById.get(tgtId);
+              if (tgt) neighbourhood.add(tgt);
+            } else if (tgtId === focalEl.id) {
+              const src = elementById.get(srcId);
+              if (src) neighbourhood.add(src);
+            }
+          }
+
+          // Union bounding box of the neighbourhood.
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          for (const el of neighbourhood) {
+            const size = canvas.renderingState.getElementSize(el) ?? { width: 160, height: 80 };
+            minX = Math.min(minX, el.position.x);
+            minY = Math.min(minY, el.position.y);
+            maxX = Math.max(maxX, el.position.x + size.width);
+            maxY = Math.max(maxY, el.position.y + size.height);
+          }
+          contentBox = {
+            x: minX - focusPadding,
+            y: minY - focusPadding,
+            width: (maxX - minX) + focusPadding * 2,
+            height: (maxY - minY) + focusPadding * 2,
+          };
+        }
+      }
+
+      if (format === 'svg') {
+        let content = await canvas.exportSvg({ addXmlHeader: true, contentBox });
+        if (noCss) {
+          content = content.replace(/<style[\s\S]*?<\/style>/gi, '');
+        }
+        return { success: true, data: { content } };
+      }
+      if (format === 'png') {
+        const content = await canvas.exportRaster({ mimeType: 'image/png', contentBox });
+        return { success: true, data: { content } };
+      }
+      return { success: false, error: `Unknown format: ${format}` };
+    } catch (e) {
+      return { success: false, error: String(e) };
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// setViewMode
+// ---------------------------------------------------------------------------
+const setViewMode: McpTool = {
+  name: 'setViewMode',
+  description: 'Switch the canvas between ABox view (individuals/instances) and TBox view (classes/properties). Call before exportImage when you want to capture a specific layer.',
+  inputSchema: {
+    type: 'object',
+    required: ['mode'],
+    properties: {
+      mode: {
+        type: 'string',
+        enum: ['abox', 'tbox'],
+        description: 'abox = instance view, tbox = ontology/class view',
+      },
+    },
+  },
+  async handler(params): Promise<McpResult> {
+    try {
+      const { mode } = (params ?? {}) as { mode?: string };
+      if (mode !== 'abox' && mode !== 'tbox') {
+        return { success: false, error: 'mode must be "abox" or "tbox"' };
+      }
+      applyViewMode(mode);
+      return { success: true, data: { mode } };
+    } catch (e) {
+      return { success: false, error: String(e) };
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// getGraphState
+// ---------------------------------------------------------------------------
+const DATA_GRAPHS = new Set(['urn:vg:data', 'urn:vg:inferred']);
+
+const getGraphState: McpTool = {
+  name: 'getGraphState',
+  description:
+    'Return a summary of the current graph state scoped to the requested graphs. ' +
+    'Default (graphs omitted): data + inferred — canvas node/link counts. ' +
+    'Include "urn:vg:shapes" to also get SHACL validation status.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      graphs: {
+        type: 'array',
+        items: { type: 'string', enum: ['urn:vg:data', 'urn:vg:inferred', 'urn:vg:shapes'] },
+        default: ['urn:vg:data', 'urn:vg:inferred'],
+        description: 'Graphs to summarise. Defaults to [urn:vg:data, urn:vg:inferred]. Add urn:vg:shapes to include SHACL validation state.',
+      },
+    },
+  },
+  async handler(params): Promise<McpResult> {
+    try {
+      const { graphs = ['urn:vg:data', 'urn:vg:inferred'] } = (params ?? {}) as { graphs?: string[] };
+      const graphSet = new Set(graphs);
+
+      const result: Record<string, unknown> = { graphs };
+
+      if (graphs.some(g => DATA_GRAPHS.has(g))) {
+        const { ctx } = getWorkspaceRefs();
+        const model = ctx.model;
+        const nodes = model.elements
+          .filter(e => e instanceof Reactodia.EntityElement)
+          .map(e => {
+            const entity = e as Reactodia.EntityElement;
+            const data = entity.data;
+            return {
+              iri: entity.iri,
+              label: getElementLabel(data),
+              types: data?.types ?? [],
+            };
+          });
+        result.nodeCount = nodes.length;
+        result.linkCount = model.links.length;
+        result.nodes = nodes;
+      }
+
+      if (graphSet.has('urn:vg:shapes')) {
+        const shaclState = useShaclResultStore.getState();
+        const shaclErrorCount = shaclState.errors.length;
+        const shaclInfoCount = shaclState.warnings.filter(w => w.severity === 'info').length;
+        const shaclWarningCount = shaclState.warnings.length - shaclInfoCount;
+        result.shacl = {
+          shapesLoaded: shaclState.shaclShapesLoaded,
+          conforms: shaclErrorCount === 0 && shaclWarningCount === 0 && shaclInfoCount === 0,
+          errorCount: shaclErrorCount,
+          warningCount: shaclWarningCount,
+          infoCount: shaclInfoCount,
+        };
+      }
+
+      return { success: true, data: result };
+    } catch (e) {
+      return { success: false, error: String(e) };
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// help
+// ---------------------------------------------------------------------------
+const help: McpTool = {
+  name: 'help',
+  description: 'List all available tools or get details about a specific tool.',
+  inputSchema: { type: 'object', properties: { tool: { type: 'string', description: 'Tool name to get help for' } } },
+  async handler(params): Promise<McpResult> {
+    const { tool } = (params ?? {}) as { tool?: string };
+    if (tool) {
+      const entry = mcpManifest.find(e => e.name === tool);
+      if (!entry) return { success: false, error: `Unknown tool: ${tool}. Call help() with no arguments to list all tools.` };
+      return { success: true, data: { content: JSON.stringify({ name: entry.name, description: entry.description, inputSchema: entry.inputSchema }) } };
+    }
+    const instructions = [
+      '⚠️  RELAY INTERCEPTION — READ FIRST',
+      'This relay ONLY intercepts JSON-RPC 2.0 wrapped in single backticks (see format below).',
+      'ALL other formats are SILENTLY IGNORED — no response, no error, nothing:',
+      '  • OpenAI function_call / tool_calls',
+      '  • Claude tool_use blocks',
+      '  • Gemini functionCall',
+      '  • {"tool":"x","input":{}} style',
+      '  • {"jsonrpc":"2.0","method":"toolName",...}  ← method must be "tools/call", not a tool name',
+      '  • <tool_call> XML tags',
+      '  • Plain prose describing a tool call',
+      'If you do not use the exact format below, your call will never be executed.',
+      '',
+      'RELAY FORMAT',
+      'Single backtick per JSON-RPC object. Up to 5 calls per message — they run in order.',
+      '`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"TOOLNAME","arguments":ARGS}}`',
+      '',
+      'Example — layout + fit + export in one message:',
+      '`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"runLayout","arguments":{}}}`',
+      '`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fitCanvas","arguments":{}}}`',
+      '`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"exportImage","arguments":{"format":"svg"}}}`',
+      '',
+      'CRITICAL RULES',
+      '1. Single ` not triple ```. Increment id per call. Never output a call you don\'t intend to run.',
+      '   ⚠️  EXAMPLE CALLS ARE EXECUTED: any backtick-wrapped JSON-RPC in your message is run immediately.',
+      '   In explanatory text to the user, describe actions in plain prose — never show a sample call.',
+      '2. Batch up to 5 non-dependent calls (mutations, layout, export). Send discovery calls (getNodes, queryGraph) alone and wait for the result before continuing.',
+      '3. addTriple (IRI-object edges): both nodes must exist first — call addNode for each endpoint before or in the same batch as addTriple.',
+      '4. addTriple (literal object): annotation property — visible on canvas after expandNode.',
+      '5. 5+ individuals: loadRdf(turtle=...) not repeated addNode — one round-trip.',
+      '6. Pre-loaded prefixes: foaf rdf rdfs owl xsd skos dc ex — use short form (foaf:Person, owl:Class).',
+      '7. Tool failed? READ THE ERROR and retry immediately with the corrected call. Never skip a failed call — keep retrying until success or you have exhausted the fix options, then report what failed and why.',
+      '8. GUIDED SESSION: if the user is asking one question at a time, execute ONLY what was asked, then STOP. Do not execute additional tools based on relay results. Wait for the next user question.',
+      '   Skip suggestOntologiesForTask and loadOntology unless explicitly requested — guided sessions provide all context through questions.',
+      '',
+      'COMMON MISTAKES',
+      'WRONG: addTriple({subjectIri:" :b0",...})  ← space-colon is NOT a blank node; this always fails',
+      'WRONG: addTriple({subjectIri:":b0",...})   ← colon-only prefix is NOT a blank node',
+      'RIGHT: addTriple({subjectIri:"_:b0",...})  ← blank nodes MUST start with underscore-colon _:',
+      'BLANK NODE RULE: blank-node labels are ALWAYS "_:label" (underscore then colon). ' +
+      'Use _:b0, _:b1, _:b2 … for OWL restrictions. One distinct label per restriction.',
+      '',
+      'WRONG: addLink({...})  ← this tool does not exist; use addTriple for all RDF edges',
+      'RIGHT: addTriple({subjectIri:"ex:A", predicateIri:"rdfs:subClassOf", objectIri:"ex:B"})',
+      '',
+      'WRONG: addTriple({s:"ex:A", p:"rdfs:subClassOf", o:"ex:B"})',
+      'RIGHT: addTriple({subjectIri:"ex:A", predicateIri:"rdfs:subClassOf", objectIri:"ex:B"})',
+      '',
+      'WRONG: addTriple for a brand-new entity  ← use addNode to create, then addTriple to link',
+      'RIGHT: addNode({iri:"ex:MyClass", typeIri:"owl:Class", label:"MyClass"}) then addTriple({subjectIri:"ex:MyClass",...})',
+      '',
+      'WRONG: addNode({iri:"ex:salami1", typeIri:"owl:NamedIndividual"}) then addTriple to add second type',
+      'RIGHT: addNode({iri:"ex:salami1", typeIris:["owl:NamedIndividual","ex:SalamiTopping"], label:"salami1"})',
+      '  ← use typeIris (array) whenever an individual needs multiple rdf:type values at once',
+      '',
+      'WRONG: loadOntology({url:"calendar"})  ← searches by prefix name, not use-case',
+      'RIGHT: loadOntology({query:"calendar"}) then loadOntology({url:"ical"}) to load',
+      '',
+      'WRONG: queryGraph({query:"SELECT * WHERE {?s ?p ?o}"})',
+      'RIGHT: queryGraph({sparql:"SELECT * WHERE {?s ?p ?o}"})  ← param is "sparql", not "query"',
+      '',
+      'WRONG: setViewMode({viewMode:"abox"})',
+      'RIGHT: setViewMode({mode:"abox"})  ← param is "mode", not "viewMode"',
+      '',
+      'WRONG: setLayout({...}), layout({...}), hierarchical({...})  ← these tools do not exist',
+      'RIGHT: runLayout({})  ← the only layout tool; call it after adding nodes',
+      '',
+      'WRONG (silently ignored): {"tool":"addNode","input":{"iri":"ex:MyClass"}}',
+      'WRONG (silently ignored): any native tool/function-call syntax your model normally uses',
+      'WRONG (silently ignored): {"jsonrpc":"2.0","method":"addNode","params":{"iri":"ex:MyClass"},"id":1}  ← method must be "tools/call", NOT the tool name',
+      'RIGHT: `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"addNode","arguments":{"iri":"ex:MyClass","typeIri":"owl:Class"}}}`',
+      'RIGHT (multi-type): `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"addNode","arguments":{"iri":"ex:salami1","typeIris":["owl:NamedIndividual","ex:SalamiTopping"],"label":"salami1"}}}`',
+      '',
+      'SPARQL: prefixes registered via loadOntology/setNamespace are auto-injected — no PREFIX declarations needed for them.',
+      'Only declare a PREFIX if it is not in your namespace registry.',
+      '',
+      'CANVAS — PROACTIVE RULES (do these automatically, without being asked)',
+      '• addNode auto-navigates to the new node — no separate focusNode call needed.',
+      '• After adding any nodes: call runLayout({}) — without it nodes pile at (0,0).',
+      '• runLayout is view-specific — only arranges the currently active view.',
+      '  After setViewMode, call runLayout({}) again to arrange the new view.',
+      '• Batch pattern: addNode(s) + addTriple(s) in one message, then runLayout({}) in the next.',
+      '• Annotation literals: call expandNode({iri:"..."}) after addTriple to reveal them on the node card.',
+      '',
+      'WORKFLOW (minimal working session)',
+      '1. suggestOntologiesForTask({task:"..."}) → pick prefixes',
+      '2. loadOntology({url:"<prefix>"}) × N  [batch these]',
+      '3. addNode × N + addTriple × N  [batch builds; discovery alone]',
+      '4. runLayout({}) + fitCanvas() + exportImage({format:"svg"})  [batch these]',
+      '   Use setViewMode({mode:"abox"}) only when explicitly working with individuals.',
+      '',
+      'READING RESULTS',
+      'Relay injects [Ontosphere — N tools ✓] with one backtick-wrapped JSON-RPC response per call.',
+      'result = success; error = failure (check error.message).',
+      'Long ops (layout, reasoning) may time out — a [late result for <tool>] follow-up arrives automatically. Do NOT retry.',
+      '',
+      mcpServerDescription,
+      '',
+      'TOOLS',
+      ...mcpManifest.map(e => `${e.name} — ${e.description}`),
+      '',
+      'Call help({tool:"<name>"}) for the full schema of any tool.',
+    ].join('\n');
+    return { success: true, data: { content: instructions } };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// canonicalizeGraph
+// ---------------------------------------------------------------------------
+const canonicalizeGraph: McpTool = {
+  name: 'canonicalizeGraph',
+  description:
+    'Produce the W3C RDFC-1.0 canonical N-Quads form + a content hash of the graph — ' +
+    'for reproducible snapshots, deterministic diffing, and standards-compliant dataset identity.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      graph: {
+        type: 'string',
+        description:
+          'Restrict canonicalization to a single named graph (e.g. "urn:vg:data", "urn:vg:ontologies"). Omit to canonicalize the whole dataset.',
+      },
+      includeInferred: {
+        type: 'boolean',
+        default: false,
+        description:
+          'When no specific graph is given, fold the urn:vg:inferred graph into the canonical form (default false: asserted triples only).',
+      },
+    },
+  },
+  async handler(params): Promise<McpResult> {
+    try {
+      const { graph, includeInferred = false } =
+        (params ?? {}) as { graph?: string; includeInferred?: boolean };
+      const { canonical, hash, quadCount } = await rdfManager.canonicalize({
+        graph,
+        includeInferred,
+      });
+      return { success: true, data: { canonical, hash, quadCount } };
+    } catch (e) {
+      return { success: false, error: String(e) };
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// suggestOntologiesForTask
+// ---------------------------------------------------------------------------
+const suggestOntologiesForTask: McpTool = {
+  name: 'suggestOntologiesForTask',
+  description:
+    'Suggest compatible sets of ontologies for a plain-language task description. ' +
+    'Pass task as a phrase ("people I know", "mind map", "track sensor readings"). ' +
+    'Returns matching packs — each with prefix list and rationale — so you can load them via loadOntology. ' +
+    'Pass empty string or omit task to browse all 10 available packs.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      task: {
+        type: 'string',
+        description: 'Plain-language description of the knowledge graph task.',
+      },
+    },
+  },
+  async handler(params): Promise<McpResult> {
+    const { task = '' } = (params ?? {}) as { task?: string };
+    const packs = searchOntologyPacks(task);
+    return {
+      success: true,
+      data: { task: task || '(browse all)', count: packs.length, packs },
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Exports
+// ---------------------------------------------------------------------------
+export const graphTools: McpTool[] = [
+  loadRdf,
+  loadOntology,
+  suggestOntologiesForTask,
+  queryGraph,
+  exportGraph,
+  canonicalizeGraph,
+  exportImage,
+  setViewMode,
+  getGraphState,
+  help,
+];

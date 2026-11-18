@@ -1,0 +1,175 @@
+/**
+ * @fileoverview AI Relay sidebar section
+ * Shows relay connection status, setup instructions, draggable bookmarklet, and call log.
+ */
+
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { Zap, ExternalLink, Copy, Check } from 'lucide-react';
+import { Button } from '../ui/button';
+
+function fallbackCopy(text: string) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+}
+
+const STARTER_PROMPT =
+`我正在使用动态本体工作台的浏览器工具接口。工作台通过 W3C WebMCP 标准（document.modelContext）提供图谱操作能力，并兼容尚未原生支持该标准的浏览器。
+
+连接方式：本页书签工具监听回复中由反引号包围的 JSON-RPC 2.0 工具调用，转发到本体工作台，执行结果自动回传到当前对话。所有结果来自当前真实图谱。
+
+调用格式：每行一个调用，使用反引号包围：
+\`{"jsonrpc":"2.0","id":<N>,"method":"tools/call","params":{"name":"<tool>","arguments":{...}}}\`
+
+请先调用 help 获取工具清单，再根据我的要求操作本体数据：
+\`{"jsonrpc":"2.0","id":0,"method":"tools/call","params":{"name":"help","arguments":{}}}\``;
+import type { RelayCallLogEntry } from '../../hooks/useRelayBridge';
+
+interface RelaySectionProps {
+  buildBookmarkletHref: () => string;
+  connected: boolean;
+  callLog: RelayCallLogEntry[];
+}
+
+function formatRelativeTime(timestamp: number): string {
+  const diffMs = Date.now() - timestamp;
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return `${diffSec} 秒前`;
+  const diffMin = Math.floor(diffSec / 60);
+  return `${diffMin} 分钟前`;
+}
+
+export const RelaySection: React.FC<RelaySectionProps> = ({ buildBookmarkletHref, connected, callLog }) => {
+  const bookmarkletRef = useRef<HTMLAnchorElement>(null);
+  const [copied, setCopied] = useState(false);
+  const [annotationGuardS, setAnnotationGuardS] = useState(() => {
+    const stored = localStorage.getItem('relay-annotation-guard-s');
+    return stored !== null ? Number(stored) : 0;
+  });
+
+  const handleGuardChange = useCallback((s: number) => {
+    setAnnotationGuardS(s);
+    localStorage.setItem('relay-annotation-guard-s', String(s));
+  }, []);
+
+  const copyPrompt = useCallback(() => {
+    const done = () => { setCopied(true); setTimeout(() => setCopied(false), 2000); };
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(STARTER_PROMPT).then(done).catch(() => {
+        fallbackCopy(STARTER_PROMPT);
+        done();
+      });
+    } else {
+      fallbackCopy(STARTER_PROMPT);
+      done();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (bookmarkletRef.current) {
+      bookmarkletRef.current.setAttribute('href', buildBookmarkletHref());
+    }
+  }, [buildBookmarkletHref]);
+
+  return (
+    <div className="px-3 py-2 space-y-3">
+      {/* Description */}
+      <p className="text-xs text-muted-foreground leading-relaxed">
+        Connect ChatGPT, Claude, or Gemini to this graph — no server or extension needed. Implements <a href="https://webmachinelearning.github.io/webmcp/" target="_blank" rel="noopener noreferrer" className="underline">WebMCP</a> (<code>document.modelContext</code>). The AI outputs backtick-wrapped JSON-RPC 2.0 tool calls; the relay executes them here and injects results back into the chat automatically.
+      </p>
+
+      {/* Setup steps */}
+      <ol className="text-xs text-muted-foreground space-y-1 list-none">
+        <li className="flex gap-2"><span className="text-foreground font-medium">1.</span> Drag the button below to your bookmark bar</li>
+        <li className="flex gap-2"><span className="text-foreground font-medium">2.</span> Go to your AI chat tab, click the bookmark</li>
+        <li className="flex gap-2 items-start">
+          <span className="text-foreground font-medium shrink-0">3.</span>
+          <span>
+            Paste the starter prompt into your AI chat — the AI calls <code className="text-xs">help()</code> to get full instructions, then tool calls run here automatically
+          </span>
+          <button
+            onClick={copyPrompt}
+            title="Copy starter prompt"
+            className="shrink-0 ml-auto text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
+        </li>
+      </ol>
+
+      {/* Injection delay */}
+      <div className="space-y-1">
+        <div className="flex justify-between text-xs text-muted-foreground">
+          <span>Injection delay</span>
+          <span>{annotationGuardS === 0 ? 'none' : `${annotationGuardS}s`}</span>
+        </div>
+        <input
+          type="range" min={0} max={10} step={1} value={annotationGuardS}
+          onChange={(e) => handleGuardChange(Number(e.target.value))}
+          className="w-full accent-primary"
+          title="Delay before injecting results (0 = immediate; set 2s for Open WebUI)"
+        />
+        <p className="text-xs text-muted-foreground/60">Running relays update automatically via ping</p>
+      </div>
+
+      {/* Draggable bookmarklet */}
+      <Button variant="outline" size="sm" asChild className="w-full cursor-grab active:cursor-grabbing">
+        <a
+          ref={bookmarkletRef}
+          draggable
+          onClick={(e) => e.preventDefault()}
+          aria-label="Drag to bookmark bar to install Ontosphere Relay"
+        >
+          <Zap className="h-3.5 w-3.5 mr-1.5" />
+          Ontosphere Relay - {window.location.host}
+        </a>
+      </Button>
+
+      {/* Docs link */}
+      <button
+        onClick={() => window.dispatchEvent(new CustomEvent('assessment-open-manual', { detail: '智能体与工作流' }))}
+        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <ExternalLink className="h-3 w-3" />
+        How it works
+      </button>
+
+      {/* Divider + status */}
+      <div className="border-t border-border/40 pt-2 space-y-1.5">
+        <div className="flex items-center gap-2 text-xs font-medium">
+          <span
+            className={`h-2 w-2 rounded-full flex-shrink-0 ${connected ? 'bg-green-500' : 'bg-muted-foreground/40'}`}
+            aria-label={connected ? 'Relay active' : 'Relay waiting'}
+          />
+          <span className={connected ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}>
+            {connected ? 'relay active' : 'waiting'}
+          </span>
+        </div>
+
+        {/* Call log */}
+        {callLog.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">No calls yet</p>
+        ) : (
+          <ul className="space-y-0.5">
+            {callLog.map((entry: RelayCallLogEntry) => (
+              <li key={`${entry.timestamp}-${entry.tool}`} className="flex items-center justify-between text-xs">
+                <span className="font-mono text-foreground">{entry.tool}</span>
+                <span className="flex items-center gap-1.5 text-muted-foreground">
+                  <span className={entry.success ? 'text-green-600 dark:text-green-400' : 'text-destructive'}>
+                    {entry.success ? '✓' : '✗'}
+                  </span>
+                  <span>{formatRelativeTime(entry.timestamp)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+};

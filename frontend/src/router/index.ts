@@ -5,7 +5,8 @@ import IndicatorAnalysis from '@/pages/IndicatorAnalysis.vue'
 import SolutionEvaluation from '@/pages/SolutionEvaluation.vue'
 import KnowledgeBase from '@/pages/KnowledgeBase.vue'
 import OntologyModel from '@/pages/OntologyModel.vue'
-import OntologyDetail from '@/pages/OntologyDetail.vue'
+import OntologyEntry from '@/pages/OntologyEntry.vue'
+import OntologyWorkbench from '@/pages/OntologyWorkbench.vue'
 import OntologyBuild from '@/pages/OntologyBuild.vue'
 import OntologyManualBuild from '@/pages/OntologyManualBuild.vue'
 import OntologyMetaModelEdit from '@/pages/OntologyMetaModelEdit.vue'
@@ -42,6 +43,11 @@ const routes: Array<RouteRecordRaw> = [
   },
   {
     path: '/ontology',
+    name: 'OntologyEntry',
+    component: OntologyEntry
+  },
+  {
+    path: '/ontology/library',
     name: 'OntologyModel',
     component: OntologyModel
   },
@@ -62,8 +68,8 @@ const routes: Array<RouteRecordRaw> = [
   {
     path: '/ontology/:id',
     name: 'OntologyDetail',
-    component: OntologyDetail,
-    meta: { title: '本体详情' }
+    component: OntologyWorkbench,
+    meta: { title: '动态本体工作台' }
   },
   {
     // 手动构建向导：?template={tplId} 触发本体模型预填骨架

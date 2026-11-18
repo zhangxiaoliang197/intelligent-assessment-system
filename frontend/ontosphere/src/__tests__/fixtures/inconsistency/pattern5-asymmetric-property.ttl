@@ -1,0 +1,11 @@
+@prefix : <http://example.org/reasoner-test#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+# Pattern 5 (OWL 2 DL): asymmetric property violation
+# :alice parentOf :bob AND :bob parentOf :alice — both directions of an AsymmetricProperty → inconsistent
+
+:parentOf a owl:ObjectProperty , owl:AsymmetricProperty .
+:alice a owl:NamedIndividual ; :parentOf :bob .
+:bob a owl:NamedIndividual ; :parentOf :alice .

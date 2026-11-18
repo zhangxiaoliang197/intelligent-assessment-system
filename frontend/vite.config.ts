@@ -3,7 +3,8 @@ import vue from '@vitejs/plugin-vue'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
-import { resolve } from 'path'
+import { resolve, relative, isAbsolute, extname } from 'path'
+import { createReadStream, statSync } from 'node:fs'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, resolve(__dirname, '..'), '')
@@ -20,6 +21,28 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [
+      {
+        name: 'serve-built-ontosphere',
+        configureServer(server) {
+          // The vendored source folder has the same name. Always serve its production
+          // build here, before Vite can interpret the upstream index as a Vue entry.
+          const root = resolve(__dirname, 'public/ontosphere')
+          const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.ttl': 'text/turtle', '.woff2': 'font/woff2' }
+          server.middlewares.use('/ontosphere', (req, res) => {
+            try {
+              const pathname = decodeURIComponent(new URL(req.url || '/', 'http://localhost').pathname)
+              const target = resolve(root, `.${pathname.endsWith('/') ? `${pathname}index.html` : pathname}`)
+              const within = relative(root, target)
+              if (within.startsWith('..') || isAbsolute(within) || !statSync(target).isFile()) throw new Error('missing asset')
+              res.setHeader('Content-Type', mime[extname(target)] || 'application/octet-stream')
+              res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
+              res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless')
+              res.setHeader('Cache-Control', 'no-cache')
+              createReadStream(target).pipe(res)
+            } catch { res.statusCode = 404; res.end('Ontosphere asset missing. Run npm run build:ontology.') }
+          })
+        }
+      },
       vue(),
       AutoImport({
         resolvers: [ElementPlusResolver()],
@@ -37,6 +60,10 @@ export default defineConfig(({ mode }) => {
       }
     },
     server: {
+      headers: {
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'credentialless'
+      },
       port: 10086,
       // 开发代理会在 Node 服务端注入管理凭据，因此强制只监听回环地址。
       // ADMIN_API_TOKEN 不会进入 import.meta.env，也不会被打进浏览器 bundle。
@@ -122,6 +149,7 @@ export default defineConfig(({ mode }) => {
       }
       }
     },
+    preview: { headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'credentialless' } },
     build: {
       outDir: 'dist',
       assetsDir: 'assets',

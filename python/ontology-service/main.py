@@ -85,6 +85,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from workbench import router as workbench_router
+app.include_router(workbench_router)
+from ontosphere_editor import router as ontosphere_editor_router
+from examples.wargame import update_demo_metadata
+app.include_router(ontosphere_editor_router)
+
 # ---------- 默认本体模型 ----------
 # 创建本体时若未指定类型，使用以下默认类型集
 # 本体模型定义粗粒度类型分类（实体类型/实体/属性/事件），实体类型在此基础上做细粒度类型定义
@@ -2690,6 +2696,7 @@ def _count_relations(ontology_id: str) -> int:
 def _ontology_summary(ont: OntologyModel) -> Dict[str, Any]:
     """返回本体摘要（含实时计数）。"""
     d = ont.dict()
+    update_demo_metadata(d)
     # v3：concepts_count 字段名保留（前端兼容），实际为实体类型数
     d['concepts_count'] = _count_concepts(ont.id)
     d['entity_type_relations_count'] = _count_entity_type_relations(ont.id)

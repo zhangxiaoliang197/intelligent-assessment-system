@@ -1,0 +1,315 @@
+// src/mcp/tools/diagnosticsBrief.ts
+// Pure function: turns structured diagnostics into a ranked, plain-language,
+// agent-actionable repair brief.
+
+import { abbreviateIri, type NamespaceMap } from '../../utils/iriAbbreviation';
+
+export interface DiagnosticsData {
+  isConsistent: boolean | null;
+  /**
+   * Inconsistency justifications (MIPS). Each axiom carries the optional source
+   * `graph` it physically resides in (urn:vg:data OR urn:vg:ontologies for
+   * imported schema axioms) and, for literal objects, the object term's
+   * `objectTermType`/`objectDatatype`/`objectLanguage`. These flow end-to-end
+   * so the apply path targets the correct graph and reconstructs the EXACT
+   * typed/lang literal (C1 + H2). All extra fields are OPTIONAL for back-compat.
+   */
+  justifications: {
+    subject: string;
+    predicate: string;
+    object: string;
+    objectTermType?: string;
+    objectDatatype?: string;
+    objectLanguage?: string;
+    graph?: string;
+  }[][];
+  unsatisfiableClasses: string[];
+  profile: {
+    owl2dl: boolean;
+    violations: { axiom: string; reason: string }[];
+    el?: { valid: boolean; violations: { construct: string; axiom: string; reason: string }[] };
+    ql?: { valid: boolean; violations: { construct: string; axiom: string; reason: string }[] };
+    rl?: { valid: boolean; violations: { construct: string; axiom: string; reason: string }[] };
+    mostRestrictive?: 'EL' | 'QL' | 'RL' | 'DL' | 'Full';
+  };
+  shaclViolations: {
+    focusNode: string | null;
+    path: string | null;
+    severity: string | null;
+    message: string | null;
+    sourceShape: string | null;
+    constraint: string | null;
+  }[];
+}
+
+// IRI naming: a prefixed name from the namespace map, or the full IRI; never a bare local name
+// ---------------------------------------------------------------------------
+
+/** The namespace map of the brief being built (buildRepairBrief is synchronous, so one slot is safe). */
+let briefNamespaces: NamespaceMap = {};
+
+function nameOf(iri: string): string {
+  return abbreviateIri(iri, briefNamespaces);
+}
+
+// ---------------------------------------------------------------------------
+// Section builders
+// ---------------------------------------------------------------------------
+
+function buildInconsistencySection(justifications: DiagnosticsData['justifications']): string {
+  const lines: string[] = ['1. INCONSISTENCY (most severe)'];
+
+  if (justifications.length > 1) {
+    lines.push(
+      `   The ontology has ${justifications.length} independent contradictions; each must be resolved.`,
+    );
+  }
+
+  justifications.forEach((axiomSet, idx) => {
+    lines.push(`   Justification ${idx + 1}:`);
+    for (const ax of axiomSet) {
+      lines.push(
+        `     - ${nameOf(ax.subject)} ${nameOf(ax.predicate)} ${nameOf(ax.object)}`,
+      );
+    }
+
+    lines.push(
+      '   To resolve, remove or revise at least one axiom in this set.',
+    );
+  });
+
+  return lines.join('\n');
+}
+
+function buildProfileSection(
+  profile: DiagnosticsData['profile'],
+  num: number,
+): string {
+  const lines: string[] = [`${num}. OWL 2 DL PROFILE VIOLATIONS`];
+  for (const v of profile.violations) {
+    lines.push(`   - Axiom: ${nameOf(v.axiom)}`);
+    lines.push(`     Reason: ${v.reason}`);
+  }
+  if (profile.mostRestrictive) {
+    lines.push(
+      `   Tightest fitting OWL 2 profile: ${profile.mostRestrictive}` +
+        ` (EL=${profile.el?.valid ? 'in' : 'out'},` +
+        ` QL=${profile.ql?.valid ? 'in' : 'out'},` +
+        ` RL=${profile.rl?.valid ? 'in' : 'out'}).`,
+    );
+  }
+  return lines.join('\n');
+}
+
+function buildShaclSection(
+  violations: DiagnosticsData['shaclViolations'],
+  num: number,
+): string {
+  // Group by severity
+  const bySeverity = new Map<string, DiagnosticsData['shaclViolations']>();
+  for (const v of violations) {
+    const sev = v.severity ?? 'Unknown';
+    if (!bySeverity.has(sev)) bySeverity.set(sev, []);
+    bySeverity.get(sev)!.push(v);
+  }
+
+  const lines: string[] = [`${num}. SHACL VIOLATIONS`];
+  for (const [severity, group] of bySeverity.entries()) {
+    lines.push(`   [${severity}]`);
+    for (const v of group) {
+      const focus = v.focusNode ? nameOf(v.focusNode) : '(unknown)';
+      const path = v.path ? nameOf(v.path) : '(no path)';
+      const msg = v.message ?? '(no message)';
+      lines.push(`   - Focus: ${focus} | Path: ${path}`);
+      lines.push(`     Message: ${msg}`);
+    }
+  }
+  lines.push(
+    '   Add or correct the data to satisfy the shape.',
+  );
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Suggested-repairs section (R1)
+// ---------------------------------------------------------------------------
+
+/** Minimal shape of a repair suggestion this brief needs (kept local to avoid a cycle). */
+export interface BriefRepair {
+  id: string;
+  issue: string;
+  action: {
+    tool: string;
+    args: {
+      subjectIri?: string;
+      predicateIri?: string;
+      objectIri?: string;
+      // C1 + H2: source graph + object term metadata threaded from the MIPS so
+      // the apply path hits the right graph and reconstructs the exact literal.
+      graph?: string;
+      objectTermType?: string;
+      objectDatatype?: string;
+      objectLanguage?: string;
+    };
+  };
+  rationale: string;
+  verifiedConsistent?: boolean;
+  verifiedSet?: boolean;
+  needsValue?: boolean;
+  needsManualReview?: boolean;
+  /** 'weaken' for axiom-weakening alternatives; absent/'delete' for deletions. */
+  kind?: string;
+  /** For weakenings: the deletion repair id this is an alternative to. */
+  alternativeTo?: string;
+  /** For weakenings: "A ⊑ D" — the original, stronger axiom. */
+  weakerThan?: string;
+  /** For weakenings: true when the weakening is symbolically verified. */
+  weakeningVerified?: boolean;
+}
+
+/** Extra verification context surfaced alongside the ranked repair list. */
+export interface RepairBriefOptions {
+  /**
+   * Result of removing the FULL hitting set at once. true ⇒ applying ALL the
+   * suggested inconsistency repairs together restores consistency; false ⇒ it
+   * does not (manual review needed); null/undefined ⇒ not verified.
+   */
+  repairSetVerifiedConsistent?: boolean | null;
+  /** Warning when some repair axioms matched no triple during verification. */
+  repairSetMatchWarning?: string;
+  /** prefix to namespace IRI: IRIs in the brief are prefixed names from it, else full IRIs. */
+  namespaces?: NamespaceMap;
+}
+
+function buildSuggestedRepairsSection(
+  repairs: BriefRepair[],
+  options: RepairBriefOptions = {},
+): string {
+  const lines: string[] = ['SUGGESTED REPAIRS (ranked):'];
+
+  const hasMultiple =
+    repairs.filter((r) => r.issue === 'inconsistency' && !r.needsManualReview).length > 1;
+
+  const hasWeakenings = repairs.some((r) => r.kind === 'weaken');
+
+  repairs.forEach((r) => {
+    if (r.needsManualReview) {
+      lines.push(`   ${r.id}. [manual review] — ${r.rationale}`);
+      return;
+    }
+    // Axiom-weakening alternatives (Troquard et al. 2018; Li & Lambrix 2024):
+    // a LESS-destructive replacement of the culprit `A ⊑ D` with a weaker
+    // `A ⊑ D′` — preserves more knowledge than deletion. Rendered distinctly.
+    if (r.kind === 'weaken') {
+      const wv =
+        r.weakeningVerified === true
+          ? ' [verified: removing the original and adding the weaker axiom leaves the ontology consistent]'
+          : '';
+      const alt = r.alternativeTo ? ` (alternative to deletion ${r.alternativeTo})` : '';
+      lines.push(`   ${r.id}. [weaken]${alt} — ${r.rationale}${wv}`);
+      return;
+    }
+    // A per-axiom `false` does NOT mean the repair is wrong: with multiple
+    // independent contradictions no single removal restores consistency on its
+    // own. Render it as "not alone" and point to the full set.
+    const verify =
+      r.verifiedConsistent === true
+        ? ' [verified: removing this alone restores consistency]'
+        : r.verifiedConsistent === false
+          ? hasMultiple
+            ? ' [verified: does NOT restore consistency ALONE — apply the full repair set below]'
+            : ' [verified: does NOT alone restore consistency]'
+          : '';
+    const value = r.needsValue ? ' [you must supply a value]' : '';
+    const kindTag = hasWeakenings ? ' [delete]' : '';
+    lines.push(`   ${r.id}. ${r.action.tool}${kindTag} — ${r.rationale}${verify}${value}`);
+  });
+
+  if (hasWeakenings) {
+    lines.push(
+      '   ⇒ NOTE: [weaken] repairs replace a culprit A ⊑ D with a logically weaker ' +
+        'A ⊑ D′ (D′ ⊒ D) — they PRESERVE MORE KNOWLEDGE than the [delete] alternative. ' +
+        'Prefer the most-specific weakening that restores consistency; fall back to ' +
+        'deletion only when no weakening suffices (Troquard et al. 2018; Li & Lambrix 2024).',
+    );
+  }
+
+  // Full-set verdict (M2): the union of the suggested repairs is the actual fix.
+  if (options.repairSetVerifiedConsistent === true) {
+    lines.push(
+      '   ⇒ Applying ALL of the above inconsistency repairs together is verified to restore consistency.',
+    );
+  } else if (options.repairSetVerifiedConsistent === false) {
+    lines.push(
+      '   ⇒ NOTE: applying all of the above together was NOT verified to restore consistency — manual review may be required.',
+    );
+  }
+  if (options.repairSetMatchWarning) {
+    lines.push(`   ⇒ WARNING: ${options.repairSetMatchWarning}`);
+  }
+
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Main export
+// ---------------------------------------------------------------------------
+
+export function buildRepairBrief(
+  d: DiagnosticsData,
+  repairs: BriefRepair[] = [],
+  options: RepairBriefOptions = {},
+): string {
+  briefNamespaces = options.namespaces ?? {};
+  const hasInconsistency = d.isConsistent === false;
+  const hasUnsatisfiable = d.unsatisfiableClasses.length > 0;
+  const hasProfileViolations = d.profile?.owl2dl === false && (d.profile?.violations.length ?? 0) > 0;
+  const hasShaclViolations = d.shaclViolations.length > 0;
+  const hasProfileFlag = d.profile?.owl2dl === false;
+
+  const anyIssue =
+    hasInconsistency ||
+    hasUnsatisfiable ||
+    hasProfileFlag ||
+    hasShaclViolations;
+
+  if (!anyIssue) {
+    return 'No issues detected.';
+  }
+
+  const sections: string[] = [];
+  let num = 1;
+
+  if (hasInconsistency) {
+    sections.push(buildInconsistencySection(d.justifications));
+    num++;
+  }
+
+  if (hasUnsatisfiable) {
+    const lines: string[] = [`${num}. UNSATISFIABLE CLASSES`];
+    for (const cls of d.unsatisfiableClasses) {
+      lines.push(
+        `   - ${nameOf(cls)}: This class can never have instances — relax its definition` +
+          ' (e.g. remove a disjointness or an over-constraining restriction).',
+      );
+    }
+    sections.push(lines.join('\n'));
+    num++;
+  }
+
+  if (hasProfileFlag && d.profile) {
+    sections.push(buildProfileSection(d.profile, num));
+    num++;
+  }
+
+  if (hasShaclViolations) {
+    sections.push(buildShaclSection(d.shaclViolations, num));
+    num++;
+  }
+
+  if (repairs.length > 0) {
+    sections.push(buildSuggestedRepairsSection(repairs, options));
+  }
+
+  return sections.join('\n\n');
+}

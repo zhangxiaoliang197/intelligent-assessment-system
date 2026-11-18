@@ -22,6 +22,7 @@ class RelationType(BaseModel):
     """本体模型关系类型。"""
     name: str
     description: str = ""
+    iri: str = ""
 
 
 class PropertySchema(BaseModel):
@@ -58,6 +59,9 @@ class Property(BaseModel):
     指标型属性支持历史版本（history）和数据字段绑定（bindings）。
     """
     id: str                              # prop_xxxx
+    iri: str = ""
+    rdf_datatype: str = ""
+    rdf_language: str = ""
     entity_id: str = ""                  # 所属实体/关系ID（关系属性时存关系ID）
     name: str                            # 属性名，如"资产负债率"
     value: Any = None                    # 当前值
@@ -109,6 +113,7 @@ class EntityType(BaseModel):
         return data
 
     id: str                              # et_xxxx
+    iri: str = ""
     ontology_id: str = ""                # 所属本体ID
     name: str                            # 类型名，如"企业""上市企业""财务指标"
     description: str = ""                # 类型释义
@@ -170,6 +175,7 @@ class Entity(BaseModel):
     属性按所属 EntityType 的并集 property_schema（含继承）填充。
     """
     id: str
+    iri: str = ""
     ontology_id: str
     name: str
     instance_of: str = ""                # 实体类型ID（EntityType.id），替代原 type 字段
@@ -213,6 +219,13 @@ class OntologyModel(BaseModel):
     name: str
     description: str = ""
     version: str = "1.0.0"
+    namespaces: Dict[str, str] = Field(default_factory=dict)
+    rdf_extensions: str = ""
+    rdf_extension_nodes: List[str] = Field(default_factory=list)
+    rdf_document: str = ""
+    rdf_dataset: str = ""
+    rdf_projection_hash: str = ""
+    canvas_layouts: Dict[str, Any] = Field(default_factory=dict)
     # v3：entity_types 为完整的 EntityType 列表（带层级 + property_schema）
     entity_types: List[EntityType] = Field(default_factory=list)
     relation_types: List[RelationType] = Field(default_factory=list)

@@ -10,3 +10,8 @@ python-docx>=1.0.0
 owlready2>=0.46
 # Neo4j 图数据库驱动（Phase 3 引入）：Neo4jRepository 实现
 neo4j>=5.14
+
+# 动态本体工作台：RDF 互操作、OWL-RL 推理、SHACL 约束校验
+rdflib>=7.1,<8
+owlrl>=7.1,<8
+pyshacl>=0.30,<1

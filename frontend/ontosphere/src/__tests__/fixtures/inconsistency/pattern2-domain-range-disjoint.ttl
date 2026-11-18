@@ -1,0 +1,12 @@
+@prefix : <http://example.org/reasoner-test#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+# Pattern 2 (OWL 2 EL): domain/range inferred disjoint types
+# :widget hasPart :widget → inferred :Machine (domain) and :Component (range), which are disjoint → inconsistent
+
+:Machine a owl:Class .
+:Component a owl:Class ; owl:disjointWith :Machine .
+:hasPart a owl:ObjectProperty ; rdfs:domain :Machine ; rdfs:range :Component .
+:widget a owl:NamedIndividual ; :hasPart :widget .
