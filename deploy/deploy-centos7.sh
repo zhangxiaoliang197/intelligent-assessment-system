@@ -152,6 +152,7 @@ services:
     environment:
       - ADMIN_API_TOKEN=$ADMIN_API_TOKEN
       - ADMIN_UI_PASSWORD=$ADMIN_UI_PASSWORD
+      - TZ=Asia/Shanghai
       # 内网地图服务上游，供 nginx 的 /geowebcache/、/tiles/ 反向代理使用
       - MAP_TILE_UPSTREAM=$MAP_TILE_UPSTREAM
     extra_hosts:
@@ -172,6 +173,7 @@ services:
     restart: always
     environment:
       - QDRANT_URL=http://assessment-qdrant:6333
+      - TZ=Asia/Shanghai
       - LOG_ENV=\${LOG_ENV:-prod}
       - LOG_LEVEL=\${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -200,6 +202,7 @@ services:
       - ONTOLOGY_SERVICE_URL=http://assessment-ontology:10256
       - INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN
       - EVALUATION_SKILLS_DIR=/app/config/skills
+      - TZ=Asia/Shanghai
       - LOG_ENV=\${LOG_ENV:-prod}
       - LOG_LEVEL=\${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -231,6 +234,7 @@ services:
       - EVALUATION_API_URL=http://assessment-qa:10253
       - ONTOLOGY_SERVICE_URL=http://assessment-ontology:10256
       - INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN
+      - TZ=Asia/Shanghai
       - LOG_ENV=\${LOG_ENV:-prod}
       - LOG_LEVEL=\${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -254,6 +258,7 @@ services:
       - "10255:10255"
     restart: always
     environment:
+      - TZ=Asia/Shanghai
       - LOG_ENV=\${LOG_ENV:-prod}
       - LOG_LEVEL=\${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -279,6 +284,8 @@ services:
     environment:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
       - INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN
+      - LLM_SEND_THINKING=\${LLM_SEND_THINKING:-true}
+      - TZ=Asia/Shanghai
       - LOG_ENV=\${LOG_ENV:-prod}
       - LOG_LEVEL=\${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -316,6 +323,8 @@ services:
       - IPAGE_LLM_ALLOWED_HOSTS=$IPAGE_LLM_ALLOWED_HOSTS
       - INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN
       - LLM_MAX_TOKENS=24000
+      - LLM_SEND_THINKING=\${LLM_SEND_THINKING:-true}
+      - TZ=Asia/Shanghai
       - LOG_ENV=prod
       - LOG_LEVEL=$LOG_LEVEL
       - LOG_DIR=/app/logs
@@ -357,6 +366,7 @@ services:
       - INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN
       - ADMIN_API_TOKEN=$ADMIN_API_TOKEN
       - IPAGE_SERVICE_URL=http://assessment-ipage:10257
+      - TZ=Asia/Shanghai
       - SPRING_PROFILES_ACTIVE=\${LOG_ENV:-prod}
       - LOG_PATH=/app/logs
       - LOG_LEVEL=\${LOG_LEVEL:-INFO}
@@ -413,6 +423,16 @@ rm -rf "$SKILLS_DIR"
 mv "$SKILLS_TMP_DIR" "$SKILLS_DIR"
 test -s "$SKILLS_DIR/README.md"
 test "$(find "$SKILLS_DIR" -mindepth 2 -maxdepth 2 -name SKILL.md -type f | wc -l)" -eq 30
+
+# ─── 可选：导入初始化 SQL（默认关闭，避免覆盖已有配置）───
+if [[ "${INIT_MYSQL:-false}" == "true" ]]; then
+    if [[ -f "$PROJECT_DIR/init-mysql.sql" ]] && command -v mysql >/dev/null 2>&1; then
+        log_info "导入 init-mysql.sql ..."
+        mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" < "$PROJECT_DIR/init-mysql.sql"
+    else
+        log_warn "未找到 init-mysql.sql 或 mysql 客户端，跳过初始化 SQL；可稍后手工执行"
+    fi
+fi
 
 log_info "docker-compose.yml 已部署"
 

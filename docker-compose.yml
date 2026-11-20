@@ -42,6 +42,7 @@ services:
       # ADMIN_API_TOKEN 不会写入浏览器包，只在同一容器内注入到管理 API 反向代理请求。
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be configured}
       - ADMIN_UI_PASSWORD=${ADMIN_UI_PASSWORD:?ADMIN_UI_PASSWORD must be configured}
+      - TZ=Asia/Shanghai
       # 内网地图服务上游（协议+主机+端口，不含结尾斜杠），供 nginx 的
       # /geowebcache/、/tiles/ 反向代理使用。内网部署必须覆盖为实际地址。
       - MAP_TILE_UPSTREAM=${MAP_TILE_UPSTREAM:-http://host.docker.internal:9090}
@@ -66,6 +67,7 @@ services:
       - assessment-net
     environment:
       - QDRANT_URL=http://assessment-qdrant:6333
+      - TZ=Asia/Shanghai
       - LOG_ENV=${LOG_ENV:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -95,6 +97,7 @@ services:
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be configured}
       - EVALUATION_SKILLS_DIR=/app/config/skills
       - EVALUATION_SKILL_MD_OVERRIDE_DIR=/app/data/skill-markdown-overrides
+      - TZ=Asia/Shanghai
       - LOG_ENV=${LOG_ENV:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -125,6 +128,7 @@ services:
       - EVALUATION_API_URL=http://assessment-qa:10253
       - ONTOLOGY_SERVICE_URL=http://assessment-ontology:10256
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be configured}
+      - TZ=Asia/Shanghai
       - LOG_ENV=${LOG_ENV:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -148,6 +152,7 @@ services:
     networks:
       - assessment-net
     environment:
+      - TZ=Asia/Shanghai
       - LOG_ENV=${LOG_ENV:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -173,6 +178,8 @@ services:
     environment:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be configured}
+      - LLM_SEND_THINKING=${LLM_SEND_THINKING:-true}
+      - TZ=Asia/Shanghai
       - LOG_ENV=${LOG_ENV:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -210,6 +217,8 @@ services:
       - IPAGE_LLM_ALLOWED_HOSTS=${IPAGE_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be configured}
       - LLM_MAX_TOKENS=24000
+      - LLM_SEND_THINKING=${LLM_SEND_THINKING:-true}
+      - TZ=Asia/Shanghai
       - LOG_ENV=${LOG_ENV:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_DIR=/app/logs
@@ -257,6 +266,7 @@ services:
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be configured}
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be configured}
       - IPAGE_SERVICE_URL=http://assessment-ipage:10257
+      - TZ=Asia/Shanghai
       - LOG_PATH=/app/logs
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     # Linux 下让 host.docker.internal 解析到宿主机网关

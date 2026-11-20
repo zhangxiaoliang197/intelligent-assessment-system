@@ -122,7 +122,10 @@ def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000,
         "max_tokens": max_tokens,
         "stream": False,
     }
-    if thinking_type in ("enabled", "disabled"):
+    # 内网 OpenAI 兼容服务可能不接受 thinking 字段，可用 LLM_SEND_THINKING=false 关闭
+    send_thinking = os.getenv("LLM_SEND_THINKING", "true").strip().lower() not in (
+        "0", "false", "no", "off")
+    if send_thinking and thinking_type in ("enabled", "disabled"):
         body_dict["thinking"] = {"type": thinking_type}
     body = json.dumps(body_dict).encode("utf-8")
 
@@ -268,7 +271,10 @@ def call_llm_with_tools(messages: list, tools: list, tool_choice=None,
     }
     if tool_choice is not None:
         body_dict["tool_choice"] = tool_choice
-    if thinking_type in ("enabled", "disabled"):
+    # 内网 OpenAI 兼容服务可能不接受 thinking 字段，可用 LLM_SEND_THINKING=false 关闭
+    send_thinking = os.getenv("LLM_SEND_THINKING", "true").strip().lower() not in (
+        "0", "false", "no", "off")
+    if send_thinking and thinking_type in ("enabled", "disabled"):
         body_dict["thinking"] = {"type": thinking_type}
 
     url = f"{api_url}/chat/completions"

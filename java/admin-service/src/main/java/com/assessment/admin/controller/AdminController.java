@@ -1904,6 +1904,12 @@ public class AdminController {
         }
 
         List<Map<String, Object>> schemas = new ArrayList<>();
+        // 数据集所属数据源的数据库类型：Python 侧据此为每个数据集选择 SQL 方言，
+        // 避免多数据源混合时全部回退到元数据库的 MySQL 方言。
+        Map<String, String> databaseTypes = new java.util.HashMap<>();
+        for (DatabaseConfig cfg : dbConfigRepo.findAll()) {
+            databaseTypes.put(cfg.getId(), Objects.toString(cfg.getType(), ""));
+        }
         for (Dataset ds : datasets) {
             if (ds.getTableName() == null) continue;
             // 字段列表：人工注解优先，未标注时降级读物理表结构，保证"注册即可见"
@@ -1916,6 +1922,8 @@ public class AdminController {
             schema.put("tableName", ds.getTableName());
             schema.put("description", ds.getDescription());
             schema.put("databaseId", ds.getDatabaseId());
+            schema.put("databaseType", databaseTypes.getOrDefault(
+                    Objects.toString(ds.getDatabaseId(), ""), ""));
             // 数据集级领域语义（原样透传，解析错误由消费侧按实体大类兜底）
             schema.put("semanticJson", ds.getSemanticJson());
             // 注解校验状态（只读信息：生成期不做指纹比对，页面提示用）

@@ -817,16 +817,28 @@ def build_summary(columns: List[str], rows: List[Dict[str, Any]]) -> str:
 # 单个子问题取数
 # ──────────────────────────────────────────────────────────────────
 
-def _append_limit(sql: str, limit: int) -> str:
-    """detail 查询安全追加 LIMIT（SQL 中未显式指定时）。"""
-    if re_search_limit(sql):
+def _append_limit(sql: str, limit: int, dialect: str = "mysql") -> str:
+    """detail 查询安全追加行数限制（按数据库方言，SQL 中未显式指定时）。"""
+    if re_search_limit(sql, dialect):
         return sql
-    return f"{sql.rstrip(';')} LIMIT {limit + 1}"
+    statement = sql.rstrip(";").rstrip()
+    rows = limit + 1
+    if dialect == "oracle":
+        # 外层 ROWNUM 在内层排序完成后生效，兼容 11g/12c
+        return f"SELECT * FROM ({statement}) WHERE ROWNUM <= {rows}"
+    if dialect == "sqlserver":
+        if re.search(r"\border\s+by\b", statement, re.IGNORECASE):
+            return f"{statement} OFFSET 0 ROWS FETCH NEXT {rows} ROWS ONLY"
+        return f"SELECT TOP ({rows}) * FROM ({statement}) AS _limited"
+    return f"{statement} LIMIT {rows}"
 
 
-def re_search_limit(sql: str) -> bool:
-    """简单判断 SQL 是否已有 LIMIT（避免重复）。"""
-    import re
+def re_search_limit(sql: str, dialect: str = "mysql") -> bool:
+    """判断 SQL 是否已有行数限制，避免重复追加。"""
+    if dialect == "oracle":
+        return bool(re.search(r"\bROWNUM\b|\bFETCH\s+(FIRST|NEXT)\b", sql, re.IGNORECASE))
+    if dialect == "sqlserver":
+        return bool(re.search(r"\bTOP\s*\(?\s*\d+|\bFETCH\s+NEXT\b", sql, re.IGNORECASE))
     return bool(re.search(r"\blimit\s+\d+", sql, re.IGNORECASE))
 
 
@@ -1008,6 +1020,13 @@ def bucket_expr(dialect: str, column: str, step_seconds: int) -> str:
     """
     col = _quote_ident(dialect, column)
     step = int(step_seconds)
+    if dialect == "sqlserver":
+        # 统一输出字符串桶起点，格式与其它方言一致
+        if step >= 86400:
+            return f"CONVERT(varchar(10), {col}, 120) + ' 00:00:00'"
+        if step >= 3600:
+            return f"CONVERT(varchar(13), {col}, 120) + ':00:00'"
+        return f"CONVERT(varchar(16), {col}, 120) + ':00'"
     if dialect in ("dm", "oracle"):
         if step >= 86400:
             return f"TO_CHAR(TRUNC({col}), 'YYYY-MM-DD 00:00:00')"
@@ -1301,7 +1320,7 @@ def execute_sub_question(sq: Dict[str, Any], meta: Dict[str, Any],
             if scope:
                 sql = _inject_scope_where(sql, scope)
                 sql_log["scopeInjected"] = True
-            sql = _append_limit(sql, config.IPAGE_TIMESERIES_ROW_LIMIT)
+            sql = _append_limit(sql, config.IPAGE_TIMESERIES_ROW_LIMIT, dialect)
             sql_log["sql"] = sql
             payload = admin_client.execute_dataset_sql(dataset_id, sql)
             sql_log["viaSql"] = bool(payload.get("success"))
@@ -1340,7 +1359,7 @@ def execute_sub_question(sq: Dict[str, Any], meta: Dict[str, Any],
                 sql = _inject_scope_where(sql, scope)
                 sql_log["scopeInjected"] = True
             if mode == "detail":
-                sql = _append_limit(sql, config.IPAGE_DETAIL_ROW_LIMIT)
+                sql = _append_limit(sql, config.IPAGE_DETAIL_ROW_LIMIT, dialect)
             sql_log["sql"] = sql
             payload = admin_client.execute_dataset_sql(dataset_id, sql)
             sql_log["viaSql"] = bool(payload.get("success"))

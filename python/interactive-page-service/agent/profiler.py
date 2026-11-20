@@ -157,12 +157,9 @@ def build_profiles(meta: Dict[str, Any], use_stats: bool = False) -> Dict[str, A
     data = meta.get("data") if isinstance(meta.get("data"), dict) else {}
     schemas = data.get("schemas") or []
     default_dialect = _dialect_for(data.get("dbType"))
-    if use_stats and config.PROFILE_STATS_ENABLED:
-        dialects = _load_dialects(schemas, default_dialect)
-    else:
-        # 静态画像不发 SQL，无需读取数据源类型
-        dialects = {str((s or {}).get("databaseId") or ""): default_dialect
-                    for s in schemas if isinstance(s, dict)}
+    # 导出元数据已带每数据集 databaseType，静态画像无需再请求 admin；
+    # 统计画像时若仍缺失，再回源查询数据源列表。
+    dialects = _load_dialects(schemas, default_dialect, fetch_remote=use_stats)
     result["dialects"] = dialects
 
     stats_budget = (config.PROFILE_STATS_MAX_DATASETS
@@ -768,19 +765,41 @@ def _dialect_for(db_type: Any, fallback: str = "mysql") -> str:
     return base if base in _VALID_DIALECTS else "mysql"
 
 
-def _load_dialects(schemas: List[Any], default: str) -> Dict[str, str]:
-    """读取数据源类型，建立 databaseId → SQL 方言映射（失败回退全局）。"""
+def _load_dialects(schemas: List[Any], default: str, fetch_remote: bool = True) -> Dict[str, str]:
+    """建立 databaseId → SQL 方言映射。
+
+    优先使用导出元数据里已带的数据集级 ``databaseType``，缺失时再向 admin
+    查询数据源列表；静态画像（不发 SQL）可以通过 ``fetch_remote=False``
+    跳过网络请求。
+    """
     type_map: Dict[str, str] = {}
-    try:
-        payload = admin_client.query_databases()
-        items = payload.get("databases") or payload.get("data") or []
-        if isinstance(items, list):
-            type_map = {
-                str(item.get("id")): str(item.get("type") or "")
-                for item in items if isinstance(item, dict)
-            }
-    except Exception as exc:  # 方言探测失败不阻断
-        logger.warning("读取数据源类型失败，SQL 方言回退全局: %s", exc)
+    for schema in schemas:
+        if not isinstance(schema, dict):
+            continue
+        db_id = str(schema.get("databaseId") or "")
+        db_type = str(schema.get("databaseType") or "")
+        if db_id and db_type and not type_map.get(db_id):
+            type_map[db_id] = db_type
+
+    missing = any(
+        str((schema or {}).get("databaseId") or "")
+        and not type_map.get(str((schema or {}).get("databaseId") or ""))
+        for schema in schemas if isinstance(schema, dict)
+    )
+    if fetch_remote and missing:
+        try:
+            payload = admin_client.query_databases()
+            items = payload.get("databases") or payload.get("data") or []
+            if isinstance(items, list):
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    db_id = str(item.get("id") or "")
+                    if db_id and not type_map.get(db_id):
+                        type_map[db_id] = str(item.get("type") or "")
+        except Exception as exc:  # 方言探测失败不阻断
+            logger.warning("读取数据源类型失败，SQL 方言回退全局: %s", exc)
+
     result: Dict[str, str] = {}
     for schema in schemas:
         db_id = str((schema or {}).get("databaseId") or "")

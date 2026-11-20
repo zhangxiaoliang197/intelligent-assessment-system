@@ -4,10 +4,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 IMAGES_DIR="$PROJECT_DIR/docker-images"
+VERSION="${VERSION:-$(date +%Y%m%d)}"
 mkdir -p "$IMAGES_DIR"
 
 echo "========================================"
 echo "智能评估系统 - Docker 镜像构建脚本"
+echo "版本: $VERSION"
 echo "========================================"
 echo ""
 
@@ -18,13 +20,23 @@ build_image() {
     docker build -t "assessment-$name:latest" \
         -f "$PROJECT_DIR/docker/Dockerfile.$dockerfile" \
         "$PROJECT_DIR"
+    docker tag "assessment-$name:latest" "assessment-$name:$VERSION"
 }
 
 save_image() {
     local name=$1
-    echo "[导出] assessment-$name:latest -> $IMAGES_DIR/assessment-$name.tar"
-    docker save -o "$IMAGES_DIR/assessment-$name.tar" "assessment-$name:latest"
+    echo "[导出] assessment-$name:latest + :$VERSION -> $IMAGES_DIR/assessment-$name.tar"
+    docker save -o "$IMAGES_DIR/assessment-$name.tar" \
+        "assessment-$name:latest" "assessment-$name:$VERSION"
 }
+
+echo "=== 第0步: 构建前端产物 ==="
+if [[ "${SKIP_FRONTEND_BUILD:-0}" == "1" ]]; then
+    echo "[跳过] SKIP_FRONTEND_BUILD=1"
+else
+    # frontend Dockerfile 直接 COPY frontend/dist，必须先把最新源码构建成 dist
+    ( cd "$PROJECT_DIR/frontend" && npm ci && npm run build )
+fi
 
 echo "=== 第1步: 构建前端 ==="
 build_image "frontend" "frontend"
@@ -60,6 +72,12 @@ echo ""
 echo "=== 第3步: 构建 Java 服务 ==="
 build_image "admin" "admin"
 save_image "admin"
+
+echo ""
+echo "=== 第4步: 保存 Qdrant 镜像（离线内网必需） ==="
+docker pull qdrant/qdrant:latest
+docker save -o "$IMAGES_DIR/assessment-qdrant.tar" qdrant/qdrant:latest
+echo "[导出] qdrant/qdrant:latest -> $IMAGES_DIR/assessment-qdrant.tar"
 
 echo ""
 echo "========================================"

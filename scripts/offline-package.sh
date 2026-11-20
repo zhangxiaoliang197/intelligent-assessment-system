@@ -16,7 +16,8 @@ echo "[打包] $PACKAGE_NAME"
 tar -czf "$PROJECT_DIR/$PACKAGE_NAME" \
     -C "$PROJECT_DIR" \
     docker-images \
-    deploy
+    deploy \
+    init-mysql.sql
 
 echo "离线部署包已生成: $PROJECT_DIR/$PACKAGE_NAME"
 echo "目标机部署命令:"
