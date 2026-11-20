@@ -15,15 +15,38 @@ import semantic_validator
 
 _SERVICE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO_ROOT = os.path.dirname(os.path.dirname(_SERVICE_DIR))
-_SCHEMA_PATH = os.path.join(
-    _REPO_ROOT, "java", "admin-service", "src", "main", "resources", "semantic-schema.json")
-_CASES_PATH = os.path.join(_REPO_ROOT, "tests", "fixtures", "semantic_cases.json")
+
+
+def _first_existing(*paths):
+    """返回第一个存在的文件路径；全部不存在返回空串。"""
+    for path in paths:
+        if path and os.path.isfile(path):
+            return path
+    return ""
+
+
+# 本地仓库直接读 Java 资源；容器镜像内由 Dockerfile.ipage 复制到 /app，
+# 避免镜像构建时的单测因缺少仓库目录而失败。
+_SCHEMA_PATH = _first_existing(
+    os.getenv("SEMANTIC_SCHEMA_PATH", ""),
+    "/app/semantic-schema.json",
+    os.path.join(_REPO_ROOT, "java", "admin-service", "src", "main", "resources", "semantic-schema.json"),
+)
+_CASES_PATH = _first_existing(
+    os.getenv("SEMANTIC_CASES_PATH", ""),
+    "/app/tests/fixtures/semantic_cases.json",
+    os.path.join(_SERVICE_DIR, "tests", "fixtures", "semantic_cases.json"),
+    os.path.join(_REPO_ROOT, "tests", "fixtures", "semantic_cases.json"),
+)
 
 
 class SemanticValidatorTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        if not _SCHEMA_PATH or not _CASES_PATH:
+            raise unittest.SkipTest(
+                "未找到 semantic-schema.json 或 semantic_cases.json，跳过跨端一致性校验")
         with open(_SCHEMA_PATH, "r", encoding="utf-8") as f:
             cls.schema_text = f.read()
         with open(_CASES_PATH, "r", encoding="utf-8") as f:

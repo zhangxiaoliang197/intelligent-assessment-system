@@ -4,6 +4,9 @@ RUN pip config set global.index-url https://pypi.org/simple
 COPY python/interactive-page-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY python/interactive-page-service/ .
+# 跨端一致性单测所需的唯一真相：Java 侧语义规范 + golden 用例
+COPY java/admin-service/src/main/resources/semantic-schema.json /app/semantic-schema.json
+COPY tests/fixtures/semantic_cases.json /app/tests/fixtures/semantic_cases.json
 ENV LOG_DIR=/app/logs \
     LOG_ENV=prod \
     LOG_LEVEL=INFO \

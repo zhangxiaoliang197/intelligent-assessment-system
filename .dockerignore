@@ -1,0 +1,36 @@
+# 版本控制与本地文件
+.git
+.gitignore
+.trae
+.vscode
+
+# 前端依赖与源码：前端镜像只需要 dist
+frontend/node_modules
+frontend/src
+frontend/public
+frontend/.vite
+frontend/*.log
+
+# Java 构建产物：admin 镜像内会重新 mvn package
+**/target
+
+# Python 缓存与虚拟环境
+**/__pycache__
+**/*.pyc
+**/.venv
+**/venv
+python/knowledge-service/venv
+
+# 运行数据与日志（SQLite、附件、日志均不应进入镜像）
+**/logs
+**/data
+**/*.log
+**/*.log.err
+
+# 已生成的镜像与打包产物
+docker-images
+*.tar
+*.tar.gz
+
+# 本地缓存
+.cache
