@@ -63,6 +63,19 @@ def _request(method: str, url: str, body: dict = None, timeout: int = None) -> d
         return {"success": False, "message": str(exc)[:200]}
 
 
+def query_databases() -> dict:
+    """读取数据源配置列表（仅用于按数据源类型选择 SQL 方言）。
+
+    返回 ``{"success": true, "databases": [{"id", "name", "type", ...}]}``；
+    失败时返回 ``{"success": False, ...}``，调用方回退全局方言。
+    """
+    return _request(
+        "GET",
+        f"{config.ADMIN_SERVICE_URL}/api/admin/database/list",
+        timeout=config.HTTP_TIMEOUT,
+    )
+
+
 def query_datasets_meta(database_id: str = "") -> dict:
     """取数据集 schema + 指标定义（/export/for-llm），供 Planner 选择数据集。
 

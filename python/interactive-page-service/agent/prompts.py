@@ -11,6 +11,8 @@
 from typing import Any, Dict, List
 
 from agent import dimension_graph
+from agent import profiler
+from agent.bundle_meta import has_geo_features
 
 # ──────────────────────────────────────────────────────────────────
 # 数据集目录格式化
@@ -26,11 +28,12 @@ def format_meta_catalog(meta: Dict[str, Any]) -> str:
         return "（当前没有任何已注册且可用于分析的数据集）"
 
     blocks: List[str] = []
+    profiles = (meta.get("_profiles") or {}).get("byId") or {}
     for idx, schema in enumerate(schemas, 1):
         if not isinstance(schema, dict):
             continue
         ds_id = schema.get("datasetId") or schema.get("id") or ""
-        name = schema.get("name") or schema.get("tableName") or ds_id
+        name = schema.get("datasetName") or schema.get("name") or schema.get("tableName") or ds_id
         table = schema.get("tableName") or ""
         desc = schema.get("description") or schema.get("businessMeaning") or ""
         fields = schema.get("fields") or schema.get("columns") or []
@@ -54,6 +57,9 @@ def format_meta_catalog(meta: Dict[str, Any]) -> str:
             # 注解声明的坐标列（如"经度/纬度"）也算有地理能力，避免非约定命名被误判
             geo_tag = "  【地理能力：有坐标字段】"
         block = [f"{idx}. 数据集ID: {ds_id}｜名称: {name}｜表: {table}{geo_tag}"]
+        cap_tag = profiler.summarize(profiles.get(str(ds_id)))
+        if cap_tag:
+            block.append(f"   {cap_tag}")
         if desc:
             block.append(f"   说明: {desc}")
         if field_lines:
@@ -208,8 +214,8 @@ def build_sql_messages(question: str, schema: Dict[str, Any], mode: str,
     if mode == "detail":
         rules = (
             "1. 只能生成一条 SELECT，禁止 INSERT/UPDATE/DELETE/DROP/ALTER/CREATE；\n"
-            "2. 表名列名严格来自下方表结构；明细保真：禁止聚合/GROUP BY/DISTINCT，"
-            "SELECT 全部业务列（经纬度、名称、时间、高度、速度、状态等都要保留）；\n"
+            "2. 明细保真：必须使用 SELECT *，禁止只选择问题中提到的列，"
+            "禁止聚合/GROUP BY/DISTINCT（实体编号、坐标、时间、半径等列必须原样保留）；\n"
             "3. 可按问题生成 WHERE 精确过滤与 ORDER BY（航迹按实体、时间/序号排序）；\n"
             "4. 时间边界 {gte:A, lte:B} 必须生成 列 >= A AND 列 <= B，不得用当前时间替代历史时点；\n"
             "5. 标准 ANSI SQL；不要加 LIMIT（行数由后端统一控制）。"
@@ -513,12 +519,7 @@ def _geo_features_view(geo: Dict[str, Any]) -> Dict[str, Any]:
 
 def _has_geo_features(geo: Dict[str, Any]) -> bool:
     """判断 geoFeatures 是否包含可上车的地图要素（空数组视为无地图数据）。"""
-    if not isinstance(geo, dict):
-        return False
-    return any(
-        isinstance(geo.get(key), list) and bool(geo.get(key))
-        for key in ("tracks", "points", "units", "circles")
-    )
+    return has_geo_features(geo)
 
 
 def _bundle_view(bundle: Dict[str, Any], sample_rows: int) -> Dict[str, Any]:

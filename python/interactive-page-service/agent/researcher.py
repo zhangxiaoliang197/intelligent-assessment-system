@@ -19,6 +19,7 @@ import cache_registry
 from llm_client import call_llm_json
 from agent import prompts
 from agent import field_resolver
+from agent import profiler
 from agent.dimension_graph import DimensionGraph
 from agent.field_resolver import FieldResolver, build_resolver
 from store import admin_client
@@ -413,11 +414,34 @@ def build_geo_features(rows: List[Dict[str, Any]], columns: List[str],
     resolver = resolver or FieldResolver(None, columns, table_name)
     table_unit_kind = resolver.unit_kind()
     aircraft_index = aircraft_index or {}
+    # 呼号反向索引：明细 SQL 未投影实体编号时，分组键会退化成任务号/名称，
+    # 此时按呼号仍能补全机型类别与侦察/打击半径，避免动态能力圈与扫掠带整体缺失。
+    aircraft_by_name: Dict[str, Dict[str, Any]] = {}
+    for item in aircraft_index.values():
+        if not isinstance(item, dict):
+            continue
+        callsign = str(item.get("callsign") or "").strip()
+        if callsign:
+            aircraft_by_name.setdefault(callsign, item)
+
+    def aircraft_meta_of(acid: str, name: str = "") -> Dict[str, Any]:
+        """按实体编号查机型档案，未命中时按呼号/名称兜底。"""
+        meta = aircraft_index.get(acid)
+        if meta:
+            return meta
+        return aircraft_by_name.get(str(name or "").strip(), {})
+
     empty = {"kind": "none", "tracks": [], "points": [], "circles": [], "units": []}
-    # 坐标：注解 geometry 优先并**整体替换**候选，避免误配到同表的其它坐标前缀
+    # 坐标：注解优先 → 能力画像 → 列名启发式；画像命中时整体替换候选，
+    # 避免误配到同表的其它坐标前缀（如 JD/WD 这类拼音缩写列）
     annotated_pair = resolver.annotated_coord_pair()
-    pairs = ([("", annotated_pair[0], annotated_pair[1])] if annotated_pair
-             else _find_coord_pairs(columns))
+    profile_pair = None if annotated_pair else resolver.profile_geo_pair()
+    if annotated_pair:
+        pairs = [("", annotated_pair[0], annotated_pair[1])]
+    elif profile_pair:
+        pairs = [("", profile_pair[0], profile_pair[1])]
+    else:
+        pairs = _find_coord_pairs(columns)
     if not pairs:
         return empty
 
@@ -432,16 +456,21 @@ def build_geo_features(rows: List[Dict[str, Any]], columns: List[str],
         if any(tok in str(c).lower()
                for tok in ("name", "callsign", "aircraft", "目标", "名称", "呼号"))
     ]
-    # 敌机编号优先于通用 aircraft_id，避免分组落到错误列
-    id_field = _find_field(columns, ("enemy_aircraft_id", "aircraft_id", "target_id",
-                                     "threat_id", "range_id", "id"))
-    name_field = _find_field(columns, ("enemy_aircraft_name", "aircraft_name", "callsign",
-                                       "threat_name", "target_name", "base_name", "name",
-                                       "呼号", "名称"))
+    # 敌机编号优先于通用 aircraft_id，避免分组落到错误列；中文编号词最后兜底
+    id_field = (_find_field(columns, ("enemy_aircraft_id", "aircraft_id", "target_id",
+                                      "threat_id", "range_id", "id",
+                                      "编号", "标识", "编码"))
+                or resolver.profile_entity_key())
+    name_field = (_find_field(columns, ("enemy_aircraft_name", "aircraft_name", "callsign",
+                                        "threat_name", "target_name", "base_name", "name",
+                                        "呼号", "名称", "姓名"))
+                  or resolver.profile_name_column())
     type_field = resolver.type_column(
         _find_field(columns, ("threat_type", "category", "range_type",
-                              "damage_type", "weapon_type", "type", "kind")))
-    status_field = resolver.status_column(_find_field(columns, ("hit_result", "status", "severity")))
+                              "damage_type", "weapon_type", "type", "kind",
+                              "类别", "类型", "分类", "种类")))
+    status_field = resolver.status_column(
+        _find_field(columns, ("hit_result", "status", "severity", "状态", "结果", "健康")))
     kind_field = _find_field(columns, ("type", "category", "kind", "threat_level"))
     faction_column = resolver.faction_column()
     # 象形符号：字段注解 symbol 优先，其次数据集 symbolDefault；无注解返回空（前端走原推断）
@@ -570,11 +599,12 @@ def build_geo_features(rows: List[Dict[str, Any]], columns: List[str],
                 # 不足 2 点不构成航迹，作为飞机位置点标注
                 if len(group_rows) < 2:
                     r0 = group_rows[0]
+                    lone_name = str(r0.get(name_field) or acid) if name_field else acid
                     lone = {
                         "lng": _to_float(r0.get(lng_field)), "lat": _to_float(r0.get(lat_field)),
-                        "name": str(r0.get(name_field) or acid) if name_field else acid,
+                        "name": lone_name,
                         "kind": "aircraft", "unitKind": "aircraft",
-                        "type": aircraft_index.get(acid, {}).get("category") or "",
+                        "type": aircraft_meta_of(acid, lone_name).get("category") or "",
                         "time": str(r0.get(time_field)) if time_field and r0.get(time_field) is not None else None,
                     }
                     attach_symbol(lone)
@@ -604,7 +634,7 @@ def build_geo_features(rows: List[Dict[str, Any]], columns: List[str],
                         if r.get(name_field):
                             name = str(r.get(name_field))
                             break
-                ac_meta = aircraft_index.get(acid, {})
+                ac_meta = aircraft_meta_of(acid, name)
                 track = {
                     "id": acid,
                     "name": name,
@@ -964,9 +994,7 @@ def page_frame_step(span_seconds: float, target_frames: int) -> int:
 def _quote_ident(dialect: str, name: str) -> str:
     """按方言引用标识符（列名可能是中文，必须加引号）。"""
     n = str(name or "").replace('"', '""').replace("`", "``")
-    if dialect == "postgresql":
-        return f'"{n}"'
-    if dialect == "h2":
+    if dialect in ("postgresql", "h2", "dm", "oracle", "sqlserver"):
         return f'"{n}"'
     return f"`{n}`"
 
@@ -975,10 +1003,17 @@ def bucket_expr(dialect: str, column: str, step_seconds: int) -> str:
     """生成时间桶表达式（字符串形式的桶起点，统一 YYYY-MM-DD HH:MM:SS）。
 
     mysql=DATE_FORMAT；postgresql=to_char；h2=FORMATDATETIME；
+    达梦/Oracle 用 TO_CHAR + TRUNC（分钟档位按分钟截断，不精确对齐 5/15 分钟）。
     5/15 分钟档位通过"减去分钟余数"对齐到整 5/15 分钟。
     """
     col = _quote_ident(dialect, column)
     step = int(step_seconds)
+    if dialect in ("dm", "oracle"):
+        if step >= 86400:
+            return f"TO_CHAR(TRUNC({col}), 'YYYY-MM-DD 00:00:00')"
+        if step >= 3600:
+            return f"TO_CHAR(TRUNC({col}, 'HH24'), 'YYYY-MM-DD HH24:00:00')"
+        return f"TO_CHAR(TRUNC({col}, 'MI'), 'YYYY-MM-DD HH24:MI:00')"
     if dialect == "postgresql":
         if step < 3600:
             base = f"date_trunc('hour', {col}) + (floor(extract(minute from {col})/{step // 60}) * interval '{step // 60} minute')"
@@ -1231,7 +1266,7 @@ def execute_sub_question(sq: Dict[str, Any], meta: Dict[str, Any],
     if mode == "timeseries" and fields:
         # 时间桶聚合：确定性 SQL（不依赖 LLM），时间列由注解/列名解析
         all_columns = [str((f or {}).get("column") or "") for f in fields]
-        dialect = str((meta.get("data") or {}).get("dbType") or "mysql").lower()
+        dialect = profiler.dialect_for(meta, dataset_id)
         resolver = build_resolver(meta, table_name, all_columns)
         time_col = str(sq.get("timeField") or "").strip()
         if time_col not in all_columns:

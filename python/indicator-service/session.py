@@ -46,8 +46,10 @@ def ensure_session(session_id: str, auto_create: bool = True):
         }
     if not auto_create:
         return None
-    # 会话不存在，自动创建
-    _cs_create(session_id, "indicator", stage="analyzing")
+    # 会话不存在，自动创建；创建失败会导致后续消息无法落库，必须显式告警
+    resp_create = _cs_create(session_id, "indicator", stage="analyzing")
+    if not resp_create.get("success"):
+        logger.error(f"创建指标会话 {session_id} 失败: {resp_create.get('message', '未知错误')}")
     return {"stage": "analyzing", "messages": [], "pending_indicators": None, "session_id": session_id}
 
 
@@ -91,14 +93,18 @@ def get_session_stage(session_id: str) -> str:
 def set_session_stage(session_id: str, stage: str):
     """设置会话阶段"""
     ensure_session(session_id)
-    _cs_update(session_id, stage=stage)
+    resp = _cs_update(session_id, stage=stage)
+    if not resp.get("success"):
+        logger.error(f"更新会话 {session_id} 阶段为 {stage} 失败: {resp.get('message', '未知错误')}")
 
 
 def set_pending_indicators(session_id: str, indicators_data: dict):
     """暂存待确认的指标体系数据到 MySQL extraData"""
     ensure_session(session_id)
     extra = _serialize_extra_data(indicators_data)
-    _cs_update(session_id, stage="awaiting_confirmation", extraData=extra)
+    resp = _cs_update(session_id, stage="awaiting_confirmation", extraData=extra)
+    if not resp.get("success"):
+        logger.error(f"保存会话 {session_id} 的待确认指标失败: {resp.get('message', '未知错误')}")
 
 
 def get_pending_indicators(session_id: str) -> dict:
@@ -146,6 +152,9 @@ def add_message(session_id: str, role: str, content: str, metadata: dict = None)
         title = content[:30] if content and len(content) > 30 else (content or "")
 
     resp = _cs_add_msg(session_id, role, content, seq, metadata=meta_str, title=title)
+    # 消息落库失败会导致历史记录与上下文缺失，禁止静默忽略
+    if not resp.get("success"):
+        logger.error(f"会话 {session_id} 消息落库失败(seq={seq}, role={role}): {resp.get('message', '未知错误')}")
     return seq
 
 

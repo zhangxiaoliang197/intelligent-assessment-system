@@ -711,7 +711,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { computed, reactive, ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -1539,7 +1539,11 @@ const sendMessage = async () => {
   })
   
   // 添加AI等待消息
-  const aiMessage: any = {
+  // 必须用 reactive 包装后再入数组：流式过程中会直接给这个对象赋值（result/content 等），
+  // 若入数组的是原始对象，赋值不会触发数组元素代理的依赖更新，
+  // 依赖 messages 的 computed（如多轮态势产物 artifactRounds）会一直停留在旧值，
+  // 表现为「两轮对话时生成态势页面只出现第一轮」。
+  const aiMessage: any = reactive({
     role: 'assistant',
     content: '',
     querying: true,
@@ -1549,7 +1553,7 @@ const sendMessage = async () => {
     databaseId: selectedDataSourceId.value || '',
     databaseName: selectedDataSourceName.value,
     question: query
-  }
+  })
   messages.value.push(aiMessage)
   
   try {

@@ -652,6 +652,11 @@ const treeChartRefs = ref<HTMLElement[]>([])
 let activeAbortController: AbortController | null = null
 let cancelRequested = false
 let _newSessionPending = false  // 防止新会话创建期间发送消息到旧会话
+// 会话世代：新建会话/切换历史时自增。流式响应的每个事件都校验世代，
+// 世代不一致说明用户已切换对话，迟到的事件一律丢弃，避免旧对话内容/会话ID写进新对话。
+let conversationEpoch = 0
+// 页面恢复会话的校验过程，发送消息前必须等待它完成，避免用未校验的旧会话ID发起请求
+let sessionReady: Promise<void> = Promise.resolve()
 
 // ── 右侧执行面板状态 ──
 const showExecutionPanel = ref(false)
@@ -771,31 +776,46 @@ const fetchHistoryList = async () => {
   } catch (e) { /* 静默处理 */ }
 }
 
-const fetchSessionMessages = async (sid: string) => {
+const fetchSessionMessages = async (sid: string): Promise<boolean> => {
   try {
     const res = await fetch(`/api/indicator/history?session_id=${sid}`)
+    if (!res.ok) return false
     const data = await res.json()
-    if (data.messages) {
+    if (Array.isArray(data.messages)) {
       sessionMessages.value[sid] = data.messages
+      return true
     }
-  } catch (e) { /* 静默处理 */ }
+    return false
+  } catch (e) { return false }
 }
 
 fetchHistoryList()
+// 恢复上次会话：仅当服务端确实存在该会话的消息时才恢复。
+// 否则清除本地会话 ID，避免出现"界面空白、后端却仍停留在上一轮待确认状态"的串台。
+// 旧版本会话 ID 为 36 位带连字符 UUID，消息从未落库，同样按空会话处理。
 if (sessionId.value) {
-  fetchSessionMessages(sessionId.value).then(() => {
-    const msgs = sessionMessages.value[sessionId.value]
-    if (msgs) {
-      // 恢复地图显示状态（历史加载时后端已剥离 map_annotations 并提取 geo 数据）
-      msgs.forEach(msg => {
-        if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0) {
-          msg.showMap = true
-          msg.showMapPrompt = false
-        }
-      })
-      messages.value = [...msgs]
+  const restoredId = sessionId.value
+  const isLegacyId = restoredId.includes('-')
+  sessionReady = fetchSessionMessages(restoredId).then((ok) => {
+    const msgs = sessionMessages.value[restoredId]
+    if (isLegacyId || (ok && (!msgs || msgs.length === 0))) {
+      delete sessionMessages.value[restoredId]
+      sessionId.value = ''
+      messages.value = []
+      persistState()
+      return
     }
-    restoreExecutionState(sessionId.value)
+    if (!ok) return
+    if (!msgs) return
+    // 恢复地图显示状态（历史加载时后端已剥离 map_annotations 并提取 geo 数据）
+    msgs.forEach(msg => {
+      if (msg.geoPoints && msg.geoPoints.length > 0 || msg.routes && msg.routes.length > 0 || msg.areas && msg.areas.length > 0 || msg.circles && msg.circles.length > 0) {
+        msg.showMap = true
+        msg.showMapPrompt = false
+      }
+    })
+    messages.value = [...msgs]
+    restoreExecutionState(restoredId)
     nextTick(() => { setTimeout(() => renderTreesForMessages(), 300) })
   })
 }
@@ -839,6 +859,10 @@ const restoreExecutionState = (sid: string) => {
 }
 
 const loadHistory = async (item: any) => {
+  // 切换对话：先终止当前分析并使进行中的请求失效，避免旧对话的响应写入新对话
+  stopAnalysis()
+  conversationEpoch++
+  analyzing.value = false
   await fetchSessionMessages(item.id)
   const msgs = sessionMessages.value[item.id]
   if (msgs && msgs.length > 0) {
@@ -862,6 +886,8 @@ const loadHistory = async (item: any) => {
 const newSession = async () => {
   // 立即中止可能正在运行的请求并清空状态
   stopAnalysis()
+  conversationEpoch++
+  analyzing.value = false
   _newSessionPending = true
   sessionId.value = ''
   messages.value = []
@@ -905,6 +931,9 @@ const deleteHistory = async (id: string) => {
   delete sessionMessages.value[id]
   historyList.value = historyList.value.filter(item => item.id !== id)
   if (sessionId.value === id) {
+    stopAnalysis()
+    conversationEpoch++
+    analyzing.value = false
     sessionId.value = ''
     messages.value = []
     executionSteps.value = []
@@ -1003,6 +1032,8 @@ const stopAnalysis = () => {
 }
 
 const analyzeIndicator = async (selectedNames?: string[]) => {
+  // 等待页面恢复会话的校验完成，避免用未校验的旧会话 ID 发起请求
+  await sessionReady
   if (_newSessionPending) {
     ElMessage.warning('正在创建新会话，请稍候')
     return
@@ -1015,6 +1046,10 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
     ElMessage.warning('正在分析中，请稍候')
     return
   }
+
+  // 本次请求绑定的会话世代与会话 ID：切换对话后迟到的事件不再生效
+  const requestEpoch = conversationEpoch
+  const requestSessionId = sessionId.value || undefined
 
   const userQuestion = inputMessage.value
   inputMessage.value = ''
@@ -1049,17 +1084,18 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
 
   activeAbortController = new AbortController()
 
-  // 安全兜底：200 秒后强制恢复按钮状态，防止因异常导致 analyzing 卡死
+  // 安全兜底：360 秒后强制恢复按钮状态，防止因异常导致 analyzing 卡死。
+  // 数值校验可能触发一次 SQL 重写，整条管线耗时高于普通查询。
   const analyzingGuard = setTimeout(() => {
-    if (analyzing.value) {
+    if (analyzing.value && requestEpoch === conversationEpoch) {
       analyzing.value = false
       cancelRequested = false
       activeAbortController = null
     }
-  }, 200000)
+  }, 360000)
 
   try {
-    const reqBody: any = { query: userQuestion, session_id: sessionId.value || undefined }
+    const reqBody: any = { query: userQuestion, session_id: requestSessionId }
     if (selectedDataSourceId.value) {
       reqBody.database_id = selectedDataSourceId.value
       reqBody.database_name = selectedDataSourceName.value
@@ -1084,16 +1120,20 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
     const decoder = new TextDecoder()
     let buffer = ''
     let fullText = ''
+    let staleResponse = false
 
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
+      // 用户已切换对话：立即停止消费旧会话的流
+      if (requestEpoch !== conversationEpoch) { staleResponse = true; break }
 
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')
       buffer = lines.pop() || ''
 
       for (const line of lines) {
+        if (requestEpoch !== conversationEpoch) { staleResponse = true; break }
         if (!line.trim()) continue
         try {
           const data = JSON.parse(line)
@@ -1172,11 +1212,9 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
             if (data.rawResults) panelState.value.rawResults = data.rawResults
             if (data.indicators) panelState.value.indicators = data.indicators
 
+            // 后端返回的会话 ID 为唯一可信来源，前端不再自行拼造 ID
             if (data.session_id) {
-              if (!sessionId.value) {
-                sessionId.value = data.session_id
-                saveHistory(data.session_id, userQuestion)
-              }
+              sessionId.value = data.session_id
             }
           } else if (data.type === 'error') {
             fullText += '\n\n' + (data.message || data.content || '未知错误')
@@ -1223,26 +1261,31 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
           }
         } catch (e) { /* ignore */ }
       }
+      if (staleResponse) break
     }
 
-    if (!fullText && !messages.value[currentMsgIndex].summary && !messages.value[currentMsgIndex].rawResults) {
+    // 对话已切换：本次响应整体作废，不写入新对话的消息与缓存
+    if (staleResponse || requestEpoch !== conversationEpoch) return
+
+    if (!fullText && !messages.value[currentMsgIndex]?.summary && !messages.value[currentMsgIndex]?.rawResults) {
       messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: '分析失败，请检查网络连接或大模型配置。', querying: false }
     } else if (messages.value[currentMsgIndex].querying) {
       messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], querying: false }
     }
 
-    if (!sessionId.value) {
-      const newSessionId = 'session_' + Date.now()
-      sessionId.value = newSessionId
-      saveHistory(newSessionId, userQuestion)
+    if (sessionId.value) {
+      sessionMessages.value[sessionId.value] = [...messages.value]
+      persistState()
+      // 分析完成后从服务端刷新历史列表，保证新会话立即出现、标题与时间准确
+      fetchHistoryList()
     }
-    sessionMessages.value[sessionId.value] = [...messages.value]
-    persistState()
 
     nextTick(() => {
       setTimeout(() => { renderTreesForMessages() }, 300)
     })
   } catch (e: any) {
+    // 对话已切换：旧请求的失败/取消不应影响新对话
+    if (requestEpoch !== conversationEpoch) return
     if (cancelRequested || (e as Error).name === 'AbortError') {
       messages.value[currentMsgIndex] = { ...messages.value[currentMsgIndex], content: '本次分析已取消。', querying: false }
     } else {
@@ -1250,23 +1293,13 @@ const analyzeIndicator = async (selectedNames?: string[]) => {
     }
   } finally {
     clearTimeout(analyzingGuard)
-    analyzing.value = false
-    activeAbortController = null
-    cancelRequested = false
+    // 仅当仍处于发起请求的那个对话时才复位全局状态，避免旧请求把新对话的输入框锁死
+    if (requestEpoch === conversationEpoch) {
+      analyzing.value = false
+      activeAbortController = null
+      cancelRequested = false
+    }
   }
-}
-
-const saveHistory = (id: string, question: string) => {
-  const exists = historyList.value.find(item => item.id === id)
-  if (!exists) {
-    historyList.value.unshift({ id, title: question.length > 20 ? question.substring(0, 20) + '...' : question, time: new Date().toLocaleString() })
-  } else {
-    exists.title = question.length > 20 ? question.substring(0, 20) + '...' : question
-    exists.time = new Date().toLocaleString()
-    const index = historyList.value.indexOf(exists)
-    if (index > 0) { historyList.value.splice(index, 1); historyList.value.unshift(exists) }
-  }
-  persistState()
 }
 
 const setTreeChartRef = (el: any, index: number) => { if (el) treeChartRefs.value[index] = el }

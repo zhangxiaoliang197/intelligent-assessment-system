@@ -6,7 +6,8 @@
   "$defs": {
     "entityKind": {
       "description": "实体大类，决定地图符号与生命周期口径",
-      "enum": ["air", "ground_facility", "base", "other"]
+      "enum": ["air", "ground_facility", "base", "unit", "person", "organization",
+               "task", "area", "resource", "other"]
     },
     "symbol": {
       "description": "象形符号键，必须落在 page-kit.js 的 SIT_SHAPES 注册表内（未命中的键会导致静默回退成圆点）",

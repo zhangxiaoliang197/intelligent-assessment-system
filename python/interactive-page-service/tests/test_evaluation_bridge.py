@@ -83,6 +83,25 @@ class BundleMappingTest(unittest.TestCase):
         _, plan2, _ = build_bundle_and_plan(artifacts2, "红蓝对比")
         self.assertEqual(plan2["title"], "红蓝对比")
 
+    def test_bundle_map_available_matches_geo(self):
+        """数据包必须携带 mapAvailable：页面写作契约以它作为地图渲染开关。"""
+        no_geo = ArtifactItem(
+            artifactId="q1", name="统计", mode="aggregate",
+            columns=["机型", "数量"], rows=[{"机型": "歼-20", "数量": 3}],
+        )
+        bundle, _, _ = build_bundle_and_plan(make_artifacts([no_geo]), "")
+        self.assertIs(bundle["mapAvailable"], False)
+
+        geo = ArtifactItem(
+            artifactId="q2", name="基地分布", mode="detail",
+            columns=["名称", "经度", "纬度"],
+            rows=[{"名称": "基地A", "经度": 116.4, "纬度": 39.9}],
+            totalRows=1,
+            geo={"markers": [{"name": "基地A", "lng": 116.4, "lat": 39.9}]},
+        )
+        bundle2, _, _ = build_bundle_and_plan(make_artifacts([no_geo, geo]), "")
+        self.assertIs(bundle2["mapAvailable"], True)
+
 
 class GeoConversionTest(unittest.TestCase):
     def test_markers_to_points(self):
@@ -221,10 +240,16 @@ class ChartCapTest(unittest.TestCase):
         return [numeric_item(f"q{i}", f"统计{i}") for i in range(1, count + 1)]
 
     @staticmethod
-    def _geo_item():
+    def _round_chart_items(round_no: int, count: int):
+        """构造某一轮的可图表聚合产物（id 带 r{N}_ 轮次前缀）。"""
+        return [numeric_item(f"r{round_no}_q{i}", f"第{round_no}轮统计{i}")
+                for i in range(1, count + 1)]
+
+    @staticmethod
+    def _geo_item(item_id: str = "geo1"):
         """构造一条带坐标的明细产物，用于触发地图区块。"""
         return ArtifactItem(
-            artifactId="geo1",
+            artifactId=item_id,
             name="空间分布",
             mode="detail",
             columns=["名称", "经度", "纬度"],
@@ -259,6 +284,41 @@ class ChartCapTest(unittest.TestCase):
         charts = [s for s in plan["sections"] if s["kind"] == "chart"]
         self.assertEqual(len(charts), 8)
         self.assertFalse(any(s["kind"] == "map" for s in plan["sections"]))
+
+    def test_chart_quota_fair_across_rounds(self):
+        """两轮各有 4 张图表且带地图时，图表配额应两轮均分，不能整轮挤掉第二轮。"""
+        items = (
+            self._round_chart_items(1, 4)
+            + self._round_chart_items(2, 4)
+            + [self._geo_item("r1_geo1")]
+        )
+        artifacts = make_artifacts(items)
+        bundle, plan, _ = build_bundle_and_plan(artifacts, "多轮评估")
+
+        charts = [s for s in plan["sections"] if s["kind"] == "chart"]
+        self.assertEqual(len(charts), 4)
+        chart_refs = [s["ref"] for s in charts]
+        self.assertEqual(sum(1 for ref in chart_refs if ref.startswith("r1_")), 2)
+        self.assertEqual(sum(1 for ref in chart_refs if ref.startswith("r2_")), 2)
+
+        # 所有勾选产物都必须至少被一个区块引用，不能因图表配额而静默消失
+        refs = {s.get("ref") for s in plan["sections"] if s.get("ref")}
+        self.assertEqual(refs, {d["id"] for d in bundle["datasets"]})
+
+    def test_aggregate_over_cap_falls_back_to_table(self):
+        """超出图表配额的聚合产物补数据表，保证数据仍可见。"""
+        items = self._round_chart_items(1, 6) + [self._geo_item("r1_geo1")]
+        artifacts = make_artifacts(items)
+        bundle, plan, _ = build_bundle_and_plan(artifacts, "多轮评估")
+
+        charts = [s for s in plan["sections"] if s["kind"] == "chart"]
+        self.assertEqual(len(charts), 4)
+        tables = [s for s in plan["sections"] if s["kind"] == "table"]
+        # 6 条聚合中 4 条上图，剩余 2 条补表
+        self.assertEqual(len(tables), 2)
+        # 所有勾选产物都必须至少被一个区块引用
+        refs = {s.get("ref") for s in plan["sections"] if s.get("ref")}
+        self.assertEqual(refs, {d["id"] for d in bundle["datasets"]})
 
 
 class PlanCoverageTest(unittest.TestCase):

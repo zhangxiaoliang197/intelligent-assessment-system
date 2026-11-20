@@ -99,7 +99,12 @@
 
   // 页面级阵营筛选（宿主浮层下发）：空字符串 = 全部
   var activeFaction = '';
-  var FACTION_ALIASES = { red: '红方', blue: '蓝方', '红方': '红方', '蓝方': '蓝方' };
+  // 归属别名：已知值归一化，未知值原样保留（支持任意军事归属体系）
+  var FACTION_ALIASES = {
+    red: '红方', blue: '蓝方', '红方': '红方', '蓝方': '蓝方',
+    friendly: '我方', hostile: '敌方', neutral: '中立', unknown: '未知',
+    '我方': '我方', '敌方': '敌方', '中立': '中立', '未知': '未知',
+  };
   // 逐机图层子项 → 全局组开关键
   var TRACK_PART_GROUPS = {
     track: 'trackLine',
@@ -109,7 +114,8 @@
 
   function normalizeFaction(v) {
     var s = String(v == null ? '' : v).trim();
-    return FACTION_ALIASES[s] || FACTION_ALIASES[s.toLowerCase()] || '';
+    if (!s) return '';
+    return FACTION_ALIASES[s] || FACTION_ALIASES[s.toLowerCase()] || s;
   }
 
   // 阵营过滤：未选择阵营、元素无阵营（如静态设施）、或阵营一致时可见
@@ -157,10 +163,12 @@
     light: { badge: '#f59e0b' },
   };
 
-  // 按系列名称取色：命中阵营名则用语义色（红方红、蓝方蓝），否则回退到 PALETTE 按序取色，
-  // 保证无论 LLM 输出的 series 顺序如何，阵营颜色都正确。
+  // 按系列名称取色：已知归属用语义色（红方红、蓝方蓝），未知归属按名称稳定取色，
+  // 保证无论 LLM 输出的 series 顺序如何，同一归属颜色都一致。
   function factionColor(name, fallback) {
-    return FACTION_COLORS[String(name || '').trim()] || fallback;
+    var key = String(name || '').trim();
+    if (!key) return fallback;
+    return FACTION_COLORS[key] || FACTION_COLORS[normalizeFaction(key)] || hashColor(key) || fallback;
   }
 
   function esc(s) {
@@ -940,6 +948,10 @@
       '.sit-playback .sit-pb-btn:hover{background:#f1f5f9}',
       '.sit-playback .sit-pb-range{flex:1;min-width:90px;accent-color:#1d4ed8;cursor:pointer}',
       '.sit-playback .sit-pb-time{color:#475569;white-space:nowrap;font-variant-numeric:tabular-nums}',
+      // 无地理要素时的地图空态（避免只显示一个空白地图容器）
+      '.sit-map-empty{display:flex;align-items:center;justify-content:center;width:100%;height:100%;',
+      '  min-height:120px;box-sizing:border-box;color:#94a3b8;font-size:13px;background:#f8fafc;',
+      '  border:1px dashed #cbd5e1;border-radius:8px;}',
     ].join('');
     document.head.appendChild(style);
   }
@@ -1055,6 +1067,13 @@
     magnifier: '<g fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round"><circle cx="10.6" cy="10.6" r="5.4"/><path d="m14.6 14.6 4.4 4.4"/></g>',
     ring: '<g fill="none" stroke="#fff" stroke-width="1.8"><circle cx="12" cy="12" r="6.4"/><circle cx="12" cy="12" r="2.2" fill="#fff" stroke="none"/><path d="M12 2.6v3M12 18.4v3M2.6 12h3M18.4 12h3"/></g>',
     dot: '<circle cx="12" cy="12" r="3.4" fill="#fff"/>',
+    // 通用形状族：任意实体大类都能落到基础形状，无需为每个领域新增图标
+    square: '<rect x="5.6" y="5.6" width="12.8" height="12.8" rx="1.6" fill="none" stroke="#fff" stroke-width="1.9"/>',
+    diamond: '<path fill="none" stroke="#fff" stroke-width="1.9" stroke-linejoin="round" d="M12 3.4 20.6 12 12 20.6 3.4 12z"/>',
+    triangle: '<path fill="none" stroke="#fff" stroke-width="1.9" stroke-linejoin="round" d="M12 4.2 21 19.8H3z"/>',
+    hex: '<path fill="none" stroke="#fff" stroke-width="1.9" stroke-linejoin="round" d="M12 3.2 19.6 7.6v8.8L12 20.8 4.4 16.4V7.6z"/>',
+    boat: '<path fill="none" stroke="#fff" stroke-width="1.9" stroke-linejoin="round" d="M4.4 13.6h15.2l-2 5H6.4zM8 13.6V7h8v6.6"/>',
+    source: '<g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="2.4"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4"/></g>',
   };
 
   var EVENT_COLORS = {
@@ -1102,31 +1121,87 @@
   // forLegend=true 时忽略状态变色/角标（图例按类别合并，状态差异只在地图符号上体现）
   // 数据源注解优先：units[].symbol 直驱符号注册表、units[].factionColor 直驱配色、
   // units[].statusKey 直驱状态视觉；三者缺失时一律回落原有推断逻辑（存量页面零变化）。
-  function resolveUnitVisual(u, forLegend) {
+  // 通用形状族：未命中存量分支的实体大类，用"基础形状 + 类别首字"表达，避免全变成圆点。
+  var GENERIC_KIND_SHAPES = {
+    platform: 'diamond', platform_air: 'diamond', platform_ground: 'square',
+    platform_sea: 'boat', unit: 'square', person: 'dot', organization: 'hex',
+    facility: 'base', event: 'boom', task: 'flag', area: 'ring',
+    resource: 'square', sensor: 'source', other: 'ring',
+  };
+  var GENERIC_TYPE_SHAPES = [
+    ['飞机', 'diamond'], ['无人机', 'diamond'], ['舰', 'boat'], ['艇', 'boat'],
+    ['车', 'square'], ['坦克', 'square'], ['装甲', 'square'], ['人员', 'dot'],
+    ['仓库', 'base'], ['基地', 'base'], ['阵地', 'ring'], ['雷达', 'source'],
+    ['告警', 'boom'], ['故障', 'boom'], ['事件', 'boom'], ['任务', 'flag'], ['区域', 'ring'],
+  ];
+  function genericShapeOf(kind, type) {
+    if (GENERIC_KIND_SHAPES[kind]) return GENERIC_KIND_SHAPES[kind];
+    var text = String(type || '');
+    for (var i = 0; i < GENERIC_TYPE_SHAPES.length; i++) {
+      if (text.indexOf(GENERIC_TYPE_SHAPES[i][0]) >= 0) return GENERIC_TYPE_SHAPES[i][1];
+    }
+    return 'ring';
+  }
+  function genericUnitVisual(kind, type) {
+    return {
+      shape: genericShapeOf(kind, type),
+      label: type || kind || '其它单位',
+      color: kindColor(kind, type || kind) || '#64748b',
+    };
+  }
+  function shortLabelOf(text) {
+    var s = String(text || '').trim();
+    if (!s) return '';
+    var cn = s.match(/[\u4e00-\u9fa5]/);
+    return cn ? cn[0] : s.charAt(0).toUpperCase();
+  }
+  // 通用状态三态：只在存量中文状态词未命中时兜底（重损/中损/维修等仍走原规则）
+  var STATUS_BAD_WORDS = ['故障', '异常', '失效', '离线', '告警', '损坏', '停用', '不可用',
+                          '未命中', '失败', '逾期', '事故'];
+  var STATUS_WARN_WORDS = ['维修', '维护', '待检', '待修', '降级', '受限', '预警', '部分'];
+  function statusToneOf(text) {
+    var s = String(text || '');
+    if (!s) return '';
+    for (var i = 0; i < STATUS_BAD_WORDS.length; i++) {
+      if (s.indexOf(STATUS_BAD_WORDS[i]) >= 0) return 'bad';
+    }
+    for (var j = 0; j < STATUS_WARN_WORDS.length; j++) {
+      if (s.indexOf(STATUS_WARN_WORDS[j]) >= 0) return 'warn';
+    }
+    return '';
+  }
+  function shapeMarkup(v) {
+    var body = SIT_SHAPES[v.shape] || SIT_SHAPES.dot;
+    if (!v || !v.shortLabel) return body;
+    return body + '<text x="12" y="15.3" text-anchor="middle" font-size="8.6" '
+      + 'font-weight="700" fill="#fff" font-family="sans-serif">' + esc(v.shortLabel) + '</text>';
+  }  function resolveUnitVisual(u, forLegend) {
     var kind = normalizeUnitKind(u);
     var type = String(u.type || '');
     var faction = String(u.faction || '').trim();
     var status = String(u.status || '').trim();
     var customColor = String(u.factionColor || '').trim();
+    var factionColorValue = factionColor(faction, '');
     var shape, color, label;
+    var shortLabel = '';
 
     if (kind === 'aircraft') {
       shape = aircraftShapeOf(type);
       label = type || '战机';
-      color = customColor || FACTION_COLORS[faction] || KIND_COLORS.threat;
+      color = customColor || factionColorValue || KIND_COLORS.threat;
     } else if (kind === 'base') {
       shape = 'base'; label = '基地';
-      color = customColor || FACTION_COLORS[faction] || '#059669';
+      color = customColor || factionColorValue || '#059669';
     } else if (kind === 'threat') {
       if (hasText(type, '雷达')) shape = 'radar';
       else if (hasText(type, '岸舰')) shape = 'coastal';
       else shape = 'sam';
       label = type || '防空单位';
-      color = customColor || FACTION_COLORS[faction] || '#dc2626';
+      color = customColor || factionColorValue || '#dc2626';
     } else if (kind === 'facility') {
       // 注解 entityKind=ground_facility 的默认视觉：地面设施用环+紫，区分于防空单位/打击目标
       shape = 'ring'; label = type || '地面设施';
-      color = customColor || FACTION_COLORS[faction] || KIND_COLORS.facility;
+      color = customColor || factionColorValue || KIND_COLORS.facility;
     } else if (kind === 'target') {
       shape = targetShapeOf(type);
       label = type || '打击目标';
@@ -1139,16 +1214,26 @@
       } else {
         shape = aircraftShapeOf(type); label = status ? status + '战损' : '战损事件';
       }
-      color = customColor || FACTION_COLORS[faction] || EVENT_COLORS.event_damage;
+      color = customColor || factionColorValue || EVENT_COLORS.event_damage;
     } else if (kind === 'event_recon') {
       shape = 'magnifier'; label = '侦察发现'; color = customColor || EVENT_COLORS.event_recon;
     } else {
-      shape = 'dot'; label = type || '其它单位'; color = customColor || '#64748b';
+      // 通用实体大类（platform/unit/person/event/task/area/resource/sensor/other 等）：
+      // 基础形状按大类决定，类别首字叠加在图形内，保证任意数据都有可区分的符号。
+      var generic = genericUnitVisual(kind, type);
+      shape = generic.shape;
+      label = generic.label;
+      color = customColor || factionColorValue || generic.color;
+      shortLabel = type ? shortLabelOf(type) : '';
     }
 
-    // 注解指定的象形符号直驱（须在注册表内，否则继续用上面的推断结果）
+    // 注解指定的象形符号直驱（须在注册表内，否则继续用上面的推断结果）；
+    // 命中专业图标时不再叠加类别首字，避免图形内文字与图标重叠。
     var customShape = String(u.symbol || '').trim();
-    if (customShape && SIT_SHAPES[customShape]) shape = customShape;
+    if (customShape && SIT_SHAPES[customShape]) {
+      shape = customShape;
+      shortLabel = '';
+    }
 
     // 状态叠加：摧毁 → 灰底+叉；受损/压制/维修 → 角标
     // 图例按类别合并，不应用状态变色
@@ -1170,15 +1255,17 @@
     else if (hasText(status, '重损')) badge = BADGE_COLORS.critical;
     else if (hasText(status, '中损') || hasText(status, '受损') || hasText(status, '压制')) badge = BADGE_COLORS.heavy;
     else if (hasText(status, '轻损') || hasText(status, '战损') || hasText(status, '维修')) badge = BADGE_COLORS.light;
+    else if (statusToneOf(status) === 'bad') badge = BADGE_COLORS.critical;
+    else if (statusToneOf(status) === 'warn') badge = BADGE_COLORS.light;
 
-    return { kind: kind, shape: shape, color: color, label: label,
+    return { kind: kind, shape: shape, color: color, label: label, shortLabel: shortLabel,
              badge: badge, overlayCross: overlayCross, dim: dim };
   }
 
   function unitIconHtml(v, size, heading) {
     var rot = toNum(heading);
     var svg = '<svg viewBox="0 0 24 24" style="' + (rot !== null ? 'transform:rotate(' + rot + 'deg)' : '') + '">'
-      + (SIT_SHAPES[v.shape] || SIT_SHAPES.dot) + '</svg>';
+      + shapeMarkup(v) + '</svg>';
     var badge = v.badge ? '<span class="sit-ic-badge" style="background:' + v.badge + '"></span>' : '';
     var cross = v.overlayCross ? '<svg class="sit-ic-x" viewBox="0 0 24 24">' + SIT_SHAPES.cross + '</svg>' : '';
     return '<div class="sit-ic" style="width:' + size + 'px;height:' + size + 'px;background:' + v.color
@@ -1312,7 +1399,7 @@
       return '<span class="sit-legend-sw" style="background:transparent">'
         + '<svg viewBox="0 0 24 24"><g transform="translate(2,2) scale(0.84)">'
         + '<circle cx="12" cy="12" r="11.4" fill="' + v.color + '" stroke="#fff" stroke-width="1.6"/>'
-        + (SIT_SHAPES[v.shape] || SIT_SHAPES.dot) + '</g></svg></span>';
+        + shapeMarkup(v) + '</g></svg></span>';
     }
     function cb(scope, key, part, checked) {
       var attrs = ' type="checkbox" data-scope="' + scope + '" data-key="' + esc(key) + '"';
@@ -2371,6 +2458,20 @@
 
       var L = window.L;
       ensureMapStyle();
+
+      // 无任何地理要素时不创建地图：直接展示空态，避免页面上出现一块空白地图
+      var featureCount =
+        ((spec.units && spec.units.length) || 0) +
+        ((spec.points && spec.points.length) || 0) +
+        ((spec.tracks && spec.tracks.length) || 0) +
+        ((spec.circles && spec.circles.length) || 0);
+      if (!featureCount) {
+        var renderedPair = mapByEl.filter(function (p) { return p[0] === node; })[0];
+        if (!renderedPair) {
+          node.innerHTML = '<div class="sit-map-empty">暂无地理数据</div>';
+        }
+        return null;
+      }
 
       // 同一容器重渲染：复用地图实例，仅清除业务图层，**保留用户的缩放/拖动视图**。
       // 时间轴播放时反复调用 render，若每次重建地图 + fitBounds 会导致地图不断缩放。

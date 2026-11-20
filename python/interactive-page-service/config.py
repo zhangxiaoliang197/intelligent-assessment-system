@@ -119,6 +119,13 @@ IPAGE_SKILL_DEFAULT_MODE = (
 IPAGE_SKILL_EMBED_TIMEOUT = max(1, int(os.getenv("IPAGE_SKILL_EMBED_TIMEOUT", "10")))
 IPAGE_SKILL_EMBED_MAX_TEXTS = max(1, int(os.getenv("IPAGE_SKILL_EMBED_MAX_TEXTS", "64")))
 
+# ── 数据能力画像（profiler）──
+# 是否允许用统计 SQL 校正静态画像（关闭后只按注解/列名推断，零查询）
+PROFILE_STATS_ENABLED = os.getenv(
+    "PROFILE_STATS_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+# 单次生成最多对多少个数据集做统计增强（超出只做静态画像，避免启动即打爆数据库）
+PROFILE_STATS_MAX_DATASETS = max(0, int(os.getenv("PROFILE_STATS_MAX_DATASETS", "30")))
+
 # ── 注解校验 ──
 # 运行期的注解值域采样校验：默认关闭。值域校验已左移到保存期（admin 的 AnnotationValidator），
 # 运行期只做零成本的值域漂移告警（用内存中的结果行比对注解值域），打开本开关仅供排障复核。

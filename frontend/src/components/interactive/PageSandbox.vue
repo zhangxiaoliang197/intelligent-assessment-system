@@ -106,13 +106,17 @@ const dragRatio = ref(0)
 const dockLeft = ref(0)
 let dockPostTimer: ReturnType<typeof setTimeout> | null = null
 
-// ── 阵营选项：从数据包自动推导（地理要素 + 表格阵营列），≥2 个才显示 ──
+// ── 阵营/归属选项：从数据包自动推导（地理要素 + 表格归属列），≥2 个才显示 ──
+// 已知值归一化，未知值原样保留，支持任意军事归属体系（敌我/甲乙/番号等）。
 const FACTION_ALIAS: Record<string, string> = {
   red: '红方', blue: '蓝方', 红方: '红方', 蓝方: '蓝方',
+  friendly: '我方', hostile: '敌方', neutral: '中立', unknown: '未知',
+  我方: '我方', 敌方: '敌方', 中立: '中立', 未知: '未知',
 }
 function normalizeFactionValue(v: unknown): string {
   const s = String(v ?? '').trim()
-  return FACTION_ALIAS[s] || FACTION_ALIAS[s.toLowerCase()] || ''
+  if (!s) return ''
+  return FACTION_ALIAS[s] || FACTION_ALIAS[s.toLowerCase()] || s
 }
 const factionOptions = computed<string[]>(() => {
   const found = new Set<string>()
@@ -127,11 +131,11 @@ const factionOptions = computed<string[]>(() => {
     }
     for (const row of ds?.rows || []) {
       for (const col of Object.keys(row || {})) {
-        if (/^(阵营|faction)$/i.test(col)) add(row[col])
+        if (/^(阵营|归属|隶属|敌我|所属|faction|side|camp)$/i.test(col)) add(row[col])
       }
     }
   }
-  const order = ['红方', '蓝方']
+  const order = ['红方', '我方', '蓝方', '敌方', '中立', '未知']
   return Array.from(found).sort((a, b) => {
     const ia = order.indexOf(a), ib = order.indexOf(b)
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
@@ -309,6 +313,20 @@ function normalizePageHtml(raw: string): string {
   return t
 }
 
+// ── 数据包派生字段：mapAvailable 必须与页面写作契约一致 ──
+// 页面业务代码普遍以 if (data.mapAvailable) 作为地图渲染开关；旧版本落库的数据包
+// 没有该字段，直接注入会让地图区块永远不渲染（勾选时标记地图可用、页面却是空白）。
+// 这里按 geoFeatures 兜底计算，同时保证历史页面无需重新生成也能正常出图。
+function computeMapAvailable(bundle: any): boolean {
+  for (const ds of bundle?.datasets || []) {
+    const geo = ds?.geoFeatures || {}
+    for (const key of ['tracks', 'points', 'units', 'circles']) {
+      if (Array.isArray(geo[key]) && geo[key].length > 0) return true
+    }
+  }
+  return false
+}
+
 // ── 组装 srcdoc：CSP（connect-src 'none'）+ vendor 注入到 LLM HTML ──
 function buildSrcdoc(rawHtml: string): string {
   const pageHtml = normalizePageHtml(rawHtml)
@@ -345,7 +363,7 @@ function buildSrcdoc(rawHtml: string): string {
     // turf 必须在 page-kit 之前：page-kit 的能力圈扫掠留痕依赖 window.turf.buffer
     + `<script src="${origin}/vendor/turf.min.js"><\/script>`
     // 版本号用于强制刷新运行时缓存：新增图例图层开关与阵营联动后，旧缓存会缺失接口
-    + `<script src="${origin}/vendor/page-kit.js?v=20261110-2"><\/script>`
+    + `<script src="${origin}/vendor/page-kit.js?v=20261120-1"><\/script>`
 
   const headMatch = pageHtml.match(/<head[^>]*>/i)
   if (headMatch) {
@@ -424,8 +442,14 @@ async function rebuild() {
     }
   }
   // 深拷贝切断响应式代理（postMessage 结构化克隆本身也会处理）
+  const bundle = props.bundle || { question: '', datasets: [] }
   pendingPayload = JSON.parse(JSON.stringify({
-    data: props.bundle || { question: '', datasets: [] },
+    data: {
+      ...bundle,
+      mapAvailable: typeof bundle.mapAvailable === 'boolean'
+        ? bundle.mapAvailable
+        : computeMapAvailable(bundle),
+    },
     tileLayers,
     fallbackTileLayers,
   }))

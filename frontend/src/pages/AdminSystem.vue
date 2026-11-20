@@ -146,14 +146,19 @@
                       <el-tag v-else type="info" size="small">未校验</el-tag>
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" min-width="500">
+                  <el-table-column label="操作" min-width="180">
                     <template #default="scope">
-                      <el-button size="small" @click="openTableStructure(scope.row)">表结构</el-button>
-                      <el-button size="small" @click="openDatasetSemantic(scope.row)">语义注解</el-button>
-                      <el-button size="small" @click="validateAnnotations(scope.row)">校验注解</el-button>
-                      <el-button size="small" @click="openAnnotationDrafts(scope.row)">AI 注解草稿</el-button>
-                      <el-button size="small" @click="editDataset(scope.row)">编辑</el-button>
-                      <el-button size="small" type="danger" @click="deleteDataset(scope.row)">删除</el-button>
+                      <el-button size="small" type="primary" plain
+                                 @click="openAnnotationWorkflow(scope.row)">注解</el-button>
+                      <el-dropdown trigger="click" style="margin-left:8px">
+                        <el-button size="small">更多 ▾</el-button>
+                        <template #dropdown>
+                          <el-dropdown-menu>
+                            <el-dropdown-item @click="editDataset(scope.row)">编辑信息</el-dropdown-item>
+                            <el-dropdown-item divided @click="deleteDataset(scope.row)">删除</el-dropdown-item>
+                          </el-dropdown-menu>
+                        </template>
+                      </el-dropdown>
                     </template>
                   </el-table-column>
                 </el-table>
@@ -852,6 +857,14 @@
         </template>
       </el-dialog>
     </div>
+
+    <!-- 数据集注解工作流：表结构 + AI 建议 + 字段注解 + 数据集语义 + 校验保存 -->
+    <DatasetAnnotationWorkflow
+      v-model="workflowVisible"
+      :dataset="workflowDataset"
+      :databases="databases"
+      @saved="onWorkflowSaved"
+    />
   </Layout>
 </template>
 
@@ -859,6 +872,7 @@
 import { ref, computed, watch, onMounted, h } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import Layout from '@/components/Layout.vue'
+import DatasetAnnotationWorkflow from '@/components/DatasetAnnotationWorkflow.vue'
 import api from '@/services/api'
 
 const activeTab = ref('database')
@@ -1594,6 +1608,22 @@ async function deleteDataset(row: any) {
   }
 }
 
+// ── 数据集注解工作流 ──
+const workflowVisible = ref(false)
+const workflowDataset = ref<any>(null)
+
+function openAnnotationWorkflow(row: any) {
+  workflowDataset.value = row
+  workflowVisible.value = true
+}
+
+async function onWorkflowSaved() {
+  await loadDatasets()
+}
+
+// 旧版注解入口已由工作流替代，代码暂留以便排障，后续统一清理
+void [openAnnotationDrafts, validateAnnotations, openDatasetSemantic, openTableStructure]
+
 // ==================== 领域语义注解（semantic_json） ====================
 // 以下白名单与后端 resources/semantic-schema.json 保持一致，只能选择不允许自由输入
 const SEMANTIC_ROLE_OPTIONS = [
@@ -1622,6 +1652,12 @@ const SEMANTIC_ENTITY_KIND_OPTIONS = [
   { label: '空中目标 (air)', value: 'air' },
   { label: '地面设施 (ground_facility)', value: 'ground_facility' },
   { label: '基地 (base)', value: 'base' },
+  { label: '部队单位 (unit)', value: 'unit' },
+  { label: '人员 (person)', value: 'person' },
+  { label: '组织机构 (organization)', value: 'organization' },
+  { label: '任务/行动 (task)', value: 'task' },
+  { label: '区域 (area)', value: 'area' },
+  { label: '物资/装备 (resource)', value: 'resource' },
   { label: '其他 (other)', value: 'other' }
 ]
 

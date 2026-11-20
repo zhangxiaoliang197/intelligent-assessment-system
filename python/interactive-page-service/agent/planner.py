@@ -15,6 +15,7 @@ import config
 from llm_client import call_llm_with_tools
 from agent import prompts
 from agent import dimension_graph
+from agent import profiler
 from agent.field_resolver import find_time_field
 
 logger = logging.getLogger("ipage-service")
@@ -138,14 +139,24 @@ def _available_dataset_ids(meta: Dict[str, Any]) -> set:
 
 
 def _geo_capable_ids(meta: Dict[str, Any]) -> set:
-    """具备成对经纬度的数据集（注解优先，列名启发式兜底）。"""
+    """具备坐标能力的数据集（能力画像优先，注解/列名启发式兜底）。"""
     if not isinstance(meta, dict) or not meta.get("success"):
         return set()
     schemas = (meta.get("data", {}) or {}).get("schemas", []) or []
+    by_id = ((meta.get("_profiles") or {}).get("byId") or {}) if isinstance(meta, dict) else {}
     capable = set()
     for schema in schemas:
         ds_id = str((schema or {}).get("datasetId") or (schema or {}).get("id") or "").strip()
-        if ds_id and _dataset_geo_capable(schema):
+        if not ds_id:
+            continue
+        profile = by_id.get(ds_id)
+        if isinstance(profile, dict):
+            geo = (profile.get("capabilities") or {}).get("geo") or {}
+            if geo.get("lng") and geo.get("lat") \
+                    and str(geo.get("coordType") or "geographic") != "projected":
+                capable.add(ds_id)
+                continue
+        if _dataset_geo_capable(schema):
             capable.add(ds_id)
     return capable
 
@@ -158,7 +169,7 @@ def _dataset_geo_capable(schema: Dict[str, Any]) -> bool:
 
 
 def _time_capable_ids(meta: Dict[str, Any]) -> set:
-    """可做时间桶聚合的数据集（存在可识别的态势时间列）。
+    """可做时间桶聚合的数据集（能力画像优先，时间列识别兜底）。
 
     口径与取数侧 field_resolver.find_time_field 一致（事件/记录时间优先，
     排除服役/成立/创建等档案日期），保证"规划能过 = 取数能分桶"。
@@ -166,11 +177,17 @@ def _time_capable_ids(meta: Dict[str, Any]) -> set:
     if not isinstance(meta, dict) or not meta.get("success"):
         return set()
     schemas = (meta.get("data", {}) or {}).get("schemas", []) or []
+    by_id = ((meta.get("_profiles") or {}).get("byId") or {}) if isinstance(meta, dict) else {}
     capable = set()
     for schema in schemas:
         ds_id = str((schema or {}).get("datasetId") or (schema or {}).get("id") or "").strip()
         if not ds_id:
             continue
+        profile = by_id.get(ds_id)
+        if isinstance(profile, dict):
+            if ((profile.get("capabilities") or {}).get("time") or {}).get("column"):
+                capable.add(ds_id)
+                continue
         columns = [str((f or {}).get("column") or "") for f in (schema.get("fields") or [])]
         if find_time_field(columns):
             capable.add(ds_id)
@@ -391,7 +408,8 @@ def _fallback_plan(meta: Dict[str, Any], query: str) -> Dict[str, Any]:
     if schemas:
         first = schemas[0] or {}
         ds_id = str(first.get("datasetId") or first.get("id") or "")
-        ds_name = str(first.get("name") or first.get("tableName") or ds_id)
+        ds_name = str(first.get("datasetName") or first.get("name")
+                      or first.get("tableName") or ds_id)
         geo_capable = _geo_capable_ids(meta)
         geo = "points" if ds_id in geo_capable else "none"
     sections = [
@@ -420,6 +438,8 @@ class Planner:
     def __init__(self, meta: Dict[str, Any], skill_context: Dict[str, Any] = None):
         self.meta = meta
         self.skill_context = skill_context if isinstance(skill_context, dict) else None
+        # 能力画像：入口已构建时直接复用，未构建时只做零查询的静态画像
+        profiler.ensure_profiles(meta)
         self.available = _available_dataset_ids(meta)
         self.geo_capable = _geo_capable_ids(meta)
         self.time_capable = _time_capable_ids(meta)

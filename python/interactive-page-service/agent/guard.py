@@ -60,6 +60,10 @@ _FORBIDDEN_TAG_PATTERNS = [
     (r"\s(?:src|href|poster)\s*=\s*[\"']\s*(?:https?:)?//", "禁止外链资源地址"),
 ]
 
+# 地图容器（id/class 中含 map 的 div）：无地理要素时不允许出现，避免空白地图占位
+_MAP_CONTAINER_RE = re.compile(
+    r"<div[^>]+(?:id|class)\s*=\s*[\"'][^\"']*map[^\"']*[\"']", re.IGNORECASE)
+
 # 密钥/凭据特征
 _SECRET_PATTERNS = [
     (r"sk-[A-Za-z0-9]{16,}", "疑似 API Key 泄露"),
@@ -174,8 +178,11 @@ def validate_page(html: str, bundle: Dict[str, Any]) -> List[str]:
     if not ("SitChart.render" in text or "SitMap.render" in text or "SitTable.render" in text):
         issues.append("页面至少要调用 SitChart.render / SitMap.render / SitTable.render 之一展示数据")
     # 数据包没有地理要素时禁止渲染地图，避免生成空白地图
-    if "SitMap.render" in text and not _bundle_has_geo_features(bundle):
+    has_geo = _bundle_has_geo_features(bundle)
+    if "SitMap.render" in text and not has_geo:
         issues.append("数据包没有可渲染的地理要素，页面不允许调用 SitMap.render 或创建地图容器")
+    elif not has_geo and _MAP_CONTAINER_RE.search(text):
+        issues.append("数据包没有可渲染的地理要素，页面不允许创建地图容器")
 
     # 页面级时间轴（bundle.timeline）相关的契约校验
     timeline = (bundle or {}).get("timeline") if isinstance(bundle, dict) else None

@@ -25,6 +25,7 @@ from .tools import (
 from .text_to_sql import run_text_to_sql, _validate_sql
 from .analyst import run_analyst
 from .sufficiency import assess_data_sufficiency, build_indicator_types
+from .value_validation import validate_result_values
 from .indicator_engine import (
     build_check_schema, plan_indicators, preflight_indicators,
 )
@@ -281,6 +282,7 @@ class Step:
     TABLE_SELECT      = 4
     SQL_GENERATE      = 5
     SQL_EXECUTE       = 6
+    VALUE_VALIDATION  = 6.5
     SUFFICIENCY       = 7
     RESULT_PREVIEW    = 8
     ANALYST           = 9
@@ -862,6 +864,88 @@ async def sql_execute_node(database_id, es, llm_call_fn):
 
 
 # =========================================================================
+# 阶段 6.5 – 数值口径校验（步骤 6.5）
+# =========================================================================
+
+async def value_validation_node(es, database_id, enhanced_indicators,
+                                raw_results, llm_call_fn):
+    """步骤 6.5 — 确定性数值校验，必要时重写一次 SQL。
+
+    校验比率类指标是否落在 0~100、是否为空/负值，并提取样本量提示。
+    发现越界时：
+      1. 将违规原因反馈给大模型，重写一次 SQL 并重新执行；
+      2. 若重写后违规指标减少则采用新结果，否则保留原结果；
+      3. 无论是否重写，越界行/单元格都会从下游分析结果中剔除，
+         由 analyst 明确说明"因口径异常不予评价"。
+
+    Yields:
+        步骤事件；最后以 ``{"_return": (rows, report)}`` 返回过滤后的行与校验报告
+    """
+    report = validate_result_values(raw_results, enhanced_indicators)
+
+    if not report["has_violations"]:
+        yield {"type": "step", "step": _build_step(
+            Step.VALUE_VALIDATION, "Value Validation", "completed",
+            detail=report["summary"], progress=100)}
+        yield {"_return": (raw_results, report)}
+        return
+
+    original_report = report
+    yield {"type": "step", "step": _build_step(
+        Step.VALUE_VALIDATION, "Value Validation", "in_progress",
+        detail=f"{report['summary']}，正在重写 SQL...", progress=50)}
+
+    retried_rows = None
+    rewritten = False
+    if not es.value_retry_done:
+        es.value_retry_done = True
+        es.previous_error = report["retry_feedback"]
+        es.steps = [s for s in (es.steps or [])
+                    if s.get("step", 0) < Step.SQL_GEN_THRESHOLD]
+        try:
+            await run_text_to_sql(es, llm_call_fn)
+            if es.sql_valid and es.generated_sql:
+                result = execute_sql_on_database(database_id, es.generated_sql)
+                if result.get("success"):
+                    retried_rows = _extract_rows(result)
+        except Exception as e:
+            logger.warning(f"数值校验触发的 SQL 重写失败: {e}")
+
+    if retried_rows is not None:
+        retry_report = validate_result_values(retried_rows, enhanced_indicators)
+        # 仅在重写结果非空、确实识别到指标、且违规指标减少时采用，避免越改越差
+        improved = (
+            len(retry_report["invalid_indicators"]) < len(report["invalid_indicators"])
+            and retry_report.get("validated_count", 0) > 0
+        )
+        if improved:
+            logger.info("数值校验：SQL 重写后违规指标减少，采用新结果")
+            raw_results, report = retried_rows, retry_report
+            rewritten = True
+        else:
+            logger.info("数值校验：SQL 重写未改善，保留原结果并剔除异常值")
+
+    # 越界行/单元格不进入后续分析与最终结论
+    raw_results = report.get("valid_rows", raw_results)
+
+    if rewritten:
+        detail = (f"原结果 {len(original_report['violations'])} 项数值异常，"
+                  f"已重写 SQL 并采用修正结果")
+    else:
+        detail = f"{report['summary']}；异常值已从结论中剔除"
+    violations_for_log = (original_report if rewritten else report).get("violations", [])
+
+    yield {"type": "step", "step": _build_step(
+        Step.VALUE_VALIDATION, "Value Validation", "completed",
+        detail=detail,
+        thinking="\n".join(
+            f"- {v['indicator']}: {v['value']} → {v['reason']}"
+            for v in violations_for_log[:10]),
+        progress=100)}
+    yield {"_return": (raw_results, report)}
+
+
+# =========================================================================
 # 阶段 6 – 结果预览（步骤 7）
 # =========================================================================
 
@@ -1392,7 +1476,17 @@ async def run_indicator_query(question, database_id, database_name,
             else:
                 yield ev
 
-    # ── 步骤 6.5: 数据充分性评估（确定性判定，不依赖 LLM） ───────────
+    # ── 步骤 6.5: 数值口径校验（确定性判定 + 最多一次 SQL 重写） ─────────
+    value_report = {}
+    async for ev in value_validation_node(es, database_id, enhanced_indicators,
+                                          raw_results, llm_call_fn):
+        if "_return" in ev:
+            raw_results, value_report = ev["_return"]
+        else:
+            yield ev
+    es.value_validation = value_report
+
+    # ── 步骤 6.6: 数据充分性评估（确定性判定，不依赖 LLM） ───────────
     # 区分「技术失败」与「库无数据」：gen_ok/exec_ok 任一为 False 即技术失败
     technical_failure = (not gen_ok) or (not exec_ok)
     failure_msg = es.execution_error or ""

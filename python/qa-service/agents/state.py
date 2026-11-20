@@ -169,6 +169,13 @@ class EvaluationState:
     # 指标类型映射 {指标名: "direct"|"computed"}，供 analyst Prompt 注入
     indicator_types: Dict[str, str] = field(default_factory=dict)
 
+    # 数值口径校验报告（阶段6.5 产出，由 value_validation.validate_result_values 生成）
+    # 含越界/缺失的比率指标与低置信度提示，供 analyst 禁止引用异常值
+    value_validation: Dict[str, Any] = field(default_factory=dict)
+
+    # 是否已针对数值校验失败做过一次 SQL 重写，避免无限重试
+    value_retry_done: bool = False
+
     # ============================================================
     # 第七阶段：图表 — Chart Agent 的输出
     # ============================================================

@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import config
 from agent import researcher
+from agent import bundle_meta
 from models import EvaluationArtifacts
 
 logger = logging.getLogger("ipage-service")
@@ -27,6 +28,8 @@ MAX_CHART_SECTIONS_WITH_MAP = 4
 MAX_CHART_SECTIONS_NO_MAP = 8
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_-]")
+# 多轮合并产物的轮次前缀（由前端 buildMultiRoundPayload 统一添加）
+_ROUND_PREFIX_RE = re.compile(r"^r(\d+)_")
 
 
 def _generated_at() -> str:
@@ -209,6 +212,44 @@ def _append_section(sections: List[Dict[str, Any]], kind: str, title: str, ref: 
     })
 
 
+def _round_key(entry: Dict[str, Any]) -> int:
+    """产物所属轮次：多轮合并时前端会给 id 加 r{N}_ 前缀；单轮产物统一归为第 0 组。"""
+    matched = _ROUND_PREFIX_RE.match(str(entry.get("id") or ""))
+    return int(matched.group(1)) if matched else 0
+
+
+def _pick_chart_entries(candidates: List[Dict[str, Any]], cap: int) -> List[Dict[str, Any]]:
+    """在图表配额内按轮次轮流选取，保证多轮产物都能出现在首屏图表区。
+
+    同一轮内保持原始顺序；只有一轮时结果与「按顺序取前 cap 条」完全一致。
+    """
+    if cap <= 0:
+        return []
+    buckets: Dict[int, List[Dict[str, Any]]] = {}
+    round_order: List[int] = []
+    for entry in candidates:
+        key = _round_key(entry)
+        if key not in buckets:
+            buckets[key] = []
+            round_order.append(key)
+        buckets[key].append(entry)
+
+    picked: List[Dict[str, Any]] = []
+    while len(picked) < cap:
+        progressed = False
+        for key in round_order:
+            bucket = buckets[key]
+            if not bucket:
+                continue
+            picked.append(bucket.pop(0))
+            progressed = True
+            if len(picked) >= cap:
+                break
+        if not progressed:
+            break
+    return picked
+
+
 def _build_plan(
     artifacts: EvaluationArtifacts,
     entries: List[Dict[str, Any]],
@@ -238,9 +279,12 @@ def _build_plan(
         MAX_CHART_SECTIONS_WITH_MAP if (want_map and geo_entry)
         else MAX_CHART_SECTIONS_NO_MAP
     )
-    chart_entries = [
+    # 图表配额按轮次轮流分配：若直接截断，多轮场景下靠后的轮次会被整轮挤掉，
+    # 表现为「生成态势页面只显示第一轮」。轮次信息来自前端加在产物 id 上的 r{N}_ 前缀。
+    chart_candidates = [
         e for e in aggregate_entries if _is_chartable(e, chart_hints.get(e["id"]))
-    ][:chart_cap]
+    ]
+    chart_entries = _pick_chart_entries(chart_candidates, chart_cap)
 
     # KPI：优先引用有数值列的数据条目
     if want_kpi:
@@ -268,14 +312,16 @@ def _build_plan(
         if table_entry:
             _append_section(sections, "table", "评估数据明细", table_entry["id"])
 
-    # 未被任何区块引用的明细产物：补一张明细表，避免用户勾选的数据被静默丢弃。
-    # 明细表开关关闭时仍会补，因为「开关关闭」只代表不要主明细表，
-    # 而这些产物若不出区块就会既不上图也不上表，页面上完全看不到。
+    # 未被任何区块引用的产物：补一张数据表，避免用户勾选的数据被静默丢弃。
+    # 除明细产物外，超出图表配额的聚合产物同样要补表：多轮合并时若只按顺序截断，
+    # 靠后轮次的聚合结果会既不上图也不上表，页面上看起来「只有第一轮」。
     referenced = {s.get("ref") for s in sections if s.get("ref")}
-    for entry in detail_entries:
+    for entry in entries:
         if entry["id"] in referenced:
             continue
-        _append_section(sections, "table", f"{entry.get('name') or '评估数据'}（明细）", entry["id"])
+        suffix = "（明细）" if entry.get("mode") == "detail" else "（数据表）"
+        _append_section(sections, "table",
+                        f"{entry.get('name') or '评估数据'}{suffix}", entry["id"])
         referenced.add(entry["id"])
 
     if (artifacts.conclusion or "").strip():
@@ -358,5 +404,7 @@ def build_bundle_and_plan(
     conclusion = (artifacts.conclusion or "").strip()
     if conclusion:
         bundle["conclusion"] = conclusion
+    # 补齐 mapAvailable：页面写作契约要求运行时数据包带该字段，缺省会让地图区块静默不渲染
+    bundle_meta.apply_bundle_meta(bundle)
     plan = _build_plan(artifacts, entries, chart_hints, fallback_query)
     return bundle, plan, warnings

@@ -101,7 +101,7 @@
           :rows="2"
           resize="none"
           :disabled="!canRevise"
-          :placeholder="canRevise ? '对当前页面提出修改，例如：只看蓝方、增加时间趋势图…' : '生成页面后可在此输入修改要求'"
+          :placeholder="canRevise ? '对当前页面提出修改，例如：只看某一方、增加时间趋势图…' : '生成页面后可在此输入修改要求'"
           @keydown.enter.exact.prevent="onSend"
         />
         <div class="composer-foot">

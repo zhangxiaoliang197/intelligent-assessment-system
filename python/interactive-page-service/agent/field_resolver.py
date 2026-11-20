@@ -30,8 +30,34 @@ ENTITY_KIND_TO_UNIT: Dict[str, str] = {
     "air": "aircraft",
     "base": "base",
     "ground_facility": "facility",
+    # 军事领域新增 6 类：运行时 unitKind 与注解值同名
+    "unit": "unit",
+    "person": "person",
+    "organization": "organization",
+    "task": "task",
+    "area": "area",
+    "resource": "resource",
     "other": "other",
 }
+
+# 能力画像（profiler）产出的军事通用实体大类；仅作为内部 unitKind 使用，不写入注解契约
+PROFILE_ENTITY_KINDS: frozenset = frozenset({
+    "platform", "platform_air", "platform_ground", "platform_sea",
+    "unit", "facility", "person", "organization", "event", "task",
+    "area", "resource", "sensor", "target", "threat", "other",
+})
+
+# 中文语义词典（与 profiler 保持一致；只在英文/注解未命中时兜底，保证存量数据零回归）
+_CN_LNG_TOKENS = ("经度", "东经")
+_CN_LAT_TOKENS = ("纬度", "北纬")
+_CN_TIME_TOKENS = ("时间", "日期", "时刻", "上报", "发生", "记录")
+_CN_FACTION_TOKENS = ("阵营", "归属", "隶属", "敌我", "所属", "编成", "派别")
+_CN_STATUS_TOKENS = ("状态", "结果", "健康", "告警")
+_CN_TYPE_TOKENS = ("类别", "类型", "分类", "种类")
+_CN_ID_TOKENS = ("编号", "标识", "编码")
+_CN_NAME_TOKENS = ("名称", "呼号", "姓名")
+_CN_SEQ_TOKENS = ("序号", "顺序", "点号")
+_CN_RADIUS_TOKENS = ("半径", "作用范围", "覆盖范围")
 
 # 物理表名 → 地图单位语义（③ 层兜底；注解缺失时保持历史行为，不删除）
 UNIT_KIND_BY_TABLE: Dict[str, str] = {
@@ -90,8 +116,12 @@ def faction_color(canonical: str) -> str:
 # ──────────────────────────────────────────────────────────────────
 
 def find_coord_pairs(columns: List[str]) -> List[Tuple[str, str, str]]:
-    """识别成对经纬度列，返回 (前缀, lng列, lat列)；前缀 '' 表示裸 lng/lat。"""
+    """识别成对经纬度列，返回 (前缀, lng列, lat列)；前缀 '' 表示裸 lng/lat。
+
+    英文前后缀优先（与改造前逐字一致），中文「经度/纬度」作为兜底追加在末尾。
+    """
     lngs, lats = {}, {}
+    cn_lng = cn_lat = None
     for c in columns:
         low = str(c).lower()
         if low in ("lng", "lon", "longitude"):
@@ -102,7 +132,14 @@ def find_coord_pairs(columns: List[str]) -> List[Tuple[str, str, str]]:
             lngs[low[:-4]] = c
         elif low.endswith("_lat"):
             lats[low[:-4]] = c
-    return [(prefix, lng, lats[prefix]) for prefix, lng in lngs.items() if prefix in lats]
+        elif any(tok in low for tok in _CN_LNG_TOKENS) and not cn_lng:
+            cn_lng = c
+        elif any(tok in low for tok in _CN_LAT_TOKENS) and not cn_lat:
+            cn_lat = c
+    pairs = [(prefix, lng, lats[prefix]) for prefix, lng in lngs.items() if prefix in lats]
+    if cn_lng and cn_lat:
+        pairs.append(("", cn_lng, cn_lat))
+    return pairs
 
 
 def find_field(columns: List[str], candidates: Tuple[str, ...]) -> Optional[str]:
@@ -123,16 +160,18 @@ def radius_kind(col_name: str) -> str:
     "半径取探测值、标签却写打击范围"的错配，且另一根半径被整个忽略。
     """
     low = str(col_name or "").lower()
-    if "strike" in low:
+    if "strike" in low or "打击" in low or "攻击" in low:
         return "strike"
-    if "detect" in low or "recon" in low or "scout" in low or "search" in low:
+    if ("detect" in low or "recon" in low or "scout" in low or "search" in low
+            or "侦察" in low or "探测" in low or "搜索" in low):
         return "recon"
     return ""
 
 
 # 档案/管理类日期关键词：服役日期、成立日期、创建时间等是静态属性，不是态势事件时间，
 # 绝不能作为地图时间轴字段（否则会把时间轴拉到数年前）
-NON_EVENT_TIME_KEYS = ("commission", "found", "establish", "birth", "create", "update", "valid")
+NON_EVENT_TIME_KEYS = ("commission", "found", "establish", "birth", "create", "update", "valid",
+                       "服役", "成立", "创建", "更新", "出生", "有效")
 
 
 def find_time_field(columns: List[str]) -> Optional[str]:
@@ -141,7 +180,8 @@ def find_time_field(columns: List[str]) -> Optional[str]:
     匹配优先级：
       1. 明确的事件时间列（record_time/event_time/recon_time/destroyed_time 等）
       2. 以 _time 结尾的列（排除服役、成立、创建等档案管理时间）
-      3. 含 date/时间的列兜底（同样排除档案日期，如 commission_date）
+      3. 含 date/时间 的列兜底（同样排除档案日期，如 commission_date）
+      4. 中文时间词兜底（上报时间/发生时刻等），同样排除档案词
     """
     lows = [str(c).lower() for c in columns]
     event_cands = ("record_time", "event_time", "recon_time", "destroyed_time",
@@ -156,6 +196,10 @@ def find_time_field(columns: List[str]) -> Optional[str]:
             return original
     for low, original in zip(lows, columns):
         if ("date" in low or "时间" in str(original)) \
+                and not any(k in low for k in NON_EVENT_TIME_KEYS):
+            return original
+    for low, original in zip(lows, columns):
+        if any(tok in low for tok in _CN_TIME_TOKENS) \
                 and not any(k in low for k in NON_EVENT_TIME_KEYS):
             return original
     return None
@@ -174,7 +218,7 @@ class FieldResolver:
     """单个数据集的字段解析器（注解优先，列名启发式兜底）。"""
 
     def __init__(self, spec: Optional[TableSpec], columns: List[str],
-                 table_name: str = ""):
+                 table_name: str = "", profile: Optional[Dict[str, Any]] = None):
         """初始化。
 
         Args:
@@ -182,10 +226,12 @@ class FieldResolver:
                 此时所有方法只走列名启发式，与改造前行为一致。
             columns: 本次取数结果集的列名（注解声明的列必须在此存在才生效）。
             table_name: 物理表名（③ 层表名映射兜底用）。
+            profile: 能力画像（profiler 产出）；注解缺失时作为第二优先级来源。
         """
         self.spec = spec
         self.columns: List[str] = [str(c) for c in (columns or [])]
         self.table_name = str(table_name or "")
+        self.profile: Dict[str, Any] = profile if isinstance(profile, dict) else {}
         # 维度关系图（由 build_resolver 注入；用于注解值域采样比对，可为 None）
         self.graph: Any = None
         self._lower_map = {c.lower(): c for c in self.columns}
@@ -226,6 +272,85 @@ class FieldResolver:
         """取字段业务含义文本（注解优先，其次是物理列注释）。"""
         meta = (getattr(self.spec, "columns", None) or {}).get(column) or {}
         return str(meta.get("meaning") or "")
+
+    # ── ②.5 层：能力画像（注解缺失时的第二优先级来源）──────────────
+    # 画像由 profiler 确定性产出，不写入注解契约；只对结果集中真实存在的列生效。
+
+    def _profile_cap(self) -> Dict[str, Any]:
+        """取画像能力段（无画像返回空字典）。"""
+        cap = self.profile.get("capabilities") if isinstance(self.profile, dict) else None
+        return cap if isinstance(cap, dict) else {}
+
+    def _existing_quiet(self, column: Any) -> Optional[str]:
+        """画像列存在性检查：不存在时**不写提示**（画像不是注解，缺列不代表注解失效）。"""
+        name = str(column or "").strip()
+        if not name:
+            return None
+        if name in self.columns:
+            return name
+        return self._lower_map.get(name.lower())
+
+    def _existing_pair(self, lng: Any, lat: Any) -> Optional[Tuple[str, str]]:
+        """画像坐标列必须都存在于结果集，才认为有效。"""
+        lng_col = self._existing_quiet(lng)
+        lat_col = self._existing_quiet(lat)
+        if lng_col and lat_col and lng_col != lat_col:
+            return lng_col, lat_col
+        return None
+
+    def profile_geo_pair(self) -> Optional[Tuple[str, str]]:
+        """画像坐标对（投影坐标不参与地图渲染）。"""
+        geo = self._profile_cap().get("geo") or {}
+        if str(geo.get("coordType") or "geographic") == "projected":
+            return None
+        return self._existing_pair(geo.get("lng"), geo.get("lat"))
+
+    def profile_time_column(self) -> Optional[str]:
+        """画像事件时间列。"""
+        cap = self._profile_cap().get("time") or {}
+        return self._existing_quiet(cap.get("column"))
+
+    def profile_seq_column(self) -> Optional[str]:
+        """画像轨迹点序号列。"""
+        entity = self._profile_cap().get("entity") or {}
+        return self._existing_quiet(entity.get("seq"))
+
+    def profile_entity_key(self) -> Optional[str]:
+        """画像实体键列（航迹拆分、实体编号）。"""
+        entity = self._profile_cap().get("entity") or {}
+        return self._existing_quiet(entity.get("key"))
+
+    def profile_name_column(self) -> Optional[str]:
+        """画像名称列。"""
+        entity = self._profile_cap().get("entity") or {}
+        return self._existing_quiet(entity.get("name"))
+
+    def profile_category_columns(self) -> List[str]:
+        """画像类别列（按画像顺序，只保留结果集中存在的列）。"""
+        cols = self._profile_cap().get("category") or []
+        return [c for c in (self._existing_quiet(x) for x in cols) if c]
+
+    def profile_faction_columns(self) -> List[str]:
+        """画像归属/阵营列。"""
+        cols = self._profile_cap().get("affiliation") or []
+        return [c for c in (self._existing_quiet(x) for x in cols) if c]
+
+    def profile_status_columns(self) -> List[str]:
+        """画像状态列。"""
+        cols = self._profile_cap().get("status") or []
+        return [c for c in (self._existing_quiet(x) for x in cols) if c]
+
+    def profile_radius_columns(self) -> List[str]:
+        """画像半径列。"""
+        geo = self._profile_cap().get("geo") or {}
+        cols = geo.get("radius") or []
+        return [c for c in (self._existing_quiet(x) for x in cols) if c]
+
+    def profile_unit_kind(self) -> str:
+        """画像实体大类（仅内部 unitKind，不写入注解契约）。"""
+        entity = self._profile_cap().get("entity") or {}
+        kind = str(entity.get("kind") or "").strip()
+        return kind if kind in PROFILE_ENTITY_KINDS else ""
 
     def column_by_role(self, role: str) -> Optional[str]:
         """按字段角色找列（① 层）；多个同角色时按结构顺序取第一个。"""
@@ -274,39 +399,49 @@ class FieldResolver:
         return None
 
     def coord_pair(self) -> Optional[Tuple[str, str]]:
-        """返回 (lng列, lat列) 或 None（注解优先，否则列名启发式首对）。"""
+        """返回 (lng列, lat列) 或 None（注解 → 画像 → 列名启发式）。"""
         annotated = self.annotated_coord_pair()
         if annotated:
             return annotated
+        profiled = self.profile_geo_pair()
+        if profiled:
+            return profiled
         pairs = find_coord_pairs(self.columns)
         return (pairs[0][1], pairs[0][2]) if pairs else None
 
     # ── 时间 / 排序 ───────────────────────────────────────────────
 
     def event_time_column(self) -> Optional[str]:
-        """事件时间列：注解 eventTimeColumn → role=time → 含义文本 → 列名启发式。"""
+        """事件时间列：注解 → role=time → 画像 → 含义文本 → 列名启发式。"""
         annotated = self._existing(self.dataset_semantic.get("eventTimeColumn"))
         if annotated:
             return annotated
         role_col = self.column_by_role("time")
         if role_col:
             return role_col
+        profiled = self.profile_time_column()
+        if profiled:
+            return profiled
         meaning_col = self._by_meaning(_TIME_MEANING_TOKENS, exclude=NON_EVENT_TIME_KEYS)
         if meaning_col:
             return meaning_col
         return find_time_field(self.columns)
 
     def seq_column(self) -> Optional[str]:
-        """航迹点排序列（不含时间回退）：role=seq → 列名含 seq。"""
-        return self.column_by_role("seq") or find_field(self.columns, ("seq",))
+        """航迹点排序列（不含时间回退）：role=seq → 画像 → 列名含 seq。"""
+        return (self.column_by_role("seq")
+                or self.profile_seq_column()
+                or find_field(self.columns, ("seq",)))
 
     def sort_column(self) -> Optional[str]:
         """航迹点排序字段：seq 列 → 事件时间列。"""
         return self.seq_column() or self.event_time_column()
 
     def type_column(self, fallback: Optional[str] = None) -> Optional[str]:
-        """类型/类别列：② 业务含义命中类别词 → 传入的列名启发式结果。"""
-        return self._by_meaning(_TYPE_MEANING_TOKENS) or fallback
+        """类型/类别列：含义文本 → 画像类别列 → 传入的列名启发式结果。"""
+        profiled = self.profile_category_columns()
+        return self._by_meaning(_TYPE_MEANING_TOKENS) or (profiled[0] if profiled else None) \
+            or fallback
 
     def altitude_column(self) -> Optional[str]:
         """高度列：role=altitude → 含义文本 → 列名。"""
@@ -341,6 +476,9 @@ class FieldResolver:
             resolved = [self._existing(col) for col in annotated]
             if all(resolved):
                 return [col for col in resolved if col]
+        # 画像兜底：注解未声明拆分键时，用画像识别的实体键/名称列
+        id_field = id_field or self.profile_entity_key()
+        name_field = name_field or self.profile_name_column()
         group = [id_field or name_field] if (id_field or name_field) else []
         if mission_field and mission_field not in group:
             group.append(mission_field)
@@ -349,7 +487,7 @@ class FieldResolver:
     # ── 半径与范围圈 ──────────────────────────────────────────────
 
     def radius_columns(self) -> List[str]:
-        """半径列：注解 geometry.radiusColumn 置前，其余列名含 radius 的保留（不丢圈）。"""
+        """半径列：注解 → role → 画像 → 列名（含中文「半径」）；不丢任何一圈。"""
         result: List[str] = []
         annotated = None
         geometry = self.dataset_semantic.get("geometry")
@@ -360,8 +498,13 @@ class FieldResolver:
         role_col = self.column_by_role("radius")
         if role_col and role_col not in result:
             result.append(role_col)
+        for column in self.profile_radius_columns():
+            if column not in result:
+                result.append(column)
         for column in self.columns:
-            if "radius" in str(column).lower() and column not in result:
+            low = str(column).lower()
+            if ("radius" in low or any(tok in low for tok in _CN_RADIUS_TOKENS)) \
+                    and column not in result:
                 result.append(column)
         return result
 
@@ -382,10 +525,15 @@ class FieldResolver:
     # ── 单位语义与符号 ───────────────────────────────────────────
 
     def unit_kind(self) -> str:
-        """数据集单位大类：① entityKind → ③ 表名映射 → ''（由调用方回落 other）。"""
+        """数据集单位大类：注解 entityKind → 画像实体类型 → 表名映射 → ''。"""
         entity_kind = str(self.dataset_semantic.get("entityKind") or "").strip()
         if entity_kind in ENTITY_KIND_TO_UNIT:
             return ENTITY_KIND_TO_UNIT[entity_kind]
+        if entity_kind in PROFILE_ENTITY_KINDS:
+            return entity_kind
+        profiled = self.profile_unit_kind()
+        if profiled:
+            return profiled
         table = self.table_name.lower()
         return next((kind for token, kind in UNIT_KIND_BY_TABLE.items()
                      if token in table), "")
@@ -449,9 +597,11 @@ class FieldResolver:
         return text
 
     def status_column(self, fallback: Optional[str] = None) -> Optional[str]:
-        """状态列：role=status → 含义文本 → 传入的列名启发式结果。"""
+        """状态列：role=status → 含义文本 → 画像状态列 → 传入的列名启发式结果。"""
+        profiled = self.profile_status_columns()
         return (self.column_by_role("status")
                 or self._by_meaning(_STATUS_MEANING_TOKENS)
+                or (profiled[0] if profiled else None)
                 or fallback)
 
     def status_key(self, column: str, raw: Any) -> str:
@@ -488,8 +638,14 @@ class FieldResolver:
                 if canonical and canonical != raw_text:
                     return canonical, faction_color(canonical)
 
-        # ③ 列名启发式 / 档案索引 / 表名兜底
-        val = str(row.get("faction") or "").strip()
+        # ③ 列名启发式 / 画像 / 档案索引 / 表名兜底
+        # 已知阵营值保持旧口径；未知归属值（如"我方/敌我/番号"）在无档案兜底时原样保留，
+        # 供前端动态生成筛选条。
+        raw_text = ""
+        if column:
+            raw = row.get(column)
+            raw_text = "" if raw is None else str(raw).strip()
+        val = raw_text or str(row.get("faction") or "").strip()
         if val in ("蓝方", "红方"):
             return val, ""
         index = aircraft_index or {}
@@ -499,10 +655,14 @@ class FieldResolver:
                 return indexed, ""
         if fallback_unit:
             return fallback_unit, ""
+        # 只有画像确认该数据集存在归属列时，才保留红蓝之外的任意归属值；
+        # 无画像的存量数据沿用旧口径（未知值返回空），保证零回归。
+        if val and self.profile_faction_columns():
+            return val, ""
         return "", ""
 
     def faction_column(self) -> Optional[str]:
-        """阵营列：① role=dimension 且带值映射/同义词的列 → ③ 列名 faction/camp/side。"""
+        """阵营列：注解 → 画像归属列 → 列名 faction/camp/side → 中文归属词。"""
         for column in self.columns:
             semantic = self._semantic_of(column)
             if semantic.get("values") or semantic.get("synonyms"):
@@ -511,7 +671,14 @@ class FieldResolver:
                     low = str(column).lower()
                     if "阵营" in meaning or low in ("faction", "camp", "side"):
                         return column
-        return find_field(self.columns, ("faction", "camp", "side"))
+        profiled = self.profile_faction_columns()
+        if profiled:
+            return profiled[0]
+        found = find_field(self.columns, ("faction", "camp", "side"))
+        if found:
+            return found
+        return next((c for c in self.columns
+                     if any(tok in str(c).lower() for tok in _CN_FACTION_TOKENS)), None)
 
     # ── 值域一致性提示（决策 D4）─────────────────────────────────
 
@@ -587,11 +754,13 @@ class FieldResolver:
 
 
 def build_resolver(meta: Dict[str, Any], table_name: str,
-                   columns: List[str]) -> FieldResolver:
+                   columns: List[str],
+                   profile: Optional[Dict[str, Any]] = None) -> FieldResolver:
     """按元数据构造解析器（复用 DimensionGraph 的缓存图；失败降级为纯列名启发式）。
 
     失败时返回 ``FieldResolver(None, columns, table_name)`` —— 与改造前行为一致，
-    绝不因注解链路异常影响取数。
+    绝不因注解链路异常影响取数。``profile`` 未传入时只读 ``meta["_profiles"]``，
+    **不主动触发画像构建**（避免取数阶段额外查库）。
     """
     spec: Optional[TableSpec] = None
     graph: Any = None
@@ -604,6 +773,10 @@ def build_resolver(meta: Dict[str, Any], table_name: str,
         logger.warning("构造字段解析器失败，本次退回列名启发式 table=%s: %s", table_name, exc)
         spec = None
         graph = None
-    resolver = FieldResolver(spec, columns, table_name)
+    if profile is None and isinstance(meta, dict):
+        profiles = meta.get("_profiles")
+        if isinstance(profiles, dict):
+            profile = (profiles.get("byTable") or {}).get(str(table_name or ""))
+    resolver = FieldResolver(spec, columns, table_name, profile=profile)
     resolver.graph = graph
     return resolver

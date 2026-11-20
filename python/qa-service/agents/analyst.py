@@ -432,6 +432,38 @@ async def run_analyst(state: EvaluationState, llm_call_fn,
         )
         user_msg = "请基于数据给出结构化分析结论。"
 
+    # ── 注入数值口径校验结果（阶段 6.5 的确定性判定）──
+    # 越界指标已从结果集中剔除，这里明确告知模型不得引用其数值，
+    # 避免"150% 命中率"这类口径错误进入最终结论。
+    validation = getattr(state, "value_validation", None) or {}
+    validation_block = ""
+    if validation.get("has_violations"):
+        lines = [
+            "",
+            "## 数值口径校验（系统确定性判定，优先级最高）",
+            "以下指标的计算结果超出合理范围，已从结果集中剔除，**禁止在结论中引用其数值**：",
+        ]
+        for item in validation.get("violations", [])[:10]:
+            lines.append(
+                f"- {item.get('indicator', '')} = {item.get('value')}："
+                f"{item.get('reason', '')}")
+        lines.append(
+            "请只基于其余有效指标作答；若没有有效指标，直接说明"
+            "「相关指标因计算口径异常无法评价」并给出修正建议，不要估算数值。")
+        validation_block += "\n".join(lines)
+    if validation.get("warnings"):
+        lines = [
+            "",
+            "## 样本量提示（低置信度）",
+            "以下指标样本量不足，只能作为参考，不得外推为稳定结论：",
+        ]
+        for item in validation.get("warnings", [])[:10]:
+            lines.append(
+                f"- {item.get('indicator', '')}：{item.get('reason', '')}")
+        validation_block += "\n" + "\n".join(lines)
+    if validation_block:
+        system_prompt = f"{system_prompt}\n{validation_block}"
+
     logger.info(f"[analyst] 场景={scenario}, has_computed={has_computed}, "
                 f"prompt长度={len(system_prompt)}")
 

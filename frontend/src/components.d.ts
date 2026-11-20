@@ -9,6 +9,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     AssistantAvatar: typeof import('./components/AssistantAvatar.vue')['default']
     CurrentStatePanel: typeof import('./components/CurrentStatePanel.vue')['default']
+    DatasetAnnotationWorkflow: typeof import('./components/DatasetAnnotationWorkflow.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAvatar: typeof import('element-plus/es')['ElAvatar']
     ElButton: typeof import('element-plus/es')['ElButton']

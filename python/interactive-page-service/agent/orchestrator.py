@@ -15,7 +15,8 @@ from agent.planner import Planner, resolve_skill_datasets
 from agent.researcher import execute_sub_question, build_map_timeline, build_page_timeline
 from agent.page_writer import PageWriter
 from agent.evaluation_bridge import build_bundle_and_plan
-from agent import dimension_graph, entity_filter, skill_catalog, skill_matcher
+from agent import bundle_meta
+from agent import dimension_graph, entity_filter, skill_catalog, skill_matcher, profiler
 from models import PageRecord
 from store import admin_client, page_store
 
@@ -316,6 +317,12 @@ def _resolve_skill(query: str, meta: Dict[str, Any],
             return _build_skill_context(skill, "inherited", None,
                                         f"继承上一版页面所用技能「{skill.name}」", [], meta)
 
+    # 无数据集元数据时不自动匹配技能：技能只声明实体槽位，必须依赖真实数据集解析，
+    # 否则会套用一套"什么数据都没解析到"的剧本，并污染 plan.skill。
+    if not isinstance(meta, dict) or not meta.get("success"):
+        logger.info("无数据集元数据，本次不自动匹配技能")
+        return None
+
     try:
         result = skill_matcher.match(query)
     except Exception as exc:
@@ -372,6 +379,13 @@ async def generate_stream(page: PageRecord, meta: Dict[str, Any],
 
     skill_context: Dict[str, Any] = None
 
+    # 能力画像：为规划与取数提供确定性的能力判断（统计增强失败自动降级为静态画像）
+    if isinstance(meta, dict) and meta.get("success"):
+        try:
+            profiler.ensure_profiles(meta, allow_stats=True)
+        except Exception as exc:
+            logger.warning("能力画像构建失败，本次使用静态画像: %s", exc)
+
     # ── 评估产物模式：跳过 Planner/Researcher，直接用勾选产物生成页面 ──
     if artifacts:
         if page.parentId:
@@ -422,6 +436,8 @@ async def generate_stream(page: PageRecord, meta: Dict[str, Any],
         # 表现为 intent='' 走占位符、dataBundle={} 无数据，即"修改后的页面打不开、不显示"。
         plan = dict(parent.plan or {})
         bundle = dict(parent.dataBundle or {})
+        # 历史页面的数据包可能缺少 mapAvailable（旧版本生成），修订前统一补齐
+        bundle_meta.apply_bundle_meta(bundle)
         entries = [e for e in (bundle.get("datasets") or []) if isinstance(e, dict)]
         sql_log = [s for s in (parent.sqlLog or []) if isinstance(s, dict)]
         page.plan = plan
@@ -477,6 +493,7 @@ async def generate_stream(page: PageRecord, meta: Dict[str, Any],
             page_timeline = build_page_timeline(entries)
             if page_timeline:
                 bundle["timeline"] = page_timeline
+            bundle_meta.apply_bundle_meta(bundle)
             _finalize_skill(plan, skill_context)
             page.plan = plan
             page.dataBundle = bundle
@@ -563,6 +580,7 @@ async def generate_stream(page: PageRecord, meta: Dict[str, Any],
         page_timeline = build_page_timeline(entries)
         if page_timeline:
             bundle["timeline"] = page_timeline
+        bundle_meta.apply_bundle_meta(bundle)
         page.dataBundle = bundle
         page.sqlLog = sql_log
         _save(page)

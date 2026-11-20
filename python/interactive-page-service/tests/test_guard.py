@@ -108,6 +108,20 @@ class GuardTest(unittest.TestCase):
         issues = validate_page(VALID_HTML, empty_geo_bundle)
         self.assertTrue(any("地理要素" in i for i in issues))
 
+    def test_map_container_without_geo_rejected(self):
+        """没有地理要素时，即使不调用 SitMap 也不允许留下空白地图容器。"""
+        html = VALID_HTML.replace('id="m1"', 'id="map1"').replace(
+            "SitMap.render('#m1', {points: data.datasets[0].geoFeatures.points});", "")
+        empty_geo_bundle = {
+            "datasets": [{
+                "id": "q1",
+                "rows": [{"side": "红方"}],
+                "geoFeatures": {"tracks": [], "points": [], "units": [], "circles": []},
+            }]
+        }
+        issues = validate_page(html, empty_geo_bundle)
+        self.assertTrue(any("地图容器" in i for i in issues))
+
     def test_preamble_before_doctype_rejected(self):
         """LLM 在文档前输出寒暄说明文字必须被判为不合规。"""
         html = "这是为您生成的页面：\n" + VALID_HTML

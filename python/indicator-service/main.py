@@ -272,7 +272,8 @@ def _stream_indicator_query(session_id: str, query: str, database_id: str, datab
     if selected_indicator_names:
         payload["selected_indicator_names"] = selected_indicator_names
     try:
-        for line in http_post_stream(f"{EVALUATION_API_URL}/evaluation/indicator-query/stream", payload, timeout=180):
+        # 数值校验可能触发一次 SQL 重写，整条管线耗时上升，超时放宽到 300 秒
+        for line in http_post_stream(f"{EVALUATION_API_URL}/evaluation/indicator-query/stream", payload, timeout=300):
             yield line
     except Exception as e:
         logger.error(f"Indicator query stream failed: {e}")
@@ -771,8 +772,10 @@ async def list_sessions():
 
 @app.post("/indicator/session/new")
 async def new_session():
-    # 只返回 UUID，不创建数据库记录；真正发消息时由 analyze/stream 创建
-    new_id = str(uuid.uuid4())
+    # 只返回会话 ID，不创建数据库记录；真正发消息时由 analyze/stream 创建。
+    # 统一使用 32 位无连字符十六进制：ass_chat_message / ass_chat_history 的
+    # session_id 列宽为 32，带连字符的 36 位 UUID 会导致消息落库失败。
+    new_id = uuid.uuid4().hex
     return {"success": True, "session_id": new_id}
 
 
@@ -792,7 +795,7 @@ async def delete_session_endpoint(session_id: str):
 @app.post("/indicator/analyze")
 async def analyze_indicator(request: AnalyzeRequest):
     """分析指标请求（非流式，兼容旧版）"""
-    session_id = request.session_id or str(uuid.uuid4())
+    session_id = request.session_id or uuid.uuid4().hex
     ensure_session(session_id)
 
     context = build_context(session_id)
@@ -831,30 +834,10 @@ async def analyze_indicator_stream(request: AnalyzeRequest):
       - "done" → 新问题 → 重置为 analyzing
     """
     session_id = request.session_id
+    # 无 session_id 时一律新建会话。禁止根据服务端状态"猜"一个最近会话复用，
+    # 否则多个对话（或多标签页）会互相串入对方的阶段与待确认指标。
     if not session_id:
-        # ── 无 session_id 时尝试复用最近的活跃 indicator 会话 ──
-        # 仅复用 analyzing 阶段（用户可能刷新了页面，正在等待LLM响应）。
-        # awaiting_confirmation/querying/done 阶段的会话不自动复用，
-        # 避免新问题被合并到旧会话。
-        from datetime import datetime as _dt, timezone as _tz
-        existing_sessions = get_all_sessions()
-        for sid, sdata in existing_sessions.items():
-            stage_s = sdata.get("stage", "")
-            if stage_s in ("analyzing",):
-                # 仅复用 5 分钟内创建的会话
-                created = sdata.get("createTime", "")
-                if created:
-                    try:
-                        ct = _dt.fromisoformat(created)
-                        if (_dt.now(_tz.utc) - ct.replace(tzinfo=_tz.utc)).total_seconds() < 300:
-                            session_id = sid
-                            logger.info(f"Reusing analyzing session {session_id} (created {created})")
-                            break
-                    except Exception:
-                        pass
-
-    if not session_id:
-        session_id = str(uuid.uuid4())
+        session_id = uuid.uuid4().hex
     
     ensure_session(session_id)
     stage = get_session_stage(session_id)
