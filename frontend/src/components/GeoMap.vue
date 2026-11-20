@@ -297,7 +297,7 @@ function clearTileLayers() {
   tileLayers = []
 }
 
-// ── 瓦片失败回退：高德瓦片不可达时自动降级为 GeoWebCache 6 层 ──
+// ── 瓦片失败回退：高德瓦片不可达时自动降级为 GeoWebCache 内网图层 ──
 let fallbackApplied = false
 
 /** 移除当前底图并挂上备用图层（只执行一次，避免反复抖动） */

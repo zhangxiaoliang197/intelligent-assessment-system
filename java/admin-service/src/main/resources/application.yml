@@ -59,6 +59,13 @@ db:
 driver:
   storage-path: ${user.dir}/drivers
 
+# ─── 地图服务 ───
+map:
+  # 首次初始化时默认启用的底图类型：
+  #   geowebcache — 内网 GeoWebCache（默认，内网部署使用）
+  #   amap        — 高德在线底图（需服务器可访问外网）
+  default-type: ${MAP_DEFAULT_TYPE:geowebcache}
+
 # ─── 日志配置 ───
 # LOG_PATH 由环境变量注入（Docker 内 /app/logs，本地 ./logs）
 logging:

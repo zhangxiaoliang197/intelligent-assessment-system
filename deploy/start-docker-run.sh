@@ -63,6 +63,11 @@ INTERNAL_SERVICE_TOKEN="${INTERNAL_SERVICE_TOKEN:-}"
 ADMIN_API_TOKEN="${ADMIN_API_TOKEN:-}"
 ADMIN_UI_PASSWORD="${ADMIN_UI_PASSWORD:-}"
 IPAGE_LLM_ALLOWED_HOSTS="${IPAGE_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}"
+# ─── 内网地图服务上游（协议+主机+端口，不含结尾斜杠）───
+# 前端 nginx 的 /geowebcache/、/tiles/ 反向代理会转发到该地址。
+MAP_TILE_UPSTREAM="${MAP_TILE_UPSTREAM:-http://host.docker.internal:9090}"
+MAP_TILE_UPSTREAM="${MAP_TILE_UPSTREAM%/}"
+echo "  地图服务上游: $MAP_TILE_UPSTREAM"
 if [ ${#INTERNAL_SERVICE_TOKEN} -lt 24 ] || [ "$INTERNAL_SERVICE_TOKEN" = "local-development-token" ]; then
     echo "ERROR: INTERNAL_SERVICE_TOKEN 必须显式配置为至少 24 位随机值"
     exit 1
@@ -390,6 +395,8 @@ docker run -d --name assessment-frontend \
     -p 10086:80 \
     -e ADMIN_API_TOKEN="$ADMIN_API_TOKEN" \
     -e ADMIN_UI_PASSWORD="$ADMIN_UI_PASSWORD" \
+    -e MAP_TILE_UPSTREAM="$MAP_TILE_UPSTREAM" \
+    --add-host host.docker.internal:host-gateway \
     --log-driver json-file \
     --log-opt max-size=20m \
     --log-opt max-file=3 \

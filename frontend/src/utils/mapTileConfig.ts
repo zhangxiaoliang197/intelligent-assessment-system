@@ -18,7 +18,7 @@ export interface MapLayerConfig {
   attribution?: string
 }
 
-// 默认硬编码配置（GeoWebCache 6 层叠加，作为 API 失败或高德不可达时的兜底）
+// 默认硬编码配置（内网 GeoWebCache 的 seri1/seri2 两层，作为 API 失败或高德不可达时的兜底）
 export const DEFAULT_BASE_URL = '/geowebcache/gwc'
 
 // 高德瓦片同源代理前缀（vite 开发代理 / nginx 生产代理转发到高德瓦片域名）
@@ -41,13 +41,22 @@ export function normalizeBaseUrl(baseUrl: string): string {
 export function buildLayers(type: string, baseUrl: string): MapLayerConfig[] {
   const url = normalizeBaseUrl(baseUrl).replace(/\/+$/, '')
   if (type === 'geowebcache') {
+    // 内网 GeoWebCache：TMS 端点形如
+    // /service/tms/1.0.0/{图层}@{网格集}@{格式}/{z}/{x}/{y}.png
+    // 图层名与网格集必须与内网发布的一致。
+    // TMS 端点固定按左下原点解释坐标，因此 tms 必须为 true（与网格集名里是否含 esri 无关）。
+    const base = url || DEFAULT_BASE_URL
     return [
-      { id: 'china_provinces_3857', name: '省级行政边界', urlTemplate: `${url}/service/tms/1.0.0/china:china_provinces_3857@EPSG:900913@png/{z}/{x}/{y}.png`, opacity: 0.9, minZoom: 3, maxZoom: 18, tms: true },
-      { id: 'china_cities_3857', name: '城市/区县边界', urlTemplate: `${url}/service/tms/1.0.0/china:china_cities_3857@EPSG:900913@png/{z}/{x}/{y}.png`, opacity: 0.3, minZoom: 3, maxZoom: 18, tms: true },
-      { id: 'china_osm_waterareas_3857', name: '湖泊水库', urlTemplate: `${url}/service/tms/1.0.0/china:china_osm_waterareas_3857@EPSG:900913@png/{z}/{x}/{y}.png`, opacity: 0.4, minZoom: 3, maxZoom: 18, tms: true },
-      { id: 'china_osm_waterways_3857', name: '河流水系', urlTemplate: `${url}/service/tms/1.0.0/china:china_osm_waterways_3857@EPSG:900913@png/{z}/{x}/{y}.png`, opacity: 0.3, minZoom: 3, maxZoom: 18, tms: true },
-      { id: 'china_osm_roads_3857', name: '道路网络', urlTemplate: `${url}/service/tms/1.0.0/china:china_osm_roads_3857@EPSG:900913@png/{z}/{x}/{y}.png`, opacity: 0.2, minZoom: 3, maxZoom: 18, tms: true },
-      { id: 'china_osm_railways_3857', name: '铁路地铁', urlTemplate: `${url}/service/tms/1.0.0/china:china_osm_railways_3857@EPSG:900913@png/{z}/{x}/{y}.png`, opacity: 0.1, minZoom: 3, maxZoom: 18, tms: true },
+      {
+        id: 'seri1', name: '底图系列一',
+        urlTemplate: `${base}/service/tms/1.0.0/seri1@EPSG:3857_esri1@png/{z}/{x}/{y}.png`,
+        opacity: 1, minZoom: 3, maxZoom: 18, tms: true, attribution: 'GeoWebCache',
+      },
+      {
+        id: 'seri2', name: '底图系列二',
+        urlTemplate: `${base}/service/tms/1.0.0/seri2@EPSG:3857_esri2@png/{z}/{x}/{y}.png`,
+        opacity: 0.6, minZoom: 3, maxZoom: 18, tms: true, attribution: 'GeoWebCache',
+      },
     ]
   }
   if (type === 'amap') {

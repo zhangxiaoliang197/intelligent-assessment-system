@@ -109,7 +109,7 @@ Start-Process "$nodeBin\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "
 | `/api/ontology` | localhost:10256 | Ontology Service |
 | `/api/ipage` | localhost:10257 | ipage（态势页面）|
 | `/api/admin` | localhost:10258（不重写路径） | Admin Service |
-| `/tiles`, `/geowebcache` | localhost:9090 | 外部地图服务 |
+| `/tiles`, `/geowebcache` | 见 `MAP_TILE_UPSTREAM`（开发默认 localhost:9090） | 外部地图服务 |
 
 **规则：新增 API 路径时，必须在 vite.config.ts 和 nginx.conf 中同步更新代理配置。**
 
@@ -123,7 +123,7 @@ Start-Process "$nodeBin\npx.cmd" -ArgumentList "vite --host" -WorkingDirectory "
 | `/api/ontology/*` | assessment-ontology:10256 |
 | `/api/ipage/*` | assessment-ipage:10257 |
 | `/api/admin/*` | assessment-admin:10258（不重写路径） |
-| `/tiles`, `/geowebcache` | 外部地图服务:9090 |
+| `/tiles`, `/geowebcache` | 由环境变量 `MAP_TILE_UPSTREAM` 指定（协议+主机+端口），前端 nginx 以 `^~` 前缀反向代理 |
 
 ## Docker 跨服务调用环境变量映射 (start-docker-run.sh)
 

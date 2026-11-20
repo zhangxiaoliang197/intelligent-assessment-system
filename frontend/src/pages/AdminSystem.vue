@@ -375,7 +375,7 @@
             <el-input v-model="mapForm.baseUrl" :placeholder="mapForm.type === 'geowebcache' ? '如：/geowebcache 或 http://192.168.1.100:9090/geowebcache' : mapForm.type === 'amap' ? '默认 /amap-tiles（同源代理前缀）' : '如：http://192.168.1.100:9090/tiles/{z}/{x}/{y}.png'" />
           </el-form-item>
           <div style="color: #909399; font-size: 12px; margin-top: 8px;">
-            <template v-if="mapForm.type === 'geowebcache'">GeoWebCache 将自动叠加 6 层标准图层（省级、城市、水域、水系、道路、铁路）。</template>
+            <template v-if="mapForm.type === 'geowebcache'">GeoWebCache 将叠加内网发布的 seri1、seri2 两层（TMS 端点，图层名与网格集需与内网一致）。</template>
             <template v-else-if="mapForm.type === 'amap'">高德栅格底图经同源代理加载（GCJ02 坐标，与前端标注坐标一致）；需部署服务器可访问外网，不可达时自动回退 GeoWebCache。</template>
             <template v-else>自定义服务将使用地址作为单层瓦片源。</template>
           </div>

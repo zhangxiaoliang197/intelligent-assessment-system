@@ -285,9 +285,9 @@ VALUES ('llm_001', 'DeepSeek 默认', 'deepseek', 'https://api.deepseek.com/v1',
 
 -- 3.3 默认地图服务配置：高德在线底图（启用）+ GeoWebCache（备用）
 INSERT IGNORE INTO `ass_map_service_config` (`id`, `name`, `map_type`, `base_url`, `is_active`, `create_time`, `update_time`)
-VALUES ('map_001', 'GeoWebCache 内网地图（备用）', 'geowebcache', '/geowebcache/gwc', 0, NOW(), NOW());
+VALUES ('map_001', 'GeoWebCache 内网地图（默认）', 'geowebcache', '/geowebcache/gwc', 1, NOW(), NOW());
 INSERT IGNORE INTO `ass_map_service_config` (`id`, `name`, `map_type`, `base_url`, `is_active`, `create_time`, `update_time`)
-VALUES ('map_amap_001', '高德在线底图（推荐）', 'amap', '/amap-tiles', 1, NOW(), NOW());
+VALUES ('map_amap_001', '高德在线底图（备用）', 'amap', '/amap-tiles', 0, NOW(), NOW());
 
 -- ============================================================
 -- 完成
@@ -297,5 +297,5 @@ SELECT '  MySQL 初始化完成！' AS '';
 SELECT '  数据库: assessment' AS '';
 SELECT '  表: ass_database_config, ass_dataset, ass_field_annotation, ass_indicator, ass_llm_config, ass_driver, ass_map_service_config, situation_report, ass_chat_session, ass_chat_message, ass_chat_context, ass_chat_history' AS '';
 SELECT '  默认 LLM: DeepSeek (llm_001, 已激活)' AS '';
-SELECT '  默认地图: 高德在线底图 (map_amap_001, 已激活)，GeoWebCache 作为备用' AS '';
+SELECT '  默认地图: GeoWebCache 内网地图 (map_001, 已启用)，高德底图作为备用' AS '';
 SELECT '========================================' AS '';

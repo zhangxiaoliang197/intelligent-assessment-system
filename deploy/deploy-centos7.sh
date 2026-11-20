@@ -95,6 +95,11 @@ INTERNAL_SERVICE_TOKEN="${INTERNAL_SERVICE_TOKEN:-}"
 ADMIN_API_TOKEN="${ADMIN_API_TOKEN:-}"
 ADMIN_UI_PASSWORD="${ADMIN_UI_PASSWORD:-}"
 IPAGE_LLM_ALLOWED_HOSTS="${IPAGE_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}"
+# ─── 内网地图服务上游（协议+主机+端口，不含结尾斜杠）───
+# 前端 nginx 的 /geowebcache/、/tiles/ 反向代理会转发到该地址。
+# 例: MAP_TILE_UPSTREAM=http://192.168.100.190:8084
+MAP_TILE_UPSTREAM="${MAP_TILE_UPSTREAM:-http://host.docker.internal:9090}"
+MAP_TILE_UPSTREAM="${MAP_TILE_UPSTREAM%/}"
 
 # ─── 日志环境变量（可被外部环境变量覆盖）───
 LOG_ENV="${LOG_ENV:-prod}"
@@ -147,6 +152,10 @@ services:
     environment:
       - ADMIN_API_TOKEN=$ADMIN_API_TOKEN
       - ADMIN_UI_PASSWORD=$ADMIN_UI_PASSWORD
+      # 内网地图服务上游，供 nginx 的 /geowebcache/、/tiles/ 反向代理使用
+      - MAP_TILE_UPSTREAM=$MAP_TILE_UPSTREAM
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - assessment-net
     logging:

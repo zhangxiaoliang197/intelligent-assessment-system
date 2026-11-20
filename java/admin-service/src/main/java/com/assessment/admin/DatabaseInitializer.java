@@ -31,6 +31,10 @@ public class DatabaseInitializer implements CommandLineRunner {
     private static final String AMAP_CONFIG_NAME = "高德在线底图（推荐）";
     private static final String AMAP_BASE_URL = "/amap-tiles";
 
+    /** 首次初始化默认启用的底图类型：geowebcache（内网）或 amap（公网高德） */
+    @Value("${map.default-type:geowebcache}")
+    private String defaultMapType;
+
     private final DriverRepository driverRepo;
     private final LlmConfigRepository llmConfigRepo;
     private final MapServiceConfigRepository mapConfigRepo;
@@ -184,16 +188,19 @@ public class DatabaseInitializer implements CommandLineRunner {
     /**
      * 初始化/迁移地图服务配置。
      *
-     * 首次初始化：写入 GeoWebCache（备用）+ 高德在线底图（启用）。
-     * 存量环境：若从未存在 amap 配置，则补一条；仅当当前启用项仍是 GeoWebCache 时自动切到高德，
-     * 用户手动配过其他服务则保持不动，可在管理后台随时切回。
+     * 首次初始化：同时写入 GeoWebCache 与高德在线底图，启用哪一项由
+     * map.default-type 决定（内网默认 geowebcache，公网默认 amap）。
+     * 存量环境：若从未存在 amap 配置，则补一条；仅当默认类型为 amap 且当前启用项
+     * 仍是 GeoWebCache 时才自动切换，用户手动配过其他服务则保持不动。
      */
     private void initDefaultMapServiceConfig() {
+        boolean preferAmap = "amap".equalsIgnoreCase(defaultMapType);
         List<MapServiceConfig> all = mapConfigRepo.findAll();
         if (all.isEmpty()) {
-            saveMapConfig("map_001", "GeoWebCache 内网地图（备用）", "geowebcache", "/geowebcache/gwc", false);
-            saveMapConfig(AMAP_CONFIG_ID, AMAP_CONFIG_NAME, "amap", AMAP_BASE_URL, true);
-            log.info("默认地图服务配置已插入：高德在线底图（启用）+ GeoWebCache（备用）");
+            saveMapConfig("map_001", "GeoWebCache 内网地图（默认）", "geowebcache", "/geowebcache/gwc", !preferAmap);
+            saveMapConfig(AMAP_CONFIG_ID, AMAP_CONFIG_NAME, "amap", AMAP_BASE_URL, preferAmap);
+            log.info("默认地图服务配置已插入：{}（启用），另一项作为备用",
+                    preferAmap ? "高德在线底图" : "GeoWebCache 内网地图");
             return;
         }
 
@@ -213,21 +220,26 @@ public class DatabaseInitializer implements CommandLineRunner {
                 ? "map_" + java.util.UUID.randomUUID().toString().substring(0, 8)
                 : AMAP_CONFIG_ID;
 
+        // 仅在默认类型为 amap 时才把 GeoWebCache 切换成高德；内网部署保持内网底图不变
+        boolean activateAmap = activeIsGeoWebCache && preferAmap;
+
         MapServiceConfig amap = new MapServiceConfig();
         amap.setId(amapId);
         amap.setName(AMAP_CONFIG_NAME);
         amap.setType("amap");
         amap.setBaseUrl(AMAP_BASE_URL);
-        amap.setIsActive(activeIsGeoWebCache);
+        amap.setIsActive(activateAmap);
         amap.setCreateTime(LocalDateTime.now());
         amap.setUpdateTime(LocalDateTime.now());
 
-        if (activeIsGeoWebCache) {
+        if (activateAmap) {
             all.forEach(c -> {
                 c.setIsActive(false);
                 mapConfigRepo.save(c);
             });
             log.info("存量地图配置已迁移为高德底图（如需回退，请在管理后台启用 GeoWebCache）");
+        } else if (activeIsGeoWebCache) {
+            log.info("当前启用 GeoWebCache，默认类型为 geowebcache，保持内网底图不变");
         } else {
             log.info("已补充高德底图配置，但当前启用的是 {}，保持用户选择不变", active.getName());
         }
