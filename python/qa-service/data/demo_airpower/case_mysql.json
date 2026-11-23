@@ -1,0 +1,15 @@
+{
+  "caseId": "case_airpower_2026",
+  "tables": {
+    "case": "airpower_case",
+    "base": "airpower_base",
+    "radar": "airpower_radar",
+    "daily": "airpower_case_daily"
+  },
+  "counts": {
+    "airpower_case": 1,
+    "airpower_base": 5,
+    "airpower_radar": 5,
+    "airpower_case_daily": 25
+  }
+}
