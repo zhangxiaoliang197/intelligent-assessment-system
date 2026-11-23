@@ -138,7 +138,15 @@ def _discover_database() -> tuple[str, dict[str, Any]]:
     ] or [db for db in databases if str(db.get("type", "")).lower() == "mysql"]
     if not candidates:
         return "", {}
-    return str(candidates[0].get("id", "")), candidates[0]
+    # 多个 MySQL 数据源时，优先选案例专用库（默认 airpower_assessment），
+    # 避免按主键顺序随机命中其它演示库导致取不到案例表。
+    preferred_name = os.getenv("AIRPOWER_DB_NAME", "airpower_assessment").strip()
+    preferred = [
+        db for db in candidates
+        if str(db.get("database") or db.get("dbName") or "") == preferred_name
+    ]
+    chosen = (preferred or candidates)[0]
+    return str(chosen.get("id", "")), chosen
 
 
 def _rows_from_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

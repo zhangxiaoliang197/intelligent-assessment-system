@@ -722,6 +722,20 @@
         "parent_entity_type_name": null,
         "create_time": "2026-11-22 21:53:15.280329",
         "update_time": "2026-11-22 21:53:15.280329"
+      },
+      {
+        "id": "concept_3ac37374",
+        "iri": "",
+        "ontology_id": "ont_005dad28",
+        "name": "作战事件",
+        "description": "",
+        "color": "#5470c6",
+        "property_schema": [],
+        "source_snippet": "",
+        "parent_entity_type_id": null,
+        "parent_entity_type_name": null,
+        "create_time": "2026-11-23 13:32:14.972585",
+        "update_time": "2026-11-23 13:32:14.972585"
       }
     ],
     "relation_types": [
@@ -767,7 +781,7 @@
       }
     ],
     "create_time": "2026-11-22 21:53:15.280329",
-    "update_time": "2026-11-22 23:51:12.478418",
+    "update_time": "2026-11-23 13:41:38.742355",
     "status": "活跃",
     "schema_version": 3
   },
@@ -1482,6 +1496,20 @@
       "parent_entity_type_name": null,
       "create_time": "2026-11-22 21:53:15.280329",
       "update_time": "2026-11-22 21:53:15.280329"
+    },
+    {
+      "id": "concept_3ac37374",
+      "iri": "",
+      "ontology_id": "ont_005dad28",
+      "name": "作战事件",
+      "description": "",
+      "color": "#5470c6",
+      "property_schema": [],
+      "source_snippet": "",
+      "parent_entity_type_id": null,
+      "parent_entity_type_name": null,
+      "create_time": "2026-11-23 13:32:14.972585",
+      "update_time": "2026-11-23 13:32:14.972585"
     }
   ],
   "entity_type_relations": [
@@ -5601,7 +5629,7 @@
           "rdf_language": "",
           "entity_id": "ent_e38807d0",
           "name": "开机时长",
-          "value": 17.0,
+          "value": 2,
           "category": "metric",
           "data_type": "number",
           "unit": "小时/日",
@@ -5616,16 +5644,47 @@
             "agg": "mean",
             "expression": "MEAN(radar_hours) WHERE side='红方'"
           },
-          "history": [],
+          "history": [
+            {
+              "value": 17.0,
+              "recorded_at": "2026-11-22 21:53:16.800211",
+              "source_snippet": "",
+              "note": ""
+            },
+            {
+              "value": 2,
+              "recorded_at": "2026-11-23 13:34:40.091050",
+              "source_snippet": "",
+              "note": ""
+            },
+            {
+              "value": 17,
+              "recorded_at": "2026-11-23 13:35:56.110607",
+              "source_snippet": "",
+              "note": ""
+            },
+            {
+              "value": 2,
+              "recorded_at": "2026-11-23 13:37:36.835392",
+              "source_snippet": "",
+              "note": ""
+            },
+            {
+              "value": 17,
+              "recorded_at": "2026-11-23 13:39:37.483253",
+              "source_snippet": "",
+              "note": ""
+            }
+          ],
           "verification": null,
           "create_time": "2026-11-22 21:53:16.800211",
-          "update_time": "2026-11-22 21:53:16.800211"
+          "update_time": "2026-11-23 13:41:38.742279"
         }
       ],
       "bindings": {},
       "source_snippet": "",
       "create_time": "2026-11-22 21:53:16.800235",
-      "update_time": "2026-11-22 21:53:16.800236"
+      "update_time": "2026-11-23 13:41:38.742279"
     },
     {
       "id": "ent_7bf41461",
@@ -6337,6 +6396,111 @@
       "source_snippet": "",
       "create_time": "2026-11-22 21:53:17.273685",
       "update_time": "2026-11-22 21:53:17.273685"
+    },
+    {
+      "id": "ent_06961f43",
+      "iri": "",
+      "ontology_id": "ont_005dad28",
+      "name": "11·23 北岭基地遭电子压制",
+      "instance_of": "concept_3ac37374",
+      "type": "",
+      "is_primary": false,
+      "properties": [
+        {
+          "id": "prop_00944424",
+          "iri": "",
+          "rdf_datatype": "",
+          "rdf_language": "",
+          "entity_id": "ent_06961f43",
+          "name": "事件时间",
+          "value": "2026-11-23",
+          "category": "descriptive",
+          "data_type": "string",
+          "unit": "",
+          "source_snippet": "",
+          "bindings": {},
+          "history": [],
+          "verification": null,
+          "create_time": "2026-11-23 13:41:13.702420",
+          "update_time": "2026-11-23 13:41:13.702420"
+        },
+        {
+          "id": "prop_cb886545",
+          "iri": "",
+          "rdf_datatype": "",
+          "rdf_language": "",
+          "entity_id": "ent_06961f43",
+          "name": "事件类型",
+          "value": "电子压制/反辐射打击",
+          "category": "descriptive",
+          "data_type": "string",
+          "unit": "",
+          "source_snippet": "",
+          "bindings": {},
+          "history": [],
+          "verification": null,
+          "create_time": "2026-11-23 13:41:13.702420",
+          "update_time": "2026-11-23 13:41:13.702420"
+        },
+        {
+          "id": "prop_c2a0feba",
+          "iri": "",
+          "rdf_datatype": "",
+          "rdf_language": "",
+          "entity_id": "ent_06961f43",
+          "name": "影响对象",
+          "value": "北岭基地、北岭警戒雷达",
+          "category": "descriptive",
+          "data_type": "string",
+          "unit": "",
+          "source_snippet": "",
+          "bindings": {},
+          "history": [],
+          "verification": null,
+          "create_time": "2026-11-23 13:41:13.702420",
+          "update_time": "2026-11-23 13:41:13.702420"
+        },
+        {
+          "id": "prop_0ee4dc3b",
+          "iri": "",
+          "rdf_datatype": "",
+          "rdf_language": "",
+          "entity_id": "ent_06961f43",
+          "name": "影响说明",
+          "value": "北岭基地出动架次、任务成功率、战备完好率与雷达开机时长同时下降，持续保障能力受限。",
+          "category": "descriptive",
+          "data_type": "string",
+          "unit": "",
+          "source_snippet": "",
+          "bindings": {},
+          "history": [],
+          "verification": null,
+          "create_time": "2026-11-23 13:41:13.702420",
+          "update_time": "2026-11-23 13:41:13.702420"
+        },
+        {
+          "id": "prop_c48ef5b7",
+          "iri": "",
+          "rdf_datatype": "",
+          "rdf_language": "",
+          "entity_id": "ent_06961f43",
+          "name": "数据证据",
+          "value": "2026-11-23 北岭基地出动 8 架次、雷达开机 2 小时（前五日均值分别约 15 架次、17.4 小时）。",
+          "category": "descriptive",
+          "data_type": "string",
+          "unit": "",
+          "source_snippet": "",
+          "bindings": {},
+          "history": [],
+          "verification": null,
+          "create_time": "2026-11-23 13:41:13.702420",
+          "update_time": "2026-11-23 13:41:13.702420"
+        }
+      ],
+      "bindings": {},
+      "source_snippet": "",
+      "create_time": "2026-11-23 13:41:13.702575",
+      "update_time": "2026-11-23 13:41:13.702577"
     }
   ],
   "relations": [
@@ -7014,6 +7178,45 @@
       "weight": 1.0,
       "source_snippet": "",
       "create_time": "2026-11-22 23:51:12.478404",
+      "update_time": null
+    },
+    {
+      "id": "rel_a563ec3f",
+      "ontology_id": "ont_005dad28",
+      "source_id": "ent_7adae906",
+      "target_id": "ent_06961f43",
+      "relation_type": "包含",
+      "properties": [],
+      "bindings": {},
+      "weight": 1.0,
+      "source_snippet": "",
+      "create_time": "2026-11-23 13:41:22.007688",
+      "update_time": null
+    },
+    {
+      "id": "rel_35be4301",
+      "ontology_id": "ont_005dad28",
+      "source_id": "ent_06961f43",
+      "target_id": "ent_814b4084",
+      "relation_type": "约束",
+      "properties": [],
+      "bindings": {},
+      "weight": 1.0,
+      "source_snippet": "",
+      "create_time": "2026-11-23 13:41:28.277041",
+      "update_time": null
+    },
+    {
+      "id": "rel_90ba0671",
+      "ontology_id": "ont_005dad28",
+      "source_id": "ent_06961f43",
+      "target_id": "ent_654c10da",
+      "relation_type": "约束",
+      "properties": [],
+      "bindings": {},
+      "weight": 1.0,
+      "source_snippet": "",
+      "create_time": "2026-11-23 13:41:34.537454",
       "update_time": null
     }
   ]

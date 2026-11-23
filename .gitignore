@@ -77,6 +77,8 @@ Desktop.ini
 llm_config.json
 docker-images/
 assessment-offline-*.tar.gz
+# 演示视频与录制产物（体积大，不入库）
+deliverables/
 offline-deps/
 _build_docker.ps1
 

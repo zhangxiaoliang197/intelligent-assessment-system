@@ -1,5 +1,7 @@
 {
   "caseId": "case_airpower_2026",
+  "databaseId": "db_62da60ee",
+  "database": "airpower_assessment",
   "tables": {
     "case": "airpower_case",
     "base": "airpower_base",
