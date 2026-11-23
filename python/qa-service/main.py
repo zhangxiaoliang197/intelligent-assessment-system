@@ -1168,8 +1168,12 @@ async def delete_llm_config(config_id: str):
 try:
     from evaluation_api import evaluation_router
     from skill_api import skill_api_router
+    from ontology_assessment import router as ontology_assessment_router
+    from ontology_semantic import router as ontology_semantic_router
     app.include_router(evaluation_router)
     app.include_router(skill_api_router)
+    app.include_router(ontology_assessment_router)
+    app.include_router(ontology_semantic_router)
     logger.info("评估分析和托管 Skill 路由已注册")
 except Exception as e:
     logger.warning(f"注册评估分析路由失败: {e}")

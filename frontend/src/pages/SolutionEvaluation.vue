@@ -129,6 +129,23 @@
               配置
             </el-button>
           </div>
+          <div class="data-source-selector ontology-selector">
+            <span class="label">参考本体：</span>
+            <el-select
+              v-model="selectedOntologyId"
+              clearable
+              placeholder="选择动态本体"
+              size="small"
+              style="width: 190px"
+            >
+              <el-option
+                v-for="item in ontologyOptions"
+                :key="item.id"
+                :label="item.name"
+                :value="item.id"
+              />
+            </el-select>
+          </div>
         </div>
 
         <div
@@ -232,6 +249,17 @@
                     <AssistantAvatar v-else />
                   </div>
                   <div class="message-content">
+                    <!-- 提问后的口径确认：语义统一 + 模糊确认，确认后才开始计算 -->
+                    <OntologySupport
+                      v-if="msg.role === 'assistant' && msg.ontologyId && msg.awaitingConfirm"
+                      :question="msg.question || ''"
+                      :ontology-id="msg.ontologyId"
+                      @confirm="onOntologyConfirm(msg, $event)"
+                    />
+                    <div v-if="msg.confirmedSummary" class="os-confirmed-line">
+                      <el-icon><Check /></el-icon>
+                      <span>{{ msg.confirmedSummary }}</span>
+                    </div>
                     <!-- AI 等待态：与智能问答保持一致 -->
                     <div v-if="msg.querying && !msg.content && !msg.result" class="message-loading">分析中...</div>
                     <!-- 结果展示区（SQL + 数据表格）放在建议前面 -->
@@ -509,6 +537,27 @@
                     <!-- 分析建议（2-3条） -->
                     <div v-if="msg.content" class="message-text" v-html="renderMarkdown(msg.content)"></div>
 
+                    <!-- 结果后的推荐追问：先出结果，再跳转动态本体展示 -->
+                    <FollowupAnalysis
+                      v-if="msg.role === 'assistant' && msg.result && followupContextOf(msg)"
+                      :question="msg.question || followupContextOf(msg)?.question || ''"
+                      :ontology-id="followupContextOf(msg)?.ontologyId || ''"
+                      :side="followupContextOf(msg)?.side || 'red'"
+                      :profile="followupContextOf(msg)?.profile || 'v1.2'"
+                      :metric-keys="followupContextOf(msg)?.metricKeys || []"
+                      :metric-options="followupContextOf(msg)?.metricOptions || []"
+                      :dimensions="followupContextOf(msg)?.dimensions || {}"
+                      @answer="onFollowupAnswer(msg, $event)"
+                    />
+
+                    <!-- 溯源 / 归因的对话式回答：先回答结果，再提供跳转动态本体 -->
+                    <FollowupAnswer
+                      v-if="msg.followup"
+                      :mode="msg.followup.mode"
+                      :detail="msg.followup.detail"
+                      @jump="jumpToOntologyGraph(msg.followup)"
+                    />
+
                     <!-- 地图显示提示 -->
                     <div v-if="msg.showMapPrompt" class="map-prompt">
                       <div class="map-prompt-text">
@@ -735,6 +784,7 @@ import {
   Microphone,
   MapLocation,
   FullScreen,
+  Check,
   WarningFilled
 } from '@element-plus/icons-vue'
 import Layout from '@/components/Layout.vue'
@@ -743,6 +793,9 @@ import ToolSwitchBar from '@/components/ToolSwitchBar.vue'
 import SkillsLibrary from '@/pages/SkillsLibrary.vue'
 import SkillMarkdownDialog from '@/components/evaluation/SkillMarkdownDialog.vue'
 import SituationArtifactDialog from '@/components/evaluation/SituationArtifactDialog.vue'
+import OntologySupport from '@/components/evaluation/OntologySupport.vue'
+import FollowupAnalysis from '@/components/evaluation/FollowupAnalysis.vue'
+import FollowupAnswer from '@/components/evaluation/FollowupAnswer.vue'
 import GeoMap from '@/components/GeoMap.vue'
 import { processMapData, extractGeoFromResults } from '@/composables/useMapPrompt'
 import { stripMapAnnotationBlock } from '@/utils/mapAnnotationParser'
@@ -793,6 +846,7 @@ const LS_SESSION_ID = 'solution_session_id'
 // 状态
 const inputMessage = ref('')
 const analyzing = ref(false)
+const awaitingClarify = ref(false)
 const messages = ref<Array<any>>([])
 const historyList = ref<Array<any>>([])
 const searchQuery = ref('')
@@ -841,6 +895,9 @@ function resultCardHasConclusion(result: any): boolean {
 const dataSources = ref<Array<any>>([])
 const selectedDataSourceId = ref<string | null>(null)
 const selectedDataSourceName = ref<string>('')
+// 参考本体：用于在问答中展示语义统一、模糊确认、溯源与归因
+const ontologyOptions = ref<Array<any>>([])
+const selectedOntologyId = ref<string | null>(null)
 const evaluationSkills = ref<EvaluationSkill[]>([])
 const selectedSkillId = ref<string>('')
 const skillLibraryVisible = ref(false)
@@ -1471,6 +1528,99 @@ const stopAnalysis = async () => {
   activeAbortController?.abort()
 }
 
+const buildConfirmedSummary = (context: any) => {
+  if (!context || context.auto) return ''
+  const dims = context.dimensions || {}
+  const dimText = Object.entries(dims)
+    .map(([key, value]) => `${key}：${value}`)
+    .join(' · ')
+  const metricText = (context.metricOptions || [])
+    .map((item: any) => item.name)
+    .filter(Boolean)
+    .join('、')
+  const parts: string[] = []
+  if (dimText) parts.push(dimText)
+  if (metricText) parts.push(`指标：${metricText}`)
+  return parts.length ? `已确认口径 — ${parts.join('；')}` : ''
+}
+
+const onOntologyConfirm = (msg: any, payload: any) => {
+  const resolve = msg?.resolveOntologyConfirm
+  if (typeof resolve === 'function') resolve(payload)
+}
+
+// 追问所需的评估口径：优先用本轮确认结果；历史会话从 result.ontology 还原
+const followupContextOf = (msg: any) => {
+  const literal = msg?.ontologyContext
+  if (literal?.metricKeys?.length) {
+    return { ...literal, ontologyId: literal.ontologyId || msg?.ontologyId || '' }
+  }
+  const onto = msg?.result?.ontology
+  if (!onto?.id || !(onto.metricKeys || []).length) return null
+  const names = String(onto.metricName || '').split(/[、,，]/).filter(Boolean)
+  const metricOptions = (onto.metricKeys || []).map((key: string, index: number) => ({
+    key,
+    name: names[index] || key
+  }))
+  return {
+    question: msg?.question || '',
+    ontologyId: onto.id,
+    metricKeys: onto.metricKeys,
+    metricOptions,
+    dimensions: onto.dimensions || {},
+    profile: onto.profile || 'v1.2',
+    side: onto.side || 'red'
+  }
+}
+
+// 溯源 / 归因：把结果作为一条新的 assistant 消息追加到对话里，先回答再给跳转
+const onFollowupAnswer = (sourceMsg: any, payload: any) => {
+  const context = followupContextOf(sourceMsg) || {}
+  const answerMessage: any = reactive({
+    role: 'assistant',
+    content: '',
+    querying: false,
+    result: null,
+    followup: {
+      mode: payload.mode,
+      detail: payload.detail,
+      question: sourceMsg?.question || context.question || '',
+      ontologyId: context.ontologyId || sourceMsg?.ontologyId || '',
+      dimensions: context.dimensions || {}
+    }
+  })
+  messages.value.push(answerMessage)
+  setTimeout(() => scrollToBottom(), 60)
+}
+
+// 跳转动态本体：把本次关注节点/关系写入 sessionStorage，由图谱页高亮展示
+const jumpToOntologyGraph = (followup: any) => {
+  const detail = followup?.detail
+  const mode = followup?.mode
+  if (!detail || !mode || !followup?.ontologyId) return
+  const title = mode === 'trace'
+    ? `数据溯源 · ${detail.metric?.name || ''}`
+    : '归因分析 · 制空权指数'
+  const payload = {
+    ontologyId: followup.ontologyId,
+    mode,
+    title,
+    question: followup.question || '',
+    nodeIds: detail.nodeIds || [],
+    edgePairs: detail.edgePairs || [],
+    focusTypes: detail.focusTypes || [],
+    detail,
+    dimensions: followup.dimensions || {}
+  }
+  try {
+    sessionStorage.setItem('ontology-focus', JSON.stringify(payload))
+  } catch {
+    ElMessage.error('无法保存图谱高亮数据')
+    return
+  }
+  router.push(`/ontology-graph/${followup.ontologyId}?mode=${mode}`)
+}
+
 const sendMessage = async () => {
   if (_newSessionPending) {
     ElMessage.warning('正在创建新会话，请稍候')
@@ -1478,6 +1628,10 @@ const sendMessage = async () => {
   }
   if (!inputMessage.value.trim()) {
     ElMessage.warning('请输入评估需求')
+    return
+  }
+  if (awaitingClarify.value) {
+    ElMessage.warning('请先确认当前问题的评估口径')
     return
   }
   if (selectedSkillId.value && !selectedDataSourceId.value) {
@@ -1525,9 +1679,8 @@ const sendMessage = async () => {
   }
   invalidateSkillRecommendations()
   inputMessage.value = ''
-  analyzing.value = true
-  // 任务真正发起时才展开「系统执行过程」面板
-  showExecutionPanel.value = true
+  // 口径确认前不展开「系统执行过程」，确认后才真正发起计算
+  showExecutionPanel.value = false
   cancelRequested = false
   activeRunId.value = ''
   executionSteps.value = []
@@ -1546,15 +1699,36 @@ const sendMessage = async () => {
   const aiMessage: any = reactive({
     role: 'assistant',
     content: '',
-    querying: true,
+    querying: false,
     result: null,
     executionSteps: [] as any[],
     skillId: selectedSkillId.value,
     databaseId: selectedDataSourceId.value || '',
     databaseName: selectedDataSourceName.value,
-    question: query
+    ontologyId: selectedOntologyId.value || '',
+    question: query,
+    awaitingConfirm: false,
+    confirmedSummary: ''
   })
   messages.value.push(aiMessage)
+
+  // 语义统一 + 模糊确认：先在对话里确认口径，确认后才开始计算指标
+  let ontologyContext: any = null
+  if (aiMessage.ontologyId && !selectedSkillId.value) {
+    awaitingClarify.value = true
+    aiMessage.awaitingConfirm = true
+    ontologyContext = await new Promise(resolve => {
+      aiMessage.resolveOntologyConfirm = resolve
+    })
+    awaitingClarify.value = false
+    aiMessage.awaitingConfirm = false
+    aiMessage.resolveOntologyConfirm = null
+    aiMessage.ontologyContext = ontologyContext
+    aiMessage.confirmedSummary = buildConfirmedSummary(ontologyContext)
+  }
+  analyzing.value = true
+  aiMessage.querying = true
+  showExecutionPanel.value = true
   
   try {
     // 使用 fetch API 进行流式请求
@@ -1577,7 +1751,10 @@ const sendMessage = async () => {
         session_id: sessionId.value || undefined,
         dataSourceId: selectedDataSourceId.value || '',
         database_name: selectedDataSourceName.value,
-        skillId: selectedSkillId.value || null
+        skillId: selectedSkillId.value || null,
+        ontologyId: aiMessage.ontologyId || undefined,
+        metricKeys: ontologyContext?.metricKeys || [],
+        dimensions: ontologyContext?.dimensions || {}
       })
     })
     
@@ -1976,7 +2153,21 @@ const initData = async () => {
   }
 }
 
+const loadOntologyOptions = async () => {
+  try {
+    const res: any = await api.get('/ontology/list')
+    ontologyOptions.value = (res.items || []).filter((item: any) => item.status !== '归档')
+    if (!selectedOntologyId.value) {
+      const demo = ontologyOptions.value.find((item: any) => (item.name || '').includes('红蓝对抗'))
+      if (demo) selectedOntologyId.value = demo.id
+    }
+  } catch (e) {
+    console.warn('加载本体列表失败:', e)
+  }
+}
+
 onMounted(async () => {
+  loadOntologyOptions()
   await initData()
   // 恢复上次会话（从服务端加载，如果 sessionId 在历史列表中）
   if (sessionId.value && historyList.value.some((h: any) => h.id === sessionId.value)) {
@@ -2323,6 +2514,7 @@ onMounted(async () => {
 
 .chat-panel {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   border-right: none;
@@ -2332,7 +2524,9 @@ onMounted(async () => {
 
 .chat-area {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 24px 20px;
 }
 
@@ -2487,11 +2681,13 @@ onMounted(async () => {
 .message-list {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   gap: 1.5rem;
 }
 
 .message {
   display: flex;
+  min-width: 0;
   gap: 1rem;
 }
 
@@ -2500,7 +2696,21 @@ onMounted(async () => {
 }
 
 .message-content {
+  min-width: 0;
   max-width: 90%;
+  overflow-wrap: anywhere;
+}
+
+.os-confirmed-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
 }
 
 .message-text {
@@ -2887,15 +3097,30 @@ onMounted(async () => {
   color: #374151;
 }
 
-.indicator-result .sql-code {
+.indicator-result .sql-code,
+.general-result .sql-code {
+  max-width: 100%;
   background: #1f2937;
   color: #e5e7eb;
   padding: 1rem;
   border-radius: 0.5rem;
   overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
   font-family: 'Courier New', monospace;
   font-size: 0.9rem;
   line-height: 1.6;
+}
+
+.general-result {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.general-result .sql-section h6,
+.general-result .data-section h6 {
+  margin: 1rem 0 0.5rem;
+  color: #374151;
 }
 
 .indicator-result .statistics-section {
@@ -3270,6 +3495,8 @@ onMounted(async () => {
 
 /* 图表可视化区域 */
 .chart-section {
+  min-width: 0;
+  max-width: 100%;
   background: #fff;
   border-radius: 8px;
   padding: 16px;
@@ -3289,6 +3516,9 @@ onMounted(async () => {
 }
 .chart-container {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
   min-height: 360px;
 }
 

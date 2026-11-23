@@ -37,6 +37,12 @@ class PropertySchema(BaseModel):
     unit: str = ""                       # 单位，如"%""万元"
     required: bool = False
     description: str = ""
+    # 指标语义（评估问答使用）：标准名 / 同义词 / 计算公式 / 所属评估维度
+    # 例：name="制空权指数", standard_name="制空权指数", synonyms=["制空权","空中优势"]
+    standard_name: str = ""
+    synonyms: List[str] = Field(default_factory=list)
+    formula: str = ""
+    dimension: str = ""
 
 
 class PropertyHistoryEntry(BaseModel):

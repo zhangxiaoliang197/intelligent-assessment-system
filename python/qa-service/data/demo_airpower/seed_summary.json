@@ -1,0 +1,67 @@
+{
+  "ontologyId": "ont_005dad28",
+  "dataSource": {
+    "mode": "mysql",
+    "dataset": "assessment.airpower_case_daily",
+    "database": "assessment",
+    "databaseId": "db_08af76b4",
+    "table": "airpower_case_daily"
+  },
+  "red": {
+    "side": "red",
+    "base": {
+      "sorties": 191.0,
+      "losses": 4.0,
+      "mission_success": 0.8138,
+      "ready_rate": 0.852,
+      "radar_hours": 15.73
+    },
+    "enemy_losses": 10.0,
+    "exchange_ratio": 2.5,
+    "parts": {
+      "sorties_share": 0.5859,
+      "mission_success": 0.8138,
+      "ready_rate": 0.852,
+      "exchange_score": 0.7143,
+      "radar_coverage": 0.6554
+    },
+    "index": 71.5,
+    "profile": "v1.2"
+  },
+  "blue": {
+    "side": "blue",
+    "base": {
+      "sorties": 135.0,
+      "losses": 10.0,
+      "mission_success": 0.7638,
+      "ready_rate": 0.794,
+      "radar_hours": 21.0
+    },
+    "enemy_losses": 4.0,
+    "exchange_ratio": 0.4,
+    "parts": {
+      "sorties_share": 0.4141,
+      "mission_success": 0.7638,
+      "ready_rate": 0.794,
+      "exchange_score": 0.2857,
+      "radar_coverage": 0.875
+    },
+    "index": 57.9,
+    "profile": "v1.2"
+  },
+  "gate": {
+    "status": "有条件通过",
+    "errors": 0,
+    "warnings": 1,
+    "confidence": 0.92,
+    "items": [
+      {
+        "level": "warning",
+        "rule": "必填属性缺失",
+        "message": "2026-11-22 南岭基地 缺少「燃油保障天数」，持续作战能力评估置信度下降",
+        "evidence": "南岭基地 · fuel_days = 空"
+      }
+    ]
+  },
+  "level": "红方优势"
+}

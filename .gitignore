@@ -78,6 +78,8 @@ llm_config.json
 docker-images/
 assessment-offline-*.tar.gz
 内网部署1120/
+# 演示视频与录制产物（体积大，不入库）
+deliverables/
 offline-deps/
 _build_docker.ps1
 
@@ -103,8 +105,8 @@ python/ontology-service/data/build_jobs/
 # 本体数据备份目录（服务自动生成，不入库）
 **/data_backup_*/
 
-# 用户本体构建/编辑生成的运行时数据（服务自动生成，不入库）
-python/ontology-service/data/user_ontologies/
+# 用户本体数据：本体 JSON 作为初始化数据入库，.bak 备份不入库
+python/ontology-service/data/user_ontologies/*.bak
 
 # 本体列表索引（服务启动时自动加载/重建，不入库）
 python/ontology-service/data/ontologies_index.json
@@ -155,3 +157,6 @@ frontend/public/ontosphere/
 frontend/ontosphere/public/rdf-reasoner-konclude/
 frontend/ontosphere/public/coi-serviceworker.js
 
+
+# 运行时锁文件（不入库）
+python/ontology-service/data/.locks/

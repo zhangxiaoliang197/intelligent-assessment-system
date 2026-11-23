@@ -14,6 +14,7 @@ import AdminSystem from '@/pages/AdminSystem.vue'
 import InteractivePage from '@/pages/InteractivePage.vue'
 import InteractiveView from '@/pages/InteractiveView.vue'
 import SituationPageDialog from '@/pages/SituationPageDialog.vue'
+import OntologyDetail from '@/pages/OntologyDetail.vue'
 
 const routes: Array<RouteRecordRaw> = [
   {
@@ -70,6 +71,13 @@ const routes: Array<RouteRecordRaw> = [
     name: 'OntologyDetail',
     component: OntologyWorkbench,
     meta: { title: '动态本体工作台' }
+  },
+  {
+    // 评估分析溯源/归因跳转：图谱高亮页（读取 sessionStorage 中的 ontology-focus）
+    path: '/ontology-graph/:id',
+    name: 'OntologyGraph',
+    component: OntologyDetail,
+    meta: { title: '动态本体图谱' }
   },
   {
     // 手动构建向导：?template={tplId} 触发本体模型预填骨架

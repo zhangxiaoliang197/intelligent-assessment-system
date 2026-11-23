@@ -30,7 +30,14 @@ class JsonRepository(OntologyRepository):
 
         main.py 顶部会 `from repository import get_repository` 创建 repo 单例，
         若此处模块级 import main 会形成循环。延迟到方法调用时 import 安全。
+
+        另外，`python main.py` 启动时模块名是 `__main__`，`import main` 会再次
+        执行模块级 `load_db()` 生成第二份内存数据，必须优先复用入口模块。
         """
+        import sys
+        running = sys.modules.get("__main__")
+        if running is not None and hasattr(running, "ontologies_db"):
+            return running
         import main
         return main
 
