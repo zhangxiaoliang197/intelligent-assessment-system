@@ -68,6 +68,8 @@ IPAGE_LLM_ALLOWED_HOSTS="${IPAGE_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,1
 MAP_TILE_UPSTREAM="${MAP_TILE_UPSTREAM:-http://host.docker.internal:9090}"
 MAP_TILE_UPSTREAM="${MAP_TILE_UPSTREAM%/}"
 echo "  地图服务上游: $MAP_TILE_UPSTREAM"
+# 内网 OpenAI 兼容服务不接受 thinking 字段时设为 false
+LLM_SEND_THINKING="${LLM_SEND_THINKING:-true}"
 if [ ${#INTERNAL_SERVICE_TOKEN} -lt 24 ] || [ "$INTERNAL_SERVICE_TOKEN" = "local-development-token" ]; then
     echo "ERROR: INTERNAL_SERVICE_TOKEN 必须显式配置为至少 24 位随机值"
     exit 1
@@ -163,6 +165,7 @@ echo "========================================"
 echo "[启动] Qdrant (6333)..."
 docker run -d --name assessment-qdrant \
     --network "$NET_NAME" \
+    -e TZ=Asia/Shanghai \
     -p 6333:6333 \
     -v "$DATA_DIR/qdrant:/qdrant/storage" \
     --restart always \
@@ -204,6 +207,7 @@ echo "========================================"
 echo "[启动] 基础管理服务 (10258)..."
 docker run -d --name assessment-admin \
     --network "$NET_NAME" \
+    -e TZ=Asia/Shanghai \
     -p 127.0.0.1:10258:10258 \
     -v drivers-data:/app/drivers \
     -e MYSQL_HOST="$MYSQL_HOST" \
@@ -216,7 +220,7 @@ docker run -d --name assessment-admin \
     -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
     -e ADMIN_API_TOKEN="$ADMIN_API_TOKEN" \
     -e IPAGE_SERVICE_URL="http://assessment-ipage:10257" \
-    -e ANNOTATION_DRAFT_ENABLED="${ANNOTATION_DRAFT_ENABLED:-false}" \
+    -e ANNOTATION_DRAFT_ENABLED="${ANNOTATION_DRAFT_ENABLED:-true}" \
     -e ANNOTATION_DRAFT_MAX_COLUMNS="${ANNOTATION_DRAFT_MAX_COLUMNS:-40}" \
     -e LOG_PATH="/app/logs" \
     -e LOG_LEVEL="$LOG_LEVEL" \
@@ -251,6 +255,7 @@ echo "========================================"
 echo "[启动] 知识库服务 (10252)..."
 docker run -d --name assessment-knowledge \
     --network "$NET_NAME" \
+    -e TZ=Asia/Shanghai \
     -p 10252:10252 \
     -e QDRANT_URL="http://${QDRANT_HOST}:${QDRANT_PORT}" \
     -e LOG_ENV="$LOG_ENV" \
@@ -269,6 +274,7 @@ docker run -d --name assessment-knowledge \
 echo "[启动] 智能问答服务 (10253)..."
 docker run -d --name assessment-qa \
     --network "$NET_NAME" \
+    -e TZ=Asia/Shanghai \
     -p 10253:10253 \
     -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
     -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
@@ -294,6 +300,7 @@ docker run -d --name assessment-qa \
 echo "[启动] 指标分析服务 (10254)..."
 docker run -d --name assessment-indicator \
     --network "$NET_NAME" \
+    -e TZ=Asia/Shanghai \
     -p 10254:10254 \
     -e QA_SERVICE_URL="http://assessment-qa:10253" \
     -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
@@ -316,6 +323,7 @@ docker run -d --name assessment-indicator \
 echo "[启动] 评估分析服务 (10255)..."
 docker run -d --name assessment-evaluation \
     --network "$NET_NAME" \
+    -e TZ=Asia/Shanghai \
     -p 10255:10255 \
     -e LOG_ENV="$LOG_ENV" \
     -e LOG_LEVEL="$LOG_LEVEL" \
@@ -333,9 +341,11 @@ docker run -d --name assessment-evaluation \
 echo "[启动] 本体模型服务 (10256)..."
 docker run -d --name assessment-ontology \
     --network "$NET_NAME" \
+    -e TZ=Asia/Shanghai \
     -p 10256:10256 \
     -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
     -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
+    -e LLM_SEND_THINKING="$LLM_SEND_THINKING" \
     -e LOG_ENV="$LOG_ENV" \
     -e LOG_LEVEL="$LOG_LEVEL" \
     -e LOG_DIR="/app/logs" \
@@ -352,6 +362,7 @@ docker run -d --name assessment-ontology \
 echo "[启动] 态势页面服务 (10257)..."
 docker run -d --name assessment-ipage \
     --network "$NET_NAME" \
+    -e TZ=Asia/Shanghai \
     -p 127.0.0.1:10257:10257 \
     -e ADMIN_SERVICE_URL="http://assessment-admin:10258" \
     -e KNOWLEDGE_SERVICE_URL="http://assessment-knowledge:10252" \
@@ -371,6 +382,7 @@ docker run -d --name assessment-ipage \
     -e IPAGE_CORS_ORIGINS="${IPAGE_CORS_ORIGINS:-http://localhost:10086,http://127.0.0.1:10086}" \
     -e INTERNAL_SERVICE_TOKEN="$INTERNAL_SERVICE_TOKEN" \
     -e LLM_MAX_TOKENS="24000" \
+    -e LLM_SEND_THINKING="$LLM_SEND_THINKING" \
     -e LOG_ENV="$LOG_ENV" \
     -e LOG_LEVEL="$LOG_LEVEL" \
     -e LOG_DIR="/app/logs" \
@@ -392,6 +404,7 @@ echo "========================================"
 echo "[启动] 前端界面 (10086)..."
 docker run -d --name assessment-frontend \
     --network "$NET_NAME" \
+    -e TZ=Asia/Shanghai \
     -p 10086:80 \
     -e ADMIN_API_TOKEN="$ADMIN_API_TOKEN" \
     -e ADMIN_UI_PASSWORD="$ADMIN_UI_PASSWORD" \

@@ -77,6 +77,7 @@ Desktop.ini
 llm_config.json
 docker-images/
 assessment-offline-*.tar.gz
+内网部署1120/
 offline-deps/
 _build_docker.ps1
 
