@@ -133,6 +133,10 @@ def _entity_type_from_dict(d: dict, ontology_id: str = "",
                 unit=p.get("unit", ""),
                 required=p.get("required", False),
                 description=p.get("description", ""),
+                standard_name=p.get("standard_name", ""),
+                synonyms=p.get("synonyms", []) or [],
+                formula=p.get("formula", ""),
+                dimension=p.get("dimension", ""),
             ))
     return EntityType(
         id=d.get("id") or f"et_{uuid.uuid4().hex[:8]}",
@@ -1750,6 +1754,10 @@ def _generate_formal_ontology(job_id: str, target_ontology_id: str = None) -> st
                         unit=ps.get("unit", ""),
                         required=bool(ps.get("required", False)),
                         description=ps.get("description", ""),
+                        standard_name=ps.get("standard_name", ""),
+                        synonyms=ps.get("synonyms", []) or [],
+                        formula=ps.get("formula", ""),
+                        dimension=ps.get("dimension", ""),
                     ))
                 except Exception:
                     pass
@@ -3797,6 +3805,10 @@ async def add_entity_type(
                     unit=item.get("unit", ""),
                     required=item.get("required", False),
                     description=item.get("description", ""),
+                    standard_name=item.get("standard_name", ""),
+                    synonyms=item.get("synonyms", []) or [],
+                    formula=item.get("formula", ""),
+                    dimension=item.get("dimension", ""),
                 ))
 
     # v3：父类型名 → 父类型ID 解析（前端传名时自动查找）
@@ -3896,6 +3908,10 @@ async def update_entity_type(
                             unit=item.get("unit", ""),
                             required=item.get("required", False),
                             description=item.get("description", ""),
+                            standard_name=item.get("standard_name", ""),
+                            synonyms=item.get("synonyms", []) or [],
+                            formula=item.get("formula", ""),
+                            dimension=item.get("dimension", ""),
                         ))
             concept.property_schema = pschema
 

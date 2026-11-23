@@ -1,6 +1,6 @@
 <template>
   <Layout>
-    <div class="ontology-detail">
+    <div class="ontology-detail" :class="{ 'focus-mode': focusPayload }">
       <!-- 顶部工具栏 -->
       <div class="detail-header">
         <div class="header-left">
@@ -180,6 +180,65 @@
                   <span class="legend-dot" :style="{ background: type.color }"></span>
                   <span>{{ type.name }}</span>
                 </div>
+              </div>
+
+              <!-- 评估分析跳转：溯源 / 归因高亮侧栏 -->
+              <div v-if="focusPayload" class="focus-panel custom-scroll">
+                <div class="focus-panel-head">
+                  <div>
+                    <div class="focus-eyebrow">
+                      {{ focusPayload.mode === 'trace' ? '结果溯源' : '归因分析' }}
+                    </div>
+                    <div class="focus-title">{{ focusPayload.title }}</div>
+                  </div>
+                  <el-button link size="small" @click="closeFocus">清除高亮</el-button>
+                </div>
+                <div v-if="focusPayload.question" class="focus-question">问：{{ focusPayload.question }}</div>
+                <div v-if="focusSummary" class="focus-summary">{{ focusSummary }}</div>
+
+                <div v-if="focusSteps.length" class="focus-section">
+                  <div class="focus-section-title">溯源路径（{{ focusSteps.length }} 步）</div>
+                  <div v-for="(step, index) in focusSteps" :key="index" class="focus-step">
+                    <div class="focus-step-head">
+                      <span class="focus-step-level">{{ step.level }}</span>
+                      <span class="focus-step-title">{{ step.title }}</span>
+                    </div>
+                    <div class="focus-step-detail">{{ step.detail }}</div>
+                  </div>
+                </div>
+
+                <div v-if="focusReasoningSteps.length" class="focus-section">
+                  <div class="focus-section-title">具体推理过程</div>
+                  <div v-for="step in focusReasoningSteps" :key="step.step" class="focus-reasoning-step">
+                    <span class="focus-reasoning-index">{{ step.step }}</span>
+                    <div class="focus-reasoning-body">
+                      <div class="focus-reasoning-name">{{ step.title }}</div>
+                      <div class="focus-reasoning-detail">{{ step.detail }}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="focusCauses.length" class="focus-section">
+                  <div class="focus-section-title">归因原因（按影响排序）</div>
+                  <div v-for="cause in focusCauses" :key="cause.id" class="focus-cause">
+                    <div class="focus-cause-head">
+                      <span class="focus-cause-kind">{{ cause.kind }}</span>
+                      <span class="focus-cause-title">{{ cause.title }}</span>
+                      <span v-if="cause.impact" class="focus-cause-impact">±{{ cause.impact }} {{ cause.impactUnit }}</span>
+                    </div>
+                    <div class="focus-cause-detail">{{ cause.detail }}</div>
+                  </div>
+                </div>
+
+                <div v-if="focusReasoning.length" class="focus-section">
+                  <div class="focus-section-title">本体推理路径</div>
+                  <div v-for="(line, index) in focusReasoning" :key="index" class="focus-reasoning-line">{{ line }}</div>
+                </div>
+
+                <div class="focus-legend">
+                  金色描边为本次{{ focusPayload.mode === 'trace' ? '溯源' : '归因' }}涉及的本体节点，金色连线为关系路径
+                </div>
+                <el-button size="small" class="focus-back" @click="backToEvaluation">返回评估分析</el-button>
               </div>
             </div>
           </el-card>
@@ -462,6 +521,32 @@ let chartInstance: echarts.ECharts | null = null
 const rawGraphData = ref<{ nodes: any[]; links: any[] }>({ nodes: [], links: [] })
 const expandedTypeIds = ref<Set<string>>(new Set())
 
+// 评估分析 → 动态本体：溯源 / 归因高亮载荷（来自 sessionStorage）
+const focusPayload = ref<any>(null)
+const focusSummary = computed(() => {
+  const detail = focusPayload.value?.detail
+  if (!detail) return ''
+  if (focusPayload.value.mode === 'trace') {
+    const metric = detail.metric || {}
+    return `${metric.name || '指标'}：${metric.value ?? '—'}${metric.unit || ''}`
+  }
+  return detail.summary || ''
+})
+const focusSteps = computed(() => (
+  focusPayload.value?.mode === 'trace' ? (focusPayload.value.detail?.steps || []) : []
+))
+const focusCauses = computed(() => (
+  focusPayload.value?.mode === 'attribution' ? (focusPayload.value.detail?.causes || []).slice(0, 6) : []
+))
+const focusReasoning = computed(() => (
+  focusPayload.value?.mode === 'attribution' ? (focusPayload.value.detail?.reasoningPath || []) : []
+))
+const focusReasoningSteps = computed(() => (
+  focusPayload.value?.mode === 'attribution'
+    ? (focusPayload.value.detail?.reasoningSteps || [])
+    : []
+))
+
 // 对话框开关
 const showEditDialog = ref(false)
 const showAddEntityDialog = ref(false)
@@ -598,10 +683,70 @@ const loadGraph = async () => {
     rawGraphData.value = { nodes: res.data.nodes || [], links: res.data.links || [] }
     // 默认全部为类型态：只显示实体类型节点，左键类型展开（分解）为其实例
     expandedTypeIds.value = new Set()
+    applyFocusExpansion()
     renderGraph()
   } catch (e: any) {
     ElMessage.error(e.serverMessage || '加载图谱失败')
   }
+}
+
+/** 读取评估分析页写入的高亮载荷；仅当本体匹配时生效 */
+const loadFocus = () => {
+  try {
+    const raw = sessionStorage.getItem('ontology-focus')
+    if (!raw) return
+    const payload = JSON.parse(raw)
+    if (!payload || payload.ontologyId !== ontologyId) return
+    focusPayload.value = payload
+  } catch (e) {
+    console.warn('解析图谱高亮载荷失败', e)
+  }
+}
+
+/** 自动展开高亮节点所属类型（含父类型链的叶子类型），保证实例可见 */
+const applyFocusExpansion = () => {
+  const payload = focusPayload.value
+  if (!payload) return
+  const focusNodeIds = new Set<string>(payload.nodeIds || [])
+  rawGraphData.value.nodes.forEach((n: any) => {
+    if (n.node_type === 'concept' && focusNodeIds.has(n.id)) focusNodeIds.add(n.id)
+  })
+  const childIdsByParent: Record<string, string[]> = {}
+  for (const l of rawGraphData.value.links) {
+    if (l.relation !== 'SUB_CONCEPT_OF') continue
+    ;(childIdsByParent[l.source] ||= []).push(l.target)
+  }
+  const leavesOf = (typeId: string, acc: string[] = []): string[] => {
+    const children = childIdsByParent[typeId] || []
+    if (!children.length) {
+      acc.push(typeId)
+      return acc
+    }
+    children.forEach(child => leavesOf(child, acc))
+    return acc
+  }
+  const expand = new Set<string>()
+  rawGraphData.value.nodes.forEach((n: any) => {
+    if (n.node_type !== 'entity' || !focusNodeIds.has(n.id) || !n.concept_id) return
+    leavesOf(n.concept_id).forEach(leaf => expand.add(leaf))
+  })
+  rawGraphData.value.nodes.forEach((n: any) => {
+    if (n.node_type === 'concept' && focusNodeIds.has(n.id)) {
+      leavesOf(n.id).forEach(leaf => expand.add(leaf))
+    }
+  })
+  if (expand.size) expandedTypeIds.value = expand
+}
+
+const closeFocus = () => {
+  sessionStorage.removeItem('ontology-focus')
+  focusPayload.value = null
+  expandedTypeIds.value = new Set()
+  renderGraph()
+}
+
+const backToEvaluation = () => {
+  router.push('/evaluation')
 }
 
 const refreshData = async () => {
@@ -778,25 +923,34 @@ const renderGraph = () => {
   }
 
   // ── 节点：从顶层类型递归下钻，父/子/实例互斥 ──
+  const focusNodeIds = new Set<string>(focusPayload.value?.nodeIds || [])
+  const focusEdgeKeys = new Set<string>(
+    (focusPayload.value?.edgePairs || []).map((edge: any) => `${edge.source}->${edge.target}`)
+  )
+  const focusMode = focusNodeIds.size > 0
+
   const displayNodes: any[] = []
   const walkType = (typeId: string) => {
     const tn = typeNodeById[typeId]
     if (!tn) return
     if (!isExpanded(typeId)) {
+      const focused = focusMode && focusNodeIds.has(tn.id)
       // 收起态：显示类型节点
       displayNodes.push({
         name: tn.name,
         id: tn.id,
         category: catIndex[tn.type] ?? fallbackCatIndex,
-        symbolSize: 50,
+        symbolSize: focused ? 60 : 50,
         draggable: true,
         nodeType: 'entityType',
         conceptId: tn.id,
         parentId: parentIdByChildId[typeId] || '',
         childCount: (childIdsByParent[typeId] || []).length,
         parentName: parentIdByChildId[typeId] ? (typeNodeById[parentIdByChildId[typeId]]?.name || '') : '',
-        itemStyle: { borderColor: '#333', borderWidth: 2 },
-        label: { fontWeight: 'bold' },
+        itemStyle: focused
+          ? { borderColor: '#f59e0b', borderWidth: 3, shadowBlur: 18, shadowColor: 'rgba(245,158,11,0.85)' }
+          : { borderColor: '#333', borderWidth: 2, opacity: focusMode ? 0.3 : 1 },
+        label: { fontWeight: 'bold', color: focusMode && !focused ? '#9ca3af' : '#111827' },
       })
       return
     }
@@ -808,15 +962,22 @@ const renderGraph = () => {
       // 叶子类型 → 分解为实体
       for (const e of entityNodes) {
         if (e.concept_id === typeId) {
+          const focused = focusMode && focusNodeIds.has(e.id)
           displayNodes.push({
             name: e.name,
             id: e.id,
             category: catIndex[e.type] ?? fallbackCatIndex,
-            symbolSize: 32,
+            symbolSize: focused ? 46 : 32,
             draggable: true,
             nodeType: 'entity',
             conceptId: e.concept_id,
-            itemStyle: { borderColor: '#fff', borderWidth: 1.5 },
+            itemStyle: focused
+              ? { borderColor: '#f59e0b', borderWidth: 3, shadowBlur: 14, shadowColor: 'rgba(245,158,11,0.85)' }
+              : { borderColor: '#fff', borderWidth: 1.5, opacity: focusMode ? 0.28 : 1 },
+            label: {
+              color: focusMode && !focused ? '#9ca3af' : undefined,
+              fontWeight: focused ? 'bold' : 'normal'
+            },
           })
         }
       }
@@ -830,7 +991,7 @@ const renderGraph = () => {
   // ── 边：连接两端各自的可见代表，去重去自环 ──
   const displayLinks: any[] = []
   const seenEdges = new Set<string>()
-  const pushEdge = (srcId: string | null, tgtId: string | null, relation: string) => {
+  const pushEdge = (srcId: string | null, tgtId: string | null, relation: string, focused = false) => {
     if (!srcId || !tgtId || srcId === tgtId) return // 去自环（同类型收起后内部边消失）
     if (!visibleNodeIds.has(srcId) || !visibleNodeIds.has(tgtId)) return
     const edgeKey = `${srcId}-${tgtId}-${relation}`
@@ -844,7 +1005,9 @@ const renderGraph = () => {
       // 额外保留名称用于 tooltip 展示，不影响边匹配
       sourceName: idToName[srcId] || srcId,
       targetName: idToName[tgtId] || tgtId,
-      lineStyle: { type: 'solid' }
+      lineStyle: focused
+        ? { type: 'solid', color: '#f59e0b', width: 4, opacity: 1, curveness: 0.08, shadowBlur: 10, shadowColor: 'rgba(245,158,11,0.9)' }
+        : (focusMode ? { type: 'solid', color: '#cbd5e1', opacity: 0.12 } : { type: 'solid' })
     })
   }
 
@@ -862,7 +1025,11 @@ const renderGraph = () => {
     const srcEntity = entityById[l.source]
     const tgtEntity = entityById[l.target]
     if (srcEntity && tgtEntity) {
-      pushEdge(visibleRepOfEntity(srcEntity), visibleRepOfEntity(tgtEntity), relation)
+      const focused = focusMode && (
+        focusEdgeKeys.has(`${srcEntity.id}->${tgtEntity.id}`) ||
+        focusEdgeKeys.has(`${tgtEntity.id}->${srcEntity.id}`)
+      )
+      pushEdge(visibleRepOfEntity(srcEntity), visibleRepOfEntity(tgtEntity), relation, focused)
     }
   }
 
@@ -1312,6 +1479,7 @@ onMounted(async () => {
     return
   }
   await Promise.all([loadOntology(), loadConcepts(), loadEntities(), loadRelations()])
+  loadFocus()
   await nextTick()
   await loadGraph()
   window.addEventListener('resize', handleResize)
@@ -1389,6 +1557,87 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 1.25rem;
   overflow-y: auto;
+}
+
+/* 溯源/归因跳转：聚焦图谱，隐藏两侧列表，避免窄屏下中心区域被挤为 0 宽 */
+.focus-mode .left-panel,
+.focus-mode .right-panel {
+  display: none;
+}
+
+.focus-mode .center-panel {
+  width: 100%;
+}
+
+.focus-mode .detail-header {
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.focus-mode .header-left h2 {
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .three-column-layout {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .left-panel,
+  .right-panel {
+    width: 100%;
+    flex-direction: row;
+  }
+
+  .center-panel {
+    min-height: 520px;
+  }
+
+  .detail-header {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .header-left h2 {
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 760px) {
+  .left-panel,
+  .right-panel {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 900px) {
+  /* 窄屏下取消纵向拉伸，让图谱与侧栏按内容高度顺序排列并由页面滚动 */
+  .graph-card {
+    flex: none;
+  }
+
+  .graph-wrapper {
+    display: block;
+    flex: none;
+  }
+
+  .graph-container {
+    height: 400px;
+  }
+
+  /* 提高选择器优先级，覆盖下方基础样式的绝对定位 */
+  .graph-wrapper .focus-panel {
+    position: static;
+    width: auto;
+    max-height: none;
+    margin: 10px 12px 12px;
+  }
+
+  .graph-card .panel-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
 }
 
 .panel-card {
@@ -1686,6 +1935,208 @@ onUnmounted(() => {
   font-size: 0.8rem;
   color: var(--text-regular);
   padding: 2px 0;
+}
+
+.focus-panel {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  width: 360px;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(10px);
+  border: 1px solid #fcd34d;
+  border-left: 3px solid #f59e0b;
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+  z-index: 12;
+}
+
+.focus-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.focus-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  color: #b45309;
+  letter-spacing: 0.06em;
+}
+
+.focus-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+  margin-top: 2px;
+}
+
+.focus-question {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 6px;
+}
+
+.focus-summary {
+  font-size: 13px;
+  color: #1f2937;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 7px 9px;
+  margin-top: 8px;
+}
+
+.focus-section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #e5e7eb;
+}
+
+.focus-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.focus-step {
+  padding: 4px 0 6px 8px;
+  border-left: 2px solid #e5e7eb;
+}
+
+.focus-step-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.focus-step-level {
+  font-size: 10px;
+  color: #fff;
+  background: #94a3b8;
+  border-radius: 3px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+
+.focus-step-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2937;
+  word-break: break-all;
+}
+
+.focus-step-detail {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 2px;
+  line-height: 1.55;
+}
+
+.focus-cause {
+  padding: 5px 0 7px 8px;
+  border-left: 2px solid #f59e0b;
+}
+
+.focus-cause-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.focus-cause-kind {
+  font-size: 10px;
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: 3px;
+  padding: 0 5px;
+}
+
+.focus-cause-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.focus-cause-impact {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: #b45309;
+}
+
+.focus-cause-detail {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 2px;
+  line-height: 1.55;
+}
+
+.focus-reasoning-line {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+.focus-reasoning-step {
+  display: flex;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px dashed #e2e8f0;
+}
+
+.focus-reasoning-step:last-child {
+  border-bottom: none;
+}
+
+.focus-reasoning-index {
+  flex: 0 0 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.focus-reasoning-body {
+  min-width: 0;
+}
+
+.focus-reasoning-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.focus-reasoning-detail {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.focus-legend {
+  font-size: 11px;
+  color: #b45309;
+  background: #fffbeb;
+  border-radius: 5px;
+  padding: 5px 7px;
+  margin-top: 10px;
+}
+
+.focus-back {
+  width: 100%;
+  margin-top: 8px;
 }
 
 .legend-dot {

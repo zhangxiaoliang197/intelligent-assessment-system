@@ -28,6 +28,16 @@ router = APIRouter(prefix="/ontology", tags=["动态本体工作台"])
 
 
 def host():
+    """返回正在运行的 main 模块。
+
+    main.py 以 `python main.py` 启动时模块名是 `__main__`，此时 `import main`
+    会再次执行模块级 `load_db()`，产生一份与线上不一致的第二份内存数据，
+    表现为列表/元数据正常但工作台报“本体不存在”。优先复用入口模块。
+    """
+    import sys
+    running = sys.modules.get("__main__")
+    if running is not None and hasattr(running, "ontologies_db"):
+        return running
     import main
     return main
 

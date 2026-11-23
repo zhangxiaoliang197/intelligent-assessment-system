@@ -154,3 +154,9 @@ frontend/public/ontosphere/
 frontend/ontosphere/public/rdf-reasoner-konclude/
 frontend/ontosphere/public/coi-serviceworker.js
 
+
+# 运行时锁文件与本地生成状态（不入库）
+python/ontology-service/data/.locks/
+python/qa-service/data/demo_airpower/ontology_id.txt
+python/qa-service/data/demo_airpower/case_mysql.json
+python/qa-service/data/demo_airpower/seed_summary.json

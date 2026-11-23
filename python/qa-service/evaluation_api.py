@@ -37,6 +37,7 @@ from agents.skill_catalog import (
 )
 from agents.skill_runner import run_skill_workflow
 from agents.geo_artifacts import collect_geo_artifact
+from evaluation_metric_query import try_answer_metric_question
 from skill_api import skill_actor_from_request
 
 logger = logging.getLogger("evaluation.api")
@@ -136,6 +137,9 @@ class EvaluationRequest(BaseModel):
     skill_id: Optional[str] = Field(default=None, alias="skillId")
     timeout_seconds: Optional[int] = Field(default=None, ge=30, le=1800, alias="timeoutSeconds")
     ontology_id: Optional[str] = Field(default=None, alias="ontologyId")  # B 阶段：参考本体ID
+    # 用户在前端确认过的口径：指标与维度取值。确认值优先于从问题文本推断。
+    metric_keys: list[str] = Field(default_factory=list, alias="metricKeys")
+    dimensions: dict[str, str] = Field(default_factory=dict)
 
 
 class SkillRecommendRequest(BaseModel):
@@ -514,6 +518,57 @@ async def analyze_stream(request: EvaluationRequest, http_request: Request):
         # 反应式工作流可能多次下发同一 result，空间分布产物只尝试一次
         geo_enriched = False
         try:
+            # 命中动态本体指标时，直接按本体口径在案例库上计算，避免被通用编排误判为知识问答
+            metric_answer = None
+            try:
+                metric_answer = await asyncio.to_thread(
+                    try_answer_metric_question,
+                    request.query,
+                    request.ontology_id or "",
+                    "v1.2",
+                    request.metric_keys,
+                    request.dimensions,
+                )
+            except Exception as metric_error:
+                logger.warning("数据库指标问答降级到通用编排：%s", metric_error)
+
+            if metric_answer:
+                for step in metric_answer["steps"]:
+                    execution_steps.append(step)
+                    yield json.dumps({
+                        "type": "step",
+                        "step": step,
+                        "session_id": session_id,
+                    }, ensure_ascii=False, default=str) + "\n"
+                metric_result = metric_answer["result"]
+                final_result = metric_result
+                final_answer = metric_result.get("final_answer", "")
+                try:
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(
+                        _io_pool,
+                        partial(
+                            _save_session_to_mysql,
+                            session_id,
+                            request.query,
+                            final_answer,
+                            request.skill_id or "",
+                            final_result,
+                            execution_steps,
+                            request.database_id,
+                            request.database_name,
+                        ),
+                    )
+                except Exception as save_error:
+                    logger.error("持久化指标问答会话失败: %s", save_error, exc_info=True)
+                yield json.dumps({
+                    "type": "result",
+                    "session_id": session_id,
+                    "result": metric_result,
+                    "final_answer": final_answer,
+                }, ensure_ascii=False, default=str) + "\n"
+                return
+
             if selected_skill:
                 workflow = run_skill_workflow(
                     question=request.query,
