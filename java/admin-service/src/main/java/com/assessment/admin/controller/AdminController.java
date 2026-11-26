@@ -15,6 +15,7 @@ import com.assessment.admin.repository.IndicatorRepository;
 import com.assessment.admin.repository.LlmConfigRepository;
 import com.assessment.admin.repository.MapServiceConfigRepository;
 import com.assessment.admin.service.SqlExecutionService;
+import com.assessment.admin.service.DriverJarResolver;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -86,6 +87,9 @@ public class AdminController {
 
     @Autowired
     private com.assessment.admin.service.AnnotationDraftService annotationDraftService;
+
+    @Autowired
+    private DriverJarResolver driverJarResolver;
 
     @Value("${db.type:mysql}")
     private String dbType;
@@ -379,18 +383,9 @@ public class AdminController {
      * 通过 JDBC 连接数据库（统一使用 URLClassLoader 加载 JAR 驱动）
      */
     private Connection getJdbcConnection(Driver driver, String url, String username, String password) throws Exception {
-        if (driver.getJarFilePath() == null || driver.getJarFilePath().isEmpty()) {
-            throw new IOException("驱动 '" + driver.getName() + "' 尚未上传JAR包，请先在驱动管理中上传");
-        }
-
-        File jarFile = new File(driver.getJarFilePath());
-        // 相对路径以 user.dir 为基准解析（跨机器可移植）
-        if (!jarFile.isAbsolute()) {
-            jarFile = new File(System.getProperty("user.dir"), driver.getJarFilePath());
-        }
-        if (!jarFile.exists()) {
-            throw new IOException("驱动JAR文件不存在: " + driver.getJarFilePath());
-        }
+        // 精确路径失效时按驱动类通配匹配，并把新路径回写数据库（自愈历史脏数据）
+        DriverJarResolver.ResolvedJar resolved = driverJarResolver.resolveAndHeal(driver);
+        File jarFile = resolved.file();
 
         URLClassLoader classLoader = new URLClassLoader(
                 new URL[]{jarFile.toURI().toURL()},
@@ -850,7 +845,14 @@ public class AdminController {
         }
 
         // 标准化 API URL：去掉尾部斜杠，确保以 /chat/completions 结尾
-        String url = baseUrl.replaceAll("/+$", "");
+        String url = baseUrl.trim().replaceAll("/+$", "");
+        // 缺少协议头时 URI.create 会抛出难以理解的原生异常，这里直接给出可执行的提示
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            return ResponseEntity.ok(Map.of(
+                "success", false,
+                "message", "API 地址必须以 http:// 或 https:// 开头，例如 http://192.168.100.128:25809/v1（使用英文半角冒号）"
+            ));
+        }
         if (!url.endsWith("/chat/completions")) {
             if (!url.endsWith("/v1")) {
                 url += "/v1";
@@ -860,21 +862,33 @@ public class AdminController {
 
         long start = System.currentTimeMillis();
         try {
-            // 构建最小测试请求体
+            // 构建标准 OpenAI 兼容测试请求体：字段保持完整。
+            // 内网网关（FastAPI/pydantic）常把 stream/temperature 声明为必填字段，
+            // 精简请求体会被直接判 400 且无法定位缺失项；max_tokens 取 16 避免部分网关
+            // 对过小的输出上限做校验。
+            String modelName = config.getModel() != null && !config.getModel().isBlank()
+                ? config.getModel() : "gpt-3.5-turbo";
             String requestBody = String.format(
-                "{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}",
-                config.getModel() != null ? config.getModel().replace("\"", "\\\"") : "gpt-3.5-turbo"
+                "{\"model\":\"%s\",\"messages\":[{\"role\":\"system\",\"content\":\"你是连通性检测助手\"},"
+                    + "{\"role\":\"user\",\"content\":\"ping\"}],"
+                    + "\"temperature\":0.7,\"top_p\":0.9,\"max_tokens\":16,\"stream\":false}",
+                modelName.replace("\\", "\\\\").replace("\"", "\\\"")
             );
 
             java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
                 .uri(java.net.URI.create(url))
-                .header("Content-Type", "application/json")
+                .header("Content-Type", "application/json; charset=UTF-8")
+                .header("Accept", "application/json")
                 .header("Authorization", "Bearer " + (config.getApiKey() != null ? config.getApiKey() : ""))
                 .POST(java.net.http.HttpRequest.BodyPublishers.ofString(requestBody))
                 .timeout(java.time.Duration.ofSeconds(15))
                 .build();
 
+            // 必须显式使用 HTTP/1.1：JDK 默认 HTTP/2 会对明文地址发起 h2c 升级请求，
+            // 部分内网网关/vLLM 前置代理对升级请求处理不完整，表现为服务端收到 body=None，
+            // 直接把请求判成 400。Python 服务用 urllib（HTTP/1.1）调用同一地址则正常。
             java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                .version(java.net.http.HttpClient.Version.HTTP_1_1)
                 .connectTimeout(java.time.Duration.ofSeconds(10))
                 .build();
 
@@ -892,10 +906,11 @@ public class AdminController {
                     "statusCode", statusCode
                 ));
             } else {
-                // 截断错误响应体，避免过长
+                // 保留网关返回的完整校验明细（pydantic 的 loc 会指出具体缺失/非法字段），
+                // 仅在超长时截断，避免前端提示不可读
                 String respBody = response.body();
-                if (respBody != null && respBody.length() > 300) {
-                    respBody = respBody.substring(0, 300) + "...";
+                if (respBody != null && respBody.length() > 2000) {
+                    respBody = respBody.substring(0, 2000) + "...";
                 }
                 return ResponseEntity.ok(Map.of(
                     "success", false,
@@ -2285,6 +2300,221 @@ public class AdminController {
         data.put("type", active.getType());
         data.put("baseUrl", active.getBaseUrl());
         return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    /**
+     * 探测地图服务连通性（仅针对绝对地址，由 admin-service 直接请求）。
+     *
+     * 同源前缀（如 /geowebcache/gwc、/amap-tiles）的真实链路是
+     * 浏览器 → nginx/vite → 上游瓦片服务，admin-service 不在链路上，
+     * 因此这类配置返回提示，由前端按真实链路探测。
+     *
+     * @param id 地图服务配置 ID
+     * @return 成功标记、中文原因、实际请求地址、状态码、内容类型、字节数与耗时
+     */
+    @PostMapping("/config/map/{id}/probe")
+    public ResponseEntity<Map<String, Object>> probeMapConfig(@PathVariable String id) {
+        Optional<MapServiceConfig> opt = mapConfigRepo.findById(id);
+        if (opt.isEmpty()) {
+            return ResponseEntity.badRequest().body(errorMap("配置不存在"));
+        }
+        MapServiceConfig config = opt.get();
+        String baseUrl = config.getBaseUrl() == null ? "" : config.getBaseUrl().trim();
+        if (baseUrl.isEmpty()) {
+            return ResponseEntity.ok(Map.of(
+                "success", false,
+                "code", "empty",
+                "message", "地图服务地址为空：请填写同源前缀（如 /geowebcache/gwc）或绝对地址（如 http://10.0.0.8:9090/geowebcache）"
+            ));
+        }
+        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            return ResponseEntity.ok(Map.of(
+                "success", false,
+                "code", "same-origin",
+                "message", "该配置是前端同源前缀（" + baseUrl + "），实际链路由浏览器经 nginx/vite 转发，请在配置列表点击「测试」由前端探测"
+            ));
+        }
+
+        List<String> probeUrls = buildProbeTileUrls(config.getType(), baseUrl);
+        // 与 Python 调用保持一致：显式 HTTP/1.1，避免 h2c 升级请求被网关丢弃
+        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                .version(java.net.http.HttpClient.Version.HTTP_1_1)
+                .connectTimeout(java.time.Duration.ofSeconds(5))
+                .build();
+
+        String lastMessage = "未执行探测";
+        String usedUrl = probeUrls.isEmpty() ? baseUrl : probeUrls.get(0);
+        int statusCode = 0;
+        String contentType = "";
+        int bytes = 0;
+        long elapsed = 0;
+
+        for (String probeUrl : probeUrls) {
+            usedUrl = probeUrl;
+            long start = System.currentTimeMillis();
+            try {
+                java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                        .uri(java.net.URI.create(probeUrl))
+                        .header("Accept", "image/*")
+                        .GET()
+                        .timeout(java.time.Duration.ofSeconds(8))
+                        .build();
+                java.net.http.HttpResponse<byte[]> response = client.send(request,
+                        java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+                elapsed = System.currentTimeMillis() - start;
+                statusCode = response.statusCode();
+                contentType = response.headers().firstValue("Content-Type").orElse("");
+                byte[] bodyBytes = response.body();
+                bytes = bodyBytes == null ? 0 : bodyBytes.length;
+                String bodySnippet = snippet(bodyBytes);
+
+                boolean isImage = contentType.toLowerCase(Locale.ROOT).startsWith("image/");
+                if (statusCode >= 200 && statusCode < 300 && isImage && bytes > 0) {
+                    return ResponseEntity.ok(Map.of(
+                        "success", true,
+                        "message", "瓦片检测通过：HTTP " + statusCode + "，" + contentType + "，"
+                                + bytes + " 字节，" + elapsed + "ms",
+                        "url", probeUrl,
+                        "statusCode", statusCode,
+                        "contentType", contentType,
+                        "bytes", bytes,
+                        "latency", elapsed + "ms"
+                    ));
+                }
+                lastMessage = describeTileProbeFailure(statusCode, contentType, bytes, bodySnippet);
+            } catch (Exception e) {
+                elapsed = System.currentTimeMillis() - start;
+                lastMessage = describeTileProbeFailure(e);
+            }
+        }
+
+        return ResponseEntity.ok(Map.of(
+            "success", false,
+            "message", lastMessage,
+            "url", usedUrl,
+            "statusCode", statusCode,
+            "contentType", contentType,
+            "bytes", bytes,
+            "latency", elapsed + "ms"
+        ));
+    }
+
+    /**
+     * 生成探测用的真实瓦片地址：选取中国区域、通常有数据的层级与行列。
+     *
+     * @param type    地图服务类型
+     * @param baseUrl 绝对地址
+     * @return 候选探测地址（依次尝试，任一命中即视为连通）
+     */
+    private List<String> buildProbeTileUrls(String type, String baseUrl) {
+        String base = baseUrl.trim().replaceAll("/+$", "");
+        List<String> urls = new ArrayList<>();
+        if ("geowebcache".equalsIgnoreCase(type)) {
+            // TMS 端点 y 轴自下而上，这里的 y 已按 2^z-1-y 翻转
+            urls.add(base + "/service/tms/1.0.0/seri1@EPSG:3857_esri1@png/5/26/19.png");
+            urls.add(base + "/service/tms/1.0.0/seri1@EPSG:3857_esri1@png/3/6/4.png");
+        } else if ("amap".equalsIgnoreCase(type)) {
+            urls.add(base + "/vec/3/6/3.png");
+            urls.add(base + "/vec/4/13/6.png");
+        } else if (base.contains("{z}") || base.contains("{x}")) {
+            urls.add(base.replace("{-y}", "3").replace("{z}", "3").replace("{x}", "6").replace("{y}", "3"));
+            urls.add(base.replace("{-y}", "6").replace("{z}", "4").replace("{x}", "13").replace("{y}", "6"));
+        } else {
+            urls.add(base + "/3/6/3.png");
+            urls.add(base + "/4/13/6.png");
+        }
+        return urls;
+    }
+
+    /**
+     * 把 HTTP 响应判定为可读的中文失败原因。
+     *
+     * @param statusCode  HTTP 状态码
+     * @param contentType 响应内容类型
+     * @param bytes       响应字节数
+     * @param bodySnippet 上游响应正文摘要（用于说明具体原因）
+     * @return 中文原因
+     */
+    private String describeTileProbeFailure(int statusCode, String contentType, int bytes, String bodySnippet) {
+        String detail = bodySnippet == null || bodySnippet.isEmpty() ? "" : "（上游返回：" + bodySnippet + "）";
+        if (statusCode == 400) {
+            return "请求被上游拒绝（HTTP 400）：瓦片地址、图层名或网格集不正确" + detail;
+        }
+        if (statusCode == 401 || statusCode == 403) {
+            return "上游拒绝访问（HTTP " + statusCode + "）：瓦片服务需要鉴权，或未放行当前来源 IP" + detail;
+        }
+        if (statusCode == 404) {
+            return "上游可达但瓦片不存在（HTTP 404）：图层名或网格集不匹配，或该层级/行列无数据";
+        }
+        if (statusCode >= 500) {
+            return "地图服务异常（HTTP " + statusCode + "）：瓦片服务未启动，或反向代理目标地址配置错误";
+        }
+        if (statusCode >= 300 && statusCode < 400) {
+            return "地址发生重定向（HTTP " + statusCode + "）：请直接填写最终可访问的瓦片服务地址";
+        }
+        if (statusCode >= 200 && statusCode < 300) {
+            if (!contentType.toLowerCase(Locale.ROOT).startsWith("image/")) {
+                return "返回内容不是图片（" + (contentType.isEmpty() ? "无 Content-Type" : contentType)
+                        + "）：代理指到了错误页或登录页" + detail;
+            }
+            if (bytes <= 0) {
+                return "瓦片响应为空（0 字节）：瓦片服务异常，或该层级/行列没有数据";
+            }
+        }
+        return "瓦片检测失败（HTTP " + statusCode + "）：响应不符合瓦片格式" + detail;
+    }
+
+    /**
+     * 截取上游响应正文作为错误提示摘要：去掉 HTML 标签并压缩空白，避免提示不可读。
+     *
+     * @param body 响应字节
+     * @return 摘要文本（最多 120 字）
+     */
+    private String snippet(byte[] body) {
+        if (body == null || body.length == 0) {
+            return "";
+        }
+        String text = new String(body, java.nio.charset.StandardCharsets.UTF_8)
+                .replaceAll("<[^>]+>", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        return text.length() <= 120 ? text : text.substring(0, 120) + "...";
+    }
+
+    /**
+     * 把网络异常转换成可读的中文失败原因。
+     *
+     * @param e 探测过程中抛出的异常
+     * @return 中文原因
+     */
+    private String describeTileProbeFailure(Exception e) {
+        if (e instanceof java.net.http.HttpConnectTimeoutException) {
+            return "连接超时：目标主机端口不通，或被防火墙/安全组拦截";
+        }
+        if (e instanceof java.net.http.HttpTimeoutException) {
+            return "读取超时：瓦片服务响应超过 8 秒，可能存在性能问题";
+        }
+        if (e instanceof java.net.ConnectException) {
+            return "连接被拒绝：瓦片服务未启动、端口不正确，或被防火墙拦截";
+        }
+        if (e instanceof java.net.UnknownHostException) {
+            return "域名无法解析：请检查主机名是否正确，或改用 IP 地址";
+        }
+        if (e instanceof java.net.NoRouteToHostException) {
+            return "网络不可达：当前服务器到瓦片服务之间没有路由，请检查网段与防火墙";
+        }
+        if (e instanceof javax.net.ssl.SSLException) {
+            return "HTTPS 握手失败：证书无效或自签名，或该地址实际不是 HTTPS 服务";
+        }
+        String detail = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+        String lower = detail.toLowerCase(Locale.ROOT);
+        if (lower.contains("connection refused")) {
+            return "连接被拒绝：瓦片服务未启动、端口不正确，或被防火墙拦截";
+        }
+        if (lower.contains("timed out") || lower.contains("timeout")) {
+            return "连接超时：目标主机端口不通，或被防火墙/安全组拦截";
+        }
+        return "请求异常（" + e.getClass().getSimpleName() + "）：" + detail;
     }
 
     // ==================== 辅助方法 ====================

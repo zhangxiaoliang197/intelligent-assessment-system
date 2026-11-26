@@ -178,7 +178,9 @@ services:
     environment:
       - ADMIN_SERVICE_URL=http://assessment-admin:10258
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be configured}
-      - LLM_SEND_THINKING=${LLM_SEND_THINKING:-true}
+      - LLM_SEND_THINKING=${LLM_SEND_THINKING:-false}
+      - LLM_ALLOW_INSECURE_HTTP=${LLM_ALLOW_INSECURE_HTTP:-false}
+      - ONTOLOGY_LLM_ALLOWED_HOSTS=${ONTOLOGY_LLM_ALLOWED_HOSTS:-localhost,127.0.0.1,::1}
       - TZ=Asia/Shanghai
       - LOG_ENV=${LOG_ENV:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -215,9 +217,10 @@ services:
       - IPAGE_TEMPLATE_FALLBACK=${IPAGE_TEMPLATE_FALLBACK:-true}
       - IPAGE_CORS_ORIGINS=${IPAGE_CORS_ORIGINS:-http://localhost:10086,http://127.0.0.1:10086}
       - IPAGE_LLM_ALLOWED_HOSTS=${IPAGE_LLM_ALLOWED_HOSTS:-api.deepseek.com,localhost,127.0.0.1,::1}
+      - LLM_ALLOW_INSECURE_HTTP=${LLM_ALLOW_INSECURE_HTTP:-false}
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be configured}
       - LLM_MAX_TOKENS=24000
-      - LLM_SEND_THINKING=${LLM_SEND_THINKING:-true}
+      - LLM_SEND_THINKING=${LLM_SEND_THINKING:-false}
       - TZ=Asia/Shanghai
       - LOG_ENV=${LOG_ENV:-prod}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

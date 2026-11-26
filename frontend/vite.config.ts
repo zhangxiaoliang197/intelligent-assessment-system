@@ -9,6 +9,8 @@ import { createReadStream, statSync } from 'node:fs'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, resolve(__dirname, '..'), '')
   const adminToken = env.ADMIN_API_TOKEN?.trim()
+  // 开发环境瓦片上游与生产 nginx 使用同一环境变量，避免两套口径不一致
+  const mapTileUpstream = (env.MAP_TILE_UPSTREAM || 'http://localhost:9090').replace(/\/+$/, '')
   const adminProxy: ProxyOptions = {
     target: 'http://127.0.0.1:10258',
     changeOrigin: true,
@@ -123,11 +125,11 @@ export default defineConfig(({ mode }) => {
         ...adminProxy
       },
       '/tiles': {
-        target: 'http://localhost:9090',
+        target: mapTileUpstream,
         changeOrigin: true
       },
       '/geowebcache': {
-        target: 'http://localhost:9090',
+        target: mapTileUpstream,
         changeOrigin: true
       },
       // 高德瓦片同源代理（开发环境）：/amap-tiles/vec|anno/{z}/{x}/{y}.png → 高德瓦片服务

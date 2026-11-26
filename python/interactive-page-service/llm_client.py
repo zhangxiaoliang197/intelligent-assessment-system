@@ -74,13 +74,18 @@ def _validate_endpoint(api_url: str) -> None:
             f"大模型 API 主机不在允许清单中: {hostname}；"
             "请通过 IPAGE_LLM_ALLOWED_HOSTS 由部署管理员显式授权"
         )
+    # 内网 HTTP 端点：需同时开启 LLM_ALLOW_INSECURE_HTTP 且主机已在允许清单内。
+    # 清单本身仍由 IPAGE_LLM_ALLOWED_HOSTS 控制，放开 HTTP 不会放宽主机范围。
     allow_insecure_http = os.getenv("LLM_ALLOW_INSECURE_HTTP", "false").lower() in {
         "1", "true", "yes", "on",
     }
     if parsed_url.scheme != "https" and not (
-        allow_insecure_http and hostname in {"localhost", "127.0.0.1", "::1"}
+        allow_insecure_http and hostname in config.LLM_ALLOWED_HOSTS
     ):
-        raise RuntimeError("大模型 API 必须使用 HTTPS；本地 HTTP 需显式开启 LLM_ALLOW_INSECURE_HTTP")
+        raise RuntimeError(
+            "大模型 API 必须使用 HTTPS；内网 HTTP 端点需同时设置 "
+            "LLM_ALLOW_INSECURE_HTTP=true 并在 IPAGE_LLM_ALLOWED_HOSTS 中加入该主机"
+        )
 
 
 def _ssl_context() -> ssl.SSLContext:

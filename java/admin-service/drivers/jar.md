@@ -12,13 +12,19 @@ admin-service 通过 `URLClassLoader` 动态加载这些驱动，实现多数据
 | mysql-connector-j.jar| MySQL         | com.mysql.cj.jdbc.Driver            |
 | postgresql.jar       | PostgreSQL    | org.postgresql.Driver               |
 | mssql-jdbc.jar       | SQL Server    | com.microsoft.sqlserver.jdbc.SQLServerDriver |
+| ojdbc11.jar          | Oracle        | oracle.jdbc.OracleDriver            |
+| DmJdbcDriver11.jar   | 达梦数据库 V8  | dm.jdbc.driver.DmDriver             |
 
-### ❌ 缺失的驱动（需手动补充）
+> **驱动文件名不要求与上表完全一致**：若数据库记录的路径不存在，admin-service 会扫描本目录下的全部 JAR，
+> 按驱动类名（如 `dm.jdbc.driver.DmDriver`）匹配出真正包含该类的文件，并把实际路径自动回写数据库。
+> 因此 `DmJdbcDriver11.jar`、`DmJdbcDriver18.jar` 等任意版本，只要包含对应驱动类即可被加载。
+
+### 需要补充或替换驱动时
 
 | 数据库类型     | 需要的 JAR 文件          | 驱动类                          | 获取方式                                                     |
 |---------------|-------------------------|---------------------------------|-------------------------------------------------------------|
 | Oracle        | ojdbc8.jar (或 ojdbc11.jar) | oracle.jdbc.OracleDriver       | [Maven Central](https://mvnrepository.com/artifact/com.oracle.database.jdbc/ojdbc8) |
-| 达梦数据库 V8  | DmJdbcDriver18.jar       | dm.jdbc.driver.DmDriver          | 达梦官方安装包 `drivers/jdbc` 目录，或联系达梦技术支持获取         |
+| 达梦数据库 V8  | DmJdbcDriver*.jar（如 11/18 版本） | dm.jdbc.driver.DmDriver | 达梦官方安装包 `drivers/jdbc` 目录，或联系达梦技术支持获取         |
 
 ## 如何补充缺失的驱动
 

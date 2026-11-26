@@ -56,8 +56,9 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Dameng JDBC Driver: NOT in Maven Central. If needed, download DmJdbcDriver18.jar
-             from https://www.dameng.com and add to classpath manually. -->
+        <!-- Dameng JDBC Driver: NOT in Maven Central. The driver JAR is shipped under drivers/
+             (e.g. DmJdbcDriver11.jar) and loaded at runtime by DriverJarResolver,
+             which matches any JAR containing dm.jdbc.driver.DmDriver by class name. -->
 
         <dependency>
             <groupId>org.projectlombok</groupId>

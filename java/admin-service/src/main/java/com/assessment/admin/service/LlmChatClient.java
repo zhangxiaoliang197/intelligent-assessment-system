@@ -131,14 +131,18 @@ public class LlmChatClient {
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
-                    .header("Content-Type", "application/json")
+                    .header("Content-Type", "application/json; charset=UTF-8")
+                    .header("Accept", "application/json")
                     .header("Authorization", "Bearer " + (config.getApiKey() == null ? "" : config.getApiKey()))
                     .POST(HttpRequest.BodyPublishers.ofString(
                             mapper.writeValueAsString(body)))
                     .timeout(Duration.ofMillis(Math.max(5000, timeoutMs)))
                     .build();
 
+            // 必须显式使用 HTTP/1.1：JDK 默认 HTTP/2 会对明文地址发起 h2c 升级请求，
+            // 内网网关可能因升级请求丢失请求体（服务端收到 body=None 并返回 400）。
             HttpClient client = HttpClient.newBuilder()
+                    .version(HttpClient.Version.HTTP_1_1)
                     .connectTimeout(Duration.ofMillis(Math.max(5000, timeoutMs)))
                     .build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());

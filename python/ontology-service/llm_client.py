@@ -29,6 +29,16 @@ INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "").strip()
 # 可通过环境变量 LLM_TIMEOUT 覆盖。
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "300"))
 
+# 内网 HTTP 大模型主机的放行清单：仅作用于明文 HTTP，HTTPS 端点不受清单限制。
+# 默认只放行本机回环；内网地址由部署时通过 ONTOLOGY_LLM_ALLOWED_HOSTS 显式授权。
+_LLM_ALLOWED_HOSTS = tuple(
+    host.strip().lower()
+    for host in os.getenv(
+        "ONTOLOGY_LLM_ALLOWED_HOSTS", "localhost,127.0.0.1,::1",
+    ).split(",")
+    if host.strip()
+)
+
 
 def load_llm_config() -> dict:
     """从 Java admin-service 获取当前活跃的大模型配置。
@@ -152,13 +162,20 @@ def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 4000,
     parsed_url = urllib.parse.urlparse(api_url)
     if parsed_url.scheme not in {"https", "http"} or not parsed_url.hostname:
         raise RuntimeError("大模型 API 地址无效")
+    # 内网部署的 OpenAI 兼容服务多为明文 HTTP。默认仍强制 HTTPS，
+    # 只有同时开启 LLM_ALLOW_INSECURE_HTTP 且主机在放行清单内才允许；
+    # HTTPS 端点保持原有行为，不受清单限制。
     allow_insecure_http = os.getenv("LLM_ALLOW_INSECURE_HTTP", "false").lower() in {
         "1", "true", "yes", "on",
     }
+    hostname = parsed_url.hostname.lower()
     if parsed_url.scheme != "https" and not (
-        allow_insecure_http and parsed_url.hostname in {"localhost", "127.0.0.1", "::1"}
+        allow_insecure_http and hostname in _LLM_ALLOWED_HOSTS
     ):
-        raise RuntimeError("大模型 API 必须使用 HTTPS；本地 HTTP 需显式开启 LLM_ALLOW_INSECURE_HTTP")
+        raise RuntimeError(
+            "大模型 API 必须使用 HTTPS；内网 HTTP 端点需同时设置 "
+            "LLM_ALLOW_INSECURE_HTTP=true 并将主机加入 ONTOLOGY_LLM_ALLOWED_HOSTS"
+        )
 
     # vLLM 本地部署无需 API Key
     if not api_key and llm_type != "vllm":

@@ -297,10 +297,11 @@
                   <el-tag v-else type="info" size="small">未激活</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="270" align="center">
+              <el-table-column label="操作" width="340" align="center">
                 <template #default="{ row }">
                   <el-button v-if="!row.isActive" type="success" size="small" @click="activateMapConfig(row)">启用</el-button>
                   <el-button v-else size="small" disabled>当前</el-button>
+                  <el-button size="small" type="primary" plain :loading="row.testing" @click="testMapService(row)">测试</el-button>
                   <el-button size="small" @click="openMapDialog(row)">编辑</el-button>
                   <el-button type="danger" size="small" @click="deleteMapConfig(row)">删除</el-button>
                 </template>
@@ -308,6 +309,10 @@
             </el-table>
             <div style="margin-top: 12px; color: #909399; font-size: 12px;">
               提示：点击「启用」将切换当前地图服务，智能问答、指标分析、评估分析中的地图将使用激活的服务。
+            </div>
+            <div style="margin-top: 6px; color: #909399; font-size: 12px;">
+              测试会按当前类型请求一张真实瓦片：同源前缀（/geowebcache、/amap-tiles）走浏览器 → nginx/vite 代理链路，绝对地址由后端直接探测。
+              注意：代理的上游瓦片地址由部署环境变量 MAP_TILE_UPSTREAM 决定，修改本页地址不会改变反向代理目标。
             </div>
           </div>
         </el-tab-pane>
@@ -874,6 +879,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import Layout from '@/components/Layout.vue'
 import DatasetAnnotationWorkflow from '@/components/DatasetAnnotationWorkflow.vue'
 import api from '@/services/api'
+import { probeSameOriginTiles } from '@/utils/mapTileConfig'
 
 const activeTab = ref('database')
 
@@ -2685,6 +2691,34 @@ async function activateMapConfig(row: any) {
     loadMapConfigs()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || '切换失败')
+  }
+}
+
+async function testMapService(row: any) {
+  row.testing = true
+  try {
+    const base = (row.baseUrl || '').trim()
+    // 绝对地址由后端探测：浏览器直连会被 CORS 拦住，读不到状态码
+    if (/^https?:\/\//i.test(base)) {
+      const res = await api.post(`/admin/config/map/${row.id}/probe`)
+      if (res && res.success) {
+        ElMessage.success(res.message)
+      } else {
+        ElMessage({ type: 'error', message: res?.message || '检测失败', duration: 8000, showClose: true })
+      }
+      return
+    }
+    // 同源前缀走浏览器真实链路（nginx/vite 代理）
+    const result = await probeSameOriginTiles(row.type, base)
+    if (result.ok) {
+      ElMessage.success(result.message)
+    } else {
+      ElMessage({ type: 'error', message: result.message, duration: 8000, showClose: true })
+    }
+  } catch (e: any) {
+    ElMessage.error('检测异常: ' + (e?.serverMessage || e?.message || '请求失败'))
+  } finally {
+    row.testing = false
   }
 }
 

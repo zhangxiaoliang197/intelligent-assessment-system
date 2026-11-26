@@ -38,6 +38,9 @@ public class SchemaService {
     private DriverRepository driverRepo;
 
     @Autowired
+    private DriverJarResolver driverJarResolver;
+
+    @Autowired
     private FieldAnnotationRepository fieldAnnotationRepo;
 
     @Autowired
@@ -171,11 +174,8 @@ public class SchemaService {
     }
 
     private Connection getConnection(Driver driver, String url, String username, String password) throws Exception {
-        if (driver.getJarFilePath() == null || driver.getJarFilePath().isEmpty()) {
-            throw new Exception("驱动 '" + driver.getName() + "' 尚未上传JAR包，请先在驱动管理中上传");
-        }
-        File jarFile = new File(driver.getJarFilePath());
-        if (!jarFile.exists()) throw new Exception("驱动JAR文件不存在: " + driver.getJarFilePath());
+        // 统一走驱动解析器：精确路径失效时按驱动类通配匹配并自愈数据库路径
+        File jarFile = driverJarResolver.resolveAndHeal(driver).file();
 
         URLClassLoader classLoader = new URLClassLoader(
                 new URL[]{jarFile.toURI().toURL()},

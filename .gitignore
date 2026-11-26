@@ -77,7 +77,8 @@ Desktop.ini
 llm_config.json
 docker-images/
 assessment-offline-*.tar.gz
-内网部署1120/
+# 内网部署交付包（单个数百 MB 的镜像产物，不入库）
+内网部署*/
 # 演示视频与录制产物（体积大，不入库）
 deliverables/
 offline-deps/
@@ -160,3 +161,6 @@ frontend/ontosphere/public/coi-serviceworker.js
 
 # 运行时锁文件（不入库）
 python/ontology-service/data/.locks/
+
+# 部署文件
+内网部署1125/

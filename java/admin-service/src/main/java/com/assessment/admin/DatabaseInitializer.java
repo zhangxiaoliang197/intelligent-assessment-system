@@ -38,6 +38,7 @@ public class DatabaseInitializer implements CommandLineRunner {
     private final DriverRepository driverRepo;
     private final LlmConfigRepository llmConfigRepo;
     private final MapServiceConfigRepository mapConfigRepo;
+    private final com.assessment.admin.service.DriverJarResolver driverJarResolver;
 
     @Value("${db.type:mysql}")
     private String dbType;
@@ -65,18 +66,45 @@ public class DatabaseInitializer implements CommandLineRunner {
     private String pgPassword;
 
     public DatabaseInitializer(DriverRepository driverRepo, LlmConfigRepository llmConfigRepo,
-                               MapServiceConfigRepository mapConfigRepo) {
+                               MapServiceConfigRepository mapConfigRepo,
+                               com.assessment.admin.service.DriverJarResolver driverJarResolver) {
         this.driverRepo = driverRepo;
         this.llmConfigRepo = llmConfigRepo;
         this.mapConfigRepo = mapConfigRepo;
+        this.driverJarResolver = driverJarResolver;
     }
 
     @Override
     public void run(String... args) {
         createDatabaseIfNotExists();
         initDefaultDrivers();
+        // 驱动表可能保留历史部署写入的失效路径（如旧的文件名），启动时统一巡检并自愈
+        healDriverJarPaths();
         initDefaultLlmConfig();
         initDefaultMapServiceConfig();
+    }
+
+    /**
+     * 巡检全部驱动记录：精确路径失效时按驱动类在驱动目录中通配匹配，
+     * 命中后把可移植路径写回数据库，避免升级镜像后仍引用旧文件名导致连接失败。
+     */
+    private void healDriverJarPaths() {
+        List<Driver> drivers = driverRepo.findAll();
+        int healed = 0;
+        for (Driver driver : drivers) {
+            try {
+                boolean recovered = driverJarResolver.resolveAndHeal(driver).recovered();
+                if (recovered) {
+                    healed++;
+                }
+            } catch (Exception e) {
+                // 缺驱动属于可恢复状态：不阻断启动，由使用方在连接时报出中文提示
+                log.warn("驱动 {} 暂不可用: {}", driver.getName(), e.getMessage());
+            }
+        }
+        if (healed > 0) {
+            log.info("驱动JAR路径自愈完成，共更新 {} 条", healed);
+        }
     }
 
     private void createDatabaseIfNotExists() {

@@ -5,6 +5,7 @@ import com.assessment.admin.model.Driver;
 import com.assessment.admin.repository.DatabaseConfigRepository;
 import com.assessment.admin.repository.DriverRepository;
 import com.assessment.admin.service.SqlExecutionService;
+import com.assessment.admin.service.DriverJarResolver;
 import com.assessment.admin.security.TrustedRequestAuthorizer;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -31,6 +32,9 @@ public class DataQueryController {
 
     @Autowired
     private TrustedRequestAuthorizer authorizer;
+
+    @Autowired
+    private DriverJarResolver driverJarResolver;
 
     @PostMapping("/execute")
     public ResponseEntity<Map<String, Object>> executeQuery(
@@ -101,13 +105,8 @@ public class DataQueryController {
     }
 
     private Connection getJdbcConnection(Driver driver, String url, String username, String password) throws Exception {
-        if (driver.getJarFilePath() == null || driver.getJarFilePath().isEmpty()) {
-            throw new Exception("驱动 '" + driver.getName() + "' 尚未上传JAR包");
-        }
-        File jarFile = new File(driver.getJarFilePath());
-        if (!jarFile.exists()) {
-            throw new Exception("驱动JAR文件不存在: " + driver.getJarFilePath());
-        }
+        // 统一走驱动解析器：精确路径失效时按驱动类通配匹配并自愈数据库路径
+        File jarFile = driverJarResolver.resolveAndHeal(driver).file();
         URLClassLoader classLoader = new URLClassLoader(
                 new URL[]{jarFile.toURI().toURL()},
                 Thread.currentThread().getContextClassLoader()
