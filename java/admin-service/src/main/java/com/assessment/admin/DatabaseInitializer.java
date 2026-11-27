@@ -225,7 +225,8 @@ public class DatabaseInitializer implements CommandLineRunner {
         boolean preferAmap = "amap".equalsIgnoreCase(defaultMapType);
         List<MapServiceConfig> all = mapConfigRepo.findAll();
         if (all.isEmpty()) {
-            saveMapConfig("map_001", "GeoWebCache 内网地图（默认）", "geowebcache", "/geowebcache/gwc", !preferAmap);
+            // baseUrl 只到 GWC 上下文根；多写 /gwc 会拼出 /geowebcache/gwc/service/tms/... 导致 404
+            saveMapConfig("map_001", "GeoWebCache 内网地图（默认）", "geowebcache", "/geowebcache", !preferAmap);
             saveMapConfig(AMAP_CONFIG_ID, AMAP_CONFIG_NAME, "amap", AMAP_BASE_URL, preferAmap);
             log.info("默认地图服务配置已插入：{}（启用），另一项作为备用",
                     preferAmap ? "高德在线底图" : "GeoWebCache 内网地图");

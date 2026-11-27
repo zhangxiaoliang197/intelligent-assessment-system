@@ -104,6 +104,24 @@ ONTOLOGY_LLM_ALLOWED_HOSTS="${ONTOLOGY_LLM_ALLOWED_HOSTS:-localhost,127.0.0.1,::
 # 例: MAP_TILE_UPSTREAM=http://192.168.100.190:8084
 MAP_TILE_UPSTREAM="${MAP_TILE_UPSTREAM:-http://host.docker.internal:9090}"
 MAP_TILE_UPSTREAM="${MAP_TILE_UPSTREAM%/}"
+# 只认"协议+主机+端口"。带路径会与 nginx 的 /geowebcache/ 前缀重复拼接，现场表现为地图 404。
+case "$MAP_TILE_UPSTREAM" in
+    http://*/*|https://*/*)
+        log_error "MAP_TILE_UPSTREAM 只能填协议+主机+端口，不能带路径"
+        echo "  正确: MAP_TILE_UPSTREAM=http://192.168.100.190:8084"
+        echo "  错误: MAP_TILE_UPSTREAM=http://192.168.100.190:8084/geowebcache"
+        exit 1
+        ;;
+    http://*|https://*) ;;
+    *)
+        log_error "MAP_TILE_UPSTREAM 必须以 http:// 或 https:// 开头"
+        exit 1
+        ;;
+esac
+if [ "$MAP_TILE_UPSTREAM" = "http://host.docker.internal:9090" ]; then
+    echo "WARNING: MAP_TILE_UPSTREAM 未显式设置，正在使用开发默认值 http://host.docker.internal:9090"
+    echo "         内网部署请改为实际 GeoWebCache 地址；若地图黑图/404，先检查这一项。"
+fi
 
 # ─── 日志环境变量（可被外部环境变量覆盖）───
 LOG_ENV="${LOG_ENV:-prod}"

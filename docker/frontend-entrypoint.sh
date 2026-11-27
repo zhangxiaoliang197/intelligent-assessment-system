@@ -25,4 +25,8 @@ esac
 
 umask 077
 htpasswd -bcB /etc/nginx/admin.htpasswd admin "$ADMIN_UI_PASSWORD" >/dev/null
+# nginx worker 以 nginx 用户运行，而 umask 077 生成的文件是 root:root 600，worker 读不到，
+# 所有后台保存接口会 500 Permission denied。改为 root:nginx + 640：仅放开属组读，保留 077 的安全意图。
+chown root:nginx /etc/nginx/admin.htpasswd
+chmod 640 /etc/nginx/admin.htpasswd
 unset ADMIN_UI_PASSWORD

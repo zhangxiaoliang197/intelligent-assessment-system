@@ -2305,7 +2305,7 @@ public class AdminController {
     /**
      * 探测地图服务连通性（仅针对绝对地址，由 admin-service 直接请求）。
      *
-     * 同源前缀（如 /geowebcache/gwc、/amap-tiles）的真实链路是
+     * 同源前缀（如 /geowebcache、/amap-tiles）的真实链路是
      * 浏览器 → nginx/vite → 上游瓦片服务，admin-service 不在链路上，
      * 因此这类配置返回提示，由前端按真实链路探测。
      *
@@ -2324,7 +2324,7 @@ public class AdminController {
             return ResponseEntity.ok(Map.of(
                 "success", false,
                 "code", "empty",
-                "message", "地图服务地址为空：请填写同源前缀（如 /geowebcache/gwc）或绝对地址（如 http://10.0.0.8:9090/geowebcache）"
+                "message", "地图服务地址为空：请填写同源前缀（如 /geowebcache）或绝对地址（如 http://10.0.0.8:9090/geowebcache）"
             ));
         }
         if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
@@ -2411,8 +2411,8 @@ public class AdminController {
         List<String> urls = new ArrayList<>();
         if ("geowebcache".equalsIgnoreCase(type)) {
             // TMS 端点 y 轴自下而上，这里的 y 已按 2^z-1-y 翻转
-            urls.add(base + "/service/tms/1.0.0/seri1@EPSG:3857_esri1@png/5/26/19.png");
-            urls.add(base + "/service/tms/1.0.0/seri1@EPSG:3857_esri1@png/3/6/4.png");
+            urls.add(base + "/service/tms/1.0.0/esri1@EPSG:3857_esri1@png/5/26/19.png");
+            urls.add(base + "/service/tms/1.0.0/esri1@EPSG:3857_esri1@png/3/6/4.png");
         } else if ("amap".equalsIgnoreCase(type)) {
             urls.add(base + "/vec/3/6/3.png");
             urls.add(base + "/vec/4/13/6.png");

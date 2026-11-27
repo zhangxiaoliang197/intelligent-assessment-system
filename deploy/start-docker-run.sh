@@ -71,6 +71,25 @@ ONTOLOGY_LLM_ALLOWED_HOSTS="${ONTOLOGY_LLM_ALLOWED_HOSTS:-localhost,127.0.0.1,::
 # 前端 nginx 的 /geowebcache/、/tiles/ 反向代理会转发到该地址。
 MAP_TILE_UPSTREAM="${MAP_TILE_UPSTREAM:-http://host.docker.internal:9090}"
 MAP_TILE_UPSTREAM="${MAP_TILE_UPSTREAM%/}"
+# 只认"协议+主机+端口"。带路径会与 nginx 的 /geowebcache/ 前缀重复拼接，
+# 例如 http://1.2.3.4:9090/gwc 会拼成 /gwc/geowebcache/...，现场表现为地图 404 且极难定位。
+case "$MAP_TILE_UPSTREAM" in
+    http://*/*|https://*/*)
+        echo "ERROR: MAP_TILE_UPSTREAM 只能填协议+主机+端口，不能带路径"
+        echo "  正确: MAP_TILE_UPSTREAM=http://192.168.100.190:8084"
+        echo "  错误: MAP_TILE_UPSTREAM=http://192.168.100.190:8084/geowebcache"
+        exit 1
+        ;;
+    http://*|https://*) ;;
+    *)
+        echo "ERROR: MAP_TILE_UPSTREAM 必须以 http:// 或 https:// 开头"
+        exit 1
+        ;;
+esac
+if [ "$MAP_TILE_UPSTREAM" = "http://host.docker.internal:9090" ]; then
+    echo "WARNING: MAP_TILE_UPSTREAM 未显式设置，正在使用开发默认值 http://host.docker.internal:9090"
+    echo "         内网部署请改为实际 GeoWebCache 地址；若地图黑图/404，先检查这一项。"
+fi
 echo "  地图服务上游: $MAP_TILE_UPSTREAM"
 # 内网 OpenAI 兼容服务不接受 thinking 字段时保持 false（默认关闭，避免网关 400）
 LLM_SEND_THINKING="${LLM_SEND_THINKING:-false}"

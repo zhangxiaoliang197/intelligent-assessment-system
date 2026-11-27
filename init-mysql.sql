@@ -285,7 +285,7 @@ VALUES ('llm_001', 'DeepSeek 默认', 'deepseek', 'https://api.deepseek.com/v1',
 
 -- 3.3 默认地图服务配置：高德在线底图（启用）+ GeoWebCache（备用）
 INSERT IGNORE INTO `ass_map_service_config` (`id`, `name`, `map_type`, `base_url`, `is_active`, `create_time`, `update_time`)
-VALUES ('map_001', 'GeoWebCache 内网地图（默认）', 'geowebcache', '/geowebcache/gwc', 1, NOW(), NOW());
+VALUES ('map_001', 'GeoWebCache 内网地图（默认）', 'geowebcache', '/geowebcache', 1, NOW(), NOW());
 INSERT IGNORE INTO `ass_map_service_config` (`id`, `name`, `map_type`, `base_url`, `is_active`, `create_time`, `update_time`)
 VALUES ('map_amap_001', '高德在线底图（备用）', 'amap', '/amap-tiles', 0, NOW(), NOW());
 

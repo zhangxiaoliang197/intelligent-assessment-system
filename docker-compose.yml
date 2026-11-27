@@ -43,8 +43,8 @@ services:
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be configured}
       - ADMIN_UI_PASSWORD=${ADMIN_UI_PASSWORD:?ADMIN_UI_PASSWORD must be configured}
       - TZ=Asia/Shanghai
-      # 内网地图服务上游（协议+主机+端口，不含结尾斜杠），供 nginx 的
-      # /geowebcache/、/tiles/ 反向代理使用。内网部署必须覆盖为实际地址。
+      # 内网地图服务上游（只填协议+主机+端口，不能带路径、不含结尾斜杠），供 nginx 的
+      # /geowebcache/、/tiles/ 反向代理使用。内网部署必须覆盖为实际地址，默认值仅供本机开发。
       - MAP_TILE_UPSTREAM=${MAP_TILE_UPSTREAM:-http://host.docker.internal:9090}
     # 默认上游用宿主机地址时，让容器内的 host.docker.internal 指向宿主机网关
     extra_hosts:

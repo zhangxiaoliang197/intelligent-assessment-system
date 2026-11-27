@@ -18,8 +18,10 @@ export interface MapLayerConfig {
   attribution?: string
 }
 
-// 默认硬编码配置（内网 GeoWebCache 的 seri1/seri2 两层，作为 API 失败或高德不可达时的兜底）
-export const DEFAULT_BASE_URL = '/geowebcache/gwc'
+// 默认硬编码配置（内网 GeoWebCache 的 esri1/esri2 两层，作为 API 失败或高德不可达时的兜底）
+// baseUrl 只到 GWC 上下文根（/geowebcache），TMS 路径由下方图层模板自行拼接；
+// 多写一层 /gwc 会拼出 /geowebcache/gwc/service/tms/...，现场实测 404。
+export const DEFAULT_BASE_URL = '/geowebcache'
 
 // 高德瓦片同源代理前缀（vite 开发代理 / nginx 生产代理转发到高德瓦片域名）
 export const DEFAULT_AMAP_BASE = '/amap-tiles'
@@ -33,7 +35,7 @@ export interface MapLayersConfig {
 /** 把本机 GeoServer 绝对地址转成同源代理相对路径，避免导出时 canvas 跨域污染 */
 export function normalizeBaseUrl(baseUrl: string): string {
   if (!baseUrl) return baseUrl
-  // http://localhost:9090/geowebcache/gwc → /geowebcache/gwc（走 vite/nginx 同源代理）
+  // http://localhost:9090/geowebcache → /geowebcache（走 vite/nginx 同源代理）
   return baseUrl.replace(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i, '/')
 }
 
@@ -48,13 +50,13 @@ export function buildLayers(type: string, baseUrl: string): MapLayerConfig[] {
     const base = url || DEFAULT_BASE_URL
     return [
       {
-        id: 'seri1', name: '底图系列一',
-        urlTemplate: `${base}/service/tms/1.0.0/seri1@EPSG:3857_esri1@png/{z}/{x}/{y}.png`,
+        id: 'esri1', name: '底图系列一',
+        urlTemplate: `${base}/service/tms/1.0.0/esri1@EPSG:3857_esri1@png/{z}/{x}/{y}.png`,
         opacity: 1, minZoom: 3, maxZoom: 18, tms: true, attribution: 'GeoWebCache',
       },
       {
-        id: 'seri2', name: '底图系列二',
-        urlTemplate: `${base}/service/tms/1.0.0/seri2@EPSG:3857_esri2@png/{z}/{x}/{y}.png`,
+        id: 'esri2', name: '底图系列二',
+        urlTemplate: `${base}/service/tms/1.0.0/esri2@EPSG:3857_esri2@png/{z}/{x}/{y}.png`,
         opacity: 0.6, minZoom: 3, maxZoom: 18, tms: true, attribution: 'GeoWebCache',
       },
     ]
@@ -198,7 +200,7 @@ export function describeTileProbeFailure(
  * 按真实链路探测同源代理下的瓦片是否可用。
  *
  * @param type    地图服务类型
- * @param baseUrl 同源前缀（如 /geowebcache/gwc、/amap-tiles）
+ * @param baseUrl 同源前缀（如 /geowebcache、/amap-tiles）
  * @returns 探测结果
  */
 export async function probeSameOriginTiles(type: string, baseUrl: string): Promise<TileProbeResult> {
